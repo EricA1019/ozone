@@ -10,7 +10,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ---
 
-## [0.1.0] — 2026-04-12
+## [0.1.0] — 2026-04-12  *(MIT License)*
 
 Initial release. Full Rust rewrite of the original Node.js Ozone TUI.
 
