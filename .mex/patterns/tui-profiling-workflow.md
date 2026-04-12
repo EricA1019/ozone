@@ -8,9 +8,9 @@ triggers:
   - "advisory screen"
   - "failure report"
 edges:
-  - target: "../context/architecture.md"
+  - target: "context/architecture.md"
     condition: when you need to understand how the TUI, profiling layer, and CLI helpers connect
-  - target: "../context/conventions.md"
+  - target: "context/conventions.md"
     condition: before editing Rust modules so new process calls and UI code stay in the right files
 last_updated: 2026-04-12
 ---
@@ -72,4 +72,4 @@ The profiling path is intentionally separate from the fast launch path.
 
 - [ ] Update `.mex/ROUTER.md` "Current Project State" if what's working/not built has changed
 - [ ] Update any `.mex/context/` files that are now out of date
-- [ ] If this is a new task type without a pattern, create one in `.mex/patterns/` and add to `INDEX.md`
+- [ ] If this is a new task type without a pattern, create one in `.mex/patterns/` and add to `.mex/patterns/INDEX.md`

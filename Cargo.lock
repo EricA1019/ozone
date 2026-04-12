@@ -1137,6 +1137,7 @@ dependencies = [
  "crossterm",
  "directories",
  "libc",
+ "ozone-core",
  "ratatui",
  "reqwest",
  "rusqlite",
@@ -1145,6 +1146,51 @@ dependencies = [
  "sysinfo",
  "tokio",
  "tokio-util",
+]
+
+[[package]]
+name = "ozone-core"
+version = "0.1.0"
+dependencies = [
+ "directories",
+]
+
+[[package]]
+name = "ozone-engine"
+version = "0.1.0"
+dependencies = [
+ "ozone-core",
+ "tokio",
+]
+
+[[package]]
+name = "ozone-persist"
+version = "0.1.0"
+dependencies = [
+ "ozone-core",
+ "rusqlite",
+ "serde_json",
+ "thiserror",
+]
+
+[[package]]
+name = "ozone-plus"
+version = "0.1.0"
+dependencies = [
+ "clap",
+ "ozone-core",
+ "ozone-engine",
+ "ozone-persist",
+ "ozone-tui",
+]
+
+[[package]]
+name = "ozone-tui"
+version = "0.1.0"
+dependencies = [
+ "crossterm",
+ "ozone-core",
+ "ratatui",
 ]
 
 [[package]]

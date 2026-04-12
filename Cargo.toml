@@ -2,12 +2,22 @@
 name = "ozone"
 version = "0.1.0"
 edition = "2021"
-description = "Local AI stack operator — KoboldCpp + SillyTavern TUI"
+description = "⬡ Ozone — local AI stack operator for benchmarks, sweeps, profiles, and launch workflows"
 license = "MIT"
 repository = "https://github.com/EricA1019/ozone"
 homepage = "https://github.com/EricA1019/ozone"
 keywords = ["tui", "llm", "koboldcpp", "sillytavern", "ai"]
 categories = ["command-line-utilities"]
+
+[workspace]
+members = [
+    "apps/ozone-plus",
+    "crates/ozone-core",
+    "crates/ozone-engine",
+    "crates/ozone-persist",
+    "crates/ozone-tui",
+]
+resolver = "2"
 
 [[bin]]
 name = "ozone"
@@ -20,6 +30,7 @@ clap = { version = "4", features = ["derive"] }
 crossterm = "0.28"
 directories = "5"
 libc = "0.2"
+ozone-core = { path = "crates/ozone-core" }
 ratatui = { version = "0.29", features = ["crossterm"] }
 reqwest = { version = "0.12", features = ["json"] }
 serde = { version = "1", features = ["derive"] }

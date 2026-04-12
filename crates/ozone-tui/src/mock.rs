@@ -1,0 +1,332 @@
+use std::{collections::BTreeMap, convert::Infallible};
+
+use ozone_core::engine::CancelReason;
+
+use crate::{
+    app::{
+        AppBootstrap, BranchItem, DraftCheckpoint, DraftState, RuntimeCancellation, RuntimeCompletion,
+        RuntimeSendReceipt, SessionContext, TranscriptItem,
+    },
+    input::KeyAction,
+};
+
+pub trait SessionRuntime {
+    type Error;
+
+    fn bootstrap(&mut self, context: &SessionContext) -> Result<AppBootstrap, Self::Error>;
+
+    fn dispatch(
+        &mut self,
+        _context: &SessionContext,
+        _action: KeyAction,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    fn send_draft(
+        &mut self,
+        _context: &SessionContext,
+        _prompt: &str,
+    ) -> Result<Option<RuntimeSendReceipt>, Self::Error> {
+        Ok(None)
+    }
+
+    fn complete_generation(
+        &mut self,
+        _context: &SessionContext,
+    ) -> Result<Option<RuntimeCompletion>, Self::Error> {
+        Ok(None)
+    }
+
+    fn cancel_generation(
+        &mut self,
+        _context: &SessionContext,
+    ) -> Result<Option<RuntimeCancellation>, Self::Error> {
+        Ok(None)
+    }
+
+    fn persist_draft(
+        &mut self,
+        _context: &SessionContext,
+        _draft: Option<&str>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MockGeneration {
+    pub request_id: String,
+    pub prompt: String,
+    pub response: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MockRuntime {
+    pub bootstrap_state: AppBootstrap,
+    pub bootstrapped_sessions: Vec<String>,
+    pub dispatched_actions: Vec<KeyAction>,
+    pub sent_prompts: Vec<String>,
+    pub completed_requests: Vec<String>,
+    pub cancelled_requests: Vec<String>,
+    pub persisted_drafts: BTreeMap<String, String>,
+    pub active_generation: Option<MockGeneration>,
+    next_request_number: u64,
+}
+
+impl Default for MockRuntime {
+    fn default() -> Self {
+        Self {
+            bootstrap_state: AppBootstrap::default(),
+            bootstrapped_sessions: Vec::new(),
+            dispatched_actions: Vec::new(),
+            sent_prompts: Vec::new(),
+            completed_requests: Vec::new(),
+            cancelled_requests: Vec::new(),
+            persisted_drafts: BTreeMap::new(),
+            active_generation: None,
+            next_request_number: 1,
+        }
+    }
+}
+
+impl MockRuntime {
+    pub fn with_bootstrap(bootstrap_state: AppBootstrap) -> Self {
+        Self {
+            bootstrap_state,
+            ..Self::default()
+        }
+    }
+
+    pub fn seeded() -> Self {
+        Self::with_bootstrap(AppBootstrap {
+            transcript: vec![TranscriptItem::new("user", "mock session bootstrap")],
+            branches: vec![BranchItem::new("main", "main", true)],
+            status_line: Some("mock runtime ready".into()),
+            draft: Some(DraftState::default()),
+            screen: None,
+        })
+    }
+
+    fn next_request_id(&mut self) -> String {
+        let request_id = format!("mock-request-{}", self.next_request_number);
+        self.next_request_number += 1;
+        request_id
+    }
+}
+
+impl SessionRuntime for MockRuntime {
+    type Error = Infallible;
+
+    fn bootstrap(&mut self, context: &SessionContext) -> Result<AppBootstrap, Self::Error> {
+        self.bootstrapped_sessions
+            .push(context.session_id.to_string());
+        let mut bootstrap = self.bootstrap_state.clone();
+
+        let needs_restored_draft = bootstrap
+            .draft
+            .as_ref()
+            .map(|draft| draft.text.is_empty())
+            .unwrap_or(true);
+
+        if needs_restored_draft {
+            if let Some(text) = self.persisted_drafts.get(context.session_id.as_str()) {
+                bootstrap.draft = Some(DraftState::restore(DraftCheckpoint::new(
+                    text.clone(),
+                    text.chars().count(),
+                )));
+            }
+        }
+
+        Ok(bootstrap)
+    }
+
+    fn dispatch(
+        &mut self,
+        _context: &SessionContext,
+        action: KeyAction,
+    ) -> Result<(), Self::Error> {
+        self.dispatched_actions.push(action);
+        Ok(())
+    }
+
+    fn send_draft(
+        &mut self,
+        _context: &SessionContext,
+        prompt: &str,
+    ) -> Result<Option<RuntimeSendReceipt>, Self::Error> {
+        if prompt.trim().is_empty() {
+            return Ok(None);
+        }
+
+        let request_id = self.next_request_id();
+        let prompt = prompt.to_owned();
+        let user_message = TranscriptItem::new("user", prompt.clone());
+        self.bootstrap_state.transcript.push(user_message.clone());
+        self.sent_prompts.push(prompt.clone());
+        self.active_generation = Some(MockGeneration {
+            request_id: request_id.clone(),
+            prompt: prompt.clone(),
+            response: format!("Mock response to: {prompt}"),
+        });
+
+        Ok(Some(RuntimeSendReceipt {
+            request_id,
+            user_message,
+        }))
+    }
+
+    fn complete_generation(
+        &mut self,
+        _context: &SessionContext,
+    ) -> Result<Option<RuntimeCompletion>, Self::Error> {
+        let generation = match self.active_generation.take() {
+            Some(generation) => generation,
+            None => return Ok(None),
+        };
+
+        self.completed_requests.push(generation.request_id.clone());
+        let assistant_message = TranscriptItem::new("assistant", generation.response);
+        self.bootstrap_state
+            .transcript
+            .push(assistant_message.clone());
+
+        Ok(Some(RuntimeCompletion {
+            request_id: generation.request_id,
+            assistant_message,
+        }))
+    }
+
+    fn cancel_generation(
+        &mut self,
+        _context: &SessionContext,
+    ) -> Result<Option<RuntimeCancellation>, Self::Error> {
+        let generation = match self.active_generation.take() {
+            Some(generation) => generation,
+            None => return Ok(None),
+        };
+
+        self.cancelled_requests.push(generation.request_id.clone());
+
+        Ok(Some(RuntimeCancellation {
+            request_id: generation.request_id,
+            reason: CancelReason::UserRequested,
+            partial_assistant_message: Some(TranscriptItem::new(
+                "assistant",
+                format!("Partial mock response for: {}", generation.prompt),
+            )),
+        }))
+    }
+
+    fn persist_draft(
+        &mut self,
+        context: &SessionContext,
+        draft: Option<&str>,
+    ) -> Result<(), Self::Error> {
+        match draft {
+            Some(text) if !text.is_empty() => {
+                self.persisted_drafts
+                    .insert(context.session_id.to_string(), text.to_owned());
+            }
+            _ => {
+                self.persisted_drafts.remove(context.session_id.as_str());
+            }
+        }
+
+        Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use ozone_core::{engine::CancelReason, session::SessionId};
+
+    use super::{MockRuntime, SessionRuntime};
+    use crate::app::{DraftState, SessionContext, TranscriptItem};
+
+    fn session_context() -> SessionContext {
+        let session_id = SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap();
+        SessionContext::new(session_id, "Phase 1C")
+    }
+
+    #[test]
+    fn send_draft_starts_mock_generation_and_completion_commits_reply() {
+        let context = session_context();
+        let mut runtime = MockRuntime::seeded();
+
+        let receipt = runtime.send_draft(&context, "hello mock").unwrap().unwrap();
+        assert_eq!(receipt.request_id, "mock-request-1");
+        assert_eq!(
+            receipt.user_message,
+            TranscriptItem::new("user", "hello mock")
+        );
+        assert_eq!(runtime.sent_prompts, vec!["hello mock".to_string()]);
+        assert_eq!(
+            runtime
+                .active_generation
+                .as_ref()
+                .map(|generation| generation.prompt.as_str()),
+            Some("hello mock")
+        );
+
+        let completion = runtime.complete_generation(&context).unwrap().unwrap();
+        assert_eq!(completion.request_id, "mock-request-1");
+        assert_eq!(
+            completion.assistant_message,
+            TranscriptItem::new("assistant", "Mock response to: hello mock")
+        );
+        assert!(runtime.active_generation.is_none());
+        assert_eq!(
+            runtime.completed_requests,
+            vec!["mock-request-1".to_string()]
+        );
+    }
+
+    #[test]
+    fn cancel_generation_returns_user_requested_without_committing_assistant_reply() {
+        let context = session_context();
+        let mut runtime = MockRuntime::seeded();
+
+        runtime.send_draft(&context, "cancel me").unwrap();
+        let cancellation = runtime.cancel_generation(&context).unwrap().unwrap();
+
+        assert_eq!(cancellation.request_id, "mock-request-1");
+        assert_eq!(cancellation.reason, CancelReason::UserRequested);
+        assert_eq!(
+            cancellation.partial_assistant_message,
+            Some(TranscriptItem::new(
+                "assistant",
+                "Partial mock response for: cancel me"
+            ))
+        );
+        assert!(runtime.active_generation.is_none());
+        assert_eq!(
+            runtime.cancelled_requests,
+            vec!["mock-request-1".to_string()]
+        );
+        assert_eq!(
+            runtime.bootstrap_state.transcript.last(),
+            Some(&TranscriptItem::new("user", "cancel me"))
+        );
+    }
+
+    #[test]
+    fn persisted_draft_is_restored_during_bootstrap() {
+        let context = session_context();
+        let mut runtime = MockRuntime::seeded();
+
+        runtime
+            .persist_draft(&context, Some("draft from persistence"))
+            .unwrap();
+
+        let bootstrap = runtime.bootstrap(&context).unwrap();
+
+        assert_eq!(
+            bootstrap.draft,
+            Some(DraftState::restore(crate::app::DraftCheckpoint::new(
+                "draft from persistence",
+                "draft from persistence".chars().count()
+            )))
+        );
+    }
+}

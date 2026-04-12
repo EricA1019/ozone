@@ -12,14 +12,14 @@ edges:
     condition: when the reasoning behind a tech choice is needed
   - target: context/conventions.md
     condition: when understanding how to use a technology in this codebase
-last_updated: 2025-07-12
+last_updated: 2026-04-12
 ---
 
 # Stack
 
 ## Core Technologies
 
-- **Rust 2021 edition** — primary language, single compiled binary
+- **Rust 2021 edition** — primary language, now organized as a Cargo workspace with the root `ozone` package plus `ozone-core`, `ozone-engine`, `ozone-persist`, `ozone-tui`, and the `ozone-plus` app
 - **ratatui 0.29** — TUI framework (crossterm backend)
 - **crossterm 0.28** — terminal event handling (key input, raw mode)
 - **tokio 1 (full)** — async runtime for HTTP polling and process management
@@ -32,10 +32,14 @@ last_updated: 2025-07-12
 - **reqwest 0.12** — HTTP client for polling KoboldCpp/SillyTavern APIs
 - **sysinfo 0.33** — CPU core count and basic system info
 - **serde + serde_json** — JSON serialization for preferences and API responses
-- **directories 5** — XDG-compliant data/config paths (`~/.local/share/ozone/`)
+- **directories 5** — XDG-compliant data/config paths under the user's home directory
 - **chrono 0.4** — timestamps in benchmark records and log formatting
 - **anyhow** — error handling with context (all public functions return `anyhow::Result`)
 - **libc 0.2** — low-level process signaling (kill syscall)
+- **Cargo workspaces** — the repo now uses a shared workspace layout so the root `ozone` app plus `ozone-core`, `ozone-engine`, `ozone-persist`, `ozone-tui`, and `apps/ozone-plus` can evolve independently
+- **rusqlite FTS5 + WAL** — Phase 1A persistence uses SQLite content-sync FTS tables and WAL-backed session/global databases
+- **tokio broadcast** — Phase 1B engine events use a lightweight broadcast channel so future UI layers can subscribe without owning writes
+- **ratatui TestBackend** — Phase 1C shell layout/render tests use `TestBackend` to verify 80x24 and 120x40 shell behavior without requiring a live terminal
 
 ## What We Deliberately Do NOT Use
 

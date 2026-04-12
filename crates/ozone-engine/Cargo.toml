@@ -1,0 +1,12 @@
+[package]
+name = "ozone-engine"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Phase 1B conversation engine foundations for ozone+"
+license = "MIT"
+
+[dependencies]
+ozone-core = { path = "../ozone-core" }
+tokio = { version = "1", features = ["sync"] }
+

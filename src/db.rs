@@ -1,6 +1,6 @@
 use anyhow::Result;
+use ozone_core::paths;
 use rusqlite::Connection;
-use std::path::PathBuf;
 
 /// Benchmark result row — one run of a specific configuration.
 #[derive(Debug, Clone)]
@@ -43,16 +43,11 @@ pub struct ProfileRow {
     pub created_at: String,
 }
 
-fn db_path() -> PathBuf {
-    let proj = directories::ProjectDirs::from("", "", "ozone")
-        .expect("could not determine data directory");
-    let dir = proj.data_dir();
-    std::fs::create_dir_all(dir).ok();
-    dir.join("benchmarks.db")
-}
-
 pub fn open() -> Result<Connection> {
-    let path = db_path();
+    let path = paths::benchmarks_db_path().expect("could not determine data directory");
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).ok();
+    }
     let conn = Connection::open(&path)?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
     init_tables(&conn)?;
@@ -109,11 +104,24 @@ pub fn insert_benchmark(conn: &Connection, row: &BenchmarkRow) -> Result<i64> {
             timestamp, notes
         ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
         rusqlite::params![
-            row.model_name, row.model_size_gb, row.gpu_layers, row.context_size,
-            row.quant_kv, row.threads, row.tokens_per_sec, row.time_to_first_token_ms,
-            row.vram_peak_mb, row.ram_peak_mb, row.total_tokens, row.total_time_ms,
-            row.status, row.gpu_name, row.gpu_vram_mb, row.ram_total_mb,
-            row.timestamp, row.notes,
+            row.model_name,
+            row.model_size_gb,
+            row.gpu_layers,
+            row.context_size,
+            row.quant_kv,
+            row.threads,
+            row.tokens_per_sec,
+            row.time_to_first_token_ms,
+            row.vram_peak_mb,
+            row.ram_peak_mb,
+            row.total_tokens,
+            row.total_time_ms,
+            row.status,
+            row.gpu_name,
+            row.gpu_vram_mb,
+            row.ram_total_mb,
+            row.timestamp,
+            row.notes,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -127,8 +135,15 @@ pub fn insert_profile(conn: &Connection, row: &ProfileRow) -> Result<i64> {
             tokens_per_sec, vram_mb, source, created_at
         ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
         rusqlite::params![
-            row.model_name, row.profile_name, row.gpu_layers, row.context_size,
-            row.quant_kv, row.tokens_per_sec, row.vram_mb, row.source, row.created_at,
+            row.model_name,
+            row.profile_name,
+            row.gpu_layers,
+            row.context_size,
+            row.quant_kv,
+            row.tokens_per_sec,
+            row.vram_mb,
+            row.source,
+            row.created_at,
         ],
     )?;
     Ok(conn.last_insert_rowid())

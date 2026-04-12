@@ -1,12 +1,12 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Result;
+use ozone_core::paths;
 use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    analyze,
-    bench,
+    analyze, bench,
     catalog::CatalogRecord,
     db::{self, ProfileRow},
     hardware::HardwareProfile,
@@ -42,11 +42,17 @@ impl ProfilingAction {
     pub fn description(&self) -> &'static str {
         match self {
             ProfilingAction::QuickSweep => "Binary-search a safe speed/context pair quickly.",
-            ProfilingAction::FullSweep => "Explore a wider context/quant range for deeper coverage.",
+            ProfilingAction::FullSweep => {
+                "Explore a wider context/quant range for deeper coverage."
+            }
             ProfilingAction::SingleBenchmark => "Validate one recommended configuration first.",
-            ProfilingAction::GenerateProfiles => "Create speed/context profiles from benchmark history.",
+            ProfilingAction::GenerateProfiles => {
+                "Create speed/context profiles from benchmark history."
+            }
             ProfilingAction::ExportPresets => "Write the best profile into koboldcpp-presets.conf.",
-            ProfilingAction::LaunchRecommended => "Use the best available profile and launch KoboldCpp.",
+            ProfilingAction::LaunchRecommended => {
+                "Use the best available profile and launch KoboldCpp."
+            }
             ProfilingAction::ReviewIssue => "Show the blocking issue and recommended fixes.",
         }
     }
@@ -54,7 +60,9 @@ impl ProfilingAction {
     pub fn clears_backends(&self) -> bool {
         matches!(
             self,
-            ProfilingAction::QuickSweep | ProfilingAction::FullSweep | ProfilingAction::SingleBenchmark
+            ProfilingAction::QuickSweep
+                | ProfilingAction::FullSweep
+                | ProfilingAction::SingleBenchmark
         )
     }
 }
@@ -181,8 +189,16 @@ impl ProfilingFailureReport {
 
 #[derive(Debug, Clone)]
 pub enum WorkflowEvent {
-    Status { title: String, detail: String },
-    Progress { title: String, detail: String, current: u32, total: u32 },
+    Status {
+        title: String,
+        detail: String,
+    },
+    Progress {
+        title: String,
+        detail: String,
+        current: u32,
+        total: u32,
+    },
     Completed(ProfilingSuccessReport),
     Failed(ProfilingFailureReport),
     Cancelled,
@@ -218,13 +234,16 @@ fn models_dir() -> PathBuf {
     PathBuf::from(home).join("models")
 }
 
-fn kobold_log_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_string());
-    PathBuf::from(home)
-        .join(".local")
-        .join("share")
-        .join("ozone")
-        .join("koboldcpp.log")
+fn kobold_log_path() -> Option<PathBuf> {
+    paths::kobold_log_path()
+}
+
+fn kobold_log_suggestion() -> String {
+    kobold_log_path()
+        .map(|path| format!("Inspect the launcher log at {}.", path.display()))
+        .unwrap_or_else(|| {
+            "Inspect the launcher log once the ozone data directory is available.".into()
+        })
 }
 
 fn is_executable(path: &Path) -> bool {
@@ -319,7 +338,10 @@ fn pick_recommended_profile(profiles: &[ProfileRow]) -> Option<RecommendedProfil
     })
 }
 
-pub fn preferred_launch_plan(record: &CatalogRecord, hardware: &HardwareProfile) -> Result<LaunchPlan> {
+pub fn preferred_launch_plan(
+    record: &CatalogRecord,
+    hardware: &HardwareProfile,
+) -> Result<LaunchPlan> {
     let history = load_history(&record.model_name)?;
     if let Some(profile) = pick_recommended_profile(&history.profiles) {
         let total_layers = planner::estimate_total_layers(record.model_size_gb);
@@ -334,7 +356,10 @@ pub fn preferred_launch_plan(record: &CatalogRecord, hardware: &HardwareProfile)
             threads,
             blas_threads,
             mode,
-            rationale: format!("Using {} profile from benchmark history.", profile.profile_name),
+            rationale: format!(
+                "Using {} profile from benchmark history.",
+                profile.profile_name
+            ),
             estimated: false,
             estimated_vram_mb: profile.vram_mb,
             source: "Profile".into(),
@@ -352,14 +377,17 @@ pub fn build_advisory(
     let launcher = launcher_path();
     let model_ok = record.model_path.exists();
     let launcher_ok = launcher.exists() && is_executable(&launcher);
-    let launch_plan = hardware.map(|hw| preferred_launch_plan(record, hw)).transpose()?;
+    let launch_plan = hardware
+        .map(|hw| preferred_launch_plan(record, hw))
+        .transpose()?;
     let recommended_profile = pick_recommended_profile(&history.profiles);
-    let (estimated_vram_mb, gpu_budget_mb) = if let (Some(hw), Some(plan)) = (hardware, launch_plan.as_ref()) {
-        let budget = hw.gpu.as_ref().map(|gpu| (gpu.free_mb as f64 * 0.9) as u32);
-        (Some(plan.estimated_vram_mb), budget)
-    } else {
-        (None, None)
-    };
+    let (estimated_vram_mb, gpu_budget_mb) =
+        if let (Some(hw), Some(plan)) = (hardware, launch_plan.as_ref()) {
+            let budget = hw.gpu.as_ref().map(|gpu| (gpu.free_mb as f64 * 0.9) as u32);
+            (Some(plan.estimated_vram_mb), budget)
+        } else {
+            (None, None)
+        };
 
     let recommended_action = if !model_ok || !launcher_ok {
         ProfilingAction::ReviewIssue
@@ -386,7 +414,9 @@ pub fn build_advisory(
             ProfilingAction::LaunchRecommended => recommended_profile.is_some(),
             ProfilingAction::GenerateProfiles => history.ok_benchmark_count >= 2,
             ProfilingAction::ExportPresets => history.profile_count > 0,
-            ProfilingAction::QuickSweep | ProfilingAction::FullSweep | ProfilingAction::SingleBenchmark => model_ok && launcher_ok,
+            ProfilingAction::QuickSweep
+            | ProfilingAction::FullSweep
+            | ProfilingAction::SingleBenchmark => model_ok && launcher_ok,
             ProfilingAction::ReviewIssue => false,
         };
         if allowed && !available_actions.contains(&action) {
@@ -437,7 +467,9 @@ pub fn build_advisory(
         if is_stale_timestamp(ts) {
             warnings.push(ProfilingWarning {
                 severity: WarningSeverity::Info,
-                message: "Newest benchmark is over 7 days old — consider re-profiling for fresh data.".into(),
+                message:
+                    "Newest benchmark is over 7 days old — consider re-profiling for fresh data."
+                        .into(),
             });
         }
     }
@@ -454,10 +486,15 @@ pub fn build_advisory(
                 });
             }
         }
-        if matches!(plan.mode, RecommendationMode::MixedMemory | RecommendationMode::CpuOnly) {
+        if matches!(
+            plan.mode,
+            RecommendationMode::MixedMemory | RecommendationMode::CpuOnly
+        ) {
             warnings.push(ProfilingWarning {
                 severity: WarningSeverity::Warning,
-                message: "The current launch plan already expects mixed-memory or CPU-heavy execution.".into(),
+                message:
+                    "The current launch plan already expects mixed-memory or CPU-heavy execution."
+                        .into(),
             });
         }
     }
@@ -498,23 +535,41 @@ pub fn blocking_issue_report(record: &CatalogRecord) -> ProfilingFailureReport {
     )
 }
 
-fn build_success_report(record: &CatalogRecord, action: ProfilingAction) -> Result<ProfilingSuccessReport> {
+fn build_success_report(
+    record: &CatalogRecord,
+    action: ProfilingAction,
+) -> Result<ProfilingSuccessReport> {
     let history = load_history(&record.model_name)?;
     let recommended_profile = pick_recommended_profile(&history.profiles);
     let summary = match action {
-        ProfilingAction::QuickSweep => "Quick sweep completed and stored fresh benchmark coverage.".into(),
-        ProfilingAction::FullSweep => "Full sweep completed and refreshed the benchmark frontier.".into(),
-        ProfilingAction::SingleBenchmark => "Single benchmark completed and stored its result.".into(),
-        ProfilingAction::GenerateProfiles => "Profiles were generated from successful benchmark history.".into(),
-        ProfilingAction::ExportPresets => format!("Preset export completed: {}", presets_path().display()),
-        ProfilingAction::LaunchRecommended | ProfilingAction::ReviewIssue => "Workflow finished.".into(),
+        ProfilingAction::QuickSweep => {
+            "Quick sweep completed and stored fresh benchmark coverage.".into()
+        }
+        ProfilingAction::FullSweep => {
+            "Full sweep completed and refreshed the benchmark frontier.".into()
+        }
+        ProfilingAction::SingleBenchmark => {
+            "Single benchmark completed and stored its result.".into()
+        }
+        ProfilingAction::GenerateProfiles => {
+            "Profiles were generated from successful benchmark history.".into()
+        }
+        ProfilingAction::ExportPresets => {
+            format!("Preset export completed: {}", presets_path().display())
+        }
+        ProfilingAction::LaunchRecommended | ProfilingAction::ReviewIssue => {
+            "Workflow finished.".into()
+        }
     };
 
     let mut suggestions = Vec::new();
     if history.profile_count > 0 {
-        suggestions.push("Launch the recommended profile or export it to koboldcpp-presets.conf.".into());
+        suggestions
+            .push("Launch the recommended profile or export it to koboldcpp-presets.conf.".into());
     } else if history.ok_benchmark_count >= 2 {
-        suggestions.push("Generate profiles now so the launcher can reuse the best speed/context pair.".into());
+        suggestions.push(
+            "Generate profiles now so the launcher can reuse the best speed/context pair.".into(),
+        );
     } else {
         suggestions.push("Run a fuller sweep if you want broader context coverage.".into());
     }
@@ -533,7 +588,12 @@ fn build_success_report(record: &CatalogRecord, action: ProfilingAction) -> Resu
     })
 }
 
-fn build_failure_report(record: &CatalogRecord, action: ProfilingAction, detail: String, status: Option<&str>) -> ProfilingFailureReport {
+fn build_failure_report(
+    record: &CatalogRecord,
+    action: ProfilingAction,
+    detail: String,
+    status: Option<&str>,
+) -> ProfilingFailureReport {
     let launcher = launcher_path();
     let history = load_history(&record.model_name).unwrap_or_default();
     let lower = detail.to_lowercase();
@@ -542,10 +602,7 @@ fn build_failure_report(record: &CatalogRecord, action: ProfilingAction, detail:
         FailureClass::InvalidModelPath
     } else if !(launcher.exists() && is_executable(&launcher)) {
         FailureClass::LauncherMissing
-    } else if status == Some("oom")
-        || lower.contains("out of memory")
-        || lower.contains("oom")
-    {
+    } else if status == Some("oom") || lower.contains("out of memory") || lower.contains("oom") {
         FailureClass::OomOrOvercommit
     } else if status == Some("timeout")
         || lower.contains("did not start")
@@ -573,19 +630,20 @@ fn build_failure_report(record: &CatalogRecord, action: ProfilingAction, detail:
         ],
         FailureClass::BackendTimeout => vec![
             "Retry with a single benchmark or a quick sweep instead of the current action.".into(),
-            format!("Inspect the launcher log at {}.", kobold_log_path().display()),
+            kobold_log_suggestion(),
         ],
         FailureClass::OomOrOvercommit => vec![
             "Lower context size or GPU layers before retrying.".into(),
-            "Prefer a quick sweep so Ozone can search for a safer mixed-memory configuration.".into(),
+            "Prefer a quick sweep so Ozone can search for a safer mixed-memory configuration."
+                .into(),
         ],
         FailureClass::GenerationHttpError => vec![
             "Retry a single benchmark to validate the backend before sweeping again.".into(),
-            format!("Inspect the launcher log at {}.", kobold_log_path().display()),
+            kobold_log_suggestion(),
         ],
         FailureClass::Unknown => vec![
             "Retry the recommended single benchmark first to narrow the failure surface.".into(),
-            format!("Inspect the launcher log at {}.", kobold_log_path().display()),
+            kobold_log_suggestion(),
         ],
     };
 
@@ -596,9 +654,9 @@ fn build_failure_report(record: &CatalogRecord, action: ProfilingAction, detail:
     let retry_action = match class {
         FailureClass::InvalidModelPath | FailureClass::LauncherMissing => None,
         FailureClass::OomOrOvercommit => Some(ProfilingAction::QuickSweep),
-        FailureClass::BackendTimeout | FailureClass::GenerationHttpError | FailureClass::Unknown => {
-            Some(ProfilingAction::SingleBenchmark)
-        }
+        FailureClass::BackendTimeout
+        | FailureClass::GenerationHttpError
+        | FailureClass::Unknown => Some(ProfilingAction::SingleBenchmark),
     };
 
     ProfilingFailureReport {
@@ -608,11 +666,15 @@ fn build_failure_report(record: &CatalogRecord, action: ProfilingAction, detail:
         detail,
         suggestions,
         retry_action,
-        log_path: Some(kobold_log_path()),
+        log_path: kobold_log_path(),
     }
 }
 
-pub async fn run_workflow(request: WorkflowRequest, tx: UnboundedSender<WorkflowEvent>, cancel: CancellationToken) -> Result<()> {
+pub async fn run_workflow(
+    request: WorkflowRequest,
+    tx: UnboundedSender<WorkflowEvent>,
+    cancel: CancellationToken,
+) -> Result<()> {
     let action = request.action.clone();
     if action == ProfilingAction::ReviewIssue {
         let report = build_failure_report(
@@ -676,7 +738,11 @@ pub async fn run_workflow(request: WorkflowRequest, tx: UnboundedSender<Workflow
                     return;
                 }
                 let _ = tx.send(WorkflowEvent::Progress {
-                    title: if quick { "Quick sweep".into() } else { "Full sweep".into() },
+                    title: if quick {
+                        "Quick sweep".into()
+                    } else {
+                        "Full sweep".into()
+                    },
                     detail: progress.message,
                     current: progress.current,
                     total: progress.total,
@@ -810,7 +876,10 @@ pub async fn run_workflow(request: WorkflowRequest, tx: UnboundedSender<Workflow
                 title: "Export".into(),
                 detail: format!("Exporting presets to {}…", presets_path().display()),
             });
-            match analyze::export_presets_conf_quiet(&presets_path(), Some(&request.record.model_name)) {
+            match analyze::export_presets_conf_quiet(
+                &presets_path(),
+                Some(&request.record.model_name),
+            ) {
                 Ok(_count) => {
                     let mut report = build_success_report(&request.record, request.action)?;
                     // Read back the exported preset line for detail
@@ -845,7 +914,7 @@ pub async fn run_workflow(request: WorkflowRequest, tx: UnboundedSender<Workflow
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::catalog::{BenchmarkRun, Recommendation, RecSource};
+    use crate::catalog::{BenchmarkRun, RecSource, Recommendation};
 
     fn sample_record(path: &str) -> CatalogRecord {
         CatalogRecord {

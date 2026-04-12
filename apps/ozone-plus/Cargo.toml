@@ -1,0 +1,14 @@
+[package]
+name = "ozone-plus"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Phase 1C ozone+ chat shell with engine-backed persistence"
+license = "MIT"
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+ozone-core = { path = "../../crates/ozone-core" }
+ozone-engine = { path = "../../crates/ozone-engine" }
+ozone-persist = { path = "../../crates/ozone-persist" }
+ozone-tui = { path = "../../crates/ozone-tui" }

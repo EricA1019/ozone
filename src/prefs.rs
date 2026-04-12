@@ -1,7 +1,6 @@
 use anyhow::Result;
-use directories::ProjectDirs;
+use ozone_core::paths;
 use serde::{Deserialize, Serialize};
-use std::path::PathBuf;
 use tokio::fs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,13 +30,10 @@ impl Default for Preferences {
     }
 }
 
-fn prefs_path() -> Option<PathBuf> {
-    ProjectDirs::from("", "", "ozone")
-        .map(|dirs| dirs.data_dir().join("preferences.json"))
-}
-
 pub async fn load_prefs() -> Preferences {
-    let Some(path) = prefs_path() else { return Preferences::default() };
+    let Some(path) = paths::preferences_path() else {
+        return Preferences::default();
+    };
     match fs::read_to_string(&path).await {
         Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
         Err(_) => Preferences::default(),
@@ -45,7 +41,9 @@ pub async fn load_prefs() -> Preferences {
 }
 
 pub async fn save_prefs(prefs: &Preferences) -> Result<()> {
-    let Some(path) = prefs_path() else { return Ok(()) };
+    let Some(path) = paths::preferences_path() else {
+        return Ok(());
+    };
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).await?;
     }

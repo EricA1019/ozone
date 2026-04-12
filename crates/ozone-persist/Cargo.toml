@@ -1,0 +1,13 @@
+[package]
+name = "ozone-persist"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Phase 1A SQLite persistence for ozone+"
+license = "MIT"
+
+[dependencies]
+ozone-core = { path = "../ozone-core" }
+rusqlite = { version = "0.31", features = ["bundled"] }
+serde_json = "1"
+thiserror = "1"

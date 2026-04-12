@@ -11,14 +11,14 @@ triggers:
 edges:
   - target: context/architecture.md
     condition: when a convention depends on understanding the system structure
-last_updated: 2025-07-12
+last_updated: 2026-04-12
 ---
 
 # Conventions
 
 ## Naming
 
-- Files: snake_case (`bench_protocol.rs`, not `benchProtocol.rs`)
+- Files: snake_case (`main.rs`, `profiling.rs`, `src/ui/launcher.rs`)
 - Functions: snake_case, verb-first (`estimate_vram_mb`, `clear_gpu_backends`)
 - Structs: PascalCase (`CatalogRecord`, `HardwareProfile`, `LaunchPlan`)
 - Constants: SCREAMING_SNAKE_CASE (`VRAM_HEADROOM_RATIO`, `HEX_CURSOR`)
@@ -26,12 +26,21 @@ last_updated: 2025-07-12
 
 ## Structure
 
-- All source in `src/` — flat module structure, no deep nesting
+- The repo is a Cargo workspace:
+  - current `ozone` package stays at the repo root in `src/`
+  - shared crates live under `crates/`
+  - app targets beyond the root package live under `apps/`
 - UI rendering is separated: `src/ui/launcher.rs` (render functions), `src/ui/mod.rs` (App state + event loop)
 - Data logic is in dedicated modules: `catalog.rs` (file parsing), `planner.rs` (computation), `prefs.rs` (persistence)
 - External process management: `processes.rs` — all `Command::new()` calls live here
 - Theme/style: `theme.rs` — all Color/Style constants and helpers, never inline `Color::Rgb()` elsewhere
 - Database: `db.rs` — all SQLite queries, never use `Connection` directly outside this module
+- Shared product metadata and ozone filesystem path helpers belong in `crates/ozone-core`, not scattered across app modules
+- ozone+ conversation sequencing, snapshots, and event fanout belong in `crates/ozone-engine`
+- ozone+ persistence schema, migrations, and repository code belong in `crates/ozone-persist`, not in the root `ozone` app or ad hoc in `apps/ozone-plus`
+- `apps/ozone-plus` should talk to ozone+ persistence through an engine-facing facade or local store adapter; raw `SqliteRepository` mutations should stay inside that adapter layer
+- `crates/ozone-tui` should stay backend-agnostic: it owns shell state, key handling, layout, render, and the terminal loop, while app-specific `SessionRuntime` adapters live in `apps/ozone-plus`
+- If the ozone+ shell needs real persistence or engine work, keep it behind the `SessionRuntime` boundary or a local adapter in `apps/ozone-plus` rather than coupling `ozone-tui` directly to `ozone-persist`
 
 ## Patterns
 

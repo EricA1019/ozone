@@ -1,0 +1,10 @@
+[package]
+name = "ozone-core"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Shared core foundations for the Ozone product family"
+license = "MIT"
+
+[dependencies]
+directories = "5"

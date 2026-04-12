@@ -8,19 +8,48 @@
 
 **⬡ local AI stack operator**
 
-Configure, launch, and monitor [KoboldCpp](https://github.com/LostRuins/koboldcpp) + [SillyTavern](https://github.com/SillyTavern/SillyTavern) from a single terminal command. Ozone reads your hardware at startup, picks a layer split that fits in available VRAM (spilling to RAM if needed), then gets out of the way.
+![Current repo](https://img.shields.io/badge/current%20repo-ozone-7c3aed?style=for-the-badge)
+![Product family](https://img.shields.io/badge/family-ozonelite_%E2%86%92_ozone_%E2%86%92_ozone%2B-06b6d4?style=for-the-badge)
+![Upcoming](https://img.shields.io/badge/upcoming-ozone%2B-f59e0b?style=for-the-badge)
+
+Ozone is a **local-first tooling family** for running, tuning, and eventually interacting with local AI stacks.
+
+This repository currently tracks **ozone** — the middle tier in that family:
+- **ozonelite** *(planned)* — ultra-lean backend manager for constrained systems and power users
+- **ozone** *(current repo)* — backend tuning, benchmarking, sweeps, profile generation, and operator workflows
+- **ozone+** *(upcoming)* — the full local-LLM pipeline with a polished TUI/frontend built on top of the backend-management foundation
+
+Configure, benchmark, profile, launch, and monitor [KoboldCpp](https://github.com/LostRuins/koboldcpp) + [SillyTavern](https://github.com/SillyTavern/SillyTavern) from a single terminal workflow. Ozone reads your hardware, picks a layer split that fits in available VRAM (spilling to RAM if needed), helps you test alternatives, and turns good runs into reusable profiles.
 
 Built in Rust. Single binary. No Node.js, no Python, no daemon.
 
+**Contact:** ScribeALB@proton.me
+
+For the product-family guide and the upcoming ozone+ direction, see [`ozone+/README.md`](ozone+/README.md).
+
 ---
 
-## What it does
+## ⬡ Ozone product line
+
+| Build | Status | Purpose | Best for |
+|---|---|---|---|
+| **ozonelite** | Planned | Ultra-lean backend manager | Weak hardware, SSH boxes, users who want the smallest possible operational layer |
+| **ozone** | Current repo | Benchmarking, sweeps, profiles, and hardware-aware launch workflows | Users who want repeatable tuning and backend management without a full frontend stack |
+| **ozone+** | Upcoming | Full local-LLM pipeline with a polished TUI/frontend | Users who want one cohesive workflow from backend control to end-user interaction |
+
+---
+
+## What this repo does today
 
 - Splash screen with live VRAM and RAM gauges on startup
 - Scrollable model list — each entry shows size, source (`Tuned` / `Bench` / `Heur`), and a fit indicator
 - Hardware-aware planner: checks free VRAM, computes GPU layer count, falls back to mixed-memory or CPU-only automatically
 - Confirm screen shows the exact KoboldCpp flags before anything launches
 - Launches KoboldCpp, waits for the API to come up, then opens SillyTavern in a browser app window
+- `ozone bench` measures concrete model/settings combinations and stores benchmark results
+- `ozone sweep` explores multiple context / quantization combinations to find better operating points
+- `ozone analyze` reviews benchmark history, surfaces strong configurations, and generates reusable profiles
+- `ozone analyze --export` writes generated profiles back out to `koboldcpp-presets.conf`
 - Live monitor screen: VRAM %, RAM %, disk I/O sparkline, detected token/s
 - `ozone clear` stops KoboldCpp and any Ollama runner processes and frees VRAM
 
@@ -44,9 +73,33 @@ Models are read from `~/models/`. Symlinks work — if you use Ollama, symlink t
 ```bash
 git clone https://github.com/EricA1019/ozone.git
 cd ozone
-cargo build --release
+cargo build -p ozone --release
 cp target/release/ozone ~/.local/bin/    # or anywhere on $PATH
 ```
+
+---
+
+## Workspace build / dev
+
+Phase 0 keeps the current `ozone` app intact while the repo grows into a Cargo workspace. The new `ozone+` target is only an early stub in this phase — useful for workspace wiring and smoke tests, not a finished frontend yet.
+
+If you only want today's `ozone` binary, the install commands above are still the main path. For day-to-day development from the repo root, prefer workspace-aware cargo commands:
+
+```bash
+cargo build --workspace --release
+cargo run -p ozone --
+cargo check --workspace --all-targets
+cargo clippy --workspace --all-targets -- -D warnings
+```
+
+Once the `apps/ozone-plus` member exists, you can also build or run the stub from the workspace root:
+
+```bash
+cargo build -p ozone-plus
+cargo run -p ozone-plus
+```
+
+Expect `ozone+` to stay skeletal throughout Phase 0 while the shared workspace layout settles.
 
 ---
 

@@ -51,7 +51,7 @@ last_updated: 2026-04-12
 - `cargo check --release` passes.
 - `cargo clippy --release -- -D warnings` passes.
 - `cargo test --release` passes.
-- `release.yml` has a clear split between tag creation and tag-based release building.
+- `.github/workflows/release.yml` has a clear split between tag creation and tag-based release building.
 - The archive step references real files in the repository.
 
 ## Debug
