@@ -1,0 +1,6 @@
+target/
+.mex/
+.git/
+graphify-out/
+node_modules/
+*.lock

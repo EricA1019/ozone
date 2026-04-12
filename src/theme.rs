@@ -28,5 +28,6 @@ pub const WORDMARK: &[&str] = &[
     " ██████  ███████  ██████  ██   ████ ███████",
 ];
 
+pub const HEX_CURSOR: &str = "⬡";
 pub const TAGLINE: &str = "local AI stack operator";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");

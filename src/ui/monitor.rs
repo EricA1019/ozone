@@ -35,7 +35,7 @@ pub fn render(f: &mut Frame, app: &App) {
 fn render_header(f: &mut Frame, area: Rect, app: &App) {
     let now = Local::now().format("%H:%M:%S");
     let title = Line::from(vec![
-        Span::styled(" ◆ Ozone Monitor ", style_bold_violet()),
+        Span::styled(format!(" {} Ozone Monitor ", crate::theme::HEX_CURSOR), style_bold_violet()),
         Span::styled("—", style_gray()),
         Span::styled(" live ", style_green()),
         Span::styled(format!("  {now}"), style_gray()),

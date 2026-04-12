@@ -1,4 +1,5 @@
 mod catalog;
+mod db;
 mod hardware;
 mod planner;
 mod prefs;

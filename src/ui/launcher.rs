@@ -40,7 +40,7 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         .split(inner);
 
     let title = Line::from(vec![
-        Span::styled(" ◆ Ozone ", style_bold_violet()),
+        Span::styled(format!(" {} Ozone ", HEX_CURSOR), style_bold_violet()),
         Span::styled(format!("v{} ", VERSION), style_gray()),
         Span::styled("— ", style_gray()),
         Span::styled(format!("{model_count} models"), style_cyan()),
@@ -131,7 +131,7 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
     let items: Vec<ListItem> = actions.iter().enumerate().map(|(i, label)| {
         if i == app.selected_action {
             ListItem::new(Line::from(vec![
-                Span::styled("▸ ", style_cyan()),
+                Span::styled(format!("{} ", HEX_CURSOR), style_cyan()),
                 Span::styled(format!("{}", i + 1), style_gray()),
                 Span::raw("  "),
                 Span::styled(*label, Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
@@ -161,7 +161,7 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
     let area = f.area();
     let block = Block::default()
         .title(Line::from(vec![
-            Span::styled(" ◆ Ozone ", style_bold_violet()),
+            Span::styled(format!(" {} Ozone ", HEX_CURSOR), style_bold_violet()),
             Span::styled("Model Picker", style_bold_cyan()),
         ]))
         .title_bottom(Line::from(Span::styled(" ↑↓ scroll · Enter select · Esc back", style_gray())))
@@ -178,7 +178,7 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
     let hw = app.hardware.as_ref();
     let items: Vec<ListItem> = app.catalog.iter().enumerate().map(|(i, rec)| {
         let selected = i == app.selected_model;
-        let prefix = if selected { "▸ " } else { "  " };
+        let prefix = if selected { format!("{} ", HEX_CURSOR) } else { "  ".to_string() };
 
         let plan_vram = hw.map(|h| crate::planner::estimate_vram_mb(
             rec.recommendation.context_size,
