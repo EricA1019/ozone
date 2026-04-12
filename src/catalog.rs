@@ -175,9 +175,11 @@ pub async fn load_catalog(model_dir: &Path, preset_file: &Path, benchmark_file: 
     while let Some(entry) = entries.next_entry().await? {
         let name = entry.file_name().to_string_lossy().into_owned();
         if !name.ends_with(".gguf") { continue; }
-        let meta = entry.metadata().await?;
-        let size_bytes = meta.len();
-        let size_gb = (size_bytes as f64 / 1_073_741_824.0 * 10.0).round() / 10.0;
+        // Use fs::metadata (follows symlinks); fall back to 0.0 GB for broken symlinks
+        let size_gb = match fs::metadata(entry.path()).await {
+            Ok(meta) => (meta.len() as f64 / 1_073_741_824.0 * 10.0).round() / 10.0,
+            Err(_) => 0.0,
+        };
         models.push((name, entry.path(), size_gb));
     }
 
