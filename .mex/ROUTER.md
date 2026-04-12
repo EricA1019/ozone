@@ -32,6 +32,7 @@ Then read this file fully before doing anything else in this session.
 - Profiling now gives actionable warnings for risky plans and issue reports for invalid model paths / launcher failures
 - Success reports keep the UX review-first: generate/export/launch are explicit follow-up actions, not automatic side effects
 - Product-family docs now include a top-level family guide plus dedicated `ozonelite`, `ozone`, `ozone+`, and shared compatibility documents under `ozone+/`
+- GitHub Actions CI is clippy-clean again, and release automation is wired so pushes to `main` can create a version tag while the actual packaged release is built from the resulting tag run
 
 **Not yet built:**
 - TUI cancellation for in-flight profiling runs

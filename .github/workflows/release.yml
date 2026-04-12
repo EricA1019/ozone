@@ -2,6 +2,8 @@ name: Release
 
 on:
   push:
+    branches:
+      - main
     tags:
       - 'v*'
   workflow_dispatch:
@@ -15,8 +17,9 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  build:
-    name: Build Linux x86_64
+  prepare_tag:
+    name: Ensure release tag
+    if: github.event_name == 'workflow_dispatch' || (github.event_name == 'push' && github.ref_name == 'main')
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -31,12 +34,18 @@ jobs:
         run: |
           if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
             echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
-          else
+          elif [ "${GITHUB_REF_TYPE}" = "tag" ]; then
             echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          else
+            TAG=$(sed -n 's/^version = "\(.*\)"/v\1/p' Cargo.toml | head -n 1)
+            if [ -z "$TAG" ]; then
+              echo "Failed to resolve version from Cargo.toml" >&2
+              exit 1
+            fi
+            echo "tag=$TAG" >> $GITHUB_OUTPUT
           fi
 
-      - name: Create and push tag (workflow_dispatch only)
-        if: github.event_name == 'workflow_dispatch'
+      - name: Create and push tag if missing
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
@@ -44,7 +53,26 @@ jobs:
           if ! git ls-remote --tags origin "$TAG" | grep -q "$TAG"; then
             git tag "$TAG"
             git push origin "$TAG"
+            echo "Created and pushed $TAG"
+          else
+            echo "Tag $TAG already exists; nothing to do on this run."
           fi
+
+  build:
+    name: Build Linux x86_64
+    if: github.ref_type == 'tag'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        run: echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -82,5 +110,6 @@ jobs:
           tag_name: ${{ steps.version.outputs.tag }}
           files: ${{ env.ARCHIVE }}
           generate_release_notes: true
+          overwrite_files: true
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

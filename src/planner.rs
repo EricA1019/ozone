@@ -120,30 +120,31 @@ pub fn plan_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
         }
     }
 
-    if is_heuristic && hw.gpu.is_some() {
-        let gpu = hw.gpu.as_ref().unwrap();
-        let gpu_budget = (gpu.free_mb as f64 * VRAM_HEADROOM_RATIO) as u32;
-        let preferred = if gpu_layers < 0 { total_layers as i32 } else { gpu_layers };
-        let preferred_vram = estimate_vram_mb(context_size, preferred, size_gb, quant_kv, total_layers);
+    if is_heuristic {
+        if let Some(gpu) = hw.gpu.as_ref() {
+            let gpu_budget = (gpu.free_mb as f64 * VRAM_HEADROOM_RATIO) as u32;
+            let preferred = if gpu_layers < 0 { total_layers as i32 } else { gpu_layers };
+            let preferred_vram = estimate_vram_mb(context_size, preferred, size_gb, quant_kv, total_layers);
 
-        if preferred_vram > gpu_budget {
-            let mut selected_layers = 0i32;
-            for l in (1..preferred).rev() {
-                let v = estimate_vram_mb(context_size, l, size_gb, quant_kv, total_layers);
-                if v <= gpu_budget {
-                    selected_layers = l;
-                    break;
+            if preferred_vram > gpu_budget {
+                let mut selected_layers = 0i32;
+                for l in (1..preferred).rev() {
+                    let v = estimate_vram_mb(context_size, l, size_gb, quant_kv, total_layers);
+                    if v <= gpu_budget {
+                        selected_layers = l;
+                        break;
+                    }
                 }
-            }
-            gpu_layers = selected_layers;
-            rationale = if selected_layers > 0 {
-                format!("Full-GPU VRAM ({preferred_vram} MiB) exceeds budget ({gpu_budget} MiB); mixed-memory ({selected_layers}/{total_layers} layers).")
+                gpu_layers = selected_layers;
+                rationale = if selected_layers > 0 {
+                    format!("Full-GPU VRAM ({preferred_vram} MiB) exceeds budget ({gpu_budget} MiB); mixed-memory ({selected_layers}/{total_layers} layers).")
+                } else {
+                    format!("Full-GPU VRAM ({preferred_vram} MiB) exceeds budget ({gpu_budget} MiB); CPU-only mode.")
+                };
+                estimated = true;
             } else {
-                format!("Full-GPU VRAM ({preferred_vram} MiB) exceeds budget ({gpu_budget} MiB); CPU-only mode.")
-            };
-            estimated = true;
-        } else {
-            rationale = format!("Estimated VRAM ({preferred_vram} MiB) fits within GPU budget ({gpu_budget} MiB).");
+                rationale = format!("Estimated VRAM ({preferred_vram} MiB) fits within GPU budget ({gpu_budget} MiB).");
+            }
         }
     }
 
