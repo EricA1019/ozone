@@ -31,12 +31,14 @@ Then read this file fully before doing anything else in this session.
 - New TUI profiling flow works: advisory -> confirm -> running -> success/failure report
 - Profiling now gives actionable warnings for risky plans and issue reports for invalid model paths / launcher failures
 - Success reports keep the UX review-first: generate/export/launch are explicit follow-up actions, not automatic side effects
+- Product-family docs now include a top-level family guide plus dedicated `ozonelite`, `ozone`, `ozone+`, and shared compatibility documents under `ozone+/`
 
 **Not yet built:**
 - TUI cancellation for in-flight profiling runs
 - A dedicated in-TUI browser for existing benchmark history and Pareto data
 - Rich per-substep sweep visualizations beyond streamed text progress
 - Better startup/launcher flow for "Start SillyTavern only" (still status-only)
+- Dedicated ozone+ workflow / PRD docs and phase-to-implementation breakdowns beyond the current baseline design
 
 **Known issues:**
 - Broken `.gguf` symlinks can still appear in the catalog/list and are only surfaced as issues when selected
