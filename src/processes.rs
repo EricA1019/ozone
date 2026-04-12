@@ -66,23 +66,27 @@ pub async fn clear_gpu_backends() -> Result<Vec<String>> {
         .output()?;
     let text = String::from_utf8_lossy(&output.stdout);
     let mut killed = Vec::new();
-    for line in text.lines() {
+    for raw_line in text.lines() {
+        let line = raw_line.trim(); // ps pads PIDs with leading spaces
         let parts: Vec<&str> = line.splitn(2, ' ').collect();
         if parts.len() < 2 { continue; }
         let pid: u32 = match parts[0].trim().parse() { Ok(p) => p, Err(_) => continue };
         let args = parts[1];
-        if args.contains("koboldcpp") || (args.contains("ollama") && (args.contains("runner") || args.contains("serve"))) {
-            nix_kill(pid);
-            killed.push(args.split('/').last().unwrap_or(args).to_string());
+        if args.contains("koboldcpp") || (args.contains("ollama") && args.contains("runner")) {
+            if nix_kill(pid) {
+                killed.push(args.split('/').last().unwrap_or(args).to_string());
+            }
         }
     }
     Ok(killed)
 }
 
-fn nix_kill(pid: u32) {
-    let _ = std::process::Command::new("kill")
+fn nix_kill(pid: u32) -> bool {
+    std::process::Command::new("kill")
         .args(["-TERM", &pid.to_string()])
-        .status();
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
 }
 
 pub async fn start_kobold(launcher_path: &Path, model_name: &str, args: &[String]) -> Result<()> {
