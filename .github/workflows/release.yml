@@ -4,6 +4,12 @@ on:
   push:
     tags:
       - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag (e.g. v0.1.0)'
+        required: true
+        default: 'v0.1.0'
 
 env:
   CARGO_TERM_COLOR: always
@@ -12,9 +18,33 @@ jobs:
   build:
     name: Build Linux x86_64
     runs-on: ubuntu-latest
+    permissions:
+      contents: write
 
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve version
+        id: version
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            echo "tag=${{ github.event.inputs.tag }}" >> $GITHUB_OUTPUT
+          else
+            echo "tag=${GITHUB_REF_NAME}" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create and push tag (workflow_dispatch only)
+        if: github.event_name == 'workflow_dispatch'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          TAG=${{ steps.version.outputs.tag }}
+          if ! git ls-remote --tags origin "$TAG" | grep -q "$TAG"; then
+            git tag "$TAG"
+            git push origin "$TAG"
+          fi
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -40,7 +70,7 @@ jobs:
 
       - name: Package
         run: |
-          VERSION=${GITHUB_REF_NAME}
+          VERSION=${{ steps.version.outputs.tag }}
           ARCHIVE="ozone-${VERSION}-linux-x86_64.tar.gz"
           cp target/release/ozone ozone
           tar -czf "$ARCHIVE" ozone contrib/launch-koboldcpp.sh README.md LICENSE
@@ -49,6 +79,7 @@ jobs:
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
+          tag_name: ${{ steps.version.outputs.tag }}
           files: ${{ env.ARCHIVE }}
           generate_release_notes: true
         env:
