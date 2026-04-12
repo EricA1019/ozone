@@ -233,8 +233,7 @@ fn assign_profile_labels(frontier: &[ParetoPoint]) -> Vec<String> {
     labels
 }
 
-/// Auto-generate profiles for a model from benchmark data.
-pub fn generate_profiles(model_name: &str) -> Result<()> {
+fn generate_profiles_impl(model_name: &str, noisy: bool) -> Result<usize> {
     let conn = db::open()?;
     let rows = db::get_benchmarks(&conn, model_name)?;
     let ok_count = rows.iter().filter(|r| r.status == "ok").count();
@@ -277,11 +276,22 @@ pub fn generate_profiles(model_name: &str) -> Result<()> {
         generated += 1;
     }
 
-    println!();
-    println!("  ⬡ Generated {generated} profile(s) for {model_name}");
-    println!();
+    if noisy {
+        println!();
+        println!("  ⬡ Generated {generated} profile(s) for {model_name}");
+        println!();
+    }
 
-    Ok(())
+    Ok(generated)
+}
+
+/// Auto-generate profiles for a model from benchmark data.
+pub fn generate_profiles(model_name: &str) -> Result<()> {
+    generate_profiles_impl(model_name, true).map(|_| ())
+}
+
+pub fn generate_profiles_quiet(model_name: &str) -> Result<usize> {
+    generate_profiles_impl(model_name, false)
 }
 
 /// Show stored profiles.
@@ -361,7 +371,7 @@ const AUTO_END: &str = "# <<< ozone auto-generated presets";
 /// Preserves any manually-written presets outside the auto-generated markers.
 /// The chosen profile per model is the one labelled "speed" (highest tok/s on the
 /// Pareto frontier), falling back to the first profile alphabetically.
-pub fn export_presets_conf(conf_path: &Path, model: Option<&str>) -> Result<()> {
+fn export_presets_conf_impl(conf_path: &Path, model: Option<&str>, noisy: bool) -> Result<usize> {
     let conn = db::open()?;
 
     // Gather profiles to export
@@ -456,15 +466,27 @@ pub fn export_presets_conf(conf_path: &Path, model: Option<&str>) -> Result<()> 
     }
     std::fs::rename(&tmp, conf_path)?;
 
-    println!();
-    println!("  ⬡ Exported {} model profile(s) → {}", best_per_model.len(), conf_path.display());
-    for (name, p) in &best_per_model {
-        println!("    {name}: {} profile (layers={}, ctx={}, qkv={})",
-            p.profile_name, p.gpu_layers, p.context_size, p.quant_kv);
+    if noisy {
+        println!();
+        println!("  ⬡ Exported {} model profile(s) → {}", best_per_model.len(), conf_path.display());
+        for (name, p) in &best_per_model {
+            println!(
+                "    {name}: {} profile (layers={}, ctx={}, qkv={})",
+                p.profile_name, p.gpu_layers, p.context_size, p.quant_kv,
+            );
+        }
+        println!();
     }
-    println!();
 
-    Ok(())
+    Ok(best_per_model.len())
+}
+
+pub fn export_presets_conf(conf_path: &Path, model: Option<&str>) -> Result<()> {
+    export_presets_conf_impl(conf_path, model, true).map(|_| ())
+}
+
+pub fn export_presets_conf_quiet(conf_path: &Path, model: Option<&str>) -> Result<usize> {
+    export_presets_conf_impl(conf_path, model, false)
 }
 
 /// Split file content around the auto-generated markers.

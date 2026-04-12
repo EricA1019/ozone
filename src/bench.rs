@@ -22,6 +22,12 @@ effects, and concurrent workloads.";
 const BENCH_MAX_TOKENS: u32 = 100;
 const API_TIMEOUT_SECS: u64 = 180;
 
+#[derive(Debug, Clone)]
+pub struct BenchProgress {
+    pub stage: &'static str,
+    pub message: String,
+}
+
 /// Result of a single benchmark run.
 #[derive(Debug, Clone)]
 pub struct BenchResult {
@@ -44,13 +50,46 @@ pub async fn run_benchmark(
     quant_kv: u8,
     threads: Option<u32>,
 ) -> Result<BenchResult> {
+    run_benchmark_with_progress(
+        model_name,
+        _model_path,
+        launcher_path,
+        gpu_layers,
+        context_size,
+        quant_kv,
+        threads,
+        |progress| eprintln!("  ⬡ {}", progress.message),
+    )
+    .await
+}
+
+#[allow(clippy::too_many_arguments)]
+pub async fn run_benchmark_with_progress<F>(
+    model_name: &str,
+    _model_path: &std::path::Path,
+    launcher_path: &std::path::Path,
+    gpu_layers: i32,
+    context_size: u32,
+    quant_kv: u8,
+    threads: Option<u32>,
+    mut on_progress: F,
+) -> Result<BenchResult>
+where
+    F: FnMut(BenchProgress),
+{
     // Step 1: Clear existing backends
-    eprintln!("  ⬡ Clearing GPU backends…");
+    on_progress(BenchProgress {
+        stage: "clear",
+        message: "Clearing GPU backends…".into(),
+    });
     processes::clear_gpu_backends().await?;
     tokio::time::sleep(Duration::from_secs(2)).await;
 
     // Step 2: Build launch args and start KoboldCpp
-    eprintln!("  ⬡ Launching KoboldCpp…");
+    on_progress(BenchProgress {
+        stage: "launch",
+        message: "Launching KoboldCpp…".into(),
+    });
     let mut args: Vec<String> = vec![
         format!("--gpulayers={gpu_layers}"),
         format!("--contextsize={context_size}"),
@@ -66,14 +105,20 @@ pub async fn run_benchmark(
     // Step 3: Confirm model is loaded
     let loaded_model = processes::get_kobold_model().await
         .ok_or_else(|| anyhow!("KoboldCpp launched but model not available via API"))?;
-    eprintln!("  ⬡ Model loaded: {loaded_model}");
+    on_progress(BenchProgress {
+        stage: "ready",
+        message: format!("Model loaded: {loaded_model}"),
+    });
 
     // Step 4: Snapshot VRAM after model load (peak during inference will be higher,
     // but this gives a good baseline)
     let vram_pre = hardware::query_gpu_memory();
 
     // Step 5: Run generation benchmark
-    eprintln!("  ⬡ Running generation benchmark ({BENCH_MAX_TOKENS} tokens)…");
+    on_progress(BenchProgress {
+        stage: "generate",
+        message: format!("Running generation benchmark ({BENCH_MAX_TOKENS} tokens)…"),
+    });
     let gen_result = run_generation().await;
 
     // Step 6: Snapshot VRAM during/after generation
@@ -88,7 +133,10 @@ pub async fn run_benchmark(
     let ram_peak_mb = hw.ram_used_mb as u32;
 
     // Step 8: Kill KoboldCpp
-    eprintln!("  ⬡ Stopping KoboldCpp…");
+    on_progress(BenchProgress {
+        stage: "stop",
+        message: "Stopping KoboldCpp…".into(),
+    });
     processes::clear_gpu_backends().await?;
 
     match gen_result {

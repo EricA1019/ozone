@@ -14,7 +14,7 @@ edges:
     condition: when setting up the dev environment or running the project for the first time
   - target: patterns/INDEX.md
     condition: when starting a task — check the pattern index for a matching pattern file
-last_updated: [YYYY-MM-DD]
+last_updated: 2026-04-12
 ---
 
 # Session Bootstrap
@@ -24,21 +24,24 @@ If you haven't already read `AGENTS.md`, read it now — it contains the project
 Then read this file fully before doing anything else in this session.
 
 ## Current Project State
-<!-- What is working. What is not yet built. Known issues.
-     Update this section whenever significant work is completed.
-     This is the primary drift prevention mechanism — it re-grounds the agent every session.
-     Length: 3 sections (Working / Not Built / Known Issues), 3-7 items each.
-     Example:
-     **Working:**
-     - User authentication and session management
-     - Core CRUD operations for all main entities
 
-     **Not yet built:**
-     - Email notification system
-     - Admin dashboard
+**Working:**
+- Launcher dashboard, model picker, launch confirm flow, and live monitor all work in the ratatui TUI
+- CLI profiling commands work: `bench`, `sweep`, `analyze`, profile generation, and preset export
+- New TUI profiling flow works: advisory -> confirm -> running -> success/failure report
+- Profiling now gives actionable warnings for risky plans and issue reports for invalid model paths / launcher failures
+- Success reports keep the UX review-first: generate/export/launch are explicit follow-up actions, not automatic side effects
 
-     **Known issues:**
-     - Pagination breaks on filtered queries with more than 1000 results -->
+**Not yet built:**
+- TUI cancellation for in-flight profiling runs
+- A dedicated in-TUI browser for existing benchmark history and Pareto data
+- Rich per-substep sweep visualizations beyond streamed text progress
+- Better startup/launcher flow for "Start SillyTavern only" (still status-only)
+
+**Known issues:**
+- Broken `.gguf` symlinks can still appear in the catalog/list and are only surfaced as issues when selected
+- Hardware guidance is still NVIDIA-centric because GPU memory detection depends on `nvidia-smi`
+- Test coverage is still intentionally light; only profiling-domain helpers have unit tests right now
 
 ## Routing Table
 

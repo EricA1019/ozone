@@ -27,5 +27,6 @@ serde_json = "1"
 sysinfo = "0.33"
 rusqlite = { version = "0.31", features = ["bundled"] }
 tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["rt"] }
 
 [dev-dependencies]

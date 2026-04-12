@@ -23,3 +23,4 @@ Lookup table for all pattern files in this directory. Check here before starting
 
 | Pattern | Use when |
 |---------|----------|
+| [tui-profiling-workflow.md](tui-profiling-workflow.md) | Adding, reviewing, or debugging the Ozone TUI profiling/advisory/report flow |

@@ -27,6 +27,13 @@ pub struct SweepResult {
 }
 
 #[derive(Debug, Clone)]
+pub struct SweepProgress {
+    pub current: u32,
+    pub total: u32,
+    pub message: String,
+}
+
+#[derive(Debug, Clone)]
 pub struct ParetoPoint {
     pub gpu_layers: i32,
     pub context_size: u32,
@@ -82,15 +89,32 @@ fn prune_dominated(frontier: &mut Vec<ParetoPoint>, candidate: &ParetoPoint) {
 }
 
 pub async fn run_sweep(config: SweepConfig) -> Result<SweepResult> {
+    run_sweep_with_progress(config, |progress| {
+        println!("  {}", progress.message);
+    })
+    .await
+}
+
+pub async fn run_sweep_with_progress<F>(config: SweepConfig, mut on_progress: F) -> Result<SweepResult>
+where
+    F: FnMut(SweepProgress),
+{
     let total_layers = planner::estimate_total_layers(config.model_size_gb);
     let total_combos = config.context_sizes.len() * config.quant_kv_levels.len();
 
-    println!();
-    println!("  ⬡ Ozone Sweep — {}", config.model_name);
-    println!("  ─────────────────────────────────────────────────");
-    println!("  VRAM budget: {} MB | Model: {:.1} GB | Layers: {}",
-        config.gpu_vram_budget_mb, config.model_size_gb, total_layers);
-    println!();
+    on_progress(SweepProgress {
+        current: 0,
+        total: total_combos as u32,
+        message: format!("⬡ Ozone Sweep — {}", config.model_name),
+    });
+    on_progress(SweepProgress {
+        current: 0,
+        total: total_combos as u32,
+        message: format!(
+            "VRAM budget: {} MB | Model: {:.1} GB | Layers: {}",
+            config.gpu_vram_budget_mb, config.model_size_gb, total_layers,
+        ),
+    });
 
     let mut result = SweepResult {
         configs_tested: 0,
@@ -123,10 +147,14 @@ pub async fn run_sweep(config: SweepConfig) -> Result<SweepResult> {
                 Some(l) => l,
                 None => {
                     // Even 0 layers exceeds budget — skip
-                    println!(
-                        "  [{}/{}] ctx={} qkv={} ... skipped (exceeds VRAM budget)",
-                        step, total_combos, ctx, qkv,
-                    );
+                    on_progress(SweepProgress {
+                        current: step,
+                        total: total_combos as u32,
+                        message: format!(
+                            "[{}/{}] ctx={} qkv={} ... skipped (exceeds VRAM budget)",
+                            step, total_combos, ctx, qkv,
+                        ),
+                    });
                     result.configs_skipped += 1;
                     continue;
                 }
@@ -141,21 +169,28 @@ pub async fn run_sweep(config: SweepConfig) -> Result<SweepResult> {
                 p.context_size >= ctx && p.gpu_layers >= layers && p.context_size > ctx
             });
             if dominated_hint {
-                println!(
-                    "  [{}/{}] ctx={} qkv={} layers={} ... skipped (dominated)",
-                    step, total_combos, ctx, qkv, layers,
-                );
+                on_progress(SweepProgress {
+                    current: step,
+                    total: total_combos as u32,
+                    message: format!(
+                        "[{}/{}] ctx={} qkv={} layers={} ... skipped (dominated)",
+                        step, total_combos, ctx, qkv, layers,
+                    ),
+                });
                 result.configs_skipped += 1;
                 continue;
             }
 
-            // Run the actual benchmark
-            print!(
-                "  [{}/{}] ctx={} qkv={} layers={} ... ",
-                step, total_combos, ctx, qkv, layers,
-            );
+            on_progress(SweepProgress {
+                current: step,
+                total: total_combos as u32,
+                message: format!(
+                    "[{}/{}] ctx={} qkv={} layers={} ... running",
+                    step, total_combos, ctx, qkv, layers,
+                ),
+            });
 
-            let bench_result = bench::run_benchmark(
+            let bench_result = bench::run_benchmark_with_progress(
                 &config.model_name,
                 &config.model_path,
                 &config.launcher_path,
@@ -163,6 +198,7 @@ pub async fn run_sweep(config: SweepConfig) -> Result<SweepResult> {
                 ctx,
                 qkv,
                 None,
+                |_| {},
             )
             .await?;
 
@@ -170,9 +206,16 @@ pub async fn run_sweep(config: SweepConfig) -> Result<SweepResult> {
                 // Retry with fewer layers on OOM/timeout
                 if (bench_result.status == "oom" || bench_result.status == "timeout") && layers > 0 {
                     let retry_layers = (layers - 1).max(0);
-                    print!("{} — retrying with {} layers ... ", bench_result.status, retry_layers);
+                    on_progress(SweepProgress {
+                        current: step,
+                        total: total_combos as u32,
+                        message: format!(
+                            "[{}/{}] ctx={} qkv={} layers={} ... {} — retrying with {} layers",
+                            step, total_combos, ctx, qkv, layers, bench_result.status, retry_layers,
+                        ),
+                    });
 
-                    let retry = bench::run_benchmark(
+                    let retry = bench::run_benchmark_with_progress(
                         &config.model_name,
                         &config.model_path,
                         &config.launcher_path,
@@ -180,11 +223,19 @@ pub async fn run_sweep(config: SweepConfig) -> Result<SweepResult> {
                         ctx,
                         qkv,
                         None,
+                        |_| {},
                     )
                     .await?;
 
                     if retry.status == "ok" {
-                        println!("{:.1} t/s ✓", retry.tokens_per_sec);
+                        on_progress(SweepProgress {
+                            current: step,
+                            total: total_combos as u32,
+                            message: format!(
+                                "[{}/{}] ctx={} qkv={} layers={} ... {:.1} t/s ✓",
+                                step, total_combos, ctx, qkv, retry_layers, retry.tokens_per_sec,
+                            ),
+                        });
                         result.configs_tested += 1;
                         update_bests(&mut result, &retry, ctx);
                         maybe_add_pareto(&mut result.pareto_frontier, retry_layers, ctx, qkv, &retry);
@@ -192,12 +243,26 @@ pub async fn run_sweep(config: SweepConfig) -> Result<SweepResult> {
                         continue;
                     }
                 }
-                println!("{} ✗", bench_result.status);
+                on_progress(SweepProgress {
+                    current: step,
+                    total: total_combos as u32,
+                    message: format!(
+                        "[{}/{}] ctx={} qkv={} layers={} ... {} ✗",
+                        step, total_combos, ctx, qkv, layers, bench_result.status,
+                    ),
+                });
                 result.configs_failed += 1;
                 continue;
             }
 
-            println!("{:.1} t/s ✓", bench_result.tokens_per_sec);
+            on_progress(SweepProgress {
+                current: step,
+                total: total_combos as u32,
+                message: format!(
+                    "[{}/{}] ctx={} qkv={} layers={} ... {:.1} t/s ✓",
+                    step, total_combos, ctx, qkv, layers, bench_result.tokens_per_sec,
+                ),
+            });
             result.configs_tested += 1;
             update_bests(&mut result, &bench_result, ctx);
             maybe_add_pareto(&mut result.pareto_frontier, layers, ctx, qkv, &bench_result);
@@ -209,10 +274,14 @@ pub async fn run_sweep(config: SweepConfig) -> Result<SweepResult> {
             let remaining = config.context_sizes.iter().filter(|&&c| c > ctx).count();
             if remaining > 0 {
                 let skip_count = remaining * config.quant_kv_levels.len();
-                println!(
-                    "  → ctx={} exhausted VRAM budget — skipping {} larger configs",
-                    ctx, skip_count,
-                );
+                on_progress(SweepProgress {
+                    current: step,
+                    total: total_combos as u32,
+                    message: format!(
+                        "→ ctx={} exhausted VRAM budget — skipping {} larger configs",
+                        ctx, skip_count,
+                    ),
+                });
                 result.configs_skipped += skip_count as u32;
             }
             break;
@@ -222,29 +291,32 @@ pub async fn run_sweep(config: SweepConfig) -> Result<SweepResult> {
     // Sort Pareto frontier by context size ascending
     result.pareto_frontier.sort_by_key(|p| p.context_size);
 
-    // Print summary
-    println!();
-    println!(
-        "  ⬡ Sweep Complete — {} tested, {} skipped, {} failed",
-        result.configs_tested, result.configs_skipped, result.configs_failed,
-    );
+    on_progress(SweepProgress {
+        current: total_combos as u32,
+        total: total_combos as u32,
+        message: format!(
+            "⬡ Sweep Complete — {} tested, {} skipped, {} failed",
+            result.configs_tested, result.configs_skipped, result.configs_failed,
+        ),
+    });
 
     if !result.pareto_frontier.is_empty() {
-        println!();
-        println!("  Pareto Frontier (speed vs context):");
-        println!("  ┌──────────┬────────┬─────┬──────────┬──────────┐");
-        println!("  │ Context  │ Layers │ QKV │ Tokens/s │ VRAM MB  │");
-        println!("  ├──────────┼────────┼─────┼──────────┼──────────┤");
+        on_progress(SweepProgress {
+            current: total_combos as u32,
+            total: total_combos as u32,
+            message: "Pareto Frontier (speed vs context):".into(),
+        });
         for p in &result.pareto_frontier {
-            println!(
-                "  │ {:<8} │ {:<6} │ {:<3} │ {:<8.1} │ {:<8} │",
-                p.context_size, p.gpu_layers, p.quant_kv, p.tokens_per_sec, p.vram_peak_mb,
-            );
+            on_progress(SweepProgress {
+                current: total_combos as u32,
+                total: total_combos as u32,
+                message: format!(
+                    "ctx={} layers={} qkv={} {:.1} t/s {} MB",
+                    p.context_size, p.gpu_layers, p.quant_kv, p.tokens_per_sec, p.vram_peak_mb,
+                ),
+            });
         }
-        println!("  └──────────┴────────┴─────┴──────────┴──────────┘");
     }
-
-    println!();
     Ok(result)
 }
 
@@ -253,16 +325,16 @@ fn update_bests(result: &mut SweepResult, bench: &bench::BenchResult, context_si
     if result
         .best_speed
         .as_ref()
-        .map_or(true, |b| bench.tokens_per_sec > b.tokens_per_sec)
+        .is_none_or(|b| bench.tokens_per_sec > b.tokens_per_sec)
     {
         result.best_speed = Some(bench.clone());
     }
     // Best context — largest context with ok status
-    if result.best_context.as_ref().map_or(true, |_| {
+    if result.best_context.as_ref().is_none_or(|_| {
         result
             .best_context
             .as_ref()
-            .map_or(true, |_b| context_size > 0)
+            .is_none_or(|_b| context_size > 0)
     }) {
         // We track best_context simply as the result at the largest working context
         let dominated = result.best_context.as_ref().is_some_and(|b| {

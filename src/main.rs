@@ -5,6 +5,7 @@ mod db;
 mod hardware;
 mod planner;
 mod prefs;
+mod profiling;
 mod processes;
 mod sweep;
 mod theme;

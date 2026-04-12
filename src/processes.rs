@@ -72,10 +72,10 @@ pub async fn clear_gpu_backends() -> Result<Vec<String>> {
         if parts.len() < 2 { continue; }
         let pid: u32 = match parts[0].trim().parse() { Ok(p) => p, Err(_) => continue };
         let args = parts[1];
-        if args.contains("koboldcpp") || (args.contains("ollama") && args.contains("runner")) {
-            if nix_kill(pid) {
-                killed.push(args.split('/').last().unwrap_or(args).to_string());
-            }
+        if (args.contains("koboldcpp") || (args.contains("ollama") && args.contains("runner")))
+            && nix_kill(pid)
+        {
+            killed.push(args.split('/').next_back().unwrap_or(args).to_string());
         }
     }
     Ok(killed)
