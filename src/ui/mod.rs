@@ -200,6 +200,11 @@ pub async fn run_launcher(no_browser: bool) -> Result<()> {
                                     }
                                     2 => {
                                         let _ = crate::processes::clear_gpu_backends().await;
+                                        // Immediately reflect cleared state — don't wait for 2s refresh timer
+                                        app.services.kobold_running = false;
+                                        app.services.kobold_model = None;
+                                        app.services.st_running = false;
+                                        last_refresh = Instant::now();
                                         app.status_msg = Some("GPU backends cleared.".into());
                                     }
                                     3 => {
@@ -292,7 +297,12 @@ pub async fn run_launcher(no_browser: bool) -> Result<()> {
                             KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
                             KeyCode::Char('s') => {
                                 let _ = crate::processes::clear_gpu_backends().await;
-                                break Ok(());
+                                // Return to launcher with updated status rather than quitting
+                                app.services.kobold_running = false;
+                                app.services.kobold_model = None;
+                                app.services.st_running = false;
+                                app.status_msg = Some("GPU backends cleared.".into());
+                                app.screen = Screen::Launcher;
                             }
                             KeyCode::Char('r') => {
                                 app.screen = Screen::Launcher;
@@ -364,6 +374,11 @@ pub async fn run_monitor() -> Result<()> {
                     KeyCode::Char('q') | KeyCode::Esc => break,
                     KeyCode::Char('s') => {
                         let _ = crate::processes::clear_gpu_backends().await;
+                        // Draw one final frame showing cleared state before exit
+                        app.services.kobold_running = false;
+                        app.services.kobold_model = None;
+                        app.services.st_running = false;
+                        terminal.draw(|f| monitor::render(f, &app))?;
                         break;
                     }
                     _ => {}
