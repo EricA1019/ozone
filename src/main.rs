@@ -1,3 +1,4 @@
+mod analyze;
 mod bench;
 mod catalog;
 mod db;
@@ -5,6 +6,7 @@ mod hardware;
 mod planner;
 mod prefs;
 mod processes;
+mod sweep;
 mod theme;
 mod ui;
 
@@ -44,6 +46,26 @@ enum Commands {
         quant_kv: u8,
         #[arg(long, help = "CPU threads (auto if omitted)")]
         threads: Option<u32>,
+    },
+    /// Analyze benchmark results and generate profiles
+    Analyze {
+        /// Model name (omit for summary of all models)
+        model: Option<String>,
+        #[arg(long, help = "Show all models")]
+        all: bool,
+        #[arg(long, help = "Generate/update profiles from benchmarks")]
+        generate: bool,
+        #[arg(long, help = "Show stored profiles")]
+        profiles: bool,
+    },
+    /// Smart parameter sweep to find optimal settings
+    Sweep {
+        /// Model filename
+        model: String,
+        #[arg(long, help = "Max context size to test")]
+        max_context: Option<u32>,
+        #[arg(long, help = "Quick sweep (fewer configs)")]
+        quick: bool,
     },
 }
 
@@ -123,6 +145,75 @@ async fn main() -> Result<()> {
             match bench::store_result(&model, model_size_gb, gpu_layers, context, quant_kv as u32, thread_count, &result) {
                 Ok(id) => eprintln!("  Stored as benchmark #{id}"),
                 Err(e) => eprintln!("  Warning: failed to store result: {e}"),
+            }
+            Ok(())
+        }
+        Some(Commands::Sweep { model, max_context, quick }) => {
+            let home = std::env::var("HOME").unwrap_or_default();
+            let model_dir = std::path::PathBuf::from(&home).join("models");
+            let model_path = model_dir.join(&model);
+            let launcher_path = model_dir.join("launch-koboldcpp.sh");
+
+            if !model_path.exists() {
+                eprintln!("Model not found: {}", model_path.display());
+                std::process::exit(1);
+            }
+
+            let model_size_gb = std::fs::metadata(&model_path)
+                .map(|m| m.len() as f64 / 1_073_741_824.0)
+                .unwrap_or(0.0);
+
+            let hw = hardware::load_hardware();
+            let gpu_vram_budget_mb = hw.gpu.as_ref()
+                .map(|g| (g.total_mb as f64 * 0.9) as u32)
+                .unwrap_or(0);
+            let ram_total_mb = hw.ram_total_mb as u32;
+
+            let (context_sizes, quant_kv_levels) = if quick {
+                (vec![4096, 8192], vec![1u8])
+            } else {
+                let mut ctxs = vec![2048, 4096, 8192, 16384];
+                if let Some(max) = max_context {
+                    ctxs.retain(|&c| c <= max);
+                }
+                (ctxs, vec![1u8, 2])
+            };
+
+            let sweep_config = sweep::SweepConfig {
+                model_name: model,
+                model_path,
+                launcher_path,
+                model_size_gb,
+                context_sizes,
+                quant_kv_levels,
+                gpu_vram_budget_mb,
+                ram_total_mb,
+            };
+
+            sweep::run_sweep(sweep_config).await?;
+            Ok(())
+        }
+        Some(Commands::Analyze { model, all, generate, profiles }) => {
+            if profiles {
+                analyze::show_profiles(model.as_deref())?;
+            } else if generate {
+                match &model {
+                    Some(m) => {
+                        analyze::generate_profiles(m)?;
+                        analyze::show_profiles(Some(m))?;
+                    }
+                    None => {
+                        eprintln!("  --generate requires a model name.");
+                        std::process::exit(1);
+                    }
+                }
+            } else if let Some(ref m) = model {
+                analyze::show_benchmarks(Some(m))?;
+                analyze::show_pareto(m)?;
+            } else {
+                // --all or no model
+                let _ = all; // acknowledged
+                analyze::show_benchmarks(None)?;
             }
             Ok(())
         }
