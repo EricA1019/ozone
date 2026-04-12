@@ -5,6 +5,7 @@ use std::path::PathBuf;
 /// Benchmark result row — one run of a specific configuration.
 #[derive(Debug, Clone)]
 pub struct BenchmarkRow {
+    #[allow(dead_code)]
     pub id: Option<i64>,
     pub model_name: String,
     pub model_size_gb: f64,
@@ -29,6 +30,7 @@ pub struct BenchmarkRow {
 /// Auto-generated preset from benchmark data.
 #[derive(Debug, Clone)]
 pub struct ProfileRow {
+    #[allow(dead_code)]
     pub id: Option<i64>,
     pub model_name: String,
     pub profile_name: String,
@@ -224,16 +226,6 @@ pub fn get_profiles(conn: &Connection, model_name: &str) -> Result<Vec<ProfileRo
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
-}
-
-/// Count benchmarks for a given model.
-pub fn benchmark_count(conn: &Connection, model_name: &str) -> Result<u32> {
-    let count: u32 = conn.query_row(
-        "SELECT COUNT(*) FROM benchmarks WHERE model_name = ?1",
-        [model_name],
-        |r| r.get(0),
-    )?;
-    Ok(count)
 }
 
 /// Delete all profiles for a model (before regenerating).

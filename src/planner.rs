@@ -27,8 +27,11 @@ pub struct LaunchPlan {
     pub blas_threads: Option<u32>,
     pub mode: RecommendationMode,
     pub rationale: String,
+    #[allow(dead_code)]
     pub estimated: bool,
+    #[allow(dead_code)]
     pub estimated_vram_mb: u32,
+    #[allow(dead_code)]
     pub source: String,
 }
 

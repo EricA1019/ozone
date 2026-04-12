@@ -57,6 +57,8 @@ enum Commands {
         generate: bool,
         #[arg(long, help = "Show stored profiles")]
         profiles: bool,
+        #[arg(long, help = "Export profiles to koboldcpp-presets.conf")]
+        export: bool,
     },
     /// Smart parameter sweep to find optimal settings
     Sweep {
@@ -193,8 +195,12 @@ async fn main() -> Result<()> {
             sweep::run_sweep(sweep_config).await?;
             Ok(())
         }
-        Some(Commands::Analyze { model, all, generate, profiles }) => {
-            if profiles {
+        Some(Commands::Analyze { model, all, generate, profiles, export }) => {
+            if export {
+                let home = std::env::var("HOME").unwrap_or_default();
+                let conf_path = std::path::PathBuf::from(&home).join("models/koboldcpp-presets.conf");
+                analyze::export_presets_conf(&conf_path, model.as_deref())?;
+            } else if profiles {
                 analyze::show_profiles(model.as_deref())?;
             } else if generate {
                 match &model {
@@ -211,8 +217,7 @@ async fn main() -> Result<()> {
                 analyze::show_benchmarks(Some(m))?;
                 analyze::show_pareto(m)?;
             } else {
-                // --all or no model
-                let _ = all; // acknowledged
+                let _ = all;
                 analyze::show_benchmarks(None)?;
             }
             Ok(())

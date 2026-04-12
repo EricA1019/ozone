@@ -21,7 +21,6 @@ effects, and concurrent workloads.";
 
 const BENCH_MAX_TOKENS: u32 = 100;
 const API_TIMEOUT_SECS: u64 = 180;
-const LAUNCH_TIMEOUT_SECS: u64 = 120;
 
 /// Result of a single benchmark run.
 #[derive(Debug, Clone)]
@@ -38,7 +37,7 @@ pub struct BenchResult {
 /// Run a single benchmark: clear → launch → generate → measure → kill → store.
 pub async fn run_benchmark(
     model_name: &str,
-    model_path: &std::path::Path,
+    _model_path: &std::path::Path,
     launcher_path: &std::path::Path,
     gpu_layers: i32,
     context_size: u32,

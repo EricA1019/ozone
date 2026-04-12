@@ -32,7 +32,7 @@ pub fn render(f: &mut Frame, app: &App) {
     render_hints(f, chunks[6]);
 }
 
-fn render_header(f: &mut Frame, area: Rect, app: &App) {
+fn render_header(f: &mut Frame, area: Rect, _app: &App) {
     let now = Local::now().format("%H:%M:%S");
     let title = Line::from(vec![
         Span::styled(format!(" {} Ozone Monitor ", crate::theme::HEX_CURSOR), style_bold_violet()),

@@ -17,6 +17,7 @@ pub fn style_red() -> Style { Style::default().fg(RED) }
 pub fn style_gray() -> Style { Style::default().fg(GRAY) }
 pub fn style_bold_violet() -> Style { Style::default().fg(VIOLET).add_modifier(Modifier::BOLD) }
 pub fn style_bold_cyan() -> Style { Style::default().fg(CYAN).add_modifier(Modifier::BOLD) }
+#[allow(dead_code)]
 pub fn style_bold_green() -> Style { Style::default().fg(GREEN).add_modifier(Modifier::BOLD) }
 
 // ── OZONE ASCII wordmark (5 rows) ─────────────────────────────────────────

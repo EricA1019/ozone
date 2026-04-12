@@ -180,7 +180,7 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
         let selected = i == app.selected_model;
         let prefix = if selected { format!("{} ", HEX_CURSOR) } else { "  ".to_string() };
 
-        let plan_vram = hw.map(|h| crate::planner::estimate_vram_mb(
+        let plan_vram = hw.map(|_h| crate::planner::estimate_vram_mb(
             rec.recommendation.context_size,
             rec.recommendation.gpu_layers,
             rec.model_size_gb,

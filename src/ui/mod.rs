@@ -50,6 +50,7 @@ pub struct App {
     pub tokens_per_sec: Option<f64>,
     pub launch_start: Option<Instant>,
     // UI state
+    #[allow(dead_code)]
     pub last_refresh: Instant,
     pub ticker: u64,
     pub error_msg: Option<String>,
