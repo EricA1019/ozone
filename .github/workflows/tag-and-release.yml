@@ -1,0 +1,34 @@
+name: Tag and Release v0.1.0
+
+on:
+  push:
+    branches:
+      - copilot/release-01
+
+jobs:
+  tag:
+    name: Create v0.1.0 tag and release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Check if tag already exists
+        id: check_tag
+        run: |
+          if git ls-remote --tags origin v0.1.0 | grep -q v0.1.0; then
+            echo "exists=true" >> $GITHUB_OUTPUT
+          else
+            echo "exists=false" >> $GITHUB_OUTPUT
+          fi
+
+      - name: Create and push v0.1.0 tag
+        if: steps.check_tag.outputs.exists == 'false'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git tag v0.1.0
+          git push origin v0.1.0
