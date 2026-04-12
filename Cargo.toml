@@ -4,6 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "Local AI stack operator — KoboldCpp + SillyTavern TUI"
 license = "MIT"
+repository = "https://github.com/EricA1019/ozone"
+homepage = "https://github.com/EricA1019/ozone"
+keywords = ["tui", "llm", "koboldcpp", "sillytavern", "ai"]
+categories = ["command-line-utilities"]
 
 [[bin]]
 name = "ozone"
