@@ -30,5 +30,5 @@ pub use ozone_memory::{
 pub use repository::{
     BookmarkRecord, BranchRecord, CreateMessageRequest, EditMessageRequest, MessageEditRecord,
     MessageRecord, MessageSearchHit, PersistencePaths, SessionLock, SqliteRepository,
-    STALE_LOCK_TIMEOUT_MS,
+    SummaryArtifactRecord, STALE_LOCK_TIMEOUT_MS,
 };

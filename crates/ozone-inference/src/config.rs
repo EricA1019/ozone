@@ -297,6 +297,8 @@ pub struct MemoryConfig {
     pub archive_after_turns: usize,
     #[serde(default = "default_compaction_interval_hours")]
     pub compaction_interval_hours: u64,
+    #[serde(default)]
+    pub summary: SummaryConfig,
 }
 
 fn default_hybrid_alpha() -> f32 {
@@ -315,6 +317,50 @@ fn default_compaction_interval_hours() -> u64 {
     24
 }
 
+/// Configuration for deterministic summary generation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct SummaryConfig {
+    /// Maximum number of sentences to include in a chunk summary.
+    #[serde(default = "default_chunk_max_sentences")]
+    pub chunk_max_sentences: usize,
+
+    /// Minimum number of messages before auto-generating a session synopsis.
+    #[serde(default = "default_synopsis_min_messages")]
+    pub synopsis_min_messages: usize,
+
+    /// Maximum number of sentences in a session synopsis.
+    #[serde(default = "default_synopsis_max_sentences")]
+    pub synopsis_max_sentences: usize,
+
+    /// Whether to auto-generate a synopsis when a session is closed.
+    #[serde(default = "default_auto_synopsis_on_close")]
+    pub auto_synopsis_on_close: bool,
+}
+
+fn default_chunk_max_sentences() -> usize {
+    5
+}
+fn default_synopsis_min_messages() -> usize {
+    6
+}
+fn default_synopsis_max_sentences() -> usize {
+    3
+}
+fn default_auto_synopsis_on_close() -> bool {
+    true
+}
+
+impl Default for SummaryConfig {
+    fn default() -> Self {
+        Self {
+            chunk_max_sentences: default_chunk_max_sentences(),
+            synopsis_min_messages: default_synopsis_min_messages(),
+            synopsis_max_sentences: default_synopsis_max_sentences(),
+            auto_synopsis_on_close: default_auto_synopsis_on_close(),
+        }
+    }
+}
+
 impl Default for MemoryConfig {
     fn default() -> Self {
         Self {
@@ -325,6 +371,7 @@ impl Default for MemoryConfig {
             max_active_embeddings: default_max_active_embeddings(),
             archive_after_turns: default_archive_after_turns(),
             compaction_interval_hours: default_compaction_interval_hours(),
+            summary: SummaryConfig::default(),
         }
     }
 }

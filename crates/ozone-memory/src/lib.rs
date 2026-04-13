@@ -1,6 +1,7 @@
 mod index;
 mod provider;
 mod scoring;
+pub mod summary;
 
 use std::{error::Error, fmt, str::FromStr};
 
@@ -142,6 +143,24 @@ impl EmbeddingContent {
     }
 }
 
+/// Content for a chunk summary — deterministic extraction from a message range.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ChunkSummaryContent {
+    /// The summary text (first N sentences extracted from the chunk).
+    pub text: String,
+    /// Number of source messages that contributed to this summary.
+    pub source_count: usize,
+}
+
+/// Content for a session synopsis — a one-paragraph session overview.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct SessionSynopsisContent {
+    /// The synopsis text.
+    pub text: String,
+    /// Number of messages in the session when this synopsis was generated.
+    pub message_count: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum MemoryContent {
@@ -153,6 +172,14 @@ pub enum MemoryContent {
     Embedding {
         vector: Vec<f32>,
         source_text_hash: u64,
+    },
+    ChunkSummary {
+        text: String,
+        source_count: usize,
+    },
+    SessionSynopsis {
+        text: String,
+        message_count: usize,
     },
 }
 
@@ -176,6 +203,20 @@ impl MemoryContent {
         }
     }
 
+    pub fn chunk_summary(text: impl Into<String>, source_count: usize) -> Self {
+        Self::ChunkSummary {
+            text: text.into(),
+            source_count,
+        }
+    }
+
+    pub fn session_synopsis(text: impl Into<String>, message_count: usize) -> Self {
+        Self::SessionSynopsis {
+            text: text.into(),
+            message_count,
+        }
+    }
+
     pub fn into_pinned(self) -> Option<PinnedMemoryContent> {
         match self {
             Self::PinnedMemory {
@@ -187,13 +228,12 @@ impl MemoryContent {
                 pinned_by,
                 expires_after_turns,
             }),
-            Self::Embedding { .. } => None,
+            _ => None,
         }
     }
 
     pub fn into_embedding(self) -> Option<EmbeddingContent> {
         match self {
-            Self::PinnedMemory { .. } => None,
             Self::Embedding {
                 vector,
                 source_text_hash,
@@ -201,6 +241,33 @@ impl MemoryContent {
                 vector,
                 source_text_hash,
             }),
+            _ => None,
+        }
+    }
+
+    pub fn into_chunk_summary(self) -> Option<ChunkSummaryContent> {
+        match self {
+            Self::ChunkSummary {
+                text,
+                source_count,
+            } => Some(ChunkSummaryContent {
+                text,
+                source_count,
+            }),
+            _ => None,
+        }
+    }
+
+    pub fn into_session_synopsis(self) -> Option<SessionSynopsisContent> {
+        match self {
+            Self::SessionSynopsis {
+                text,
+                message_count,
+            } => Some(SessionSynopsisContent {
+                text,
+                message_count,
+            }),
+            _ => None,
         }
     }
 }
@@ -220,6 +287,24 @@ impl From<EmbeddingContent> for MemoryContent {
         Self::Embedding {
             vector: value.vector,
             source_text_hash: value.source_text_hash,
+        }
+    }
+}
+
+impl From<ChunkSummaryContent> for MemoryContent {
+    fn from(value: ChunkSummaryContent) -> Self {
+        Self::ChunkSummary {
+            text: value.text,
+            source_count: value.source_count,
+        }
+    }
+}
+
+impl From<SessionSynopsisContent> for MemoryContent {
+    fn from(value: SessionSynopsisContent) -> Self {
+        Self::SessionSynopsis {
+            text: value.text,
+            message_count: value.message_count,
         }
     }
 }
@@ -431,6 +516,24 @@ impl From<CrossSessionSearchHit> for RecallHit {
     }
 }
 
+/// Request to generate a chunk summary from a message range.
+#[derive(Debug, Clone)]
+pub struct ChunkSummaryRequest {
+    pub session_id: String,
+    pub start_message_id: String,
+    pub end_message_id: String,
+    /// Max number of sentences to extract.
+    pub max_sentences: usize,
+}
+
+/// Request to generate a session synopsis.
+#[derive(Debug, Clone)]
+pub struct SessionSynopsisRequest {
+    pub session_id: String,
+    /// Max length in characters for the synopsis.
+    pub max_chars: usize,
+}
+
 pub fn source_text_hash(text: &str) -> u64 {
     const FNV_OFFSET_BASIS: u64 = 0xcbf2_9ce4_8422_2325;
     const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -590,5 +693,22 @@ mod tests {
         assert_eq!(recall.author_kind, "assistant");
         assert_eq!(recall.text, "The nebula gate only opens at dusk.");
         assert_eq!(recall.created_at, 1_725_647_200_100);
+    }
+
+    #[test]
+    fn chunk_summary_content_roundtrip() {
+        let content = MemoryContent::chunk_summary("Alice and Bob discussed their plan.", 5);
+        let json = serde_json::to_string(&content).unwrap();
+        let parsed = serde_json::from_str::<MemoryContent>(&json).unwrap();
+        assert_eq!(content, parsed);
+    }
+
+    #[test]
+    fn session_synopsis_content_roundtrip() {
+        let content =
+            MemoryContent::session_synopsis("A roleplay session about forest exploration.", 42);
+        let json = serde_json::to_string(&content).unwrap();
+        let parsed = serde_json::from_str::<MemoryContent>(&json).unwrap();
+        assert_eq!(content, parsed);
     }
 }

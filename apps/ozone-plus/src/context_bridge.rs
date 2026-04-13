@@ -130,12 +130,14 @@ impl AppContextBridge {
         transcript: &[ConversationMessage],
         pinned_memories: &[PinnedMemoryView],
         retrieved_memories: Option<&RetrievalResultSet>,
+        session_synopsis: Option<&str>,
         inference: &InferenceAdapter,
     ) -> Result<ContextBuildResult, String> {
         self.build_from_transcript_internal(
             transcript,
             pinned_memories,
             retrieved_memories,
+            session_synopsis,
             inference,
             false,
         )
@@ -147,12 +149,14 @@ impl AppContextBridge {
         transcript: &[ConversationMessage],
         pinned_memories: &[PinnedMemoryView],
         retrieved_memories: Option<&RetrievalResultSet>,
+        session_synopsis: Option<&str>,
         inference: &InferenceAdapter,
     ) -> Result<DryRunContextBuild, String> {
         let result = self.build_from_transcript_internal(
             transcript,
             pinned_memories,
             retrieved_memories,
+            session_synopsis,
             inference,
             true,
         )?;
@@ -169,6 +173,7 @@ impl AppContextBridge {
         transcript: &[ConversationMessage],
         pinned_memories: &[PinnedMemoryView],
         retrieved_memories: Option<&RetrievalResultSet>,
+        session_synopsis: Option<&str>,
         inference: &InferenceAdapter,
         is_dry_run: bool,
     ) -> Result<ContextBuildResult, String> {
@@ -185,6 +190,9 @@ impl AppContextBridge {
             .map_err(|error| error.to_string())?;
         inject_active_pinned_memories(&mut turns, &active_pinned_memories);
         inject_retrieved_memories(&mut turns, retrieved_memories);
+        if let Some(synopsis) = session_synopsis {
+            inject_session_synopsis(&mut turns, synopsis);
+        }
         let prompt = inference
             .render_prompt(&turns)
             .map_err(|error| error.to_string())?;
@@ -195,9 +203,10 @@ impl AppContextBridge {
                 transcript.len(),
                 active_pinned_memories.len(),
                 retrieved_memories,
+                session_synopsis,
                 inference.selected_template(),
             ),
-            lines: preview_lines(transcript, &active_pinned_memories, retrieved_memories),
+            lines: preview_lines(transcript, &active_pinned_memories, retrieved_memories, session_synopsis),
             selected_items: Some(
                 transcript.len()
                     + active_pinned_memories.len()
@@ -225,9 +234,11 @@ fn preview_lines(
     transcript: &[ConversationMessage],
     active_pinned_memories: &[&PinnedMemoryView],
     retrieved_memories: Option<&RetrievalResultSet>,
+    session_synopsis: Option<&str>,
 ) -> Vec<String> {
     let mut lines = pinned_memory_preview_lines(active_pinned_memories);
     lines.extend(retrieved_memory_preview_lines(retrieved_memories));
+    lines.extend(session_synopsis_preview_lines(session_synopsis));
     lines.extend(transcript_preview_lines(transcript));
     lines
 }
@@ -297,6 +308,35 @@ fn inject_retrieved_memories(turns: &mut Vec<TranscriptTurn>, retrieved_memories
     append_system_block(turns, memory_block);
 }
 
+fn inject_session_synopsis(turns: &mut Vec<TranscriptTurn>, synopsis: &str) {
+    if synopsis.is_empty() {
+        return;
+    }
+    let layer_label = context_layer_label(ContextLayerKind::SessionSynopsis);
+    let synopsis_turn = TranscriptTurn::new(
+        TranscriptRole::System,
+        format!("[{layer_label}] {synopsis}"),
+    );
+    // Insert at position 1 (after system prompt if present, before conversation)
+    let insert_pos = if turns.first().is_some_and(|t| t.role == TranscriptRole::System) {
+        1
+    } else {
+        0
+    };
+    turns.insert(insert_pos, synopsis_turn);
+}
+
+fn session_synopsis_preview_lines(session_synopsis: Option<&str>) -> Vec<String> {
+    let Some(synopsis) = session_synopsis else {
+        return Vec::new();
+    };
+    if synopsis.is_empty() {
+        return Vec::new();
+    }
+    let layer_label = context_layer_label(ContextLayerKind::SessionSynopsis);
+    vec![format!("{layer_label} · {}", compact_single_line(synopsis, 72))]
+}
+
 fn append_system_block(turns: &mut Vec<TranscriptTurn>, block: String) {
     if let Some(system_turn) = turns
         .iter_mut()
@@ -346,6 +386,7 @@ fn context_preview_summary(
     transcript_len: usize,
     active_pinned_count: usize,
     retrieved_memories: Option<&RetrievalResultSet>,
+    session_synopsis: Option<&str>,
     template_name: &str,
 ) -> String {
     let mut summary = format!(
@@ -362,6 +403,9 @@ fn context_preview_summary(
             retrieved.hits.len(),
             retrieved.status.mode
         ));
+    }
+    if session_synopsis.is_some_and(|s| !s.is_empty()) {
+        summary.push_str(" + synopsis");
     }
     summary.push_str(&format!(" via template {template_name}"));
     summary
@@ -558,7 +602,7 @@ mod tests {
             message("user", "Hello", 2),
         ];
         let result = bridge
-            .build_from_transcript(&transcript, &[], None, &adapter)
+            .build_from_transcript(&transcript, &[], None, None, &adapter)
             .expect("fallback build should succeed");
 
         assert!(!result.prompt.is_empty());
@@ -604,7 +648,7 @@ mod tests {
         ];
 
         let result = bridge
-            .build_from_transcript(&transcript, &pinned, None, &adapter)
+            .build_from_transcript(&transcript, &pinned, None, None, &adapter)
             .expect("fallback build should succeed");
 
         assert!(result.prompt.contains("Remember the observatory key."));
@@ -673,7 +717,7 @@ mod tests {
         };
 
         let result = bridge
-            .build_from_transcript(&transcript, &[], Some(&retrieved), &adapter)
+            .build_from_transcript(&transcript, &[], Some(&retrieved), None, &adapter)
             .expect("context build should succeed");
 
         assert!(result.prompt.contains("retrieved_memory recall"));
@@ -703,7 +747,7 @@ mod tests {
         };
 
         let result = bridge
-            .build_from_transcript(&transcript, &[], Some(&retrieved), &adapter)
+            .build_from_transcript(&transcript, &[], Some(&retrieved), None, &adapter)
             .expect("context build should succeed");
 
         assert!(result.preview.summary.contains("0 retrieved (fts_only)"));
@@ -713,5 +757,58 @@ mod tests {
             .iter()
             .any(|line| line.contains("vector index missing")));
         assert!(!result.prompt.contains("retrieved_memory recall"));
+    }
+
+    #[test]
+    fn synopsis_injection_adds_system_turn() {
+        let mut turns = vec![
+            TranscriptTurn::new(TranscriptRole::System, "You are helpful."),
+            TranscriptTurn::new(TranscriptRole::User, "Hello"),
+        ];
+        inject_session_synopsis(&mut turns, "Previously discussed topic X.");
+        assert_eq!(turns.len(), 3);
+        assert_eq!(turns[1].role, TranscriptRole::System);
+        assert!(turns[1].content.contains("session_synopsis"));
+        assert!(turns[1].content.contains("topic X"));
+    }
+
+    #[test]
+    fn empty_synopsis_is_not_injected() {
+        let mut turns = vec![
+            TranscriptTurn::new(TranscriptRole::User, "Hello"),
+        ];
+        inject_session_synopsis(&mut turns, "");
+        assert_eq!(turns.len(), 1);
+    }
+
+    #[test]
+    fn synopsis_inserts_at_position_zero_when_no_system_prompt() {
+        let mut turns = vec![
+            TranscriptTurn::new(TranscriptRole::User, "Hello"),
+        ];
+        inject_session_synopsis(&mut turns, "Context from earlier.");
+        assert_eq!(turns.len(), 2);
+        assert_eq!(turns[0].role, TranscriptRole::System);
+        assert!(turns[0].content.contains("session_synopsis"));
+    }
+
+    #[test]
+    fn synopsis_appears_in_preview_summary_and_lines() {
+        let mut bridge = AppContextBridge::default();
+        let adapter = inference_adapter();
+        let transcript = vec![message("user", "Hello", 1)];
+
+        let result = bridge
+            .build_from_transcript(&transcript, &[], None, Some("Recap of events"), &adapter)
+            .expect("build should succeed");
+
+        assert!(result.preview.summary.contains("+ synopsis"));
+        assert!(result
+            .preview
+            .lines
+            .iter()
+            .any(|line| line.contains("session_synopsis") && line.contains("Recap of events")));
+        assert!(result.prompt.contains("session_synopsis"));
+        assert!(result.prompt.contains("Recap of events"));
     }
 }

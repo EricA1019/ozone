@@ -92,6 +92,12 @@ enum ShellCommand {
     Session(SessionCommand),
     Memory(MemoryCommand),
     Search(SearchCommand),
+    Summarize(SummarizeShellCommand),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SummarizeShellCommand {
+    Session,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -514,6 +520,7 @@ impl Phase1dRuntime {
                 &transcript,
                 &pinned_memories,
                 retrieved_memories.as_ref(),
+                None,
                 &self.inference,
             )
     }
@@ -554,6 +561,7 @@ impl Phase1dRuntime {
                 &transcript,
                 &pinned_memories,
                 retrieved_memories.as_ref(),
+                None,
                 &self.inference,
             )
     }
@@ -1217,6 +1225,46 @@ impl SessionRuntime for Phase1dRuntime {
                 )
                 .map(Some)
             }
+            ShellCommand::Summarize(SummarizeShellCommand::Session) => {
+                let transcript = self
+                    .repo
+                    .get_active_branch_transcript(&context.session_id)
+                    .map_err(|error| error.to_string())?;
+
+                if transcript.len() < 2 {
+                    return Ok(Some(Self::status_only_refresh(
+                        "Need at least 2 messages to generate a synopsis".to_string(),
+                    )));
+                }
+
+                let turns: Vec<ozone_memory::summary::SummaryInputTurn> = transcript
+                    .iter()
+                    .map(|msg| ozone_memory::summary::SummaryInputTurn {
+                        role: msg.author_kind.clone(),
+                        content: msg.content.clone(),
+                    })
+                    .collect();
+
+                let config = ozone_memory::summary::SummaryConfig::default();
+                let status =
+                    match ozone_memory::summary::generate_session_synopsis(&turns, &config) {
+                        Some(synopsis) => {
+                            let _ = self.repo.store_session_synopsis(
+                                &context.session_id,
+                                &synopsis,
+                                transcript.len(),
+                                0,
+                            );
+                            format!("Synopsis: {synopsis}")
+                        }
+                        None => format!(
+                            "Not enough assistant content to generate a synopsis ({} messages)",
+                            transcript.len()
+                        ),
+                    };
+
+                Ok(Some(Self::status_only_refresh(status)))
+            }
         }
     }
 
@@ -1530,6 +1578,7 @@ fn parse_shell_command(input: &str) -> Result<ShellCommand, String> {
         "memory" => parse_memory_subcommand(remainder).map(ShellCommand::Memory),
         "memories" if remainder.is_empty() => Ok(ShellCommand::Memory(MemoryCommand::List)),
         "search" => parse_search_subcommand(remainder).map(ShellCommand::Search),
+        "summarize" => parse_summarize_subcommand(remainder).map(ShellCommand::Summarize),
         _ => Err(unknown_shell_command_message()),
     }
 }
@@ -1619,8 +1668,15 @@ fn parse_search_subcommand(remainder: &str) -> Result<SearchCommand, String> {
     }
 }
 
+fn parse_summarize_subcommand(remainder: &str) -> Result<SummarizeShellCommand, String> {
+    match remainder.trim() {
+        "session" | "" => Ok(SummarizeShellCommand::Session),
+        _ => Err("Usage: /summarize session".to_string()),
+    }
+}
+
 fn unknown_shell_command_message() -> String {
-    "Unknown command. Try /session show | /session rename NAME | /session character NAME|clear | /session tags a,b|clear | /memory list | /memory note TEXT | /memory unpin <artifact-id> | /search session QUERY | /search global QUERY | :memories".to_owned()
+    "Unknown command. Try /session show | /session rename NAME | /session character NAME|clear | /session tags a,b|clear | /memory list | /memory note TEXT | /memory unpin <artifact-id> | /search session QUERY | /search global QUERY | /summarize session | :memories".to_owned()
 }
 
 fn require_non_empty(label: &str, value: String) -> Result<String, String> {

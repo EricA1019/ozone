@@ -183,6 +183,21 @@ pub struct BranchRecord {
     pub forked_from: MessageId,
 }
 
+/// A persisted summary artifact (chunk summary or session synopsis).
+#[derive(Debug, Clone)]
+pub struct SummaryArtifactRecord {
+    pub artifact_id: MemoryArtifactId,
+    pub session_id: SessionId,
+    pub kind: String,
+    pub text: String,
+    pub source_count: Option<usize>,
+    pub message_count: Option<usize>,
+    pub start_message_id: Option<String>,
+    pub end_message_id: Option<String>,
+    pub created_at: UnixTimestamp,
+    pub snapshot_version: u64,
+}
+
 #[derive(Clone)]
 pub struct SqliteRepository {
     paths: PersistencePaths,
@@ -1287,6 +1302,183 @@ impl SqliteRepository {
         Ok(deleted)
     }
 
+    pub fn store_chunk_summary(
+        &self,
+        session_id: &SessionId,
+        summary_text: &str,
+        source_count: usize,
+        start_message_id: &MessageId,
+        end_message_id: &MessageId,
+        snapshot_version: u64,
+    ) -> Result<SummaryArtifactRecord> {
+        let artifact_id = MemoryArtifactId::parse(generate_uuid_like())?;
+        let content = MemoryContent::chunk_summary(summary_text, source_count);
+        let content_json = serde_json::to_string(&content).map_err(|error| {
+            PersistError::InvalidData(format!(
+                "failed to serialize chunk summary for session {session_id}: {error}"
+            ))
+        })?;
+        let created_at = self.now();
+        let snapshot_version_i64 = i64::try_from(snapshot_version).map_err(|_| {
+            PersistError::InvalidData("snapshot_version exceeds SQLite INTEGER".to_owned())
+        })?;
+
+        let conn = self.open_session_connection(session_id)?;
+        conn.execute(
+            "INSERT INTO memory_artifacts (artifact_id, session_id, kind, content_json, source_start_message_id, source_end_message_id, provenance, created_at, snapshot_version)
+             VALUES (?1, ?2, 'chunk_summary', ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                artifact_id.as_str(),
+                session_id.as_str(),
+                content_json,
+                start_message_id.as_str(),
+                end_message_id.as_str(),
+                Provenance::SystemGenerated.as_str(),
+                created_at,
+                snapshot_version_i64,
+            ],
+        )?;
+
+        Ok(SummaryArtifactRecord {
+            artifact_id,
+            session_id: session_id.clone(),
+            kind: "chunk_summary".to_owned(),
+            text: summary_text.to_owned(),
+            source_count: Some(source_count),
+            message_count: None,
+            start_message_id: Some(start_message_id.to_string()),
+            end_message_id: Some(end_message_id.to_string()),
+            created_at,
+            snapshot_version,
+        })
+    }
+
+    pub fn store_session_synopsis(
+        &self,
+        session_id: &SessionId,
+        synopsis_text: &str,
+        message_count: usize,
+        snapshot_version: u64,
+    ) -> Result<SummaryArtifactRecord> {
+        let artifact_id = MemoryArtifactId::parse(generate_uuid_like())?;
+        let content = MemoryContent::session_synopsis(synopsis_text, message_count);
+        let content_json = serde_json::to_string(&content).map_err(|error| {
+            PersistError::InvalidData(format!(
+                "failed to serialize session synopsis for session {session_id}: {error}"
+            ))
+        })?;
+        let created_at = self.now();
+        let snapshot_version_i64 = i64::try_from(snapshot_version).map_err(|_| {
+            PersistError::InvalidData("snapshot_version exceeds SQLite INTEGER".to_owned())
+        })?;
+
+        let conn = self.open_session_connection(session_id)?;
+        conn.execute(
+            "INSERT INTO memory_artifacts (artifact_id, session_id, kind, content_json, provenance, created_at, snapshot_version)
+             VALUES (?1, ?2, 'session_synopsis', ?3, ?4, ?5, ?6)",
+            params![
+                artifact_id.as_str(),
+                session_id.as_str(),
+                content_json,
+                Provenance::SystemGenerated.as_str(),
+                created_at,
+                snapshot_version_i64,
+            ],
+        )?;
+
+        Ok(SummaryArtifactRecord {
+            artifact_id,
+            session_id: session_id.clone(),
+            kind: "session_synopsis".to_owned(),
+            text: synopsis_text.to_owned(),
+            source_count: None,
+            message_count: Some(message_count),
+            start_message_id: None,
+            end_message_id: None,
+            created_at,
+            snapshot_version,
+        })
+    }
+
+    pub fn list_chunk_summaries(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<SummaryArtifactRecord>> {
+        let conn = self.open_session_connection(session_id)?;
+        let mut stmt = conn.prepare(
+            "SELECT artifact_id, session_id, kind, content_json, source_start_message_id, source_end_message_id, created_at, snapshot_version
+             FROM memory_artifacts
+             WHERE session_id = ?1 AND kind = 'chunk_summary'
+             ORDER BY created_at DESC, artifact_id DESC",
+        )?;
+        let rows = stmt.query_map([session_id.as_str()], |row| {
+            Ok(StoredSummaryArtifact {
+                artifact_id: row.get(0)?,
+                session_id: row.get(1)?,
+                kind: row.get(2)?,
+                content_json: row.get(3)?,
+                start_message_id: row.get(4)?,
+                end_message_id: row.get(5)?,
+                created_at: row.get(6)?,
+                snapshot_version: row.get(7)?,
+            })
+        })?;
+
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(SummaryArtifactRecord::try_from)
+            .collect()
+    }
+
+    pub fn get_latest_session_synopsis(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Option<SummaryArtifactRecord>> {
+        let conn = self.open_session_connection(session_id)?;
+        let result = conn
+            .query_row(
+                "SELECT artifact_id, session_id, kind, content_json, source_start_message_id, source_end_message_id, created_at, snapshot_version
+                 FROM memory_artifacts
+                 WHERE session_id = ?1 AND kind = 'session_synopsis'
+                 ORDER BY created_at DESC, artifact_id DESC
+                 LIMIT 1",
+                [session_id.as_str()],
+                |row| {
+                    Ok(StoredSummaryArtifact {
+                        artifact_id: row.get(0)?,
+                        session_id: row.get(1)?,
+                        kind: row.get(2)?,
+                        content_json: row.get(3)?,
+                        start_message_id: row.get(4)?,
+                        end_message_id: row.get(5)?,
+                        created_at: row.get(6)?,
+                        snapshot_version: row.get(7)?,
+                    })
+                },
+            )
+            .optional()?;
+
+        match result {
+            Some(stored) => Ok(Some(SummaryArtifactRecord::try_from(stored)?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn delete_summary_artifact(
+        &self,
+        session_id: &SessionId,
+        artifact_id: &MemoryArtifactId,
+    ) -> Result<bool> {
+        let conn = self.open_session_connection(session_id)?;
+        let deleted = conn.execute(
+            "DELETE FROM memory_artifacts
+             WHERE artifact_id = ?1 AND session_id = ?2
+             AND kind IN ('chunk_summary', 'session_synopsis')",
+            params![artifact_id.as_str(), session_id.as_str()],
+        )? > 0;
+        Ok(deleted)
+    }
+
     pub fn upsert_embedding_artifacts(&self, records: &[EmbeddingRecord]) -> Result<usize> {
         let grouped = group_embedding_records(records)?;
         let mut inserted = 0;
@@ -1826,6 +2018,77 @@ impl TryFrom<StoredPinnedMemoryArtifact> for PinnedMemoryRecord {
             content,
             source_message_id,
             provenance: value.provenance.parse()?,
+            created_at: value.created_at,
+            snapshot_version,
+        })
+    }
+}
+
+#[derive(Debug)]
+struct StoredSummaryArtifact {
+    artifact_id: String,
+    session_id: String,
+    kind: String,
+    content_json: String,
+    start_message_id: Option<String>,
+    end_message_id: Option<String>,
+    created_at: i64,
+    snapshot_version: i64,
+}
+
+impl TryFrom<StoredSummaryArtifact> for SummaryArtifactRecord {
+    type Error = PersistError;
+
+    fn try_from(value: StoredSummaryArtifact) -> Result<Self> {
+        let artifact_id = MemoryArtifactId::parse(value.artifact_id)?;
+        let session_id = SessionId::parse(value.session_id.clone())?;
+        let memory_content =
+            serde_json::from_str::<MemoryContent>(&value.content_json).map_err(|error| {
+                PersistError::InvalidData(format!(
+                    "invalid summary artifact JSON for session {}: {error}",
+                    value.session_id
+                ))
+            })?;
+        let snapshot_version = u64::try_from(value.snapshot_version).map_err(|_| {
+            PersistError::InvalidData(format!(
+                "snapshot_version {} is not a valid unsigned integer",
+                value.snapshot_version
+            ))
+        })?;
+
+        let (text, source_count, message_count) = match &value.kind[..] {
+            "chunk_summary" => {
+                let cs = memory_content.into_chunk_summary().ok_or_else(|| {
+                    PersistError::InvalidData(format!(
+                        "artifact {artifact_id} did not contain chunk summary content"
+                    ))
+                })?;
+                (cs.text, Some(cs.source_count), None)
+            }
+            "session_synopsis" => {
+                let ss = memory_content.into_session_synopsis().ok_or_else(|| {
+                    PersistError::InvalidData(format!(
+                        "artifact {artifact_id} did not contain session synopsis content"
+                    ))
+                })?;
+                (ss.text, None, Some(ss.message_count))
+            }
+            other => {
+                return Err(PersistError::InvalidData(format!(
+                    "unexpected summary artifact kind: {other}"
+                )))
+            }
+        };
+
+        Ok(SummaryArtifactRecord {
+            artifact_id,
+            session_id,
+            kind: value.kind,
+            text,
+            source_count,
+            message_count,
+            start_message_id: value.start_message_id,
+            end_message_id: value.end_message_id,
             created_at: value.created_at,
             snapshot_version,
         })
@@ -4161,5 +4424,188 @@ mod tests {
         fn drop(&mut self) {
             let _ = fs::remove_dir_all(&self.root);
         }
+    }
+
+    #[test]
+    fn store_and_list_chunk_summaries() {
+        let sandbox = TestSandbox::new("chunk-summaries");
+        let (repo, clock) = test_repo(&sandbox, 1_725_647_200_000);
+        let session = repo
+            .create_session(CreateSessionRequest::new("Summary Session"))
+            .unwrap();
+
+        let msg1 = repo
+            .insert_message(
+                &session.session_id,
+                CreateMessageRequest::user("First message"),
+            )
+            .unwrap();
+        let msg2 = repo
+            .insert_message(
+                &session.session_id,
+                CreateMessageRequest::user("Second message"),
+            )
+            .unwrap();
+        let msg3 = repo
+            .insert_message(
+                &session.session_id,
+                CreateMessageRequest::user("Third message"),
+            )
+            .unwrap();
+
+        let start1 = message_id(&msg1.message_id);
+        let end1 = message_id(&msg2.message_id);
+        let start2 = message_id(&msg2.message_id);
+        let end2 = message_id(&msg3.message_id);
+
+        let first = repo
+            .store_chunk_summary(
+                &session.session_id,
+                "Alice greeted Bob.",
+                2,
+                &start1,
+                &end1,
+                1,
+            )
+            .unwrap();
+        assert_eq!(first.kind, "chunk_summary");
+        assert_eq!(first.text, "Alice greeted Bob.");
+        assert_eq!(first.source_count, Some(2));
+        assert_eq!(first.message_count, None);
+
+        clock.store(1_725_647_201_000, Ordering::SeqCst);
+        let second = repo
+            .store_chunk_summary(
+                &session.session_id,
+                "They discussed the plan.",
+                3,
+                &start2,
+                &end2,
+                3,
+            )
+            .unwrap();
+
+        let summaries = repo.list_chunk_summaries(&session.session_id).unwrap();
+        assert_eq!(summaries.len(), 2);
+        // Ordered by created_at DESC — second is first
+        assert_eq!(summaries[0].artifact_id, second.artifact_id);
+        assert_eq!(summaries[0].text, "They discussed the plan.");
+        assert_eq!(summaries[0].source_count, Some(3));
+        assert_eq!(
+            summaries[0].start_message_id.as_deref(),
+            Some(start2.as_str())
+        );
+        assert_eq!(
+            summaries[0].end_message_id.as_deref(),
+            Some(end2.as_str())
+        );
+
+        assert_eq!(summaries[1].artifact_id, first.artifact_id);
+        assert_eq!(summaries[1].text, "Alice greeted Bob.");
+        assert_eq!(summaries[1].source_count, Some(2));
+    }
+
+    #[test]
+    fn store_and_get_session_synopsis() {
+        let sandbox = TestSandbox::new("session-synopsis");
+        let (repo, clock) = test_repo(&sandbox, 1_725_647_200_000);
+        let session = repo
+            .create_session(CreateSessionRequest::new("Synopsis Session"))
+            .unwrap();
+
+        assert!(repo
+            .get_latest_session_synopsis(&session.session_id)
+            .unwrap()
+            .is_none());
+
+        let first = repo
+            .store_session_synopsis(
+                &session.session_id,
+                "A roleplay about forest exploration.",
+                10,
+                5,
+            )
+            .unwrap();
+        assert_eq!(first.kind, "session_synopsis");
+        assert_eq!(first.text, "A roleplay about forest exploration.");
+        assert_eq!(first.message_count, Some(10));
+        assert_eq!(first.source_count, None);
+
+        clock.store(1_725_647_201_000, Ordering::SeqCst);
+        let second = repo
+            .store_session_synopsis(
+                &session.session_id,
+                "Updated synopsis with more detail.",
+                20,
+                10,
+            )
+            .unwrap();
+
+        let latest = repo
+            .get_latest_session_synopsis(&session.session_id)
+            .unwrap()
+            .expect("should find a synopsis");
+        assert_eq!(latest.artifact_id, second.artifact_id);
+        assert_eq!(latest.text, "Updated synopsis with more detail.");
+        assert_eq!(latest.message_count, Some(20));
+        assert_eq!(latest.snapshot_version, 10);
+    }
+
+    #[test]
+    fn delete_summary_artifact_removes_only_summaries() {
+        let sandbox = TestSandbox::new("delete-summary");
+        let (repo, _) = test_repo(&sandbox, 1_725_647_200_000);
+        let session = repo
+            .create_session(CreateSessionRequest::new("Delete Summary"))
+            .unwrap();
+
+        let msg = repo
+            .insert_message(
+                &session.session_id,
+                CreateMessageRequest::user("Some message"),
+            )
+            .unwrap();
+        let msg_id = message_id(&msg.message_id);
+
+        let chunk = repo
+            .store_chunk_summary(
+                &session.session_id,
+                "A chunk.",
+                1,
+                &msg_id,
+                &msg_id,
+                1,
+            )
+            .unwrap();
+        let synopsis = repo
+            .store_session_synopsis(&session.session_id, "A synopsis.", 5, 2)
+            .unwrap();
+
+        assert!(repo
+            .delete_summary_artifact(&session.session_id, &chunk.artifact_id)
+            .unwrap());
+        // Deleting again returns false
+        assert!(!repo
+            .delete_summary_artifact(&session.session_id, &chunk.artifact_id)
+            .unwrap());
+
+        // Chunk is gone
+        let remaining = repo.list_chunk_summaries(&session.session_id).unwrap();
+        assert!(remaining.is_empty());
+
+        // Synopsis still there
+        let latest = repo
+            .get_latest_session_synopsis(&session.session_id)
+            .unwrap();
+        assert!(latest.is_some());
+
+        // Delete synopsis
+        assert!(repo
+            .delete_summary_artifact(&session.session_id, &synopsis.artifact_id)
+            .unwrap());
+        assert!(repo
+            .get_latest_session_synopsis(&session.session_id)
+            .unwrap()
+            .is_none());
     }
 }

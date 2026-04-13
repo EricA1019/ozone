@@ -91,6 +91,8 @@ enum Command {
     Search(SearchArgs),
     /// Rebuild the persisted vector index from recallable text sources
     Index(IndexArgs),
+    /// Generate and store summaries for a session
+    Summarize(SummarizeArgs),
 }
 
 #[derive(Args)]
@@ -391,6 +393,30 @@ enum IndexCommand {
 }
 
 #[derive(Args)]
+struct SummarizeArgs {
+    #[command(subcommand)]
+    command: SummarizeCommand,
+}
+
+#[derive(Subcommand)]
+enum SummarizeCommand {
+    /// Generate a synopsis for an entire session
+    Session {
+        /// Session ID to summarize
+        session_id: String,
+    },
+    /// Generate a chunk summary for a message range
+    Chunk {
+        /// Session ID containing the messages
+        session_id: String,
+        /// Starting message ID for the range
+        start_message_id: String,
+        /// Ending message ID for the range
+        end_message_id: String,
+    },
+}
+
+#[derive(Args)]
 struct SessionSearchArgs {
     /// Session UUID in 8-4-4-4-12 format
     session_id: String,
@@ -451,6 +477,7 @@ fn run_cli(cli: Cli) -> Result<(), String> {
         Some(Command::Memory(args)) => handle_memory_command(args.command),
         Some(Command::Search(args)) => handle_search_command(args.command),
         Some(Command::Index(args)) => handle_index_command(args.command),
+        Some(Command::Summarize(args)) => handle_summarize_command(args.command),
         None => {
             print_bootstrap_summary();
             Ok(())
@@ -1625,6 +1652,117 @@ fn rebuild_vector_index() -> Result<(), String> {
     println!("  dimensions      {}", result.provider.dimensions);
     println!("  index path      {}", result.index_path().display());
     println!("  metadata path   {}", result.metadata_path().display());
+    Ok(())
+}
+
+fn handle_summarize_command(command: SummarizeCommand) -> Result<(), String> {
+    match command {
+        SummarizeCommand::Session { session_id } => summarize_session(session_id),
+        SummarizeCommand::Chunk {
+            session_id,
+            start_message_id,
+            end_message_id,
+        } => summarize_chunk(session_id, start_message_id, end_message_id),
+    }
+}
+
+fn summarize_session(session_id_raw: String) -> Result<(), String> {
+    let repo = open_repository()?;
+    let session_id = parse_session_id(&session_id_raw)?;
+    let messages = repo
+        .get_active_branch_transcript(&session_id)
+        .map_err(|error| error.to_string())?;
+
+    let turns: Vec<ozone_memory::summary::SummaryInputTurn> = messages
+        .iter()
+        .map(|msg| ozone_memory::summary::SummaryInputTurn {
+            role: msg.author_kind.clone(),
+            content: msg.content.clone(),
+        })
+        .collect();
+
+    let config = ozone_memory::summary::SummaryConfig::default();
+    match ozone_memory::summary::generate_session_synopsis(&turns, &config) {
+        Some(synopsis) => {
+            println!("Session synopsis");
+            println!("  session         {session_id}");
+            println!("  messages        {}", messages.len());
+            println!();
+            println!("{synopsis}");
+            match repo.store_session_synopsis(&session_id, &synopsis, messages.len(), 0) {
+                Ok(record) => println!("  stored as       {}", record.artifact_id),
+                Err(err) => eprintln!("  warning: failed to persist synopsis: {err}"),
+            }
+        }
+        None => {
+            println!(
+                "Not enough content to generate a synopsis ({} messages, minimum {}).",
+                messages.len(),
+                config.synopsis_min_messages
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn summarize_chunk(
+    session_id_raw: String,
+    start_message_id_raw: String,
+    end_message_id_raw: String,
+) -> Result<(), String> {
+    let repo = open_repository()?;
+    let session_id = parse_session_id(&session_id_raw)?;
+    let start_id = parse_message_id(&start_message_id_raw)?;
+    let end_id = parse_message_id(&end_message_id_raw)?;
+    let messages = repo
+        .get_active_branch_transcript(&session_id)
+        .map_err(|error| error.to_string())?;
+
+    let start_idx = messages
+        .iter()
+        .position(|m| m.message_id == start_id)
+        .ok_or_else(|| format!("start message {start_id} not found in active branch transcript"))?;
+    let end_idx = messages
+        .iter()
+        .position(|m| m.message_id == end_id)
+        .ok_or_else(|| format!("end message {end_id} not found in active branch transcript"))?;
+
+    if end_idx < start_idx {
+        return Err("end message must come after start message in the transcript".to_owned());
+    }
+
+    let chunk = &messages[start_idx..=end_idx];
+    let turns: Vec<ozone_memory::summary::SummaryInputTurn> = chunk
+        .iter()
+        .map(|msg| ozone_memory::summary::SummaryInputTurn {
+            role: msg.author_kind.clone(),
+            content: msg.content.clone(),
+        })
+        .collect();
+
+    let config = ozone_memory::summary::SummaryConfig::default();
+    match ozone_memory::summary::generate_chunk_summary(&turns, &config) {
+        Some(summary) => {
+            println!("Chunk summary");
+            println!("  session         {session_id}");
+            println!("  range           {start_id} → {end_id}");
+            println!("  messages        {}", chunk.len());
+            println!();
+            println!("{summary}");
+            match repo.store_chunk_summary(&session_id, &summary, chunk.len(), &start_id, &end_id, 0) {
+                Ok(record) => println!("  stored as       {}", record.artifact_id),
+                Err(err) => eprintln!("  warning: failed to persist chunk summary: {err}"),
+            }
+        }
+        None => {
+            println!(
+                "Not enough content to generate a chunk summary ({} messages in range).",
+                chunk.len()
+            );
+        }
+    }
+
     Ok(())
 }
 
