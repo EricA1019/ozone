@@ -15,9 +15,10 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 
 pub use app::{
     AppBootstrap, BranchItem, ContextDryRunPreview, ContextPreview, ContextTokenBudget, DraftState,
-    FocusTarget, GenerationPoll, RuntimeCancellation, RuntimeCompletion, RuntimeContextRefresh,
-    RuntimeFailure, RuntimePhase, RuntimeProgress, RuntimeSendReceipt, ScreenState, SessionContext,
-    SessionMetadata, SessionState, SessionStats, ShellState, TranscriptItem,
+    FocusTarget, GenerationPoll, RecallBrowser, RuntimeCancellation, RuntimeCompletion,
+    RuntimeContextRefresh, RuntimeFailure, RuntimePhase, RuntimeProgress, RuntimeSendReceipt,
+    ScreenState, SessionContext, SessionMetadata, SessionState, SessionStats, ShellState,
+    TranscriptItem,
 };
 pub use input::{dispatch_key, InputMode, KeyAction};
 pub use layout::{
@@ -175,6 +176,14 @@ where
                                         app.apply_context_refresh(refresh);
                                     }
                                 }
+                                app::RuntimeCommand::TogglePinnedMemory { message_id } => {
+                                    if let Some(refresh) = runtime
+                                        .toggle_pinned_memory(&app.session.context, &message_id)
+                                        .map_err(RunSessionError::Runtime)?
+                                    {
+                                        app.apply_context_refresh(refresh);
+                                    }
+                                }
                                 app::RuntimeCommand::RunCommand { input } => {
                                     if let Some(refresh) = runtime
                                         .run_command(&app.session.context, &input)
@@ -287,6 +296,7 @@ mod tests {
             session_stats: None,
             context_preview: None,
             context_dry_run: None,
+            recall_browser: None,
         };
         let mut runtime = MockRuntime::with_bootstrap(bootstrap);
 

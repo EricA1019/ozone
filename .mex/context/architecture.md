@@ -30,12 +30,13 @@ Monitor mode shows live VRAM/RAM/CPU/services with 2s refresh.
 ## Key Components
 
 - Cargo root package `ozone`: the current middle-tier Rust TUI app in `src/`.
-- apps/ozone-plus: Phase 1D ozone+ app that now combines the persisted session CLI surfaces with the default `open` TUI shell, an app-side inference adapter, and a real async session-runtime bridge that streams assistant turns on top of the engine/persistence path.
+- apps/ozone-plus: Phase 2B ozone+ app that now combines the persisted session CLI surfaces with the default `open` TUI shell, an app-side inference adapter, manual and hybrid recall commands, explicit `index rebuild`, and a real async session-runtime bridge that streams assistant turns on top of the engine/persistence path.
 - crates/ozone-core: shared product metadata and ozone data/log path helpers.
 - crates/ozone-engine: trait-first single-writer conversation engine surface with command processing, broadcast events, snapshots, an in-memory store used by engine tests, and the first explicit Phase 1E context-assembly module (`ContextPlan` / `ContextAssembler`).
 - crates/ozone-inference: layered config loader, prompt-template registry, streaming decoder, backend descriptors, and the first KoboldCpp gateway implementation for ozone+.
-- crates/ozone-persist: ozone+ persistence layer with schema setup, migrations, advisory locks, and durable transcript/branch/swipe repository APIs.
-- crates/ozone-tui: ozone+ shell crate with session state, key/input handling, responsive layout models, ratatui rendering, the generic terminal event loop used by `apps/ozone-plus`, plus the generic context preview / dry-run / inspector surface introduced in Phase 1E.
+- crates/ozone-memory: Phase 2B retrieval domain crate for pinned-memory content, optional embedding providers, retrieval scoring/result types, expiry views, and the disk-backed `usearch` vector index manager that later 2C layers can build on.
+- crates/ozone-persist: ozone+ persistence layer with schema setup, migrations, advisory locks, durable transcript/branch/swipe repository APIs, Phase 2A pinned-memory plus cross-session search helpers, and Phase 2B embedding-artifact persistence built on `memory_artifacts` and `session_search`.
+- crates/ozone-tui: ozone+ shell crate with session state, key/input handling, responsive layout models, ratatui rendering, the generic terminal event loop used by `apps/ozone-plus`, plus the generic context preview / dry-run / inspector surface introduced in Phase 1E and the recall browser / `Ctrl+K` affordances that now surface hybrid-retrieval results without adding a new pane.
 - catalog.rs: Reads model files, parses presets/benchmarks. Produces CatalogRecord.
 - planner.rs: Mixed-memory launch planner. estimate_vram_mb() predicts VRAM usage.
 - profiling.rs: TUI-facing advisory/orchestration layer. Validates model/launcher paths, recommends next actions, runs profiling workflows, and classifies failures into actionable reports.
@@ -59,4 +60,4 @@ Monitor mode shows live VRAM/RAM/CPU/services with 2s refresh.
 - No direct inference.
 - No web UI (terminal only).
 - No Windows support (Linux only).
-- No ozone+ memory system, assistive layer, or scenes/group-chat foundation yet; Phase 1E now provides the first explicit context pipeline and inspector, while later phases extend product polish and higher-level systems.
+- No ozone+ summary lifecycle, assistive layer, or scenes/group-chat foundation yet; Phase 2A now provides manual pinned memory and keyword recall, Phase 2B adds optional embeddings plus hybrid retrieval, and later phases extend summary/promotion depth and higher-level systems.

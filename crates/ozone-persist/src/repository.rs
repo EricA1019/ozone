@@ -1,4 +1,5 @@
 use std::{
+    collections::BTreeMap,
     fs,
     io::{ErrorKind, Write},
     path::{Path, PathBuf},
@@ -20,6 +21,11 @@ use ozone_core::{
         CreateSessionRequest, SessionId, SessionRecord, SessionSummary, UnixTimestamp,
         UpdateSessionRequest,
     },
+};
+use ozone_memory::{
+    CreateNoteMemoryRequest, CrossSessionSearchHit, EmbeddingRecord, EmbeddingRecordMetadata,
+    MemoryArtifactId, MemoryContent, PinMessageMemoryRequest, PinnedMemoryContent,
+    PinnedMemoryRecord, PinnedMemoryView, Provenance, SearchSessionMetadata,
 };
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 
@@ -131,12 +137,13 @@ pub struct MessageRecord {
     pub created_at: UnixTimestamp,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq)]
 pub struct MessageSearchHit {
     pub message_id: String,
     pub author_kind: String,
     pub content: String,
     pub created_at: UnixTimestamp,
+    pub bm25_score: f32,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1158,13 +1165,16 @@ impl SqliteRepository {
         session_id: &SessionId,
         query: &str,
     ) -> Result<Vec<MessageSearchHit>> {
+        let Some(query) = plain_text_fts_query(query) else {
+            return Ok(Vec::new());
+        };
         let conn = self.open_session_connection(session_id)?;
         let mut stmt = conn.prepare(
-            "SELECT m.message_id, m.author_kind, m.content, m.created_at
+            "SELECT m.message_id, m.author_kind, m.content, m.created_at, bm25(messages_fts)
              FROM messages_fts
              JOIN messages m ON m.rowid = messages_fts.rowid
              WHERE m.session_id = ?1 AND messages_fts MATCH ?2
-             ORDER BY m.created_at ASC, m.rowid ASC",
+             ORDER BY bm25(messages_fts), m.created_at DESC, m.rowid ASC",
         )?;
         let rows = stmt.query_map(params![session_id.as_str(), query], |row| {
             Ok(MessageSearchHit {
@@ -1172,11 +1182,243 @@ impl SqliteRepository {
                 author_kind: row.get(1)?,
                 content: row.get(2)?,
                 created_at: row.get(3)?,
+                bm25_score: row.get(4)?,
             })
         })?;
 
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(PersistError::from)
+    }
+
+    pub fn pin_message_memory(
+        &self,
+        session_id: &SessionId,
+        message_id: &MessageId,
+        request: PinMessageMemoryRequest,
+    ) -> Result<PinnedMemoryRecord> {
+        let created_at = self.now();
+        let snapshot_version = self.current_message_count(session_id)?;
+        let mut session_conn = self.open_session_connection(session_id)?;
+        let tx = session_conn.transaction()?;
+        let source_message = ensure_message_exists_in_tx(&tx, message_id, session_id)?;
+        let content = PinnedMemoryContent {
+            text: source_message.content,
+            pinned_by: request.pinned_by,
+            expires_after_turns: request.expires_after_turns,
+        };
+        let record = insert_pinned_memory_artifact_in_tx(
+            &tx,
+            session_id,
+            content,
+            Some(message_id),
+            request.provenance,
+            created_at,
+            snapshot_version,
+        )?;
+        tx.commit()?;
+
+        self.touch_session_summary(session_id, created_at, 0)?;
+        Ok(record)
+    }
+
+    pub fn create_note_memory(
+        &self,
+        session_id: &SessionId,
+        request: CreateNoteMemoryRequest,
+    ) -> Result<PinnedMemoryRecord> {
+        let created_at = self.now();
+        let snapshot_version = self.current_message_count(session_id)?;
+        let mut session_conn = self.open_session_connection(session_id)?;
+        let tx = session_conn.transaction()?;
+        let record = insert_pinned_memory_artifact_in_tx(
+            &tx,
+            session_id,
+            request.content,
+            None,
+            request.provenance,
+            created_at,
+            snapshot_version,
+        )?;
+        tx.commit()?;
+
+        self.touch_session_summary(session_id, created_at, 0)?;
+        Ok(record)
+    }
+
+    pub fn list_pinned_memories(&self, session_id: &SessionId) -> Result<Vec<PinnedMemoryView>> {
+        let current_message_count = self.current_message_count(session_id)?;
+        let conn = self.open_session_connection(session_id)?;
+        let mut stmt = conn.prepare(
+            "SELECT artifact_id, session_id, content_json, source_start_message_id, source_end_message_id, provenance, created_at, snapshot_version
+             FROM memory_artifacts
+             WHERE session_id = ?1 AND kind = 'pinned_memory'
+             ORDER BY created_at ASC, artifact_id ASC",
+        )?;
+        let rows = stmt.query_map([session_id.as_str()], read_stored_pinned_memory_artifact)?;
+        let records = rows
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(PinnedMemoryRecord::try_from)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(records
+            .into_iter()
+            .map(|record| record.into_view(current_message_count))
+            .collect())
+    }
+
+    pub fn remove_pinned_memory(
+        &self,
+        session_id: &SessionId,
+        artifact_id: &MemoryArtifactId,
+    ) -> Result<bool> {
+        let touched_at = self.now();
+        let conn = self.open_session_connection(session_id)?;
+        let deleted = conn.execute(
+            "DELETE FROM memory_artifacts
+             WHERE session_id = ?1 AND artifact_id = ?2 AND kind = 'pinned_memory'",
+            params![session_id.as_str(), artifact_id.as_str()],
+        )? > 0;
+
+        if deleted {
+            self.touch_session_summary(session_id, touched_at, 0)?;
+        }
+
+        Ok(deleted)
+    }
+
+    pub fn upsert_embedding_artifacts(&self, records: &[EmbeddingRecord]) -> Result<usize> {
+        let grouped = group_embedding_records(records)?;
+        let mut inserted = 0;
+
+        for (session_id, session_records) in grouped {
+            let mut session_conn = self.open_session_connection(&session_id)?;
+            let tx = session_conn.transaction()?;
+            for record in session_records {
+                upsert_embedding_artifact_in_tx(&tx, record)?;
+                inserted += 1;
+            }
+            tx.commit()?;
+            self.refresh_session_size(&session_id)?;
+        }
+
+        Ok(inserted)
+    }
+
+    pub fn list_embedding_artifacts(
+        &self,
+        session_id: Option<&SessionId>,
+    ) -> Result<Vec<EmbeddingRecord>> {
+        let mut records = match session_id {
+            Some(session_id) => self.list_session_embedding_artifacts(session_id)?,
+            None => {
+                let mut records = Vec::new();
+                for session in self.list_sessions()? {
+                    records.extend(self.list_session_embedding_artifacts(&session.session_id)?);
+                }
+                records
+            }
+        };
+
+        records.sort_by(|left, right| {
+            left.session_id
+                .as_str()
+                .cmp(right.session_id.as_str())
+                .then_with(|| {
+                    left.source_message_id
+                        .as_ref()
+                        .map(|message_id| message_id.as_str())
+                        .cmp(
+                            &right
+                                .source_message_id
+                                .as_ref()
+                                .map(|message_id| message_id.as_str()),
+                        )
+                })
+                .then_with(|| left.created_at.cmp(&right.created_at))
+                .then_with(|| left.artifact_id.as_str().cmp(right.artifact_id.as_str()))
+        });
+        Ok(records)
+    }
+
+    pub fn remove_embedding_artifacts(&self, session_id: Option<&SessionId>) -> Result<usize> {
+        let target_sessions = match session_id {
+            Some(session_id) => vec![session_id.clone()],
+            None => self
+                .list_sessions()?
+                .into_iter()
+                .map(|session| session.session_id)
+                .collect(),
+        };
+        let mut removed = 0;
+
+        for session_id in target_sessions {
+            let conn = self.open_session_connection(&session_id)?;
+            let session_removed = conn.execute(
+                "DELETE FROM memory_artifacts
+                 WHERE session_id = ?1 AND kind = 'embedding'",
+                [session_id.as_str()],
+            )?;
+            if session_removed != 0 {
+                self.refresh_session_size(&session_id)?;
+            }
+            removed += session_removed;
+        }
+
+        Ok(removed)
+    }
+
+    pub fn replace_embedding_artifacts(
+        &self,
+        session_id: Option<&SessionId>,
+        records: &[EmbeddingRecord],
+    ) -> Result<usize> {
+        let grouped = group_embedding_records(records)?;
+        let target_sessions = target_embedding_sessions(self, session_id, &grouped)?;
+        let mut inserted = 0;
+
+        for session_id in target_sessions {
+            let session_records = grouped
+                .get(&session_id)
+                .cloned()
+                .unwrap_or_else(Vec::new);
+            let mut session_conn = self.open_session_connection(&session_id)?;
+            let tx = session_conn.transaction()?;
+            tx.execute(
+                "DELETE FROM memory_artifacts
+                 WHERE session_id = ?1 AND kind = 'embedding'",
+                [session_id.as_str()],
+            )?;
+            for record in session_records {
+                upsert_embedding_artifact_in_tx(&tx, record)?;
+                inserted += 1;
+            }
+            tx.commit()?;
+            self.refresh_session_size(&session_id)?;
+        }
+
+        Ok(inserted)
+    }
+
+    pub fn search_across_sessions(&self, query: &str) -> Result<Vec<CrossSessionSearchHit>> {
+        let Some(query) = plain_text_fts_query(query) else {
+            return Ok(Vec::new());
+        };
+        let conn = self.ensure_global_connection()?;
+        let mut stmt = conn.prepare(
+            "SELECT ss.session_id, s.name, s.character_name, s.tags, ss.message_id, ss.author_kind, ss.content, ss.created_at, bm25(session_search_fts)
+             FROM session_search_fts
+             JOIN session_search ss ON ss.rowid = session_search_fts.rowid
+             JOIN sessions s ON s.session_id = ss.session_id
+             WHERE session_search_fts MATCH ?1
+             ORDER BY bm25(session_search_fts), ss.created_at DESC, ss.rowid ASC",
+        )?;
+        let rows = stmt.query_map([query], read_stored_cross_session_search_hit)?;
+
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(CrossSessionSearchHit::try_from)
+            .collect()
     }
 
     fn store_character_card(
@@ -1247,6 +1489,22 @@ impl SqliteRepository {
                 message_delta,
                 self.session_db_size_i64(session_id),
             ],
+        )?;
+
+        if rows == 0 {
+            return Err(PersistError::SessionNotFound(session_id.to_string()));
+        }
+
+        Ok(())
+    }
+
+    fn refresh_session_size(&self, session_id: &SessionId) -> Result<()> {
+        let global_conn = self.ensure_global_connection()?;
+        let rows = global_conn.execute(
+            "UPDATE sessions
+             SET db_size_bytes = ?2
+             WHERE session_id = ?1",
+            params![session_id.as_str(), self.session_db_size_i64(session_id)],
         )?;
 
         if rows == 0 {
@@ -1328,6 +1586,28 @@ impl SqliteRepository {
 
     fn now(&self) -> UnixTimestamp {
         (self.now_utc_ms)()
+    }
+
+    fn current_message_count(&self, session_id: &SessionId) -> Result<u64> {
+        self.get_session(session_id)?
+            .map(|session| session.message_count)
+            .ok_or_else(|| PersistError::SessionNotFound(session_id.to_string()))
+    }
+
+    fn list_session_embedding_artifacts(&self, session_id: &SessionId) -> Result<Vec<EmbeddingRecord>> {
+        let conn = self.open_session_connection(session_id)?;
+        let mut stmt = conn.prepare(
+            "SELECT artifact_id, session_id, content_json, source_start_message_id, source_end_message_id, provenance, created_at, snapshot_version
+             FROM memory_artifacts
+             WHERE session_id = ?1 AND kind = 'embedding'
+             ORDER BY created_at ASC, artifact_id ASC",
+        )?;
+        let rows = stmt.query_map([session_id.as_str()], read_stored_embedding_artifact)?;
+
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(EmbeddingRecord::try_from)
+            .collect()
     }
 
     fn session_db_size(&self, session_id: &SessionId) -> Option<u64> {
@@ -1440,6 +1720,368 @@ fn export_swipe_candidate(candidate: SwipeCandidate) -> SessionExportSwipeCandid
     }
 }
 
+fn insert_pinned_memory_artifact_in_tx(
+    tx: &Transaction<'_>,
+    session_id: &SessionId,
+    content: PinnedMemoryContent,
+    source_message_id: Option<&MessageId>,
+    provenance: Provenance,
+    created_at: UnixTimestamp,
+    snapshot_version: u64,
+) -> Result<PinnedMemoryRecord> {
+    let artifact_id = MemoryArtifactId::parse(generate_uuid_like())?;
+    let content_json =
+        serde_json::to_string(&MemoryContent::from(content.clone())).map_err(|error| {
+            PersistError::InvalidData(format!(
+                "failed to serialize pinned memory artifact for session {session_id}: {error}"
+            ))
+        })?;
+    let snapshot_version_i64 = i64::try_from(snapshot_version).map_err(|_| {
+        PersistError::InvalidData("snapshot_version exceeds SQLite INTEGER".to_owned())
+    })?;
+    let source_message_id_str = source_message_id.map(MessageId::as_str);
+
+    tx.execute(
+        "INSERT INTO memory_artifacts (
+            artifact_id, session_id, kind, content_json, source_start_message_id, source_end_message_id, provenance, created_at, snapshot_version
+         ) VALUES (?1, ?2, 'pinned_memory', ?3, ?4, ?5, ?6, ?7, ?8)",
+        params![
+            artifact_id.as_str(),
+            session_id.as_str(),
+            content_json,
+            source_message_id_str,
+            source_message_id_str,
+            provenance.as_str(),
+            created_at,
+            snapshot_version_i64,
+        ],
+    )?;
+
+    Ok(PinnedMemoryRecord {
+        artifact_id,
+        session_id: session_id.clone(),
+        content,
+        source_message_id: source_message_id.cloned(),
+        provenance,
+        created_at,
+        snapshot_version,
+    })
+}
+
+#[derive(Debug)]
+struct StoredPinnedMemoryArtifact {
+    artifact_id: String,
+    session_id: String,
+    content_json: String,
+    source_start_message_id: Option<String>,
+    source_end_message_id: Option<String>,
+    provenance: String,
+    created_at: i64,
+    snapshot_version: i64,
+}
+
+impl TryFrom<StoredPinnedMemoryArtifact> for PinnedMemoryRecord {
+    type Error = PersistError;
+
+    fn try_from(value: StoredPinnedMemoryArtifact) -> Result<Self> {
+        let artifact_id = MemoryArtifactId::parse(value.artifact_id)?;
+        let session_id = SessionId::parse(value.session_id.clone())?;
+        let memory_content =
+            serde_json::from_str::<MemoryContent>(&value.content_json).map_err(|error| {
+                PersistError::InvalidData(format!(
+                    "invalid pinned memory JSON for session {}: {error}",
+                    value.session_id
+                ))
+            })?;
+        let content = memory_content.into_pinned().ok_or_else(|| {
+            PersistError::InvalidData(format!(
+                "memory artifact {artifact_id} did not contain pinned memory content"
+            ))
+        })?;
+        let snapshot_version = u64::try_from(value.snapshot_version).map_err(|_| {
+            PersistError::InvalidData(format!(
+                "snapshot_version {} is not a valid unsigned integer",
+                value.snapshot_version
+            ))
+        })?;
+        let source_message_id = match (value.source_start_message_id, value.source_end_message_id) {
+            (None, None) => None,
+            (Some(start), None) => Some(MessageId::parse(start)?),
+            (Some(start), Some(end)) if start == end => Some(MessageId::parse(start)?),
+            (Some(start), Some(end)) => {
+                return Err(PersistError::InvalidData(format!(
+                "pinned memory artifact {artifact_id} has mismatched source range {start}..{end}"
+            )))
+            }
+            (None, Some(end)) => {
+                return Err(PersistError::InvalidData(format!(
+                    "pinned memory artifact {artifact_id} has dangling source_end_message_id {end}"
+                )))
+            }
+        };
+
+        Ok(PinnedMemoryRecord {
+            artifact_id,
+            session_id,
+            content,
+            source_message_id,
+            provenance: value.provenance.parse()?,
+            created_at: value.created_at,
+            snapshot_version,
+        })
+    }
+}
+
+const EMBEDDING_ARTIFACT_FORMAT: &str = "ozone-memory.embedding-artifact.v1";
+
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+struct StoredEmbeddingArtifactContent {
+    format: String,
+    content: MemoryContent,
+    metadata: EmbeddingRecordMetadata,
+}
+
+impl StoredEmbeddingArtifactContent {
+    fn from_record(record: &EmbeddingRecord) -> Self {
+        Self {
+            format: EMBEDDING_ARTIFACT_FORMAT.to_owned(),
+            content: MemoryContent::from(record.content.clone()),
+            metadata: record.metadata.clone(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct StoredEmbeddingArtifact {
+    artifact_id: String,
+    session_id: String,
+    content_json: String,
+    source_start_message_id: Option<String>,
+    source_end_message_id: Option<String>,
+    provenance: String,
+    created_at: i64,
+    snapshot_version: i64,
+}
+
+impl TryFrom<StoredEmbeddingArtifact> for EmbeddingRecord {
+    type Error = PersistError;
+
+    fn try_from(value: StoredEmbeddingArtifact) -> Result<Self> {
+        let artifact_id = MemoryArtifactId::parse(value.artifact_id)?;
+        let session_id = SessionId::parse(value.session_id.clone())?;
+        let stored =
+            serde_json::from_str::<StoredEmbeddingArtifactContent>(&value.content_json).map_err(
+                |error| {
+                    PersistError::InvalidData(format!(
+                        "invalid embedding artifact JSON for session {}: {error}",
+                        value.session_id
+                    ))
+                },
+            )?;
+        if stored.format != EMBEDDING_ARTIFACT_FORMAT {
+            return Err(PersistError::InvalidData(format!(
+                "embedding artifact {artifact_id} used unsupported format `{}`",
+                stored.format
+            )));
+        }
+        let content = stored.content.into_embedding().ok_or_else(|| {
+            PersistError::InvalidData(format!(
+                "memory artifact {artifact_id} did not contain embedding content"
+            ))
+        })?;
+        let snapshot_version = u64::try_from(value.snapshot_version).map_err(|_| {
+            PersistError::InvalidData(format!(
+                "snapshot_version {} is not a valid unsigned integer",
+                value.snapshot_version
+            ))
+        })?;
+        if stored.metadata.dimensions == 0 {
+            return Err(PersistError::InvalidData(format!(
+                "embedding artifact {artifact_id} stored zero dimensions"
+            )));
+        }
+        if content.vector.len() != stored.metadata.dimensions {
+            return Err(PersistError::InvalidData(format!(
+                "embedding artifact {artifact_id} dimensions {} did not match vector length {}",
+                stored.metadata.dimensions,
+                content.vector.len()
+            )));
+        }
+        let source_message_id = match (value.source_start_message_id, value.source_end_message_id) {
+            (None, None) => None,
+            (Some(start), None) => Some(MessageId::parse(start)?),
+            (Some(start), Some(end)) if start == end => Some(MessageId::parse(start)?),
+            (Some(start), Some(end)) => {
+                return Err(PersistError::InvalidData(format!(
+                    "embedding artifact {artifact_id} has mismatched source range {start}..{end}"
+                )))
+            }
+            (None, Some(end)) => {
+                return Err(PersistError::InvalidData(format!(
+                    "embedding artifact {artifact_id} has dangling source_end_message_id {end}"
+                )))
+            }
+        };
+
+        Ok(EmbeddingRecord {
+            artifact_id,
+            session_id,
+            content,
+            source_message_id,
+            provenance: value.provenance.parse()?,
+            created_at: value.created_at,
+            snapshot_version,
+            metadata: stored.metadata,
+        })
+    }
+}
+
+fn upsert_embedding_artifact_in_tx(tx: &Transaction<'_>, record: &EmbeddingRecord) -> Result<()> {
+    if let Some(source_message_id) = record.source_message_id.as_ref() {
+        ensure_message_exists_in_tx(tx, source_message_id, &record.session_id)?;
+    }
+    let content_json =
+        serde_json::to_string(&StoredEmbeddingArtifactContent::from_record(record)).map_err(
+            |error| {
+                PersistError::InvalidData(format!(
+                    "failed to serialize embedding artifact for session {}: {error}",
+                    record.session_id
+                ))
+            },
+        )?;
+    let snapshot_version_i64 = i64::try_from(record.snapshot_version).map_err(|_| {
+        PersistError::InvalidData("snapshot_version exceeds SQLite INTEGER".to_owned())
+    })?;
+    let source_message_id = record.source_message_id.as_ref().map(MessageId::as_str);
+
+    tx.execute(
+        "INSERT INTO memory_artifacts (
+            artifact_id, session_id, kind, content_json, source_start_message_id, source_end_message_id, provenance, created_at, snapshot_version
+         ) VALUES (?1, ?2, 'embedding', ?3, ?4, ?4, ?5, ?6, ?7)
+         ON CONFLICT(artifact_id) DO UPDATE SET
+            session_id = excluded.session_id,
+            kind = excluded.kind,
+            content_json = excluded.content_json,
+            source_start_message_id = excluded.source_start_message_id,
+            source_end_message_id = excluded.source_end_message_id,
+            provenance = excluded.provenance,
+            created_at = excluded.created_at,
+            snapshot_version = excluded.snapshot_version",
+        params![
+            record.artifact_id.as_str(),
+            record.session_id.as_str(),
+            content_json,
+            source_message_id,
+            record.provenance.as_str(),
+            record.created_at,
+            snapshot_version_i64,
+        ],
+    )?;
+
+    Ok(())
+}
+
+fn group_embedding_records(
+    records: &[EmbeddingRecord],
+) -> Result<BTreeMap<SessionId, Vec<&EmbeddingRecord>>> {
+    let mut grouped = BTreeMap::<SessionId, Vec<&EmbeddingRecord>>::new();
+    for record in records {
+        grouped
+            .entry(record.session_id.clone())
+            .or_default()
+            .push(record);
+    }
+
+    for session_records in grouped.values_mut() {
+        session_records.sort_by(|left, right| {
+            left.artifact_id
+                .as_str()
+                .cmp(right.artifact_id.as_str())
+                .then_with(|| left.created_at.cmp(&right.created_at))
+        });
+    }
+
+    Ok(grouped)
+}
+
+fn target_embedding_sessions(
+    repo: &SqliteRepository,
+    session_id: Option<&SessionId>,
+    grouped: &BTreeMap<SessionId, Vec<&EmbeddingRecord>>,
+) -> Result<Vec<SessionId>> {
+    match session_id {
+        Some(session_id) => {
+            if let Some((unexpected_session_id, _)) = grouped
+                .iter()
+                .find(|(record_session_id, _)| *record_session_id != session_id)
+            {
+                return Err(PersistError::ConsistencyError(format!(
+                    "embedding artifact {} did not belong to session {}",
+                    unexpected_session_id, session_id
+                )));
+            }
+            Ok(vec![session_id.clone()])
+        }
+        None => {
+            let mut sessions = repo
+                .list_sessions()?
+                .into_iter()
+                .map(|session| session.session_id)
+                .collect::<Vec<_>>();
+            for session_id in grouped.keys() {
+                if sessions.iter().all(|existing| existing != session_id) {
+                    sessions.push(session_id.clone());
+                }
+            }
+            sessions.sort();
+            sessions.dedup();
+            Ok(sessions)
+        }
+    }
+}
+
+#[derive(Debug)]
+struct StoredCrossSessionSearchHit {
+    session_id: String,
+    session_name: String,
+    character_name: Option<String>,
+    tags_json: Option<String>,
+    message_id: String,
+    author_kind: String,
+    content: String,
+    created_at: i64,
+    bm25_score: f32,
+}
+
+impl TryFrom<StoredCrossSessionSearchHit> for CrossSessionSearchHit {
+    type Error = PersistError;
+
+    fn try_from(value: StoredCrossSessionSearchHit) -> Result<Self> {
+        Ok(CrossSessionSearchHit {
+            session: SearchSessionMetadata {
+                session_id: SessionId::parse(value.session_id)?,
+                session_name: value.session_name,
+                character_name: value.character_name,
+                tags: parse_tags_json(value.tags_json)?,
+            },
+            message_id: MessageId::parse(value.message_id)?,
+            author_kind: value.author_kind,
+            content: value.content,
+            created_at: value.created_at,
+            bm25_score: value.bm25_score,
+        })
+    }
+}
+
+fn parse_tags_json(tags_json: Option<String>) -> Result<Vec<String>> {
+    match tags_json {
+        Some(tags_json) => serde_json::from_str(&tags_json).map_err(|error| {
+            PersistError::InvalidData(format!("invalid session tags JSON: {error}"))
+        }),
+        None => Ok(Vec::new()),
+    }
+}
+
 #[derive(Debug)]
 struct StoredSessionSummary {
     session_id: String,
@@ -1457,12 +2099,7 @@ impl TryFrom<StoredSessionSummary> for SessionSummary {
 
     fn try_from(value: StoredSessionSummary) -> Result<Self> {
         let session_id = SessionId::parse(value.session_id)?;
-        let tags = match value.tags_json {
-            Some(tags_json) => serde_json::from_str(&tags_json).map_err(|error| {
-                PersistError::InvalidData(format!("invalid session tags JSON: {error}"))
-            })?,
-            None => Vec::new(),
-        };
+        let tags = parse_tags_json(value.tags_json)?;
         let message_count = u64::try_from(value.message_count).map_err(|_| {
             PersistError::InvalidData(format!(
                 "message_count {} is not a valid unsigned integer",
@@ -1501,6 +2138,50 @@ fn read_stored_session_summary(row: &Row<'_>) -> rusqlite::Result<StoredSessionS
         message_count: row.get(5)?,
         db_size_bytes: row.get(6)?,
         tags_json: row.get(7)?,
+    })
+}
+
+fn read_stored_pinned_memory_artifact(
+    row: &Row<'_>,
+) -> rusqlite::Result<StoredPinnedMemoryArtifact> {
+    Ok(StoredPinnedMemoryArtifact {
+        artifact_id: row.get(0)?,
+        session_id: row.get(1)?,
+        content_json: row.get(2)?,
+        source_start_message_id: row.get(3)?,
+        source_end_message_id: row.get(4)?,
+        provenance: row.get(5)?,
+        created_at: row.get(6)?,
+        snapshot_version: row.get(7)?,
+    })
+}
+
+fn read_stored_embedding_artifact(row: &Row<'_>) -> rusqlite::Result<StoredEmbeddingArtifact> {
+    Ok(StoredEmbeddingArtifact {
+        artifact_id: row.get(0)?,
+        session_id: row.get(1)?,
+        content_json: row.get(2)?,
+        source_start_message_id: row.get(3)?,
+        source_end_message_id: row.get(4)?,
+        provenance: row.get(5)?,
+        created_at: row.get(6)?,
+        snapshot_version: row.get(7)?,
+    })
+}
+
+fn read_stored_cross_session_search_hit(
+    row: &Row<'_>,
+) -> rusqlite::Result<StoredCrossSessionSearchHit> {
+    Ok(StoredCrossSessionSearchHit {
+        session_id: row.get(0)?,
+        session_name: row.get(1)?,
+        character_name: row.get(2)?,
+        tags_json: row.get(3)?,
+        message_id: row.get(4)?,
+        author_kind: row.get(5)?,
+        content: row.get(6)?,
+        created_at: row.get(7)?,
+        bm25_score: row.get(8)?,
     })
 }
 
@@ -1976,6 +2657,16 @@ fn current_timestamp_ms() -> UnixTimestamp {
     i64::try_from(duration.as_millis()).unwrap_or(i64::MAX)
 }
 
+fn plain_text_fts_query(query: &str) -> Option<String> {
+    let terms: Vec<String> = query
+        .split_whitespace()
+        .map(str::trim)
+        .filter(|term| !term.is_empty())
+        .map(|term| format!("\"{}\"", term.replace('"', "\"\"")))
+        .collect();
+    (!terms.is_empty()).then(|| terms.join(" "))
+}
+
 fn generate_uuid_like() -> String {
     let counter = u128::from(ID_COUNTER.fetch_add(1, Ordering::Relaxed));
     let nanos = SystemTime::now()
@@ -2037,6 +2728,7 @@ mod tests {
         },
     };
 
+    use ozone_memory::{source_text_hash, EmbeddingProviderKind};
     use rusqlite::Connection;
 
     use super::*;
@@ -2209,6 +2901,387 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn pinning_and_unpinning_message_memories_round_trip() {
+        let sandbox = TestSandbox::new("pinned-memory-lifecycle");
+        let (repo, _) = test_repo(&sandbox, 1_725_647_200_000);
+        let session = repo
+            .create_session(CreateSessionRequest::new("Pinned Memory Session"))
+            .unwrap();
+        let message = repo
+            .insert_message(
+                &session.session_id,
+                CreateMessageRequest::user("Remember the observatory override phrase."),
+            )
+            .unwrap();
+        let message_id = MessageId::parse(message.message_id).unwrap();
+
+        let pinned = repo
+            .pin_message_memory(
+                &session.session_id,
+                &message_id,
+                PinMessageMemoryRequest {
+                    pinned_by: ozone_memory::AuthorId::User,
+                    expires_after_turns: Some(3),
+                    provenance: Provenance::UserAuthored,
+                },
+            )
+            .unwrap();
+
+        assert_eq!(pinned.source_message_id, Some(message_id));
+        assert_eq!(
+            pinned.content.text,
+            "Remember the observatory override phrase."
+        );
+        assert_eq!(pinned.content.expires_after_turns, Some(3));
+        assert_eq!(pinned.snapshot_version, 1);
+
+        let listed = repo.list_pinned_memories(&session.session_id).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(listed[0].record.artifact_id, pinned.artifact_id);
+        assert_eq!(listed[0].remaining_turns, Some(3));
+        assert!(listed[0].is_active);
+
+        let conn = Connection::open(repo.paths().session_db_path(&session.session_id)).unwrap();
+        let count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*)
+                 FROM memory_artifacts
+                 WHERE session_id = ?1 AND kind = 'pinned_memory'",
+                [session.session_id.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(count, 1);
+
+        assert!(repo
+            .remove_pinned_memory(&session.session_id, &pinned.artifact_id)
+            .unwrap());
+        assert!(repo
+            .list_pinned_memories(&session.session_id)
+            .unwrap()
+            .is_empty());
+        assert!(!repo
+            .remove_pinned_memory(&session.session_id, &pinned.artifact_id)
+            .unwrap());
+    }
+
+    #[test]
+    fn freeform_note_memories_persist_without_source_messages() {
+        let sandbox = TestSandbox::new("pinned-note-memory");
+        let (repo, _) = test_repo(&sandbox, 1_725_647_200_000);
+        let session = repo
+            .create_session(CreateSessionRequest::new("Pinned Notes"))
+            .unwrap();
+
+        let mut request = CreateNoteMemoryRequest::new(
+            "Pack the brass lantern before leaving camp.",
+            ozone_memory::AuthorId::User,
+            Provenance::UserAuthored,
+        );
+        request.content.expires_after_turns = Some(4);
+
+        let note = repo
+            .create_note_memory(&session.session_id, request)
+            .unwrap();
+        assert_eq!(note.source_message_id, None);
+        assert_eq!(note.snapshot_version, 0);
+
+        let listed = repo.list_pinned_memories(&session.session_id).unwrap();
+        assert_eq!(listed.len(), 1);
+        assert_eq!(
+            listed[0].record.content.text,
+            "Pack the brass lantern before leaving camp."
+        );
+        assert_eq!(listed[0].remaining_turns, Some(4));
+
+        let conn = Connection::open(repo.paths().session_db_path(&session.session_id)).unwrap();
+        let stored: (String, String, Option<String>, Option<String>, String, i64) = conn
+            .query_row(
+                "SELECT kind, content_json, source_start_message_id, source_end_message_id, provenance, snapshot_version
+                 FROM memory_artifacts
+                 WHERE artifact_id = ?1",
+                [note.artifact_id.as_str()],
+                |row| {
+                    Ok((
+                        row.get(0)?,
+                        row.get(1)?,
+                        row.get(2)?,
+                        row.get(3)?,
+                        row.get(4)?,
+                        row.get(5)?,
+                    ))
+                },
+            )
+            .unwrap();
+        assert_eq!(stored.0, "pinned_memory");
+        assert!(stored.1.contains("\"kind\":\"pinned_memory\""));
+        assert!(stored.1.contains("Pack the brass lantern"));
+        assert_eq!(stored.2, None);
+        assert_eq!(stored.3, None);
+        assert_eq!(stored.4, "user_authored");
+        assert_eq!(stored.5, 0);
+    }
+
+    #[test]
+    fn pinned_memory_expiry_tracks_message_count() {
+        let sandbox = TestSandbox::new("pinned-memory-expiry");
+        let (repo, _) = test_repo(&sandbox, 1_725_647_200_000);
+        let session = repo
+            .create_session(CreateSessionRequest::new("Expiry Session"))
+            .unwrap();
+        let seed = repo
+            .insert_message(
+                &session.session_id,
+                CreateMessageRequest::user("The comet marker is blue."),
+            )
+            .unwrap();
+        let seed_id = MessageId::parse(seed.message_id).unwrap();
+
+        let pinned = repo
+            .pin_message_memory(
+                &session.session_id,
+                &seed_id,
+                PinMessageMemoryRequest {
+                    pinned_by: ozone_memory::AuthorId::User,
+                    expires_after_turns: Some(2),
+                    provenance: Provenance::UserAuthored,
+                },
+            )
+            .unwrap();
+        assert_eq!(pinned.snapshot_version, 1);
+
+        let initial = repo.list_pinned_memories(&session.session_id).unwrap();
+        assert_eq!(initial[0].turns_elapsed, 0);
+        assert_eq!(initial[0].remaining_turns, Some(2));
+        assert!(initial[0].is_active);
+
+        repo.insert_message(
+            &session.session_id,
+            CreateMessageRequest::user("A fresh turn advances the countdown."),
+        )
+        .unwrap();
+        let after_one_turn = repo.list_pinned_memories(&session.session_id).unwrap();
+        assert_eq!(after_one_turn[0].turns_elapsed, 1);
+        assert_eq!(after_one_turn[0].remaining_turns, Some(1));
+        assert!(after_one_turn[0].is_active);
+
+        repo.insert_message(
+            &session.session_id,
+            CreateMessageRequest::user("The countdown should now expire."),
+        )
+        .unwrap();
+        let expired = repo.list_pinned_memories(&session.session_id).unwrap();
+        assert_eq!(expired[0].turns_elapsed, 2);
+        assert_eq!(expired[0].remaining_turns, Some(0));
+        assert!(!expired[0].is_active);
+        assert!(expired[0].is_expired());
+    }
+
+    #[test]
+    fn embedding_artifacts_round_trip_and_replace_per_session() {
+        let sandbox = TestSandbox::new("embedding-artifacts");
+        let (repo, _) = test_repo(&sandbox, 1_725_647_200_000);
+        let first = repo
+            .create_session(CreateSessionRequest::new("Embedding Session One"))
+            .unwrap();
+        let second = repo
+            .create_session(CreateSessionRequest::new("Embedding Session Two"))
+            .unwrap();
+        let first_message = repo
+            .insert_message(
+                &first.session_id,
+                CreateMessageRequest::user("The observatory key is under the lamp."),
+            )
+            .unwrap();
+        let second_message = repo
+            .insert_message(
+                &second.session_id,
+                CreateMessageRequest::user("The gate opens at dusk."),
+            )
+            .unwrap();
+
+        let first_record = embedding_record(
+            "923e4567-e89b-12d3-a456-426614174000",
+            &first.session_id,
+            Some(&MessageId::parse(first_message.message_id.clone()).unwrap()),
+            vec![0.1, 0.2, 0.3],
+            "The observatory key is under the lamp.",
+            1_725_647_200_000,
+            1,
+        );
+        let second_record = embedding_record(
+            "a23e4567-e89b-12d3-a456-426614174000",
+            &second.session_id,
+            Some(&MessageId::parse(second_message.message_id.clone()).unwrap()),
+            vec![0.4, 0.5, 0.6],
+            "The gate opens at dusk.",
+            1_725_647_200_100,
+            1,
+        );
+
+        assert_eq!(
+            repo.upsert_embedding_artifacts(&[first_record.clone(), second_record.clone()])
+                .unwrap(),
+            2
+        );
+        assert_eq!(
+            repo.list_embedding_artifacts(Some(&first.session_id)).unwrap(),
+            vec![first_record.clone()]
+        );
+        let global = repo.list_embedding_artifacts(None).unwrap();
+        assert_eq!(global.len(), 2);
+        assert!(global.contains(&first_record));
+        assert!(global.contains(&second_record));
+
+        let updated_first = embedding_record(
+            "923e4567-e89b-12d3-a456-426614174000",
+            &first.session_id,
+            Some(&MessageId::parse(first_message.message_id.clone()).unwrap()),
+            vec![0.9, 0.0, 0.1],
+            "The observatory key moved behind the painting.",
+            1_725_647_200_200,
+            2,
+        );
+        repo.upsert_embedding_artifacts(std::slice::from_ref(&updated_first))
+            .unwrap();
+        assert_eq!(
+            repo.list_embedding_artifacts(Some(&first.session_id)).unwrap(),
+            vec![updated_first.clone()]
+        );
+
+        let replacement = embedding_record(
+            "b23e4567-e89b-12d3-a456-426614174000",
+            &first.session_id,
+            None,
+            vec![0.0, 1.0, 0.0],
+            "Pack the brass lantern before leaving camp.",
+            1_725_647_200_300,
+            0,
+        );
+        assert_eq!(
+            repo.replace_embedding_artifacts(
+                Some(&first.session_id),
+                std::slice::from_ref(&replacement),
+            )
+                .unwrap(),
+            1
+        );
+        assert_eq!(
+            repo.list_embedding_artifacts(Some(&first.session_id)).unwrap(),
+            vec![replacement.clone()]
+        );
+        let global = repo.list_embedding_artifacts(None).unwrap();
+        assert_eq!(global.len(), 2);
+        assert!(global.contains(&replacement));
+        assert!(global.contains(&second_record));
+    }
+
+    #[test]
+    fn cross_session_search_returns_session_metadata_and_local_search_still_scopes() {
+        let sandbox = TestSandbox::new("cross-session-search");
+        let (repo, _) = test_repo(&sandbox, 1_725_647_200_000);
+
+        let mut first_request = CreateSessionRequest::new("Observatory Log");
+        first_request.character_name = Some("Aster".to_owned());
+        first_request.tags = vec!["stellar".to_owned()];
+        let first = repo.create_session(first_request).unwrap();
+
+        let mut second_request = CreateSessionRequest::new("Village Log");
+        second_request.character_name = Some("Mira".to_owned());
+        second_request.tags = vec!["grounded".to_owned(), "phase2a".to_owned()];
+        let second = repo.create_session(second_request).unwrap();
+
+        let first_nebula = repo
+            .insert_message(
+                &first.session_id,
+                CreateMessageRequest::user("The nebula gate opens only at dusk."),
+            )
+            .unwrap();
+        repo.insert_message(
+            &first.session_id,
+            CreateMessageRequest::user("The orchard trail stays quiet tonight."),
+        )
+        .unwrap();
+        let second_nebula = repo
+            .insert_message(
+                &second.session_id,
+                CreateMessageRequest::new("assistant", "Nebula charts point east of the river."),
+            )
+            .unwrap();
+
+        let local = repo.search_messages(&first.session_id, "nebula").unwrap();
+        assert_eq!(local.len(), 1);
+        assert_eq!(local[0].message_id, first_nebula.message_id);
+
+        let hits = repo.search_across_sessions("nebula").unwrap();
+        assert_eq!(hits.len(), 2);
+        assert!(hits
+            .iter()
+            .all(|hit| hit.content.to_lowercase().contains("nebula")));
+
+        let first_hit = hits
+            .iter()
+            .find(|hit| hit.message_id.as_str() == first_nebula.message_id)
+            .unwrap();
+        assert_eq!(first_hit.session.session_id, first.session_id);
+        assert_eq!(first_hit.session.session_name, "Observatory Log");
+        assert_eq!(first_hit.session.character_name.as_deref(), Some("Aster"));
+        assert_eq!(first_hit.session.tags, vec!["stellar".to_owned()]);
+
+        let second_hit = hits
+            .iter()
+            .find(|hit| hit.message_id.as_str() == second_nebula.message_id)
+            .unwrap();
+        assert_eq!(second_hit.session.session_id, second.session_id);
+        assert_eq!(second_hit.session.session_name, "Village Log");
+        assert_eq!(second_hit.session.character_name.as_deref(), Some("Mira"));
+        assert_eq!(
+            second_hit.session.tags,
+            vec!["grounded".to_owned(), "phase2a".to_owned()]
+        );
+    }
+
+    #[test]
+    fn plain_text_search_treats_hyphenated_terms_as_literals() {
+        let sandbox = TestSandbox::new("hyphenated-search");
+        let (repo, _) = test_repo(&sandbox, 1_725_647_200_000);
+
+        let first = repo
+            .create_session(CreateSessionRequest::new("Hyphen Search A"))
+            .unwrap();
+        let second = repo
+            .create_session(CreateSessionRequest::new("Hyphen Search B"))
+            .unwrap();
+
+        let keyword = "observatory-phase2a-validate";
+        let first_message = repo
+            .insert_message(
+                &first.session_id,
+                CreateMessageRequest::user(format!("The keyword is {keyword} in session A.")),
+            )
+            .unwrap();
+        let second_message = repo
+            .insert_message(
+                &second.session_id,
+                CreateMessageRequest::user(format!("Session B also stores {keyword}.")),
+            )
+            .unwrap();
+
+        let local = repo.search_messages(&first.session_id, keyword).unwrap();
+        assert_eq!(local.len(), 1);
+        assert_eq!(local[0].message_id, first_message.message_id);
+
+        let global = repo.search_across_sessions(keyword).unwrap();
+        assert_eq!(global.len(), 2);
+        assert!(global
+            .iter()
+            .any(|hit| hit.message_id.as_str() == first_message.message_id));
+        assert!(global
+            .iter()
+            .any(|hit| hit.message_id.as_str() == second_message.message_id));
     }
 
     #[test]
@@ -3019,6 +4092,31 @@ mod tests {
 
     fn swipe_group_id(value: &str) -> SwipeGroupId {
         SwipeGroupId::parse(value).unwrap()
+    }
+
+    fn embedding_record(
+        artifact_id: &str,
+        session_id: &SessionId,
+        source_message_id: Option<&MessageId>,
+        vector: Vec<f32>,
+        text: &str,
+        created_at: i64,
+        snapshot_version: u64,
+    ) -> EmbeddingRecord {
+        EmbeddingRecord {
+            artifact_id: MemoryArtifactId::parse(artifact_id).unwrap(),
+            session_id: session_id.clone(),
+            content: ozone_memory::EmbeddingContent::new(vector, source_text_hash(text)),
+            source_message_id: source_message_id.cloned(),
+            provenance: Provenance::UserAuthored,
+            created_at,
+            snapshot_version,
+            metadata: EmbeddingRecordMetadata {
+                provider: EmbeddingProviderKind::Mock,
+                model: "mock/stable".to_owned(),
+                dimensions: 3,
+            },
+        }
     }
 
     fn test_repo(sandbox: &TestSandbox, initial_time: i64) -> (SqliteRepository, Arc<AtomicI64>) {

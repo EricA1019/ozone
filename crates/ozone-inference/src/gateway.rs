@@ -153,6 +153,11 @@ impl InferenceGateway {
         self.client.descriptor()
     }
 
+    /// Return a reference to the underlying KoboldCpp client for direct probing.
+    pub fn client(&self) -> &KoboldCppClient {
+        &self.client
+    }
+
     // -----------------------------------------------------------------------
     // Health
     // -----------------------------------------------------------------------

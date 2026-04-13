@@ -76,9 +76,13 @@ impl StreamDecoder {
         let v: serde_json::Value = serde_json::from_str(payload).ok()?;
 
         // KoboldCpp format: has a "token" key at the top level.
-        if v.get("token").is_some() {
-            let text = v["token"]["text"].as_str().unwrap_or("");
-            // finish_reason is only meaningful as a non-null string.
+        // Native endpoint sends `{"token": "Hello"}` (raw string).
+        // TGI-compatible sends `{"token": {"text": "Hello"}}` (object).
+        if let Some(token_val) = v.get("token") {
+            let text = token_val
+                .as_str()
+                .or_else(|| token_val.get("text").and_then(|t| t.as_str()))
+                .unwrap_or("");
             let finish = v["finish_reason"].as_str();
             if let Some(reason) = finish {
                 return Some(StreamChunk::FinishReason(reason.to_string()));
@@ -213,8 +217,26 @@ mod tests {
     }
 
     #[test]
-    fn sse_koboldcpp_token_stream() {
+    fn sse_koboldcpp_native_token_stream() {
         let mut dec = StreamDecoder::new(StreamingFormat::ServerSentEvents);
+        // KoboldCpp native `/api/extra/generate/stream` sends token as a raw string.
+        let input = concat!(
+            "data: {\"token\":\" Hello\",\"finish_reason\":null}\n",
+            "data: {\"token\":\" world\",\"finish_reason\":null}\n",
+            "data: {\"token\":\"\",\"finish_reason\":\"stop\"}\n",
+            "data: [DONE]\n",
+        );
+        let chunks = feed(&mut dec, input);
+        assert_eq!(chunks[0], StreamChunk::Token(" Hello".into()));
+        assert_eq!(chunks[1], StreamChunk::Token(" world".into()));
+        assert_eq!(chunks[2], StreamChunk::FinishReason("stop".into()));
+        assert_eq!(chunks[3], StreamChunk::Done);
+    }
+
+    #[test]
+    fn sse_koboldcpp_tgi_token_stream() {
+        let mut dec = StreamDecoder::new(StreamingFormat::ServerSentEvents);
+        // TGI-compatible format sends token as an object with a "text" field.
         let input = concat!(
             "data: {\"token\":{\"text\":\" Hello\"},\"finish_reason\":null}\n",
             "data: {\"token\":{\"text\":\" world\"},\"finish_reason\":null}\n",

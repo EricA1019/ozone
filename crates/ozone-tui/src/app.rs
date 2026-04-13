@@ -22,6 +22,7 @@ pub enum InspectorFocus {
     Summary,
     Branches,
     Message,
+    Recall,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -300,6 +301,13 @@ pub struct ContextDryRunPreview {
     pub built_at: i64,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RecallBrowser {
+    pub title: String,
+    pub summary: String,
+    pub lines: Vec<String>,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionMetadata {
     pub character_name: Option<String>,
@@ -389,6 +397,7 @@ pub enum RuntimeCommand {
     CancelGeneration,
     BuildContextDryRun,
     ToggleBookmark { message_id: String },
+    TogglePinnedMemory { message_id: String },
     RunCommand { input: String },
 }
 
@@ -409,6 +418,7 @@ pub struct RuntimeContextRefresh {
     pub session_stats: Option<SessionStats>,
     pub context_preview: Option<ContextPreview>,
     pub context_dry_run: Option<ContextDryRunPreview>,
+    pub recall_browser: Option<RecallBrowser>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -486,6 +496,7 @@ pub struct AppBootstrap {
     pub session_stats: Option<SessionStats>,
     pub context_preview: Option<ContextPreview>,
     pub context_dry_run: Option<ContextDryRunPreview>,
+    pub recall_browser: Option<RecallBrowser>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -502,6 +513,7 @@ pub struct ShellState {
     pub session_stats: Option<SessionStats>,
     pub context_preview: Option<ContextPreview>,
     pub context_dry_run: Option<ContextDryRunPreview>,
+    pub recall_browser: Option<RecallBrowser>,
     pub pending_actions: Vec<KeyAction>,
     pub runtime_commands: Vec<RuntimeCommand>,
     pub should_quit: bool,
@@ -522,6 +534,7 @@ impl ShellState {
             session_stats: None,
             context_preview: None,
             context_dry_run: None,
+            recall_browser: None,
             pending_actions: Vec::new(),
             runtime_commands: Vec::new(),
             should_quit: false,
@@ -561,6 +574,7 @@ impl ShellState {
         self.session_stats = bootstrap.session_stats;
         self.context_preview = bootstrap.context_preview;
         self.context_dry_run = bootstrap.context_dry_run;
+        self.recall_browser = bootstrap.recall_browser;
     }
 
     pub fn handle_key_event(&mut self, key: KeyEvent) -> KeyAction {
@@ -627,6 +641,7 @@ impl ShellState {
             }
             KeyAction::TriggerContextDryRun => self.trigger_context_dry_run(),
             KeyAction::ToggleBookmark => self.trigger_bookmark_toggle(),
+            KeyAction::TogglePinnedMemory => self.trigger_pinned_memory_toggle(),
             KeyAction::HistoryPrevious => {
                 if let Some(draft) = self.history.previous(&self.draft) {
                     self.focus = FocusTarget::Draft;
@@ -785,6 +800,9 @@ impl ShellState {
         if let Some(context_dry_run) = refresh.context_dry_run {
             self.context_dry_run = Some(context_dry_run);
         }
+        if let Some(recall_browser) = refresh.recall_browser {
+            self.recall_browser = Some(recall_browser);
+        }
         if let Some(status_line) = refresh.status_line {
             self.status_line = Some(status_line);
         }
@@ -810,14 +828,14 @@ impl ShellState {
             return;
         }
 
-        if prompt.trim_start().starts_with('/') {
+        if is_shell_command(&prompt) {
             self.history.push(prompt.clone());
             self.runtime_commands
                 .push(RuntimeCommand::RunCommand { input: prompt });
             self.draft = DraftState::default();
             self.focus = FocusTarget::Draft;
             self.input_mode = InputMode::Insert;
-            self.status_line = Some("Running session command…".into());
+            self.status_line = Some("Running shell command…".into());
             return;
         }
 
@@ -874,6 +892,27 @@ impl ShellState {
         self.inspector.focus = InspectorFocus::Message;
     }
 
+    fn trigger_pinned_memory_toggle(&mut self) {
+        let Some(index) = self.session.selected_message else {
+            self.status_line = Some("No transcript message is selected".into());
+            return;
+        };
+        let Some(item) = self.session.transcript.get(index) else {
+            self.status_line = Some("Selected transcript entry is no longer available".into());
+            return;
+        };
+        let Some(message_id) = item.message_id.clone() else {
+            self.status_line =
+                Some("Only persisted transcript messages can be pinned to memory".into());
+            return;
+        };
+
+        self.runtime_commands
+            .push(RuntimeCommand::TogglePinnedMemory { message_id });
+        self.status_line = Some("Updating pinned memory…".into());
+        self.inspector.focus = InspectorFocus::Recall;
+    }
+
     fn push_transcript_item(&mut self, item: TranscriptItem) {
         self.session.transcript.push(item);
         self.session.selected_message = Some(self.session.transcript.len() - 1);
@@ -891,6 +930,11 @@ fn byte_index_for_char(text: &str, char_index: usize) -> usize {
         .unwrap_or(text.len())
 }
 
+fn is_shell_command(prompt: &str) -> bool {
+    let trimmed = prompt.trim_start();
+    trimmed.starts_with('/') || trimmed.starts_with(':')
+}
+
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -899,10 +943,10 @@ mod tests {
 
     use super::{
         AppBootstrap, BranchItem, ContextDryRunPreview, ContextPreview, DraftCheckpoint,
-        DraftState, FocusTarget, GenerationPoll, InspectorFocus, RuntimeCancellation,
-        RuntimeCommand, RuntimeContextRefresh, RuntimeFailure, RuntimePhase, RuntimeProgress,
-        RuntimeSendReceipt, ScreenState, SessionContext, SessionMetadata, SessionStats, ShellState,
-        TranscriptItem,
+        DraftState, FocusTarget, GenerationPoll, InspectorFocus, RecallBrowser,
+        RuntimeCancellation, RuntimeCommand, RuntimeContextRefresh, RuntimeFailure, RuntimePhase,
+        RuntimeProgress, RuntimeSendReceipt, ScreenState, SessionContext, SessionMetadata,
+        SessionStats, ShellState, TranscriptItem,
     };
     use crate::input::{InputMode, KeyAction};
 
@@ -928,6 +972,7 @@ mod tests {
             session_stats: None,
             context_preview: None,
             context_dry_run: None,
+            recall_browser: None,
         };
 
         app.hydrate(bootstrap);
@@ -1009,7 +1054,7 @@ mod tests {
     }
 
     #[test]
-    fn slash_command_routes_to_runtime_command_without_queuing_generation() {
+    fn shell_commands_route_to_runtime_without_queuing_generation() {
         let mut app = ShellState::new(session_context());
 
         app.apply_action(KeyAction::EnterInsert);
@@ -1025,7 +1070,21 @@ mod tests {
             }]
         );
         assert!(matches!(app.session.runtime, RuntimePhase::Idle));
-        assert_eq!(app.status_line.as_deref(), Some("Running session command…"));
+        assert_eq!(app.status_line.as_deref(), Some("Running shell command…"));
+
+        app.apply_action(KeyAction::EnterInsert);
+        for ch in ":memories".chars() {
+            app.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert_eq!(
+            app.take_runtime_commands(),
+            vec![RuntimeCommand::RunCommand {
+                input: ":memories".into()
+            }]
+        );
+        assert!(matches!(app.session.runtime, RuntimePhase::Idle));
     }
 
     #[test]
@@ -1114,6 +1173,41 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_k_queues_pinned_memory_toggle_for_selected_persisted_message() {
+        let mut app = ShellState::new(session_context());
+        app.hydrate(AppBootstrap {
+            transcript: vec![TranscriptItem::persisted(
+                "msg-1",
+                "assistant",
+                "pin me",
+                false,
+            )],
+            branches: vec![BranchItem::new("branch-a", "main", true)],
+            status_line: None,
+            draft: None,
+            screen: None,
+            session_metadata: None,
+            session_stats: None,
+            context_preview: None,
+            context_dry_run: None,
+            recall_browser: None,
+        });
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)),
+            KeyAction::TogglePinnedMemory
+        );
+        assert_eq!(
+            app.take_runtime_commands(),
+            vec![RuntimeCommand::TogglePinnedMemory {
+                message_id: "msg-1".into()
+            }]
+        );
+        assert_eq!(app.status_line.as_deref(), Some("Updating pinned memory…"));
+        assert_eq!(app.inspector.focus, InspectorFocus::Recall);
+    }
+
+    #[test]
     fn bookmark_action_queues_toggle_for_selected_persisted_message() {
         let mut app = ShellState::new(session_context());
         app.hydrate(AppBootstrap {
@@ -1131,6 +1225,7 @@ mod tests {
             session_stats: None,
             context_preview: None,
             context_dry_run: None,
+            recall_browser: None,
         });
 
         assert_eq!(
@@ -1269,6 +1364,11 @@ mod tests {
                 summary: "2 turns".into(),
                 built_at: 1_700_000_000_000,
             }),
+            recall_browser: Some(RecallBrowser {
+                title: "Recall".into(),
+                summary: "1 active · 2 recent hits".into(),
+                lines: vec!["active pinned 1".into()],
+            }),
         });
 
         assert_eq!(app.status_line.as_deref(), Some("Context dry run updated"));
@@ -1287,6 +1387,12 @@ mod tests {
         );
         assert!(app.context_preview.is_some());
         assert!(app.context_dry_run.is_some());
+        assert_eq!(
+            app.recall_browser
+                .as_ref()
+                .map(|browser| browser.summary.as_str()),
+            Some("1 active · 2 recent hits")
+        );
     }
 
     #[test]

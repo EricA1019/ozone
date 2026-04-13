@@ -15,13 +15,18 @@ use ozone_engine::{
 };
 
 mod context_bridge;
+mod hybrid_search;
 mod inference_adapter;
+mod index_rebuild;
 mod runtime;
 
+use hybrid_search::{load_memory_config, HybridSearchService};
+use index_rebuild::rebuild_index;
 use ozone_persist::{
-    BranchRecord, CharacterCard, CreateMessageRequest, CreateSessionRequest,
-    ImportCharacterCardRequest, PersistError, PersistencePaths, SessionId, SessionSummary,
-    SqliteRepository, TranscriptExport,
+    AuthorId, BranchRecord, CharacterCard, CreateMessageRequest, CreateNoteMemoryRequest,
+    CreateSessionRequest, ImportCharacterCardRequest, MemoryArtifactId, PersistError,
+    PersistencePaths, PinMessageMemoryRequest, PinnedMemoryView, Provenance, SessionId,
+    SessionSummary, SqliteRepository, TranscriptExport,
 };
 use ozone_tui::{run_terminal_session, SessionContext as TuiSessionContext};
 use runtime::Phase1dRuntime;
@@ -41,9 +46,9 @@ static ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 #[command(
     name = "ozone-plus",
     version,
-    about = "Phase 1F ozone+ chat shell with engine-backed persistence",
-    long_about = "Phase 1F ozone+ chat shell with engine-backed persistence, real backend inference, and first-pass import/export lanes.\n\nThis binary opens a chat-first terminal shell for persisted sessions while still exposing lower-level CLI surfaces for transcripts, branches, swipes, character-card import, and transcript/session export. User turns, transcript state, session locks, draft persistence, and assistant generation continue to run through the real ozone persistence + inference layers.",
-    after_help = "Examples:\n  ozone-plus create \"First Session\"\n  ozone-plus open <session-id>\n  ozone-plus send <session-id> \"Hello there\"\n  ozone-plus transcript <session-id>\n  ozone-plus branch create <session-id> fork --activate\n  ozone-plus swipe add <session-id> <parent-message-id> \"Alternate reply\"\n  ozone-plus swipe activate <session-id> <swipe-group-id> 1\n  ozone-plus import card ./aster.json\n  ozone-plus export transcript <session-id> --output ./transcript.txt\n  ozone-plus export session <session-id> --output ./session.json"
+    about = "Phase 2B ozone+ chat shell with manual memory, recall foundations, and vector-index rebuild support",
+    long_about = "Phase 2B ozone+ chat shell with engine-backed persistence, real backend inference, import/export lanes, manual memory + recall foundations, and an explicit vector-index rebuild surface.\n\nThis binary opens a chat-first terminal shell for persisted sessions while still exposing lower-level CLI surfaces for transcripts, branches, swipes, memory pinning, keyword search, character-card import, transcript/session export, and on-demand vector-index rebuilds. User turns, transcript state, session locks, draft persistence, active pinned memory, assistant generation, embedding persistence, and disk-backed index rebuilds continue to run through the real ozone persistence + inference layers.",
+    after_help = "Examples:\n  ozone-plus create \"First Session\"\n  ozone-plus open <session-id>\n  ozone-plus send <session-id> \"Hello there\"\n  ozone-plus transcript <session-id>\n  ozone-plus memory pin <session-id> <message-id>\n  ozone-plus memory note <session-id> \"Remember the observatory key\"\n  ozone-plus search session <session-id> nebula\n  ozone-plus search global nebula\n  ozone-plus index rebuild\n  ozone-plus branch create <session-id> fork --activate\n  ozone-plus swipe add <session-id> <parent-message-id> \"Alternate reply\"\n  ozone-plus swipe activate <session-id> <swipe-group-id> 1\n  ozone-plus import card ./aster.json\n  ozone-plus export transcript <session-id> --output ./transcript.txt\n  ozone-plus export session <session-id> --output ./session.json"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -80,6 +85,12 @@ enum Command {
     Import(ImportArgs),
     /// Export persisted ozone+ data
     Export(ExportArgs),
+    /// Manage pinned memories and note memories
+    Memory(MemoryArgs),
+    /// Search within one session or across all sessions
+    Search(SearchArgs),
+    /// Rebuild the persisted vector index from recallable text sources
+    Index(IndexArgs),
 }
 
 #[derive(Args)]
@@ -306,6 +317,94 @@ struct ExportTranscriptArgs {
 }
 
 #[derive(Args)]
+struct MemoryArgs {
+    #[command(subcommand)]
+    command: MemoryCommand,
+}
+
+#[derive(Subcommand)]
+enum MemoryCommand {
+    /// Pin an existing message into hard context
+    Pin(MemoryPinArgs),
+    /// Create a note memory for the session
+    Note(MemoryNoteArgs),
+    /// List active and expired pinned memories
+    List(SessionArgs),
+    /// Remove a pinned memory by artifact ID
+    Unpin(MemoryUnpinArgs),
+}
+
+#[derive(Args)]
+struct MemoryPinArgs {
+    /// Session UUID in 8-4-4-4-12 format
+    session_id: String,
+    /// Message UUID to pin into hard context
+    message_id: String,
+    /// Optional number of turns before the memory expires
+    #[arg(long = "expires-after-turns", value_name = "N")]
+    expires_after_turns: Option<u32>,
+}
+
+#[derive(Args)]
+struct MemoryNoteArgs {
+    /// Session UUID in 8-4-4-4-12 format
+    session_id: String,
+    /// Note text to pin into hard context
+    text: String,
+    /// Optional number of turns before the note expires
+    #[arg(long = "expires-after-turns", value_name = "N")]
+    expires_after_turns: Option<u32>,
+}
+
+#[derive(Args)]
+struct MemoryUnpinArgs {
+    /// Session UUID in 8-4-4-4-12 format
+    session_id: String,
+    /// Memory artifact UUID to remove
+    artifact_id: String,
+}
+
+#[derive(Args)]
+struct SearchArgs {
+    #[command(subcommand)]
+    command: SearchCommand,
+}
+
+#[derive(Args)]
+struct IndexArgs {
+    #[command(subcommand)]
+    command: IndexCommand,
+}
+
+#[derive(Subcommand)]
+enum SearchCommand {
+    /// Search within a single session transcript
+    Session(SessionSearchArgs),
+    /// Search across all indexed sessions
+    Global(GlobalSearchArgs),
+}
+
+#[derive(Subcommand)]
+enum IndexCommand {
+    /// Derive embeddings, persist them, and rebuild the disk-backed vector index
+    Rebuild,
+}
+
+#[derive(Args)]
+struct SessionSearchArgs {
+    /// Session UUID in 8-4-4-4-12 format
+    session_id: String,
+    /// Full-text search query
+    query: String,
+}
+
+#[derive(Args)]
+struct GlobalSearchArgs {
+    /// Full-text search query
+    query: String,
+}
+
+#[derive(Args)]
 struct SessionArgs {
     /// Session UUID in 8-4-4-4-12 format
     session_id: String,
@@ -322,8 +421,10 @@ fn main() -> ExitCode {
 }
 
 fn run() -> Result<(), String> {
-    let cli = Cli::parse();
+    run_cli(Cli::parse())
+}
 
+fn run_cli(cli: Cli) -> Result<(), String> {
     match cli.command {
         Some(Command::Identity) => {
             print_identity();
@@ -347,6 +448,9 @@ fn run() -> Result<(), String> {
         Some(Command::Swipe(args)) => handle_swipe_command(args.command),
         Some(Command::Import(args)) => handle_import_command(args.command),
         Some(Command::Export(args)) => handle_export_command(args.command),
+        Some(Command::Memory(args)) => handle_memory_command(args.command),
+        Some(Command::Search(args)) => handle_search_command(args.command),
+        Some(Command::Index(args)) => handle_index_command(args.command),
         None => {
             print_bootstrap_summary();
             Ok(())
@@ -1355,6 +1459,175 @@ fn export_transcript(args: ExportTranscriptArgs) -> Result<(), String> {
     Ok(())
 }
 
+fn handle_memory_command(command: MemoryCommand) -> Result<(), String> {
+    match command {
+        MemoryCommand::Pin(args) => pin_memory(args),
+        MemoryCommand::Note(args) => create_note_memory(args),
+        MemoryCommand::List(args) => list_memories(args),
+        MemoryCommand::Unpin(args) => unpin_memory(args),
+    }
+}
+
+fn pin_memory(args: MemoryPinArgs) -> Result<(), String> {
+    let repo = open_repository()?;
+    let session_id = parse_session_id(&args.session_id)?;
+    let message_id = parse_message_id(&args.message_id)?;
+    let memory = repo
+        .pin_message_memory(
+            &session_id,
+            &message_id,
+            PinMessageMemoryRequest {
+                pinned_by: AuthorId::User,
+                expires_after_turns: args.expires_after_turns,
+                provenance: Provenance::UserAuthored,
+            },
+        )
+        .map_err(|error| error.to_string())?
+        .into_view(
+            repo.get_session(&session_id)
+                .map_err(|error| error.to_string())?
+                .map(|session| session.message_count)
+                .ok_or_else(|| format!("session {session_id} was not found"))?,
+        );
+
+    println!("Pinned memory.");
+    print_pinned_memory_view(&memory);
+    Ok(())
+}
+
+fn create_note_memory(args: MemoryNoteArgs) -> Result<(), String> {
+    let repo = open_repository()?;
+    let session_id = parse_session_id(&args.session_id)?;
+    let mut request = CreateNoteMemoryRequest::new(
+        require_non_empty("note text", args.text)?,
+        AuthorId::User,
+        Provenance::UserAuthored,
+    );
+    request.content.expires_after_turns = args.expires_after_turns;
+    let memory = repo
+        .create_note_memory(&session_id, request)
+        .map_err(|error| error.to_string())?
+        .into_view(
+            repo.get_session(&session_id)
+                .map_err(|error| error.to_string())?
+                .map(|session| session.message_count)
+                .ok_or_else(|| format!("session {session_id} was not found"))?,
+        );
+
+    println!("Created note memory.");
+    print_pinned_memory_view(&memory);
+    Ok(())
+}
+
+fn list_memories(args: SessionArgs) -> Result<(), String> {
+    let repo = open_repository()?;
+    let session_id = parse_session_id(&args.session_id)?;
+    let memories = repo
+        .list_pinned_memories(&session_id)
+        .map_err(|error| error.to_string())?;
+
+    println!("Pinned memories");
+    println!("  session id      {}", session_id);
+    println!(
+        "  active          {}",
+        memories.iter().filter(|memory| memory.is_active).count()
+    );
+    println!(
+        "  expired         {}",
+        memories.iter().filter(|memory| memory.is_expired()).count()
+    );
+
+    if memories.is_empty() {
+        println!("  none");
+        return Ok(());
+    }
+
+    for memory in &memories {
+        println!();
+        print_pinned_memory_view(memory);
+    }
+
+    Ok(())
+}
+
+fn unpin_memory(args: MemoryUnpinArgs) -> Result<(), String> {
+    let repo = open_repository()?;
+    let session_id = parse_session_id(&args.session_id)?;
+    let artifact_id = parse_memory_artifact_id(&args.artifact_id)?;
+    let removed = repo
+        .remove_pinned_memory(&session_id, &artifact_id)
+        .map_err(|error| error.to_string())?;
+
+    if !removed {
+        return Err(format!(
+            "pinned memory {} was not found in session {}",
+            artifact_id, session_id
+        ));
+    }
+
+    println!("Removed pinned memory.");
+    println!("  session id      {}", session_id);
+    println!("  artifact id     {}", artifact_id);
+    Ok(())
+}
+
+fn handle_search_command(command: SearchCommand) -> Result<(), String> {
+    match command {
+        SearchCommand::Session(args) => search_session(args),
+        SearchCommand::Global(args) => search_global(args),
+    }
+}
+
+fn search_session(args: SessionSearchArgs) -> Result<(), String> {
+    let repo = open_repository()?;
+    let session_id = parse_session_id(&args.session_id)?;
+    let query = require_non_empty("query", args.query)?;
+    let memory = load_memory_config(&repo, Some(&session_id))?;
+    let result = HybridSearchService::new(&repo, &memory).search_session(&session_id, &query)?;
+
+    println!(
+        "{}",
+        format_search_report("Session search", Some(&session_id), &result, false)
+    );
+
+    Ok(())
+}
+
+fn search_global(args: GlobalSearchArgs) -> Result<(), String> {
+    let repo = open_repository()?;
+    let query = require_non_empty("query", args.query)?;
+    let memory = load_memory_config(&repo, None)?;
+    let result = HybridSearchService::new(&repo, &memory).search_global(&query)?;
+
+    println!("{}", format_search_report("Global search", None, &result, true));
+
+    Ok(())
+}
+
+fn handle_index_command(command: IndexCommand) -> Result<(), String> {
+    match command {
+        IndexCommand::Rebuild => rebuild_vector_index(),
+    }
+}
+
+fn rebuild_vector_index() -> Result<(), String> {
+    let repo = open_repository()?;
+    let result = rebuild_index(&repo)?;
+
+    println!("Vector index rebuilt.");
+    println!("  sessions        {}", result.session_count);
+    println!("  sources         {}", result.source_count());
+    println!("  message sources {}", result.message_source_count);
+    println!("  memory sources  {}", result.memory_source_count);
+    println!("  artifacts       {}", result.persisted_artifact_count);
+    println!("  provider        {}", result.provider.provider);
+    println!("  model           {}", result.provider.model);
+    println!("  dimensions      {}", result.provider.dimensions);
+    println!("  index path      {}", result.index_path().display());
+    println!("  metadata path   {}", result.metadata_path().display());
+    Ok(())
+}
+
 fn open_repository() -> Result<SqliteRepository, String> {
     SqliteRepository::from_xdg().map_err(|error| error.to_string())
 }
@@ -1486,6 +1759,174 @@ fn print_message(message: &ConversationMessage) {
         if message.is_hidden { "yes" } else { "no" }
     );
     println!("  content         {}", message.content);
+}
+
+fn print_pinned_memory_view(memory: &PinnedMemoryView) {
+    println!("  artifact id     {}", memory.record.artifact_id);
+    println!(
+        "  state           {}",
+        if memory.is_active {
+            "active"
+        } else {
+            "expired"
+        }
+    );
+    println!("  provenance      {}", memory.record.provenance);
+    println!(
+        "  pinned by       {}",
+        format_author_id(&memory.record.content.pinned_by)
+    );
+    println!(
+        "  source message  {}",
+        memory
+            .record
+            .source_message_id
+            .as_ref()
+            .map(ToString::to_string)
+            .unwrap_or_else(|| "note".to_owned())
+    );
+    println!(
+        "  created         {}",
+        format_timestamp(memory.record.created_at)
+    );
+    println!("  turns elapsed   {}", memory.turns_elapsed);
+    println!(
+        "  remaining turns {}",
+        memory
+            .remaining_turns
+            .map(|remaining| remaining.to_string())
+            .unwrap_or_else(|| "∞".to_owned())
+    );
+    println!("  content         {}", memory.record.content.text.as_str());
+}
+
+fn format_search_report(
+    title: &str,
+    session_id: Option<&SessionId>,
+    result: &ozone_memory::RetrievalResultSet,
+    include_session_details: bool,
+) -> String {
+    let mut output = String::new();
+    let _ = writeln!(output, "{title}");
+    if let Some(session_id) = session_id {
+        let _ = writeln!(output, "  session id      {}", session_id);
+    }
+    let _ = writeln!(output, "  query           {}", result.query);
+    let _ = writeln!(output, "  mode            {}", result.status.mode);
+    let _ = writeln!(output, "  status          {}", format_search_status(&result.status));
+    let _ = writeln!(output, "  hits            {}", result.hits.len());
+    if result.hits.is_empty() {
+        let _ = writeln!(output, "  none");
+        return output.trim_end().to_owned();
+    }
+
+    for hit in &result.hits {
+        let _ = writeln!(output);
+        output.push_str(&format_search_hit(hit, include_session_details));
+    }
+
+    output.trim_end().to_owned()
+}
+
+fn format_search_status(status: &ozone_memory::RetrievalStatus) -> String {
+    let mut details = Vec::new();
+    if let Some(reason) = status.reason.as_ref() {
+        details.push(reason.clone());
+    }
+    if status.filtered_stale_embeddings > 0 {
+        details.push(format!(
+            "filtered {} stale embedding{}",
+            status.filtered_stale_embeddings,
+            if status.filtered_stale_embeddings == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ));
+    }
+    if status.downranked_embeddings > 0 {
+        details.push(format!(
+            "downranked {} inactive hit{}",
+            status.downranked_embeddings,
+            if status.downranked_embeddings == 1 {
+                ""
+            } else {
+                "s"
+            }
+        ));
+    }
+
+    if details.is_empty() {
+        "ok".to_owned()
+    } else {
+        details.join(" · ")
+    }
+}
+
+fn format_search_hit(
+    hit: &ozone_memory::RetrievalHit,
+    include_session_details: bool,
+) -> String {
+    let mut output = String::new();
+    if include_session_details {
+        let _ = writeln!(output, "  session id      {}", hit.session.session_id);
+        let _ = writeln!(output, "  session name    {}", hit.session.session_name);
+        let _ = writeln!(
+            output,
+            "  character       {}",
+            hit.session.character_name.as_deref().unwrap_or("—")
+        );
+        let _ = writeln!(output, "  tags            {}", format_tags(&hit.session.tags));
+    }
+    let _ = writeln!(output, "  hit             {}", hit.hit_kind);
+    let target = hit
+        .message_id
+        .as_ref()
+        .map(|message_id| format!("message {}", message_id))
+        .or_else(|| {
+            hit.artifact_id
+                .as_ref()
+                .map(|artifact_id| format!("artifact {}", artifact_id))
+        })
+        .unwrap_or_else(|| "source unknown".to_owned());
+    let _ = writeln!(output, "  target          {}", target);
+    if let Some(source_message_id) = hit.source_message_id.as_ref() {
+        let _ = writeln!(output, "  source          message {}", source_message_id);
+    }
+    if let Some(author_kind) = hit.author_kind.as_ref() {
+        let _ = writeln!(output, "  author          {}", author_kind);
+    }
+    let _ = writeln!(output, "  provenance      {}", hit.provenance);
+    let _ = writeln!(output, "  state           {}", hit.source_state);
+    let _ = writeln!(output, "  created         {}", format_timestamp(hit.created_at));
+    let _ = writeln!(output, "  score           {:.3}", hit.overall_score());
+    let _ = writeln!(
+        output,
+        "  text/vector     text {:.3} raw {:.3} bm25 {} · vector {:.3} sim {}",
+        hit.score.text_contribution,
+        hit.score.text_score,
+        hit.score
+            .bm25_score
+            .map(|score| format!("{score:.3}"))
+            .unwrap_or_else(|| "—".to_owned()),
+        hit.score.vector_contribution,
+        hit.score
+            .vector_similarity
+            .map(|score| format!("{score:.3}"))
+            .unwrap_or_else(|| "—".to_owned()),
+    );
+    let _ = writeln!(
+        output,
+        "  ranking         provenance {:.3} (score {:.2}, weight {:.2}) · recency {:.3} · importance {:.3} · stale {:.2}",
+        hit.score.provenance_contribution,
+        hit.score.provenance_score,
+        hit.score.provenance_config_weight,
+        hit.score.recency_contribution,
+        hit.score.importance_contribution,
+        hit.score.stale_penalty,
+    );
+    let _ = writeln!(output, "  content         {}", hit.text.replace('\n', " "));
+    output
 }
 
 fn print_swipe_group_snapshot(snapshot: &SwipeGroupSnapshot) {
@@ -1715,6 +2156,15 @@ fn format_timestamp(timestamp: i64) -> String {
     format!("{timestamp} ms since Unix epoch")
 }
 
+fn format_author_id(author: &AuthorId) -> String {
+    match author {
+        AuthorId::User => "user".to_owned(),
+        AuthorId::Character(name) => format!("character:{name}"),
+        AuthorId::System => "system".to_owned(),
+        AuthorId::Narrator => "narrator".to_owned(),
+    }
+}
+
 fn now_timestamp_ms() -> i64 {
     let duration = SystemTime::now()
         .duration_since(UNIX_EPOCH)
@@ -1779,6 +2229,10 @@ fn parse_message_id(value: &str) -> Result<MessageId, String> {
     MessageId::parse(value.trim()).map_err(|error| error.to_string())
 }
 
+fn parse_memory_artifact_id(value: &str) -> Result<MemoryArtifactId, String> {
+    MemoryArtifactId::parse(value.trim()).map_err(|error| error.to_string())
+}
+
 fn parse_branch_id(value: &str) -> Result<BranchId, String> {
     BranchId::parse(value.trim()).map_err(|error| error.to_string())
 }
@@ -1790,6 +2244,8 @@ fn parse_swipe_group_id(value: &str) -> Result<SwipeGroupId, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use clap::Parser;
+    use ozone_memory::VectorIndexManager;
     use ozone_tui::DraftState as TuiDraftState;
     use ozone_tui::SessionRuntime;
     use std::{
@@ -1832,6 +2288,14 @@ mod tests {
         fn xdg_data_home(&self) -> PathBuf {
             self.root.join("xdg-data")
         }
+
+        fn global_config_path(&self) -> PathBuf {
+            self.root
+                .join("home")
+                .join(".config")
+                .join("ozone")
+                .join("config.toml")
+        }
     }
 
     impl Drop for TestSandbox {
@@ -1860,6 +2324,67 @@ mod tests {
                 None => std::env::remove_var(self.key),
             }
         }
+    }
+
+    fn write_global_config(sandbox: &TestSandbox, contents: &str) {
+        let path = sandbox.global_config_path();
+        fs::create_dir_all(path.parent().unwrap()).unwrap();
+        fs::write(path, contents).unwrap();
+    }
+
+    #[test]
+    fn formatted_search_report_surfaces_mode_and_breakdown() {
+        let result = ozone_memory::RetrievalResultSet {
+            query: "observatory key".into(),
+            status: ozone_memory::RetrievalStatus {
+                mode: ozone_memory::RetrievalSearchMode::Hybrid,
+                reason: None,
+                filtered_stale_embeddings: 1,
+                downranked_embeddings: 0,
+            },
+            hits: vec![ozone_memory::RetrievalHit {
+                session: ozone_memory::SearchSessionMetadata {
+                    session_id: SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap(),
+                    session_name: "Observatory".into(),
+                    character_name: Some("Aster".into()),
+                    tags: vec!["phase2b".into()],
+                },
+                hit_kind: ozone_memory::RetrievalHitKind::Message,
+                artifact_id: None,
+                message_id: Some(
+                    MessageId::parse("223e4567-e89b-12d3-a456-426614174000").unwrap(),
+                ),
+                source_message_id: None,
+                author_kind: Some("assistant".into()),
+                text: "The key rests under the blue lamp.".into(),
+                created_at: 1_700_000_000_000,
+                provenance: Provenance::UtilityModel,
+                source_state: ozone_memory::RetrievalSourceState::Current,
+                is_active_memory: None,
+                score: ozone_memory::HybridScoreInput {
+                    mode: ozone_memory::RetrievalSearchMode::Hybrid,
+                    hybrid_alpha: 0.5,
+                    bm25_score: Some(-1.1),
+                    text_score: 0.8,
+                    vector_similarity: Some(0.9),
+                    importance_score: 0.45,
+                    recency_score: 0.7,
+                    provenance: Provenance::UtilityModel,
+                    stale_penalty: 1.0,
+                }
+                .score(
+                    &ozone_memory::RetrievalWeights::default(),
+                    &ozone_memory::ProvenanceWeights::default(),
+                ),
+            }],
+        };
+
+        let report = format_search_report("Session search", None, &result, true);
+        assert!(report.contains("mode            hybrid"));
+        assert!(report.contains("status          filtered 1 stale embedding"));
+        assert!(report.contains("text/vector     text"));
+        assert!(report.contains("ranking         provenance"));
+        assert!(report.contains("session name    Observatory"));
     }
 
     #[test]
@@ -1950,5 +2475,210 @@ mod tests {
         let session_json = fs::read_to_string(&session_path).unwrap();
         assert!(session_json.contains("\"format\": \"ozone-plus.session-export.v1\""));
         assert!(session_json.contains("\"name\": \"Smoke Session\""));
+    }
+
+    #[test]
+    fn memory_and_search_commands_parse() {
+        let cli = Cli::try_parse_from([
+            "ozone-plus",
+            "memory",
+            "pin",
+            "session-1",
+            "message-1",
+            "--expires-after-turns",
+            "3",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Memory(MemoryArgs {
+                command: MemoryCommand::Pin(args),
+            })) => {
+                assert_eq!(args.session_id, "session-1");
+                assert_eq!(args.message_id, "message-1");
+                assert_eq!(args.expires_after_turns, Some(3));
+            }
+            _ => panic!("unexpected cli parse result"),
+        }
+
+        let cli = Cli::try_parse_from([
+            "ozone-plus",
+            "search",
+            "session",
+            "session-2",
+            "observatory key",
+        ])
+        .unwrap();
+        match cli.command {
+            Some(Command::Search(SearchArgs {
+                command: SearchCommand::Session(args),
+            })) => {
+                assert_eq!(args.session_id, "session-2");
+                assert_eq!(args.query, "observatory key");
+            }
+            _ => panic!("unexpected cli parse result"),
+        }
+
+        let cli = Cli::try_parse_from(["ozone-plus", "index", "rebuild"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Index(IndexArgs {
+                command: IndexCommand::Rebuild
+            }))
+        ));
+    }
+
+    #[test]
+    fn memory_and_search_commands_execute_against_xdg_repo() {
+        let _env_guard = ENV_LOCK.lock().unwrap();
+        let sandbox = TestSandbox::new("memory-search-smoke");
+        fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
+        let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
+        let _home = ScopedEnvVar::set("HOME", sandbox.root.join("home"));
+        let keyword = "observatory-phase2a";
+
+        let repo = open_repository().unwrap();
+        let session = repo
+            .create_session(CreateSessionRequest::new("Memory Search Session"))
+            .unwrap();
+        let message = repo
+            .insert_message(
+                &session.session_id,
+                CreateMessageRequest::user(format!("The {keyword} rests under the blue lamp.")),
+            )
+            .unwrap();
+
+        run_cli(
+            Cli::try_parse_from([
+                "ozone-plus",
+                "memory",
+                "pin",
+                session.session_id.as_str(),
+                &message.message_id,
+            ])
+            .unwrap(),
+        )
+        .unwrap();
+
+        let repo = open_repository().unwrap();
+        assert_eq!(
+            repo.list_pinned_memories(&session.session_id)
+                .unwrap()
+                .len(),
+            1
+        );
+
+        run_cli(
+            Cli::try_parse_from([
+                "ozone-plus",
+                "search",
+                "session",
+                session.session_id.as_str(),
+                keyword,
+            ])
+            .unwrap(),
+        )
+        .unwrap();
+        run_cli(Cli::try_parse_from(["ozone-plus", "search", "global", keyword]).unwrap()).unwrap();
+
+        assert_eq!(
+            repo.search_messages(&session.session_id, keyword)
+                .unwrap()
+                .len(),
+            1
+        );
+        assert_eq!(repo.search_across_sessions(keyword).unwrap().len(), 1);
+    }
+
+    #[test]
+    fn index_rebuild_command_persists_embeddings_and_builds_vector_index() {
+        let _env_guard = ENV_LOCK.lock().unwrap();
+        let sandbox = TestSandbox::new("index-rebuild");
+        fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
+        let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
+        let _home = ScopedEnvVar::set("HOME", sandbox.root.join("home"));
+        write_global_config(
+            &sandbox,
+            r#"
+[memory.embedding]
+provider = "mock"
+model = "mock/stable"
+expected_dimensions = 8
+batch_size = 2
+mock_seed = 11
+"#,
+        );
+
+        let repo = open_repository().unwrap();
+        let session = repo
+            .create_session(CreateSessionRequest::new("Index Session"))
+            .unwrap();
+        repo.insert_message(
+            &session.session_id,
+            CreateMessageRequest::user("Remember the brass lantern under the stairs."),
+        )
+        .unwrap();
+        repo.create_note_memory(
+            &session.session_id,
+            CreateNoteMemoryRequest::new(
+                "Pack the spare lens before leaving camp.",
+                AuthorId::User,
+                Provenance::UserAuthored,
+            ),
+        )
+        .unwrap();
+
+        run_cli(Cli::try_parse_from(["ozone-plus", "index", "rebuild"]).unwrap()).unwrap();
+        let repo = open_repository().unwrap();
+        let first_records = repo.list_embedding_artifacts(None).unwrap();
+        assert_eq!(first_records.len(), 2);
+        let first_ids = first_records
+            .iter()
+            .map(|record| record.artifact_id.clone())
+            .collect::<Vec<_>>();
+
+        let manager = VectorIndexManager::new(repo.paths().data_dir().join("vector-index"));
+        let first_state = manager.open().unwrap().unwrap();
+        assert_eq!(first_state.vector_count, 2);
+        assert_eq!(first_state.metadata.model, "mock/stable");
+        assert_eq!(first_state.metadata.dimensions, 8);
+
+        run_cli(Cli::try_parse_from(["ozone-plus", "index", "rebuild"]).unwrap()).unwrap();
+        let repo = open_repository().unwrap();
+        let second_records = repo.list_embedding_artifacts(None).unwrap();
+        let second_ids = second_records
+            .iter()
+            .map(|record| record.artifact_id.clone())
+            .collect::<Vec<_>>();
+        assert_eq!(first_ids, second_ids);
+        let second_state = manager.open().unwrap().unwrap();
+        assert_eq!(first_state.metadata, second_state.metadata);
+    }
+
+    #[test]
+    fn index_rebuild_fails_cleanly_when_provider_is_disabled() {
+        let _env_guard = ENV_LOCK.lock().unwrap();
+        let sandbox = TestSandbox::new("index-rebuild-disabled");
+        fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
+        let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
+        let _home = ScopedEnvVar::set("HOME", sandbox.root.join("home"));
+
+        let repo = open_repository().unwrap();
+        let session = repo
+            .create_session(CreateSessionRequest::new("Disabled Index Session"))
+            .unwrap();
+        repo.insert_message(
+            &session.session_id,
+            CreateMessageRequest::user("This should remain FTS-only."),
+        )
+        .unwrap();
+
+        let err =
+            run_cli(Cli::try_parse_from(["ozone-plus", "index", "rebuild"]).unwrap()).unwrap_err();
+        assert!(err.contains("enabled embedding provider"), "unexpected error: {err}");
+
+        let repo = open_repository().unwrap();
+        assert!(repo.list_embedding_artifacts(None).unwrap().is_empty());
+        let manager = VectorIndexManager::new(repo.paths().data_dir().join("vector-index"));
+        assert!(manager.load_metadata().unwrap().is_none());
     }
 }

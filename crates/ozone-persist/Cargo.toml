@@ -8,6 +8,7 @@ license = "MIT"
 
 [dependencies]
 ozone-core = { path = "../ozone-core" }
+ozone-memory = { path = "../ozone-memory" }
 rusqlite = { version = "0.31", features = ["bundled"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

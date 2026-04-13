@@ -29,6 +29,8 @@ Lookup table for all pattern files in this directory. Check here before starting
 | [ozoneplus-context-inspector.md](ozoneplus-context-inspector.md) | Building or extending the Phase 1E context assembler surface, inspector preview, or dry-run trigger |
 | [ozoneplus-phase1f-import-export.md](ozoneplus-phase1f-import-export.md) | Building or extending Phase 1F import/export (character cards, session/transcript export), bookmarks, slash commands, or stats |
 | [ozoneplus-phase1g-launcher-onramp.md](ozoneplus-phase1g-launcher-onramp.md) | Building or extending the Phase 1G frontend-choice screen, FrontendMode, --frontend flag, or exec handoff to ozone-plus |
+| [ozoneplus-phase2a-memory-foundations.md](ozoneplus-phase2a-memory-foundations.md) | Building or extending Phase 2A manual retrieval: ozone-memory types, pinned memories, FTS recall, `memory`/`search` commands, `Ctrl+K`, or `:memories` |
+| [ozoneplus-phase2b-hybrid-retrieval.md](ozoneplus-phase2b-hybrid-retrieval.md) | Building or extending Phase 2B embeddings, vector-index rebuilds, hybrid recall/search, stale-embedding handling, or `RetrievedMemory` context injection |
 | [ozoneplus-persistence-bootstrap.md](ozoneplus-persistence-bootstrap.md) | Building or extending the Phase 1A ozone+ persistence bootstrap, schema, or session CLI |
 | [ozoneplus-roadmap-planning.md](ozoneplus-roadmap-planning.md) | Turning the ozone+ docs and current codebase into a phased execution plan |
 | [ozoneplus-streaming-backend-runtime.md](ozoneplus-streaming-backend-runtime.md) | Building or extending the Phase 1D ozone+ inference crate, app-side adapter, or streamed backend runtime path |

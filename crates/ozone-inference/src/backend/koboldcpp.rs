@@ -126,11 +126,10 @@ impl KoboldCppClient {
             .unwrap_or(false)
     }
 
-    /// Query the currently loaded model name and (estimated) context length.
+    /// Query the currently loaded model name and context length.
     ///
-    /// Context length is not exposed by KoboldCpp's `/api/v1/model` endpoint,
-    /// so we return a sentinel value; callers should use the configured value
-    /// until a more specific endpoint is available.
+    /// Context length is probed from `/api/v1/config/max_context_length`.
+    /// Falls back to 0 if the endpoint is unavailable (older KoboldCpp versions).
     pub async fn probe_model_info(&self) -> anyhow::Result<BackendModelInfo> {
         let url = format!("{}/api/v1/model", self.base_url);
         let resp: KoboldModelResponse = self
@@ -147,11 +146,34 @@ impl KoboldCppClient {
             .await
             .map_err(InferenceError::Http)?;
 
+        let context_length = self.probe_max_context_length().await.unwrap_or(0);
+
         Ok(BackendModelInfo {
             model_name: resp.result,
-            // KoboldCpp does not expose context length via this endpoint.
-            context_length: 0,
+            context_length,
         })
+    }
+
+    /// Probe the backend's max context length via `/api/v1/config/max_context_length`.
+    ///
+    /// Returns `None` if the endpoint is unavailable.
+    pub async fn probe_max_context_length(&self) -> Option<usize> {
+        #[derive(Deserialize)]
+        struct MaxCtxResponse {
+            value: usize,
+        }
+        let url = format!("{}/api/v1/config/max_context_length", self.base_url);
+        let resp: MaxCtxResponse = self
+            .http
+            .get(&url)
+            .timeout(Duration::from_secs(3))
+            .send()
+            .await
+            .ok()?
+            .json()
+            .await
+            .ok()?;
+        Some(resp.value)
     }
 
     /// Fetch live performance stats.

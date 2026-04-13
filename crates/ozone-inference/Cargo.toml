@@ -14,6 +14,7 @@ directories = "5"
 futures-util = { version = "0.3", default-features = false, features = ["std"] }
 minijinja = { version = "2", features = ["loader"] }
 ozone-core = { path = "../ozone-core" }
+ozone-memory = { path = "../ozone-memory" }
 reqwest = { version = "0.12", features = ["json", "stream"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"

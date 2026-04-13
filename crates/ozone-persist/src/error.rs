@@ -59,3 +59,15 @@ impl From<ozone_core::engine::DomainParseError> for PersistError {
         Self::InvalidData(error.to_string())
     }
 }
+
+impl From<ozone_memory::MemoryIdError> for PersistError {
+    fn from(error: ozone_memory::MemoryIdError) -> Self {
+        Self::InvalidData(error.to_string())
+    }
+}
+
+impl From<ozone_memory::MemoryParseError> for PersistError {
+    fn from(error: ozone_memory::MemoryParseError) -> Self {
+        Self::InvalidData(error.to_string())
+    }
+}

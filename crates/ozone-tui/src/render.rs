@@ -128,7 +128,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         },
         empty_state: "Transcript will appear here once ozone+ opens a live session.".into(),
         hint:
-            "j/k move · b bookmark · Tab composer · i insert · Ctrl+D dry run · Ctrl+I inspector · ? help"
+            "j/k move · b bookmark · Ctrl+K pin · Tab composer · i insert · Ctrl+D dry run · Ctrl+I inspector · ? help"
                 .into(),
     };
 
@@ -146,29 +146,34 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         hint: composer_hint(state.input_mode).into(),
     };
 
+    let mut notifications = vec![
+        format!("screen {} · focus {}", indicators.screen, indicators.focus),
+        format!("{} · {}", indicators.selection, indicators.branch),
+        state
+            .session_stats
+            .as_ref()
+            .map(|stats| {
+                format!(
+                    "{} messages · {} branches · {} bookmarks",
+                    stats.message_count, stats.branch_count, stats.bookmark_count
+                )
+            })
+            .unwrap_or_else(|| "session stats pending".into()),
+        runtime_label(&state.session.runtime),
+        inspector_visibility_label(layout, state),
+        context_status_line(state),
+    ];
+    if let Some(browser) = state.recall_browser.as_ref() {
+        notifications.push(format!("{} · {}", browser.title, browser.summary));
+    }
+
     let status = StatusPaneModel {
         title: "Status".into(),
         summary: state
             .status_line
             .clone()
             .unwrap_or_else(|| runtime_label(&state.session.runtime)),
-        notifications: vec![
-            format!("screen {} · focus {}", indicators.screen, indicators.focus),
-            format!("{} · {}", indicators.selection, indicators.branch),
-            state
-                .session_stats
-                .as_ref()
-                .map(|stats| {
-                    format!(
-                        "{} messages · {} branches · {} bookmarks",
-                        stats.message_count, stats.branch_count, stats.bookmark_count
-                    )
-                })
-                .unwrap_or_else(|| "session stats pending".into()),
-            runtime_label(&state.session.runtime),
-            inspector_visibility_label(layout, state),
-            context_status_line(state),
-        ],
+        notifications,
         hint: "? help · q quit".into(),
     };
 
@@ -540,6 +545,15 @@ fn inspector_lines(state: &ShellState, indicators: &ShellIndicators) -> Vec<Stri
         runtime_label(&state.session.runtime),
     ];
 
+    if let Some(browser) = state.recall_browser.as_ref() {
+        lines.push(format!("{} · {}", browser.title, browser.summary));
+        for line in &browser.lines {
+            lines.push(format!("· {line}"));
+        }
+    } else {
+        lines.push("recall browser idle (use :memories or /search …)".into());
+    }
+
     if let Some(preview) = state.context_preview.as_ref() {
         lines.push(format!("context preview · {}", preview.summary));
         if let Some(selected_items) = preview.selected_items {
@@ -595,16 +609,19 @@ fn inspector_focus_label(focus: InspectorFocus) -> &'static str {
         InspectorFocus::Summary => "summary",
         InspectorFocus::Branches => "branches",
         InspectorFocus::Message => "message",
+        InspectorFocus::Recall => "recall",
     }
 }
 
 fn composer_hint(input_mode: InputMode) -> &'static str {
     match input_mode {
         InputMode::Normal => {
-            "i insert · b bookmark · Tab conversation · Ctrl+D dry run · Ctrl+I inspector · ? help"
+            "i insert · b bookmark · Ctrl+K pin · Tab conversation · Ctrl+D dry run · Ctrl+I inspector · ? help"
         }
-        InputMode::Insert => "Enter send · Ctrl+C cancel · Ctrl+D dry run · Ctrl+I inspector",
-        InputMode::Command => "Enter send · Ctrl+C cancel · Ctrl+D dry run · Esc normal",
+        InputMode::Insert => {
+            "Enter send · Ctrl+C cancel · Ctrl+D dry run · Ctrl+I inspector · Ctrl+K pin"
+        }
+        InputMode::Command => "Enter send · Ctrl+C cancel · Ctrl+D dry run · Esc normal · Ctrl+K pin",
     }
 }
 
@@ -619,11 +636,16 @@ fn overlay_model(screen: ScreenState, input_mode: InputMode) -> Option<OverlayRe
                 "Tab switch conversation and composer focus".into(),
                 "i enter insert mode".into(),
                 "b toggle bookmark on the selected persisted message".into(),
+                "Ctrl+K pins or unpins the selected persisted message to hard context".into(),
                 "Enter sends the current draft".into(),
                 "Ctrl+C cancels generation".into(),
                 "Ctrl+D builds a context dry run preview".into(),
                 "Ctrl+I toggles the inspector".into(),
                 "/session show prints current session metadata".into(),
+                "/memory list, /memory note TEXT, and /memory unpin ID manage pinned memories"
+                    .into(),
+                "/search session QUERY and /search global QUERY browse recall hits".into(),
+                ":memories opens the recall browser shortcut".into(),
                 "/session rename NAME updates the session title".into(),
                 "/session character NAME|clear updates the character field".into(),
                 "/session tags a,b|clear replaces the session tags".into(),
@@ -707,6 +729,7 @@ mod tests {
             }),
             context_preview: None,
             context_dry_run: None,
+            recall_browser: None,
         });
         state.session.selected_message = Some(1);
         state
@@ -772,6 +795,36 @@ mod tests {
         assert!(rendered.contains("INSERT"));
         assert!(rendered.contains("123e4567"));
         assert!(rendered.contains("context preview unavailable"));
+    }
+
+    #[test]
+    fn render_model_surfaces_recall_browser_in_status_and_inspector() {
+        let mut state = seeded_state();
+        state.recall_browser = Some(crate::app::RecallBrowser {
+            title: "Recall".into(),
+            summary: "2 active · 1 recent hit".into(),
+            lines: vec![
+                "active pinned 2".into(),
+                "session search \"nebula\" · 1 hit".into(),
+            ],
+        });
+        state.inspector.visible = true;
+
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 120, 40));
+        let model = build_render_model(&state, &layout);
+
+        assert!(model
+            .status
+            .notifications
+            .iter()
+            .any(|line| line.contains("Recall · 2 active · 1 recent hit")));
+        assert!(model
+            .inspector
+            .as_ref()
+            .expect("inspector should render")
+            .lines
+            .iter()
+            .any(|line| line.contains("session search \"nebula\" · 1 hit")));
     }
 
     #[test]

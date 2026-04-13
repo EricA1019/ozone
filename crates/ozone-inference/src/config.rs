@@ -10,6 +10,9 @@ use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
 use config::{Config, Environment, File, FileFormat};
+use ozone_memory::{
+    EmbeddingProviderConfig, EmbeddingProviderKind, ProvenanceWeights, RetrievalWeights,
+};
 use serde::{Deserialize, Serialize};
 
 use crate::error::InferenceError;
@@ -47,6 +50,36 @@ max_concurrent_jobs = 3
 max_queue_size = 20
 stale_job_timeout_secs = 300
 
+[memory]
+hybrid_alpha = 0.5
+max_active_embeddings = 10000
+archive_after_turns = 1000
+compaction_interval_hours = 24
+
+[memory.retrieval_weights]
+semantic = 0.35
+importance = 0.25
+recency = 0.20
+provenance = 0.20
+
+[memory.provenance_weights]
+user_authored = 1.0
+character_card = 0.9
+lorebook = 0.85
+system_generated = 0.7
+utility_model = 0.6
+imported_external = 0.5
+
+[memory.embedding]
+provider = "disabled"
+model = "BAAI/bge-small-en-v1.5"
+expected_dimensions = 384
+batch_size = 256
+query_prefix = "query: "
+passage_prefix = "passage: "
+mock_seed = 7
+show_download_progress = false
+
 [logging]
 level = "info"
 file = true
@@ -67,6 +100,8 @@ pub struct OzoneConfig {
     pub context: ContextConfig,
     #[serde(default)]
     pub tasks: TasksConfig,
+    #[serde(default)]
+    pub memory: MemoryConfig,
     #[serde(default)]
     pub logging: LoggingConfig,
 }
@@ -247,6 +282,54 @@ impl Default for TasksConfig {
 }
 
 #[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct MemoryConfig {
+    #[serde(default = "default_hybrid_alpha")]
+    pub hybrid_alpha: f32,
+    #[serde(default)]
+    pub retrieval_weights: RetrievalWeights,
+    #[serde(default)]
+    pub provenance_weights: ProvenanceWeights,
+    #[serde(default)]
+    pub embedding: EmbeddingProviderConfig,
+    #[serde(default = "default_max_active_embeddings")]
+    pub max_active_embeddings: usize,
+    #[serde(default = "default_archive_after_turns")]
+    pub archive_after_turns: usize,
+    #[serde(default = "default_compaction_interval_hours")]
+    pub compaction_interval_hours: u64,
+}
+
+fn default_hybrid_alpha() -> f32 {
+    0.5
+}
+
+fn default_max_active_embeddings() -> usize {
+    10_000
+}
+
+fn default_archive_after_turns() -> usize {
+    1_000
+}
+
+fn default_compaction_interval_hours() -> u64 {
+    24
+}
+
+impl Default for MemoryConfig {
+    fn default() -> Self {
+        Self {
+            hybrid_alpha: default_hybrid_alpha(),
+            retrieval_weights: RetrievalWeights::default(),
+            provenance_weights: ProvenanceWeights::default(),
+            embedding: EmbeddingProviderConfig::default(),
+            max_active_embeddings: default_max_active_embeddings(),
+            archive_after_turns: default_archive_after_turns(),
+            compaction_interval_hours: default_compaction_interval_hours(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
 pub struct LoggingConfig {
     #[serde(default = "default_log_level")]
     pub level: String,
@@ -389,6 +472,76 @@ fn validate_config(cfg: &OzoneConfig) -> anyhow::Result<()> {
         }
         .into());
     }
+    if !cfg.memory.hybrid_alpha.is_finite() || !(0.0..=1.0).contains(&cfg.memory.hybrid_alpha) {
+        return Err(InferenceError::ConfigInvalid {
+            key: "memory.hybrid_alpha".into(),
+            reason: "must be in the range [0.0, 1.0]".into(),
+        }
+        .into());
+    }
+    cfg.memory
+        .retrieval_weights
+        .validate()
+        .map_err(|error| InferenceError::ConfigInvalid {
+            key: "memory.retrieval_weights".into(),
+            reason: error.to_string(),
+        })?;
+    cfg.memory
+        .provenance_weights
+        .validate()
+        .map_err(|error| InferenceError::ConfigInvalid {
+            key: "memory.provenance_weights".into(),
+            reason: error.to_string(),
+        })?;
+    if cfg.memory.max_active_embeddings == 0 {
+        return Err(InferenceError::ConfigInvalid {
+            key: "memory.max_active_embeddings".into(),
+            reason: "must be greater than zero".into(),
+        }
+        .into());
+    }
+    if cfg.memory.archive_after_turns == 0 {
+        return Err(InferenceError::ConfigInvalid {
+            key: "memory.archive_after_turns".into(),
+            reason: "must be greater than zero".into(),
+        }
+        .into());
+    }
+    if cfg.memory.compaction_interval_hours == 0 {
+        return Err(InferenceError::ConfigInvalid {
+            key: "memory.compaction_interval_hours".into(),
+            reason: "must be greater than zero".into(),
+        }
+        .into());
+    }
+    if cfg.memory.embedding.batch_size == 0 {
+        return Err(InferenceError::ConfigInvalid {
+            key: "memory.embedding.batch_size".into(),
+            reason: "must be greater than zero".into(),
+        }
+        .into());
+    }
+    if matches!(
+        cfg.memory.embedding.expected_dimensions,
+        Some(expected_dimensions) if expected_dimensions == 0
+    ) {
+        return Err(InferenceError::ConfigInvalid {
+            key: "memory.embedding.expected_dimensions".into(),
+            reason: "must be greater than zero when set".into(),
+        }
+        .into());
+    }
+    if !matches!(
+        cfg.memory.embedding.provider,
+        EmbeddingProviderKind::Disabled
+    ) && cfg.memory.embedding.model.trim().is_empty()
+    {
+        return Err(InferenceError::ConfigInvalid {
+            key: "memory.embedding.model".into(),
+            reason: "must not be empty when embeddings are enabled".into(),
+        }
+        .into());
+    }
     Ok(())
 }
 
@@ -415,6 +568,18 @@ mod tests {
         assert_eq!(cfg.context.safety_margin_pct, 10);
         assert_eq!(cfg.backend.health.poll_interval_secs, 30);
         assert_eq!(cfg.backend.rate_limit.min_interval_ms, 500);
+        assert_eq!(cfg.memory.hybrid_alpha, 0.5);
+        assert_eq!(cfg.memory.max_active_embeddings, 10_000);
+        assert_eq!(cfg.memory.archive_after_turns, 1_000);
+        assert_eq!(cfg.memory.compaction_interval_hours, 24);
+        assert_eq!(cfg.memory.retrieval_weights, RetrievalWeights::default());
+        assert_eq!(cfg.memory.provenance_weights, ProvenanceWeights::default());
+        assert_eq!(
+            cfg.memory.embedding.provider,
+            EmbeddingProviderKind::Disabled
+        );
+        assert_eq!(cfg.memory.embedding.model, "BAAI/bge-small-en-v1.5");
+        assert_eq!(cfg.memory.embedding.expected_dimensions, Some(384));
     }
 
     #[test]
@@ -463,6 +628,69 @@ max_tokens = 2048
     }
 
     #[test]
+    fn memory_override_parses_nested_embedding_and_weight_config() {
+        let override_toml = r#"
+[memory]
+hybrid_alpha = 0.25
+max_active_embeddings = 2048
+archive_after_turns = 256
+compaction_interval_hours = 12
+
+[memory.retrieval_weights]
+semantic = 0.4
+importance = 0.2
+recency = 0.2
+provenance = 0.2
+
+[memory.provenance_weights]
+user_authored = 0.95
+character_card = 0.9
+lorebook = 0.8
+system_generated = 0.75
+utility_model = 0.65
+imported_external = 0.55
+
+[memory.embedding]
+provider = "mock"
+model = "mock/stable"
+expected_dimensions = 16
+batch_size = 32
+query_prefix = "q: "
+passage_prefix = "d: "
+mock_seed = 99
+"#;
+
+        let cfg = ConfigLoader::new()
+            .global_config_path("/nonexistent/path/config.toml")
+            .extra_toml_override(override_toml)
+            .build()
+            .expect("memory override should parse");
+
+        assert_eq!(cfg.memory.hybrid_alpha, 0.25);
+        assert_eq!(cfg.memory.max_active_embeddings, 2048);
+        assert_eq!(cfg.memory.archive_after_turns, 256);
+        assert_eq!(cfg.memory.compaction_interval_hours, 12);
+        assert_eq!(
+            cfg.memory.retrieval_weights,
+            RetrievalWeights {
+                semantic: 0.4,
+                importance: 0.2,
+                recency: 0.2,
+                provenance: 0.2,
+            }
+        );
+        assert_eq!(cfg.memory.embedding.provider, EmbeddingProviderKind::Mock);
+        assert_eq!(cfg.memory.embedding.model, "mock/stable");
+        assert_eq!(cfg.memory.embedding.expected_dimensions, Some(16));
+        assert_eq!(cfg.memory.embedding.batch_size, 32);
+        assert_eq!(cfg.memory.embedding.query_prefix, "q: ");
+        assert_eq!(cfg.memory.embedding.passage_prefix, "d: ");
+        assert_eq!(cfg.memory.embedding.mock_seed, 99);
+        assert_eq!(cfg.memory.provenance_weights.user_authored, 0.95);
+        assert_eq!(cfg.memory.provenance_weights.imported_external, 0.55);
+    }
+
+    #[test]
     fn invalid_config_is_rejected() {
         let bad_toml = r#"
 [context]
@@ -477,6 +705,28 @@ safety_margin_pct = 99
         assert!(
             msg.contains("safety_margin_pct"),
             "error mentions the key: {msg}"
+        );
+    }
+
+    #[test]
+    fn invalid_memory_retrieval_weights_are_rejected() {
+        let bad_toml = r#"
+[memory.retrieval_weights]
+semantic = 0.6
+importance = 0.3
+recency = 0.2
+provenance = 0.2
+"#;
+
+        let result = ConfigLoader::new()
+            .global_config_path("/nonexistent/path/config.toml")
+            .extra_toml_override(bad_toml)
+            .build();
+
+        let err = result.expect_err("invalid retrieval weights should fail");
+        assert!(
+            err.to_string().contains("memory.retrieval_weights"),
+            "unexpected error: {err}"
         );
     }
 }

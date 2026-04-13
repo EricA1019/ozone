@@ -1,5 +1,7 @@
 use std::{error::Error, fmt, str::FromStr};
 
+use serde::{Deserialize, Serialize};
+
 pub type UnixTimestamp = i64;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -13,7 +15,7 @@ impl fmt::Display for SessionIdError {
 
 impl Error for SessionIdError {}
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct SessionId(String);
 
 impl SessionId {

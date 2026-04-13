@@ -21,6 +21,7 @@ pub enum KeyAction {
     ToggleInspector,
     TriggerContextDryRun,
     ToggleBookmark,
+    TogglePinnedMemory,
     HistoryPrevious,
     HistoryNext,
     DraftInsertChar(char),
@@ -45,6 +46,10 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
 
     if is_ctrl_d(key) {
         return KeyAction::TriggerContextDryRun;
+    }
+
+    if is_ctrl_k(key) {
+        return KeyAction::TogglePinnedMemory;
     }
 
     match input_mode {
@@ -108,6 +113,11 @@ fn is_ctrl_d(key: KeyEvent) -> bool {
         && key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
+fn is_ctrl_k(key: KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Char('k') | KeyCode::Char('K'))
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -168,6 +178,13 @@ mod tests {
                 KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)
             ),
             KeyAction::TriggerContextDryRun
+        );
+        assert_eq!(
+            dispatch_key(
+                InputMode::Insert,
+                KeyEvent::new(KeyCode::Char('k'), KeyModifiers::CONTROL)
+            ),
+            KeyAction::TogglePinnedMemory
         );
     }
 

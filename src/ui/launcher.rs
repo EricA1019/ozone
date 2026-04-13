@@ -472,7 +472,9 @@ pub fn render_frontend_choice(f: &mut Frame, app: &App) {
                     Span::styled(format!("{} ", HEX_CURSOR), style_cyan()),
                     Span::styled(
                         *label,
-                        Style::default().fg(crate::theme::CYAN).add_modifier(Modifier::BOLD),
+                        Style::default()
+                            .fg(crate::theme::CYAN)
+                            .add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(format!("  — {desc}"), style_gray()),
                 ]))

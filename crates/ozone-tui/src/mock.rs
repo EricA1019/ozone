@@ -84,6 +84,14 @@ pub trait SessionRuntime {
         Ok(None)
     }
 
+    fn toggle_pinned_memory(
+        &mut self,
+        _context: &SessionContext,
+        _message_id: &str,
+    ) -> Result<Option<RuntimeContextRefresh>, Self::Error> {
+        Ok(None)
+    }
+
     fn run_command(
         &mut self,
         _context: &SessionContext,
@@ -118,6 +126,7 @@ pub struct MockRuntime {
     pub cancelled_requests: Vec<String>,
     pub polled_requests: Vec<String>,
     pub persisted_drafts: BTreeMap<String, String>,
+    pub toggled_pinned_messages: Vec<String>,
     pub active_generation: Option<MockGeneration>,
     next_request_number: u64,
 }
@@ -133,6 +142,7 @@ impl Default for MockRuntime {
             cancelled_requests: Vec::new(),
             polled_requests: Vec::new(),
             persisted_drafts: BTreeMap::new(),
+            toggled_pinned_messages: Vec::new(),
             active_generation: None,
             next_request_number: 1,
         }
@@ -158,6 +168,7 @@ impl MockRuntime {
             session_stats: None,
             context_preview: None,
             context_dry_run: None,
+            recall_browser: None,
         })
     }
 
@@ -304,6 +315,15 @@ impl SessionRuntime for MockRuntime {
         }
 
         Ok(())
+    }
+
+    fn toggle_pinned_memory(
+        &mut self,
+        _context: &SessionContext,
+        message_id: &str,
+    ) -> Result<Option<RuntimeContextRefresh>, Self::Error> {
+        self.toggled_pinned_messages.push(message_id.to_owned());
+        Ok(None)
     }
 }
 

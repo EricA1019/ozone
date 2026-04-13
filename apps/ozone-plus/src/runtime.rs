@@ -2,6 +2,7 @@ use crate::{
     context_bridge::{
         AppContextBridge, ContextBuildResult, ContextPlanPreview, DryRunContextBuild,
     },
+    hybrid_search::HybridSearchService,
     inference_adapter::{InferenceAdapter, InferenceAdapterInit},
 };
 use ozone_core::engine::{
@@ -13,16 +14,20 @@ use ozone_engine::{
     EngineCommandResult, SingleWriterConversationEngine,
 };
 use ozone_inference::{InferenceError, StreamChunk};
-use ozone_persist::{PersistError, SessionId, SqliteRepository, UpdateSessionRequest};
+use ozone_persist::{
+    AuthorId, CreateNoteMemoryRequest, MemoryArtifactId, PersistError, PinMessageMemoryRequest,
+    PinnedMemoryView, Provenance, SessionId, SqliteRepository, UpdateSessionRequest,
+};
 use ozone_tui::{
     AppBootstrap as TuiBootstrap, BranchItem as TuiBranchItem,
     ContextDryRunPreview as TuiContextDryRunPreview, ContextPreview as TuiContextPreview,
     ContextTokenBudget as TuiContextTokenBudget, DraftState as TuiDraftState, GenerationPoll,
-    RuntimeCancellation as TuiRuntimeCancellation, RuntimeCompletion as TuiRuntimeCompletion,
-    RuntimeContextRefresh as TuiRuntimeContextRefresh, RuntimeFailure as TuiRuntimeFailure,
-    RuntimeProgress as TuiRuntimeProgress, RuntimeSendReceipt as TuiRuntimeSendReceipt,
-    SessionContext as TuiSessionContext, SessionMetadata as TuiSessionMetadata, SessionRuntime,
-    SessionStats as TuiSessionStats, TranscriptItem as TuiTranscriptItem,
+    RecallBrowser as TuiRecallBrowser, RuntimeCancellation as TuiRuntimeCancellation,
+    RuntimeCompletion as TuiRuntimeCompletion, RuntimeContextRefresh as TuiRuntimeContextRefresh,
+    RuntimeFailure as TuiRuntimeFailure, RuntimeProgress as TuiRuntimeProgress,
+    RuntimeSendReceipt as TuiRuntimeSendReceipt, SessionContext as TuiSessionContext,
+    SessionMetadata as TuiSessionMetadata, SessionRuntime, SessionStats as TuiSessionStats,
+    TranscriptItem as TuiTranscriptItem,
 };
 use std::{
     collections::HashSet,
@@ -61,11 +66,39 @@ struct SessionSnapshot {
     stats: TuiSessionStats,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
 enum SessionCommand {
     Show,
     Rename(String),
     Character(Option<String>),
     Tags(Vec<String>),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum MemoryCommand {
+    List,
+    Note(String),
+    Unpin(MemoryArtifactId),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SearchCommand {
+    Session(String),
+    Global(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ShellCommand {
+    Session(SessionCommand),
+    Memory(MemoryCommand),
+    Search(SearchCommand),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RecentSearchSection {
+    summary: String,
+    hit_count: usize,
+    lines: Vec<String>,
 }
 
 impl PendingGeneration {
@@ -92,6 +125,7 @@ pub(crate) struct Phase1dRuntime {
     inference: InferenceAdapter,
     context_bridge: AppContextBridge,
     pending_generation: Option<PendingGeneration>,
+    recent_search: Option<RecentSearchSection>,
 }
 
 impl Phase1dRuntime {
@@ -132,6 +166,7 @@ impl Phase1dRuntime {
             inference,
             context_bridge: AppContextBridge::default(),
             pending_generation: None,
+            recent_search: None,
         })
     }
 
@@ -167,7 +202,7 @@ impl Phase1dRuntime {
             transcript: snapshot.transcript,
             branches: snapshot.branches,
             status_line: Some(format!(
-                "{} backend ready ({}, template {}) · session locked by {} · b bookmark · Ctrl+D dry run · Ctrl+I inspector",
+                "{} backend ready ({}, template {}) · session locked by {} · b bookmark · Ctrl+K pin · Ctrl+D dry run · Ctrl+I inspector · :memories",
                 self.inference.config().backend.r#type,
                 self.inference.config().backend.url,
                 self.inference.selected_template(),
@@ -179,6 +214,7 @@ impl Phase1dRuntime {
             session_stats: Some(snapshot.stats),
             context_preview: context_preview.clone(),
             context_dry_run: context_dry_run.clone(),
+            recall_browser: None,
         };
 
         if let Some(status_line) = bootstrap.status_line.as_mut() {
@@ -380,6 +416,18 @@ impl Phase1dRuntime {
                 };
 
                 runtime.block_on(async move {
+                    // Probe backend max context length and warn if our prompt is large.
+                    if let Some(max_ctx) = gateway.client().probe_max_context_length().await {
+                        let prompt_chars = request.prompt.len();
+                        // Rough heuristic: ~3.5 chars per token for English text.
+                        let estimated_prompt_tokens = prompt_chars * 10 / 35;
+                        if estimated_prompt_tokens > max_ctx {
+                            let _ = event_tx.send(WorkerEvent::Token(format!(
+                                "\n⚠ prompt (~{estimated_prompt_tokens} est. tokens) may exceed backend context ({max_ctx})\n"
+                            )));
+                        }
+                    }
+
                     let (stream_tx, mut stream_rx) = tokio_mpsc::channel::<StreamChunk>(128);
                     let stream_gateway = gateway.clone();
                     let stream_task = tokio::spawn(async move {
@@ -388,6 +436,7 @@ impl Phase1dRuntime {
                             .await
                     });
 
+                    let mut saw_done = false;
                     while let Some(chunk) = stream_rx.recv().await {
                         match chunk {
                             StreamChunk::Token(token) => {
@@ -397,29 +446,37 @@ impl Phase1dRuntime {
                             }
                             StreamChunk::FinishReason(_) => {}
                             StreamChunk::Done => {
+                                saw_done = true;
                                 let _ = event_tx.send(WorkerEvent::Finished);
                             }
                         }
                     }
 
-                    match stream_task.await {
-                        Ok(Ok(_)) => {
-                            let _ = event_tx.send(WorkerEvent::Finished);
-                        }
-                        Ok(Err(error)) => {
-                            if error
-                                .downcast_ref::<InferenceError>()
-                                .is_some_and(|inner| matches!(inner, InferenceError::Cancelled))
-                            {
-                                let _ = event_tx.send(WorkerEvent::Cancelled);
-                            } else {
-                                let _ = event_tx.send(WorkerEvent::Failed(error.to_string()));
+                    // Only consult the task result if the stream channel
+                    // didn't already deliver a Done/Finished event.
+                    if !saw_done {
+                        match stream_task.await {
+                            Ok(Ok(_)) => {
+                                let _ = event_tx.send(WorkerEvent::Finished);
                             }
-                        }
-                        Err(error) => {
-                            let _ = event_tx.send(WorkerEvent::Failed(format!(
-                                "generation task join failure: {error}"
-                            )));
+                            Ok(Err(error)) => {
+                                if error
+                                    .downcast_ref::<InferenceError>()
+                                    .is_some_and(|inner| {
+                                        matches!(inner, InferenceError::Cancelled)
+                                    })
+                                {
+                                    let _ = event_tx.send(WorkerEvent::Cancelled);
+                                } else {
+                                    let _ =
+                                        event_tx.send(WorkerEvent::Failed(error.to_string()));
+                                }
+                            }
+                            Err(error) => {
+                                let _ = event_tx.send(WorkerEvent::Failed(format!(
+                                    "generation task join failure: {error}"
+                                )));
+                            }
                         }
                     }
                 });
@@ -446,8 +503,19 @@ impl Phase1dRuntime {
             .store()
             .get_active_branch_transcript(&context.session_id)
             .map_err(|error| error.to_string())?;
+        let pinned_memories = self
+            .repo
+            .list_pinned_memories(&context.session_id)
+            .map_err(|error| error.to_string())?;
+        let retrieved_memories = HybridSearchService::new(&self.repo, &self.inference.config().memory)
+            .context_retrieval(&context.session_id, &transcript, &pinned_memories, 3)?;
         self.context_bridge
-            .build_from_transcript(&transcript, &self.inference)
+            .build_from_transcript(
+                &transcript,
+                &pinned_memories,
+                retrieved_memories.as_ref(),
+                &self.inference,
+            )
     }
 
     #[allow(dead_code)]
@@ -475,8 +543,19 @@ impl Phase1dRuntime {
             .store()
             .get_active_branch_transcript(&context.session_id)
             .map_err(|error| error.to_string())?;
+        let pinned_memories = self
+            .repo
+            .list_pinned_memories(&context.session_id)
+            .map_err(|error| error.to_string())?;
+        let retrieved_memories = HybridSearchService::new(&self.repo, &self.inference.config().memory)
+            .context_retrieval(&context.session_id, &transcript, &pinned_memories, 3)?;
         self.context_bridge
-            .dry_run_from_transcript(&transcript, &self.inference)
+            .dry_run_from_transcript(
+                &transcript,
+                &pinned_memories,
+                retrieved_memories.as_ref(),
+                &self.inference,
+            )
     }
 
     fn build_dry_run_context_refresh(
@@ -521,6 +600,42 @@ impl Phase1dRuntime {
                 .context_bridge
                 .latest_dry_run()
                 .map(tui_context_dry_run_from_build),
+            ..TuiRuntimeContextRefresh::default()
+        })
+    }
+
+    fn refresh_context_cache(&mut self, context: &TuiSessionContext) {
+        let _ = self.dry_run_context_build(context);
+    }
+
+    fn build_recall_browser(&self, session_id: &SessionId) -> Result<TuiRecallBrowser, String> {
+        let pinned_memories = self
+            .repo
+            .list_pinned_memories(session_id)
+            .map_err(|error| error.to_string())?;
+        Ok(tui_recall_browser_from_state(
+            &pinned_memories,
+            self.recent_search.as_ref(),
+        ))
+    }
+
+    fn build_recall_browser_refresh(
+        &mut self,
+        context: &TuiSessionContext,
+        status_line: impl Into<String>,
+    ) -> Result<TuiRuntimeContextRefresh, String> {
+        Ok(TuiRuntimeContextRefresh {
+            status_line: Some(status_line.into()),
+            context_preview: self
+                .context_bridge
+                .latest_plan_preview()
+                .map(tui_context_preview_from_plan),
+            context_dry_run: self
+                .context_bridge
+                .latest_dry_run()
+                .map(tui_context_dry_run_from_build),
+            recall_browser: Some(self.build_recall_browser(&context.session_id)?),
+            ..TuiRuntimeContextRefresh::default()
         })
     }
 
@@ -884,18 +999,75 @@ impl SessionRuntime for Phase1dRuntime {
         .map(Some)
     }
 
+    fn toggle_pinned_memory(
+        &mut self,
+        context: &TuiSessionContext,
+        message_id: &str,
+    ) -> Result<Option<TuiRuntimeContextRefresh>, Self::Error> {
+        let message_id = match ozone_core::engine::MessageId::parse(message_id) {
+            Ok(message_id) => message_id,
+            Err(_) => {
+                return Ok(Some(Self::status_only_refresh(
+                    "Selected message has an invalid ID and could not be pinned",
+                )))
+            }
+        };
+
+        let existing = self
+            .repo
+            .list_pinned_memories(&context.session_id)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .filter(|memory| memory.record.source_message_id.as_ref() == Some(&message_id))
+            .map(|memory| memory.record.artifact_id)
+            .collect::<Vec<_>>();
+
+        let status_line = if existing.is_empty() {
+            self.repo
+                .pin_message_memory(
+                    &context.session_id,
+                    &message_id,
+                    PinMessageMemoryRequest {
+                        pinned_by: AuthorId::User,
+                        expires_after_turns: None,
+                        provenance: Provenance::UserAuthored,
+                    },
+                )
+                .map_err(|error| error.to_string())?;
+            "Pinned selected message into hard context".to_owned()
+        } else {
+            for artifact_id in &existing {
+                self.repo
+                    .remove_pinned_memory(&context.session_id, artifact_id)
+                    .map_err(|error| error.to_string())?;
+            }
+            if existing.len() == 1 {
+                "Removed pinned memory from selected message".to_owned()
+            } else {
+                format!(
+                    "Removed {} pinned memories from selected message",
+                    existing.len()
+                )
+            }
+        };
+
+        self.refresh_context_cache(context);
+        self.build_recall_browser_refresh(context, status_line)
+            .map(Some)
+    }
+
     fn run_command(
         &mut self,
         context: &TuiSessionContext,
         input: &str,
     ) -> Result<Option<TuiRuntimeContextRefresh>, Self::Error> {
-        let command = match parse_session_command(input) {
+        let command = match parse_shell_command(input) {
             Ok(command) => command,
             Err(error) => return Ok(Some(Self::status_only_refresh(error))),
         };
 
         match command {
-            SessionCommand::Show => {
+            ShellCommand::Session(SessionCommand::Show) => {
                 let snapshot = self.load_session_snapshot(context)?;
                 let status = format!(
                     "Session {} · character {} · tags {}",
@@ -922,9 +1094,10 @@ impl SessionRuntime for Phase1dRuntime {
                         .context_bridge
                         .latest_dry_run()
                         .map(tui_context_dry_run_from_build),
+                    ..TuiRuntimeContextRefresh::default()
                 }))
             }
-            SessionCommand::Rename(name) => {
+            ShellCommand::Session(SessionCommand::Rename(name)) => {
                 let name =
                     require_non_empty("session name", name).map_err(|error| error.to_string())?;
                 self.repo
@@ -939,7 +1112,7 @@ impl SessionRuntime for Phase1dRuntime {
                 self.build_session_refresh(context, format!("Session renamed to {name}"))
                     .map(Some)
             }
-            SessionCommand::Character(character_name) => {
+            ShellCommand::Session(SessionCommand::Character(character_name)) => {
                 self.repo
                     .update_session_metadata(
                         &context.session_id,
@@ -955,7 +1128,7 @@ impl SessionRuntime for Phase1dRuntime {
                 };
                 self.build_session_refresh(context, status).map(Some)
             }
-            SessionCommand::Tags(tags) => {
+            ShellCommand::Session(SessionCommand::Tags(tags)) => {
                 self.repo
                     .update_session_metadata(
                         &context.session_id,
@@ -971,6 +1144,78 @@ impl SessionRuntime for Phase1dRuntime {
                     format!("Session tags set to {}", format_tags(&tags))
                 };
                 self.build_session_refresh(context, status).map(Some)
+            }
+            ShellCommand::Memory(MemoryCommand::List) => self
+                .build_recall_browser_refresh(context, "Loaded pinned memories")
+                .map(Some),
+            ShellCommand::Memory(MemoryCommand::Note(text)) => {
+                let text =
+                    require_non_empty("memory note", text).map_err(|error| error.to_string())?;
+                self.repo
+                    .create_note_memory(
+                        &context.session_id,
+                        CreateNoteMemoryRequest::new(
+                            text,
+                            AuthorId::User,
+                            Provenance::UserAuthored,
+                        ),
+                    )
+                    .map_err(|error| error.to_string())?;
+                self.refresh_context_cache(context);
+                self.build_recall_browser_refresh(context, "Created pinned note memory")
+                    .map(Some)
+            }
+            ShellCommand::Memory(MemoryCommand::Unpin(artifact_id)) => {
+                let removed = self
+                    .repo
+                    .remove_pinned_memory(&context.session_id, &artifact_id)
+                    .map_err(|error| error.to_string())?;
+                if !removed {
+                    return Ok(Some(Self::status_only_refresh(format!(
+                        "Pinned memory {} was not found",
+                        artifact_id
+                    ))));
+                }
+                self.refresh_context_cache(context);
+                self.build_recall_browser_refresh(
+                    context,
+                    format!("Removed pinned memory {artifact_id}"),
+                )
+                .map(Some)
+            }
+            ShellCommand::Search(SearchCommand::Session(query)) => {
+                let query =
+                    require_non_empty("search query", query).map_err(|error| error.to_string())?;
+                let result = HybridSearchService::new(&self.repo, &self.inference.config().memory)
+                    .search_session(&context.session_id, &query)?;
+                self.recent_search = Some(recent_search_section("session", &result, false));
+                self.build_recall_browser_refresh(
+                    context,
+                    format!(
+                        "Session search `{query}` · {} · {} hit{}",
+                        result.status.summary_line(),
+                        result.hits.len(),
+                        if result.hits.len() == 1 { "" } else { "s" }
+                    ),
+                )
+                .map(Some)
+            }
+            ShellCommand::Search(SearchCommand::Global(query)) => {
+                let query =
+                    require_non_empty("search query", query).map_err(|error| error.to_string())?;
+                let result = HybridSearchService::new(&self.repo, &self.inference.config().memory)
+                    .search_global(&query)?;
+                self.recent_search = Some(recent_search_section("global", &result, true));
+                self.build_recall_browser_refresh(
+                    context,
+                    format!(
+                        "Global search `{query}` · {} · {} hit{}",
+                        result.status.summary_line(),
+                        result.hits.len(),
+                        if result.hits.len() == 1 { "" } else { "s" }
+                    ),
+                )
+                .map(Some)
             }
         }
     }
@@ -1048,17 +1293,248 @@ fn tui_context_dry_run_from_build(dry_run: &DryRunContextBuild) -> TuiContextDry
     }
 }
 
-fn parse_session_command(input: &str) -> Result<SessionCommand, String> {
+fn tui_recall_browser_from_state(
+    pinned_memories: &[PinnedMemoryView],
+    recent_search: Option<&RecentSearchSection>,
+) -> TuiRecallBrowser {
+    const MAX_SECTION_LINES: usize = 5;
+
+    let active = pinned_memories
+        .iter()
+        .filter(|memory| memory.is_active)
+        .collect::<Vec<_>>();
+    let expired = pinned_memories
+        .iter()
+        .filter(|memory| memory.is_expired())
+        .collect::<Vec<_>>();
+
+    let mut lines = vec![format!("active pinned {}", active.len())];
+    if active.is_empty() {
+        lines.push("— none".into());
+    } else {
+        lines.extend(
+            active
+                .iter()
+                .take(MAX_SECTION_LINES)
+                .map(|memory| format_pinned_memory_browser_line(memory)),
+        );
+        let omitted = active.len().saturating_sub(MAX_SECTION_LINES);
+        if omitted > 0 {
+            lines.push(format!("+{omitted} more active memories"));
+        }
+    }
+
+    if !expired.is_empty() {
+        lines.push(format!("expired pinned {}", expired.len()));
+        lines.extend(
+            expired
+                .iter()
+                .take(MAX_SECTION_LINES)
+                .map(|memory| format_pinned_memory_browser_line(memory)),
+        );
+        let omitted = expired.len().saturating_sub(MAX_SECTION_LINES);
+        if omitted > 0 {
+            lines.push(format!("+{omitted} more expired memories"));
+        }
+    }
+
+    if let Some(search) = recent_search {
+        lines.push(search.summary.clone());
+        if search.lines.is_empty() {
+            lines.push("— none".into());
+        } else {
+            lines.extend(search.lines.iter().take(MAX_SECTION_LINES).cloned());
+            let omitted = search.lines.len().saturating_sub(MAX_SECTION_LINES);
+            if omitted > 0 {
+                lines.push(format!("+{omitted} more search hits"));
+            }
+        }
+    }
+
+    let mut summary_parts = vec![format!("{} active", active.len())];
+    if !expired.is_empty() {
+        summary_parts.push(format!("{} expired", expired.len()));
+    }
+    if let Some(search) = recent_search {
+        summary_parts.push(format!(
+            "{} recent hit{}",
+            search.hit_count,
+            hit_suffix(search.hit_count)
+        ));
+    }
+
+    TuiRecallBrowser {
+        title: "Recall".into(),
+        summary: summary_parts.join(" · "),
+        lines,
+    }
+}
+
+fn recent_search_section(
+    scope: &str,
+    result: &ozone_memory::RetrievalResultSet,
+    include_session: bool,
+) -> RecentSearchSection {
+    RecentSearchSection {
+        summary: format!(
+            "{scope} search \"{}\" · {} · {} hit{}",
+            result.query,
+            result.status.summary_line(),
+            result.hits.len(),
+            hit_suffix(result.hits.len())
+        ),
+        hit_count: result.hits.len(),
+        lines: result
+            .hits
+            .iter()
+            .map(|hit| format_retrieval_browser_line(hit, include_session))
+            .collect(),
+    }
+}
+
+fn format_retrieval_browser_line(
+    hit: &ozone_memory::RetrievalHit,
+    include_session: bool,
+) -> String {
+    let target = match hit.hit_kind {
+        ozone_memory::RetrievalHitKind::Message => format!(
+            "msg {}",
+            hit.message_id
+                .as_ref()
+                .map(|message_id| short_id(message_id.as_str()))
+                .unwrap_or_else(|| "—".to_owned())
+        ),
+        ozone_memory::RetrievalHitKind::PinnedMemory => format!(
+            "memory {}",
+            hit.artifact_id
+                .as_ref()
+                .map(|artifact_id| short_id(artifact_id.as_str()))
+                .unwrap_or_else(|| "—".to_owned())
+        ),
+        ozone_memory::RetrievalHitKind::NoteMemory => format!(
+            "note {}",
+            hit.artifact_id
+                .as_ref()
+                .map(|artifact_id| short_id(artifact_id.as_str()))
+                .unwrap_or_else(|| "—".to_owned())
+        ),
+    };
+    let session_label = if include_session {
+        match hit.session.character_name.as_deref() {
+            Some(character_name) if !character_name.is_empty() => format!(
+                "{} [{}] / {} · ",
+                hit.session.session_name,
+                character_name,
+                short_id(hit.session.session_id.as_str())
+            ),
+            _ => format!(
+                "{} / {} · ",
+                hit.session.session_name,
+                short_id(hit.session.session_id.as_str())
+            ),
+        }
+    } else {
+        String::new()
+    };
+    let actor = hit
+        .author_kind
+        .clone()
+        .unwrap_or_else(|| hit.provenance.to_string());
+    let state = if hit.source_state == ozone_memory::RetrievalSourceState::Current {
+        String::new()
+    } else {
+        format!(" · {}", hit.source_state)
+    };
+
+    format!(
+        "{}{} · s={:.2} t={:.2} v={:.2} p={:.2} · {}{} · {}",
+        session_label,
+        target,
+        hit.overall_score(),
+        hit.score.text_contribution,
+        hit.score.vector_contribution,
+        hit.score.provenance_contribution,
+        actor,
+        state,
+        compact_line(&hit.text, 56)
+    )
+}
+
+fn format_pinned_memory_browser_line(memory: &PinnedMemoryView) -> String {
+    let source = memory
+        .record
+        .source_message_id
+        .as_ref()
+        .map(|message_id| format!("src {}", short_id(message_id.as_str())))
+        .unwrap_or_else(|| "note".to_owned());
+    let expiry = match memory.remaining_turns {
+        Some(remaining) if memory.is_active => format!("{remaining} turns left"),
+        Some(_) => "expired".to_owned(),
+        None => "no expiry".to_owned(),
+    };
+
+    format!(
+        "{} · {} · {} · {} · {}",
+        short_id(memory.record.artifact_id.as_str()),
+        memory.record.provenance,
+        source,
+        expiry,
+        compact_line(&memory.record.content.text, 72)
+    )
+}
+
+fn compact_line(content: &str, max_chars: usize) -> String {
+    let flattened = content.replace('\n', " ");
+    let snippet: String = flattened.chars().take(max_chars).collect();
+    if flattened.chars().count() > max_chars {
+        format!("{snippet}…")
+    } else {
+        snippet
+    }
+}
+
+fn short_id(value: &str) -> String {
+    let snippet: String = value.chars().take(8).collect();
+    if value.chars().count() > 8 {
+        format!("{snippet}…")
+    } else {
+        snippet
+    }
+}
+
+fn hit_suffix(count: usize) -> &'static str {
+    if count == 1 {
+        ""
+    } else {
+        "s"
+    }
+}
+
+fn parse_shell_command(input: &str) -> Result<ShellCommand, String> {
     let trimmed = input.trim();
+
+    if let Some(alias) = trimmed.strip_prefix(':') {
+        return match alias.trim() {
+            "memories" => Ok(ShellCommand::Memory(MemoryCommand::List)),
+            _ => Err(unknown_shell_command_message()),
+        };
+    }
+
     let command = trimmed.strip_prefix('/').unwrap_or(trimmed);
     let mut parts = command.splitn(2, char::is_whitespace);
     let root = parts.next().unwrap_or_default();
     let remainder = parts.next().unwrap_or_default().trim();
 
-    if root != "session" {
-        return Err("Unknown command. Try /session show | /session rename NAME | /session character NAME|clear | /session tags a,b|clear".to_owned());
+    match root {
+        "session" => parse_session_subcommand(remainder).map(ShellCommand::Session),
+        "memory" => parse_memory_subcommand(remainder).map(ShellCommand::Memory),
+        "memories" if remainder.is_empty() => Ok(ShellCommand::Memory(MemoryCommand::List)),
+        "search" => parse_search_subcommand(remainder).map(ShellCommand::Search),
+        _ => Err(unknown_shell_command_message()),
     }
+}
 
+fn parse_session_subcommand(remainder: &str) -> Result<SessionCommand, String> {
     if remainder.eq_ignore_ascii_case("show") {
         return Ok(SessionCommand::Show);
     }
@@ -1098,6 +1574,55 @@ fn parse_session_command(input: &str) -> Result<SessionCommand, String> {
     }
 }
 
+fn parse_memory_subcommand(remainder: &str) -> Result<MemoryCommand, String> {
+    if remainder.is_empty() || remainder.eq_ignore_ascii_case("list") {
+        return Ok(MemoryCommand::List);
+    }
+
+    let mut parts = remainder.splitn(2, char::is_whitespace);
+    let subcommand = parts.next().unwrap_or_default();
+    let argument = parts.next().unwrap_or_default().trim();
+
+    match subcommand {
+        "note" => Ok(MemoryCommand::Note(require_non_empty(
+            "memory note",
+            argument.to_owned(),
+        )?)),
+        "unpin" => Ok(MemoryCommand::Unpin(
+            MemoryArtifactId::parse(require_non_empty("artifact id", argument.to_owned())?)
+                .map_err(|error| error.to_string())?,
+        )),
+        _ => Err(
+            "Unknown memory command. Try /memory list | /memory note TEXT | /memory unpin <artifact-id> | :memories"
+                .to_owned(),
+        ),
+    }
+}
+
+fn parse_search_subcommand(remainder: &str) -> Result<SearchCommand, String> {
+    let mut parts = remainder.splitn(2, char::is_whitespace);
+    let scope = parts.next().unwrap_or_default();
+    let query = parts.next().unwrap_or_default().trim();
+
+    match scope {
+        "session" => Ok(SearchCommand::Session(require_non_empty(
+            "search query",
+            query.to_owned(),
+        )?)),
+        "global" => Ok(SearchCommand::Global(require_non_empty(
+            "search query",
+            query.to_owned(),
+        )?)),
+        _ => Err(
+            "Unknown search command. Try /search session QUERY | /search global QUERY".to_owned(),
+        ),
+    }
+}
+
+fn unknown_shell_command_message() -> String {
+    "Unknown command. Try /session show | /session rename NAME | /session character NAME|clear | /session tags a,b|clear | /memory list | /memory note TEXT | /memory unpin <artifact-id> | /search session QUERY | /search global QUERY | :memories".to_owned()
+}
+
 fn require_non_empty(label: &str, value: String) -> Result<String, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -1135,5 +1660,169 @@ fn repository_template_dir() -> Option<PathBuf> {
         if !current.pop() {
             return None;
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ozone_core::{engine::MessageId, session::SessionId};
+    use ozone_persist::{MemoryArtifactId, PinnedMemoryContent, PinnedMemoryRecord};
+
+    fn pinned_memory(
+        text: &str,
+        ordinal: u8,
+        remaining_turns: Option<u32>,
+        is_active: bool,
+    ) -> PinnedMemoryView {
+        let artifact_id =
+            MemoryArtifactId::parse(format!("123e4567-e89b-12d3-a456-4266141740{ordinal:02}"))
+                .unwrap();
+        let message_id =
+            MessageId::parse(format!("223e4567-e89b-12d3-a456-4266141740{ordinal:02}")).unwrap();
+        let session_id = SessionId::parse("323e4567-e89b-12d3-a456-426614174000").unwrap();
+
+        PinnedMemoryView {
+            record: PinnedMemoryRecord {
+                artifact_id,
+                session_id,
+                content: PinnedMemoryContent {
+                    text: text.to_owned(),
+                    pinned_by: AuthorId::User,
+                    expires_after_turns: remaining_turns.or(Some(1)),
+                },
+                source_message_id: Some(message_id),
+                provenance: Provenance::UserAuthored,
+                created_at: 1_700_000_000_000,
+                snapshot_version: 1,
+            },
+            turns_elapsed: if is_active { 0 } else { 1 },
+            remaining_turns,
+            is_active,
+        }
+    }
+
+    #[test]
+    fn parses_memory_search_and_memories_commands() {
+        assert_eq!(
+            parse_shell_command("/memory list"),
+            Ok(ShellCommand::Memory(MemoryCommand::List))
+        );
+        assert_eq!(
+            parse_shell_command(":memories"),
+            Ok(ShellCommand::Memory(MemoryCommand::List))
+        );
+        assert_eq!(
+            parse_shell_command("/memory note Remember the blue lamp"),
+            Ok(ShellCommand::Memory(MemoryCommand::Note(
+                "Remember the blue lamp".into()
+            )))
+        );
+        assert_eq!(
+            parse_shell_command("/memory unpin 123e4567-e89b-12d3-a456-426614174000"),
+            Ok(ShellCommand::Memory(MemoryCommand::Unpin(
+                MemoryArtifactId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap()
+            )))
+        );
+        assert_eq!(
+            parse_shell_command("/search session observatory key"),
+            Ok(ShellCommand::Search(SearchCommand::Session(
+                "observatory key".into()
+            )))
+        );
+        assert_eq!(
+            parse_shell_command("/search global observatory"),
+            Ok(ShellCommand::Search(SearchCommand::Global(
+                "observatory".into()
+            )))
+        );
+    }
+
+    #[test]
+    fn recall_browser_surfaces_active_expired_and_recent_hits() {
+        let browser = tui_recall_browser_from_state(
+            &[
+                pinned_memory("Remember the observatory key.", 1, Some(2), true),
+                pinned_memory("Expired fallback.", 2, Some(0), false),
+            ],
+            Some(&RecentSearchSection {
+                summary: "session search \"observatory\" · 1 hit".into(),
+                hit_count: 1,
+                lines: vec!["msg 223e4567… · assistant · The key rests under the lamp.".into()],
+            }),
+        );
+
+        assert_eq!(browser.title, "Recall");
+        assert!(browser.summary.contains("1 active"));
+        assert!(browser.summary.contains("1 expired"));
+        assert!(browser.summary.contains("1 recent hit"));
+        assert!(browser
+            .lines
+            .iter()
+            .any(|line| line.contains("Remember the observatory key.")));
+        assert!(browser
+            .lines
+            .iter()
+            .any(|line| line.contains("Expired fallback.")));
+        assert!(browser
+            .lines
+            .iter()
+            .any(|line| line.contains("session search \"observatory\" · 1 hit")));
+    }
+
+    #[test]
+    fn recent_search_section_displays_mode_and_score_breakdown() {
+        let result = ozone_memory::RetrievalResultSet {
+            query: "observatory".into(),
+            status: ozone_memory::RetrievalStatus {
+                mode: ozone_memory::RetrievalSearchMode::Hybrid,
+                reason: None,
+                filtered_stale_embeddings: 1,
+                downranked_embeddings: 0,
+            },
+            hits: vec![ozone_memory::RetrievalHit {
+                session: ozone_memory::SearchSessionMetadata {
+                    session_id: SessionId::parse("423e4567-e89b-12d3-a456-426614174000").unwrap(),
+                    session_name: "Observatory".into(),
+                    character_name: None,
+                    tags: vec!["phase2b".into()],
+                },
+                hit_kind: ozone_memory::RetrievalHitKind::Message,
+                artifact_id: None,
+                message_id: Some(
+                    MessageId::parse("523e4567-e89b-12d3-a456-426614174000").unwrap(),
+                ),
+                source_message_id: None,
+                author_kind: Some("assistant".into()),
+                text: "The key rests under the lamp.".into(),
+                created_at: 1_700_000_000_100,
+                provenance: Provenance::UtilityModel,
+                source_state: ozone_memory::RetrievalSourceState::Current,
+                is_active_memory: None,
+                score: ozone_memory::HybridScoreInput {
+                    mode: ozone_memory::RetrievalSearchMode::Hybrid,
+                    hybrid_alpha: 0.5,
+                    bm25_score: Some(-1.2),
+                    text_score: 0.9,
+                    vector_similarity: Some(0.8),
+                    importance_score: 0.45,
+                    recency_score: 0.7,
+                    provenance: Provenance::UtilityModel,
+                    stale_penalty: 1.0,
+                }
+                .score(
+                    &ozone_memory::RetrievalWeights::default(),
+                    &ozone_memory::ProvenanceWeights::default(),
+                ),
+            }],
+        };
+
+        let section = recent_search_section("session", &result, false);
+        assert!(section.summary.contains("hybrid"));
+        assert!(section.summary.contains("filtered 1 stale embedding"));
+        assert!(section.lines[0].contains("s="));
+        assert!(section.lines[0].contains("t="));
+        assert!(section.lines[0].contains("v="));
+        assert!(section.lines[0].contains("The key rests under the lamp."));
     }
 }

@@ -1,5 +1,7 @@
 use std::{error::Error, fmt, str::FromStr};
 
+use serde::{Deserialize, Serialize};
+
 use crate::session::{SessionId, UnixTimestamp};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -27,7 +29,7 @@ impl Error for EngineIdError {}
 
 macro_rules! define_uuid_id {
     ($name:ident, $label:literal) => {
-        #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
+        #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
         pub struct $name(String);
 
         impl $name {

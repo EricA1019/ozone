@@ -15,6 +15,7 @@ members = [
     "crates/ozone-core",
     "crates/ozone-engine",
     "crates/ozone-inference",
+    "crates/ozone-memory",
     "crates/ozone-persist",
     "crates/ozone-tui",
 ]

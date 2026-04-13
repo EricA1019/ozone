@@ -271,7 +271,10 @@ fn build_kc_args(plan: &LaunchPlan) -> Vec<String> {
     args
 }
 
-pub async fn run_launcher(no_browser: bool, preferred_frontend: Option<FrontendMode>) -> Result<()> {
+pub async fn run_launcher(
+    no_browser: bool,
+    preferred_frontend: Option<FrontendMode>,
+) -> Result<()> {
     let mut prefs = crate::prefs::load_prefs().await;
     prefs.no_browser = prefs.no_browser || no_browser;
 
@@ -396,8 +399,8 @@ pub async fn run_launcher(no_browser: bool, preferred_frontend: Option<FrontendM
                 terminal.draw(|f| launcher::render_launching(f, &app))?;
 
                 let home = std::env::var("HOME").unwrap_or_default();
-                let launcher_path = std::path::PathBuf::from(&home)
-                    .join("models/launch-koboldcpp.sh");
+                let launcher_path =
+                    std::path::PathBuf::from(&home).join("models/launch-koboldcpp.sh");
                 let model_path = std::path::PathBuf::from(&home)
                     .join("models")
                     .join(&plan.model_name);
@@ -922,7 +925,9 @@ pub async fn run_launcher(no_browser: bool, preferred_frontend: Option<FrontendM
             .filter(|p| p.exists())
             .unwrap_or_else(|| std::path::PathBuf::from("ozone-plus"));
         use std::os::unix::process::CommandExt;
-        let err = std::process::Command::new(ozone_plus_bin).arg("list").exec();
+        let err = std::process::Command::new(ozone_plus_bin)
+            .arg("list")
+            .exec();
         return Err(anyhow::anyhow!("Failed to exec ozone-plus: {err}"));
     }
     result
