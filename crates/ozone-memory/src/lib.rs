@@ -1,9 +1,12 @@
+pub mod assistive;
 mod index;
 mod lifecycle;
 pub mod disk_monitor;
 mod provider;
 mod scoring;
 pub mod summary;
+
+pub use assistive::{ImportanceScorer, KeywordExtractor, ScoringConfig};
 
 use std::{error::Error, fmt, str::FromStr};
 
@@ -188,6 +191,13 @@ pub enum MemoryContent {
         text: String,
         message_count: usize,
     },
+    ImportanceProposal {
+        score: f32,
+        justification: String,
+    },
+    RetrievalKey {
+        keywords: Vec<String>,
+    },
 }
 
 impl MemoryContent {
@@ -222,6 +232,17 @@ impl MemoryContent {
             text: text.into(),
             message_count,
         }
+    }
+
+    pub fn importance_proposal(score: f32, justification: impl Into<String>) -> Self {
+        Self::ImportanceProposal {
+            score,
+            justification: justification.into(),
+        }
+    }
+
+    pub fn retrieval_key(keywords: Vec<String>) -> Self {
+        Self::RetrievalKey { keywords }
     }
 
     pub fn into_pinned(self) -> Option<PinnedMemoryContent> {
@@ -713,5 +734,52 @@ mod tests {
         let json = serde_json::to_string(&content).unwrap();
         let parsed = serde_json::from_str::<MemoryContent>(&json).unwrap();
         assert_eq!(content, parsed);
+    }
+
+    #[test]
+    fn importance_proposal_content_roundtrip() {
+        let content =
+            MemoryContent::importance_proposal(0.85, "This memory is critical for plot continuity.");
+        let json = serde_json::to_string(&content).unwrap();
+        assert!(json.contains("\"kind\":\"importance_proposal\""));
+        let parsed = serde_json::from_str::<MemoryContent>(&json).unwrap();
+        assert_eq!(content, parsed);
+    }
+
+    #[test]
+    fn retrieval_key_content_roundtrip() {
+        let content = MemoryContent::retrieval_key(vec![
+            "observatory".to_owned(),
+            "lantern".to_owned(),
+            "dusk".to_owned(),
+        ]);
+        let json = serde_json::to_string(&content).unwrap();
+        assert!(json.contains("\"kind\":\"retrieval_key\""));
+        let parsed = serde_json::from_str::<MemoryContent>(&json).unwrap();
+        assert_eq!(content, parsed);
+    }
+
+    #[test]
+    fn importance_proposal_constructor_works() {
+        let content = MemoryContent::importance_proposal(0.75, "High relevance to current scene.");
+        match content {
+            MemoryContent::ImportanceProposal { score, justification } => {
+                assert!((score - 0.75).abs() < f32::EPSILON);
+                assert_eq!(justification, "High relevance to current scene.");
+            }
+            _ => panic!("Expected ImportanceProposal variant"),
+        }
+    }
+
+    #[test]
+    fn retrieval_key_constructor_works() {
+        let keywords = vec!["crystal".to_owned(), "hidden".to_owned()];
+        let content = MemoryContent::retrieval_key(keywords.clone());
+        match content {
+            MemoryContent::RetrievalKey { keywords: kw } => {
+                assert_eq!(kw, keywords);
+            }
+            _ => panic!("Expected RetrievalKey variant"),
+        }
     }
 }

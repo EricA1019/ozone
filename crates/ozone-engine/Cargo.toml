@@ -9,4 +9,6 @@ license = "MIT"
 [dependencies]
 ozone-core = { path = "../ozone-core" }
 tokio = { version = "1", features = ["sync"] }
+tokio-util = { version = "0.7", features = ["codec"] }
+bytes = "1"
 

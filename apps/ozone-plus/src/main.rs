@@ -15,6 +15,8 @@ use ozone_engine::{
 };
 use ozone_inference::MemoryConfig;
 
+pub mod config;
+pub mod hooks;
 mod context_bridge;
 mod hybrid_search;
 mod index_rebuild;

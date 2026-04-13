@@ -15,3 +15,6 @@ ozone-memory = { version = "0.1.0", path = "../../crates/ozone-memory" }
 ozone-persist = { path = "../../crates/ozone-persist" }
 ozone-tui = { path = "../../crates/ozone-tui" }
 tokio = { version = "1", features = ["rt", "sync"] }
+dirs = "6"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"

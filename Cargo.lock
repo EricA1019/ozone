@@ -1896,8 +1896,10 @@ dependencies = [
 name = "ozone-engine"
 version = "0.1.0"
 dependencies = [
+ "bytes",
  "ozone-core",
  "tokio",
+ "tokio-util",
 ]
 
 [[package]]
@@ -1951,12 +1953,15 @@ name = "ozone-plus"
 version = "0.1.0"
 dependencies = [
  "clap",
+ "dirs",
  "ozone-core",
  "ozone-engine",
  "ozone-inference",
  "ozone-memory",
  "ozone-persist",
  "ozone-tui",
+ "serde",
+ "serde_json",
  "tokio",
 ]
 

@@ -314,6 +314,8 @@ pub struct MemoryConfig {
     pub lifecycle: MemoryLifecycleConfig,
     #[serde(default)]
     pub summary: SummaryConfig,
+    #[serde(default)]
+    pub tier_b: TierBConfig,
 }
 
 fn default_hybrid_alpha() -> f32 {
@@ -330,6 +332,27 @@ fn default_archive_after_turns() -> usize {
 
 fn default_compaction_interval_hours() -> u64 {
     24
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TierBConfig {
+    pub enabled: bool,
+    pub importance_proposals: bool,
+    pub retrieval_keys: bool,
+    pub thinking_summaries: bool,
+    pub retrieval_recommendations: bool,
+}
+
+impl Default for TierBConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            importance_proposals: true,
+            retrieval_keys: true,
+            thinking_summaries: true,
+            retrieval_recommendations: true,
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
@@ -472,6 +495,7 @@ impl Default for MemoryConfig {
             compaction_interval_hours: default_compaction_interval_hours(),
             lifecycle: MemoryLifecycleConfig::default(),
             summary: SummaryConfig::default(),
+            tier_b: TierBConfig::default(),
         }
     }
 }

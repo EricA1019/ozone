@@ -12,6 +12,9 @@ use ozone_core::{
 use tokio::sync::broadcast;
 
 pub mod context;
+pub mod thinking;
+
+pub use thinking::{ThinkingBlockDecoder, ThinkingDisplayMode, ThinkingOutput, ThinkingState};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditMessageCommand {
