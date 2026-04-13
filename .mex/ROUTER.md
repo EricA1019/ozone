@@ -46,14 +46,15 @@ Then read this file fully before doing anything else in this session.
 - Phase 1G is now implemented: `src/ui/mod.rs` adds `Screen::FrontendChoice` and `FrontendMode` enum; `ozone --frontend ozonePlus` bypasses the choice screen and exec-hands-off to `ozone-plus list`; the choice screen sits between Confirm and Launch with ↑↓/Enter navigation
 - Phase 2A is now implemented: `crates/ozone-memory` owns typed pinned-memory / provenance / recall models, `crates/ozone-persist` reuses `memory_artifacts` + `session_search` for pinned memory and cross-session FTS recall, `apps/ozone-plus` now has `memory` / `search` CLI commands, and `crates/ozone-tui` supports `Ctrl+K`, `/memory ...`, `/search ...`, and `:memories` with recall output in the existing inspector/status surfaces
 - Phase 2B is now implemented: `crates/ozone-memory` now owns optional embedding providers, retrieval scoring, and the disk-backed `usearch` vector index manager; `crates/ozone-persist` now persists embedding artifacts in `memory_artifacts`; and `apps/ozone-plus` now supports `index rebuild`, hybrid session/global search, stale-embedding filtering, and `RetrievedMemory` context injection with explicit FTS-only fallback
+- Phase 2C is now implemented (alpha → gamma): `apps/ozone-plus` now has `/summarize` command, `memory recall` lifecycle labels, `lifecycle inspect`, `gc plan/run`, `events compact`, and `lifecycle disk-status`; `crates/ozone-memory` owns `StorageTierPolicy`, `ArtifactStaleness`, `DiskMonitorPolicy/DiskStatus/DiskCheckResult`, and `VersionCompatibilityResult`; `crates/ozone-persist` owns derived-artifact GC plan/apply and events compaction; `crates/ozone-inference` has full `MemoryLifecycleConfig` under `[memory.lifecycle]`
 
-**Phase 2 is in progress. Phase 2A and 2B are complete. Next: Phase 2C (summaries + lifecycle).**
+**Phase 2 is COMPLETE. All of Phase 2A, 2B, and 2C (alpha/beta/gamma) have shipped.**
 
 **Not yet built:**
 - TUI cancellation for in-flight profiling runs
 - A dedicated in-TUI browser for existing benchmark history and Pareto data
 - Rich per-substep sweep visualizations beyond streamed text progress
-- Phase 2C: rolling/session summaries, promotion rules, and lifecycle maintenance
+- Phase 3 (group chat, assistive layer, original ozone integration)
 
 **Known issues:**
 - Broken `.gguf` symlinks can still appear in the catalog/list and are only surfaced as issues when selected
