@@ -13,20 +13,22 @@ use ozone_engine::{
     ConversationStore, EditMessageCommand, EngineCommand, EngineCommandResult,
     RecordSwipeCandidateRequest, SingleWriterConversationEngine, SwipeGroupSnapshot,
 };
+use ozone_inference::MemoryConfig;
 
 mod context_bridge;
 mod hybrid_search;
-mod inference_adapter;
 mod index_rebuild;
+mod inference_adapter;
 mod runtime;
 
 use hybrid_search::{load_memory_config, HybridSearchService};
 use index_rebuild::rebuild_index;
 use ozone_persist::{
     AuthorId, BranchRecord, CharacterCard, CreateMessageRequest, CreateNoteMemoryRequest,
-    CreateSessionRequest, ImportCharacterCardRequest, MemoryArtifactId, PersistError,
-    PersistencePaths, PinMessageMemoryRequest, PinnedMemoryView, Provenance, SessionId,
-    SessionSummary, SqliteRepository, TranscriptExport,
+    CreateSessionRequest, GarbageCollectionOutcome, GarbageCollectionPlan,
+    GarbageCollectionPolicy, GarbageCollectionReason, ImportCharacterCardRequest,
+    MemoryArtifactId, PersistError, PersistencePaths, PinMessageMemoryRequest, PinnedMemoryView,
+    Provenance, SessionId, SessionSummary, SqliteRepository, TranscriptExport,
 };
 use ozone_tui::{run_terminal_session, SessionContext as TuiSessionContext};
 use runtime::Phase1dRuntime;
@@ -93,6 +95,10 @@ enum Command {
     Index(IndexArgs),
     /// Generate and store summaries for a session
     Summarize(SummarizeArgs),
+    /// Inspect derived artifact lifecycle metadata
+    Lifecycle(LifecycleArgs),
+    /// Plan or run garbage collection on derived artifacts
+    Gc(GcArgs),
 }
 
 #[derive(Args)]
@@ -417,6 +423,59 @@ enum SummarizeCommand {
 }
 
 #[derive(Args)]
+struct LifecycleArgs {
+    #[command(subcommand)]
+    command: LifecycleCommand,
+}
+
+#[derive(Subcommand)]
+enum LifecycleCommand {
+    /// List derived artifacts with lifecycle metadata for a session
+    Inspect {
+        /// Session UUID in 8-4-4-4-12 format (omit to inspect all sessions)
+        #[arg(value_name = "SESSION_ID")]
+        session_id: Option<String>,
+    },
+}
+
+#[derive(Args)]
+struct GcArgs {
+    #[command(subcommand)]
+    command: GcCommand,
+}
+
+#[derive(Subcommand)]
+enum GcCommand {
+    /// Plan (dry-run) garbage collection without deleting anything
+    Plan {
+        /// Session UUID to scope the plan (omit for all sessions)
+        #[arg(value_name = "SESSION_ID")]
+        session_id: Option<String>,
+        /// Maximum active embeddings before oldest are purged (default: unlimited)
+        #[arg(long, value_name = "N", default_value_t = usize::MAX)]
+        max_embeddings: usize,
+        /// Purge derived artifacts whose source message/memory no longer exists
+        #[arg(long)]
+        purge_orphans: bool,
+    },
+    /// Apply a garbage collection plan (deletes derived artifacts only)
+    Run {
+        /// Session UUID to scope GC (omit for all sessions)
+        #[arg(value_name = "SESSION_ID")]
+        session_id: Option<String>,
+        /// Maximum active embeddings before oldest are purged (default: unlimited)
+        #[arg(long, value_name = "N", default_value_t = usize::MAX)]
+        max_embeddings: usize,
+        /// Purge derived artifacts whose source message/memory no longer exists
+        #[arg(long)]
+        purge_orphans: bool,
+        /// Actually apply the plan (omit for dry-run preview)
+        #[arg(long)]
+        apply: bool,
+    },
+}
+
+#[derive(Args)]
 struct SessionSearchArgs {
     /// Session UUID in 8-4-4-4-12 format
     session_id: String,
@@ -478,6 +537,8 @@ fn run_cli(cli: Cli) -> Result<(), String> {
         Some(Command::Search(args)) => handle_search_command(args.command),
         Some(Command::Index(args)) => handle_index_command(args.command),
         Some(Command::Summarize(args)) => handle_summarize_command(args.command),
+        Some(Command::Lifecycle(args)) => handle_lifecycle_command(args.command),
+        Some(Command::Gc(args)) => handle_gc_command(args.command),
         None => {
             print_bootstrap_summary();
             Ok(())
@@ -1626,7 +1687,10 @@ fn search_global(args: GlobalSearchArgs) -> Result<(), String> {
     let memory = load_memory_config(&repo, None)?;
     let result = HybridSearchService::new(&repo, &memory).search_global(&query)?;
 
-    println!("{}", format_search_report("Global search", None, &result, true));
+    println!(
+        "{}",
+        format_search_report("Global search", None, &result, true)
+    );
 
     Ok(())
 }
@@ -1750,7 +1814,14 @@ fn summarize_chunk(
             println!("  messages        {}", chunk.len());
             println!();
             println!("{summary}");
-            match repo.store_chunk_summary(&session_id, &summary, chunk.len(), &start_id, &end_id, 0) {
+            match repo.store_chunk_summary(
+                &session_id,
+                &summary,
+                chunk.len(),
+                &start_id,
+                &end_id,
+                0,
+            ) {
                 Ok(record) => println!("  stored as       {}", record.artifact_id),
                 Err(err) => eprintln!("  warning: failed to persist chunk summary: {err}"),
             }
@@ -1764,6 +1835,198 @@ fn summarize_chunk(
     }
 
     Ok(())
+}
+
+fn handle_lifecycle_command(command: LifecycleCommand) -> Result<(), String> {
+    match command {
+        LifecycleCommand::Inspect { session_id } => lifecycle_inspect(session_id),
+    }
+}
+
+fn lifecycle_inspect(session_id_raw: Option<String>) -> Result<(), String> {
+    let repo = open_repository()?;
+    let session_id = session_id_raw
+        .as_deref()
+        .map(parse_session_id)
+        .transpose()?;
+    let config = load_memory_config(&repo, session_id.as_ref()).unwrap_or_default();
+    let policy = ozone_memory::StorageTierPolicy::new(
+        config.lifecycle.storage_tiers.reduced_after_messages as u64,
+        config.lifecycle.storage_tiers.minimal_after_messages as u64,
+    );
+    let records = repo
+        .inspect_derived_artifacts(
+            session_id.as_ref(),
+            &policy,
+            config.lifecycle.stale_artifacts.max_age_messages,
+            config.lifecycle.stale_artifacts.max_age_hours as u64,
+        )
+        .map_err(|error| error.to_string())?;
+
+    if records.is_empty() {
+        println!("No derived artifacts found.");
+        return Ok(());
+    }
+
+    println!("Derived artifacts  ({} total)", records.len());
+    println!();
+    for record in &records {
+        println!("  {}  {}  {}", record.artifact_id, record.kind, record.session_id);
+        println!("    tier       {}", record.storage_tier);
+        println!(
+            "    stale      {}",
+            if record.staleness.is_stale { "yes ⚠" } else { "no" }
+        );
+        println!(
+            "    age        {} messages  {} hours",
+            record.age_messages, record.staleness.age_hours
+        );
+        println!("    source     {}", if record.source_exists { "present" } else { "missing ⚠" });
+        println!("    created    {}", record.created_at);
+        println!();
+    }
+    Ok(())
+}
+
+fn handle_gc_command(command: GcCommand) -> Result<(), String> {
+    match command {
+        GcCommand::Plan {
+            session_id,
+            max_embeddings,
+            purge_orphans,
+        } => gc_plan(session_id, max_embeddings, purge_orphans),
+        GcCommand::Run {
+            session_id,
+            max_embeddings,
+            purge_orphans,
+            apply,
+        } => gc_run(session_id, max_embeddings, purge_orphans, apply),
+    }
+}
+
+fn build_gc_policy_and_session(
+    session_id_raw: Option<String>,
+    max_embeddings: usize,
+    purge_orphans: bool,
+) -> Result<(Option<SessionId>, GarbageCollectionPolicy), String> {
+    let session_id = session_id_raw.as_deref().map(parse_session_id).transpose()?;
+    let policy = GarbageCollectionPolicy::new(max_embeddings, purge_orphans);
+    Ok((session_id, policy))
+}
+
+fn gc_plan(
+    session_id_raw: Option<String>,
+    max_embeddings: usize,
+    purge_orphans: bool,
+) -> Result<(), String> {
+    let (session_id, policy) =
+        build_gc_policy_and_session(session_id_raw, max_embeddings, purge_orphans)?;
+    let repo = open_repository()?;
+    let config = load_memory_config(&repo, session_id.as_ref()).unwrap_or_default();
+    let storage_policy = ozone_memory::StorageTierPolicy::new(
+        config.lifecycle.storage_tiers.reduced_after_messages as u64,
+        config.lifecycle.storage_tiers.minimal_after_messages as u64,
+    );
+    let plan = repo
+        .plan_garbage_collection(
+            session_id.as_ref(),
+            &storage_policy,
+            config.lifecycle.stale_artifacts.max_age_messages,
+            config.lifecycle.stale_artifacts.max_age_hours as u64,
+            &policy,
+        )
+        .map_err(|error| error.to_string())?;
+    print_gc_plan(&plan);
+    Ok(())
+}
+
+fn gc_run(
+    session_id_raw: Option<String>,
+    max_embeddings: usize,
+    purge_orphans: bool,
+    apply: bool,
+) -> Result<(), String> {
+    let (session_id, policy) =
+        build_gc_policy_and_session(session_id_raw, max_embeddings, purge_orphans)?;
+    let repo = open_repository()?;
+    let config = load_memory_config(&repo, session_id.as_ref()).unwrap_or_default();
+    let storage_policy = ozone_memory::StorageTierPolicy::new(
+        config.lifecycle.storage_tiers.reduced_after_messages as u64,
+        config.lifecycle.storage_tiers.minimal_after_messages as u64,
+    );
+    let plan = repo
+        .plan_garbage_collection(
+            session_id.as_ref(),
+            &storage_policy,
+            config.lifecycle.stale_artifacts.max_age_messages,
+            config.lifecycle.stale_artifacts.max_age_hours as u64,
+            &policy,
+        )
+        .map_err(|error| error.to_string())?;
+
+    print_gc_plan(&plan);
+
+    if !apply {
+        println!();
+        println!("Dry-run mode — no artifacts deleted. Pass --apply to commit.");
+        return Ok(());
+    }
+
+    if plan.candidate_count == 0 {
+        println!();
+        println!("Nothing to delete.");
+        return Ok(());
+    }
+
+    let outcome = repo
+        .apply_garbage_collection_plan(&plan)
+        .map_err(|error| error.to_string())?;
+    print_gc_outcome(&outcome);
+    Ok(())
+}
+
+fn print_gc_plan(plan: &GarbageCollectionPlan) {
+    println!("GC plan");
+    println!("  inspected       {}", plan.inspected_count);
+    println!("  candidates      {}", plan.candidate_count);
+    if !plan.reason_counts.is_empty() {
+        println!("  reasons:");
+        for (reason, count) in &plan.reason_counts {
+            println!("    {:<28} {count}", reason_label(*reason));
+        }
+    }
+    if !plan.candidates.is_empty() {
+        println!();
+        println!("Candidates:");
+        for candidate in &plan.candidates {
+            let reasons: Vec<&str> = candidate.reasons.iter().map(|r| r.as_str()).collect();
+            println!(
+                "  {}  {}  {} — {}",
+                candidate.artifact.artifact_id,
+                candidate.artifact.kind,
+                candidate.artifact.session_id,
+                reasons.join(", ")
+            );
+        }
+    }
+}
+
+fn print_gc_outcome(outcome: &GarbageCollectionOutcome) {
+    println!();
+    println!("GC applied");
+    println!("  deleted         {}", outcome.deleted_count);
+    for (session_id, ids) in &outcome.deleted_artifact_ids {
+        println!("  session {session_id}  {} artifact(s)", ids.len());
+    }
+}
+
+fn reason_label(reason: GarbageCollectionReason) -> &'static str {
+    match reason {
+        GarbageCollectionReason::OrphanedSource => "orphaned_source",
+        GarbageCollectionReason::MinimalTier => "minimal_tier",
+        GarbageCollectionReason::SupersededSynopsis => "superseded_synopsis",
+        GarbageCollectionReason::OverEmbeddingLimit => "over_embedding_limit",
+    }
 }
 
 fn open_repository() -> Result<SqliteRepository, String> {
@@ -1951,7 +2214,11 @@ fn format_search_report(
     }
     let _ = writeln!(output, "  query           {}", result.query);
     let _ = writeln!(output, "  mode            {}", result.status.mode);
-    let _ = writeln!(output, "  status          {}", format_search_status(&result.status));
+    let _ = writeln!(
+        output,
+        "  status          {}",
+        format_search_status(&result.status)
+    );
     let _ = writeln!(output, "  hits            {}", result.hits.len());
     if result.hits.is_empty() {
         let _ = writeln!(output, "  none");
@@ -2001,10 +2268,7 @@ fn format_search_status(status: &ozone_memory::RetrievalStatus) -> String {
     }
 }
 
-fn format_search_hit(
-    hit: &ozone_memory::RetrievalHit,
-    include_session_details: bool,
-) -> String {
+fn format_search_hit(hit: &ozone_memory::RetrievalHit, include_session_details: bool) -> String {
     let mut output = String::new();
     if include_session_details {
         let _ = writeln!(output, "  session id      {}", hit.session.session_id);
@@ -2014,7 +2278,11 @@ fn format_search_hit(
             "  character       {}",
             hit.session.character_name.as_deref().unwrap_or("—")
         );
-        let _ = writeln!(output, "  tags            {}", format_tags(&hit.session.tags));
+        let _ = writeln!(
+            output,
+            "  tags            {}",
+            format_tags(&hit.session.tags)
+        );
     }
     let _ = writeln!(output, "  hit             {}", hit.hit_kind);
     let target = hit
@@ -2036,7 +2304,11 @@ fn format_search_hit(
     }
     let _ = writeln!(output, "  provenance      {}", hit.provenance);
     let _ = writeln!(output, "  state           {}", hit.source_state);
-    let _ = writeln!(output, "  created         {}", format_timestamp(hit.created_at));
+    let _ = writeln!(
+        output,
+        "  created         {}",
+        format_timestamp(hit.created_at)
+    );
     let _ = writeln!(output, "  score           {:.3}", hit.overall_score());
     let _ = writeln!(
         output,
@@ -2063,8 +2335,95 @@ fn format_search_hit(
         hit.score.importance_contribution,
         hit.score.stale_penalty,
     );
+    if let Some(lifecycle) = hit.lifecycle.as_ref() {
+        let _ = writeln!(
+            output,
+            "  lifecycle       {}",
+            lifecycle_detail_line(lifecycle)
+        );
+    }
     let _ = writeln!(output, "  content         {}", hit.text.replace('\n', " "));
     output
+}
+
+pub(crate) fn artifact_lifecycle_summary(
+    memory: &MemoryConfig,
+    snapshot_version: u64,
+    created_at: i64,
+    current_message_count: u64,
+    provenance: Provenance,
+) -> ozone_memory::ArtifactLifecycleSummary {
+    let storage_tiers = ozone_memory::StorageTierPolicy::new(
+        u64::try_from(memory.lifecycle.storage_tiers.reduced_after_messages).unwrap_or(u64::MAX),
+        u64::try_from(memory.lifecycle.storage_tiers.minimal_after_messages).unwrap_or(u64::MAX),
+    );
+    let staleness = ozone_memory::assess_artifact_staleness(
+        snapshot_version,
+        current_message_count,
+        created_at,
+        now_timestamp_ms(),
+        memory.lifecycle.stale_artifacts.max_age_messages,
+        memory.lifecycle.stale_artifacts.max_age_hours,
+    );
+
+    ozone_memory::ArtifactLifecycleSummary {
+        storage_tier: ozone_memory::storage_tier_for_age(staleness.age_messages, &storage_tiers),
+        age_messages: staleness.age_messages,
+        age_hours: staleness.age_hours,
+        is_stale: staleness.is_stale,
+        adjusted_provenance_score: ozone_memory::adjusted_provenance_weight(
+            memory.provenance_weights.weight_for(provenance),
+            provenance,
+            u32::try_from(staleness.age_messages).unwrap_or(u32::MAX),
+        )
+        .clamp(0.0, 1.0),
+    }
+}
+
+pub(crate) fn pinned_memory_lifecycle_summary(
+    memory: &MemoryConfig,
+    pinned_memory: &PinnedMemoryView,
+) -> ozone_memory::ArtifactLifecycleSummary {
+    artifact_lifecycle_summary(
+        memory,
+        pinned_memory.record.snapshot_version,
+        pinned_memory.record.created_at,
+        pinned_memory
+            .record
+            .snapshot_version
+            .saturating_add(pinned_memory.turns_elapsed),
+        pinned_memory.record.provenance,
+    )
+}
+
+pub(crate) fn lifecycle_badges(
+    lifecycle: &ozone_memory::ArtifactLifecycleSummary,
+    include_full_tier: bool,
+    include_provenance: bool,
+) -> Vec<String> {
+    let mut badges = Vec::new();
+    if include_full_tier
+        || lifecycle.storage_tier != ozone_memory::StorageTier::Full
+        || lifecycle.is_stale
+    {
+        badges.push(format!("tier {}", lifecycle.storage_tier));
+    }
+    if lifecycle.is_stale {
+        badges.push("⚠ stale".to_owned());
+    }
+    if include_provenance {
+        badges.push(format!("prov {:.2}", lifecycle.adjusted_provenance_score));
+    }
+    badges
+}
+
+pub(crate) fn lifecycle_detail_line(lifecycle: &ozone_memory::ArtifactLifecycleSummary) -> String {
+    let mut parts = lifecycle_badges(lifecycle, true, true);
+    parts.push(format!(
+        "age {} msg/{}h",
+        lifecycle.age_messages, lifecycle.age_hours
+    ));
+    parts.join(" · ")
 }
 
 fn print_swipe_group_snapshot(snapshot: &SwipeGroupSnapshot) {
@@ -2489,9 +2848,7 @@ mod tests {
                 },
                 hit_kind: ozone_memory::RetrievalHitKind::Message,
                 artifact_id: None,
-                message_id: Some(
-                    MessageId::parse("223e4567-e89b-12d3-a456-426614174000").unwrap(),
-                ),
+                message_id: Some(MessageId::parse("223e4567-e89b-12d3-a456-426614174000").unwrap()),
                 source_message_id: None,
                 author_kind: Some("assistant".into()),
                 text: "The key rests under the blue lamp.".into(),
@@ -2499,6 +2856,13 @@ mod tests {
                 provenance: Provenance::UtilityModel,
                 source_state: ozone_memory::RetrievalSourceState::Current,
                 is_active_memory: None,
+                lifecycle: Some(ozone_memory::ArtifactLifecycleSummary {
+                    storage_tier: ozone_memory::StorageTier::Minimal,
+                    age_messages: 1_024,
+                    age_hours: 169,
+                    is_stale: true,
+                    adjusted_provenance_score: 0.61,
+                }),
                 score: ozone_memory::HybridScoreInput {
                     mode: ozone_memory::RetrievalSearchMode::Hybrid,
                     hybrid_alpha: 0.5,
@@ -2522,6 +2886,7 @@ mod tests {
         assert!(report.contains("status          filtered 1 stale embedding"));
         assert!(report.contains("text/vector     text"));
         assert!(report.contains("ranking         provenance"));
+        assert!(report.contains("lifecycle       tier minimal · ⚠ stale · prov 0.61"));
         assert!(report.contains("session name    Observatory"));
     }
 
@@ -2812,7 +3177,10 @@ mock_seed = 11
 
         let err =
             run_cli(Cli::try_parse_from(["ozone-plus", "index", "rebuild"]).unwrap()).unwrap_err();
-        assert!(err.contains("enabled embedding provider"), "unexpected error: {err}");
+        assert!(
+            err.contains("enabled embedding provider"),
+            "unexpected error: {err}"
+        );
 
         let repo = open_repository().unwrap();
         assert!(repo.list_embedding_artifacts(None).unwrap().is_empty());

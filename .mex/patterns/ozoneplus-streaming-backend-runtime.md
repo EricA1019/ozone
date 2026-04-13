@@ -68,8 +68,8 @@ last_updated: 2026-04-13
 - The app runtime should never block the TUI event loop waiting for network I/O;
   use a worker boundary and pollable channels.
 - Keep config path handling aligned with the project layout:
-  - global config via XDG `~/.config/ozone/config.toml`
-  - session overrides via `<session_dir>/config.toml`
+  - global config should live in the XDG config home for ozone
+  - session overrides should live in the session-local config file
 - If no real KoboldCpp instance is available during development, a
   Kobold-compatible mock server is good enough to verify the streaming control
   flow — but record that distinction in the plan/router instead of pretending it

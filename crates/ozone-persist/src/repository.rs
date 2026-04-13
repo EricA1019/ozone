@@ -1,5 +1,5 @@
 use std::{
-    collections::BTreeMap,
+    collections::{BTreeMap, BTreeSet},
     fs,
     io::{ErrorKind, Write},
     path::{Path, PathBuf},
@@ -23,9 +23,10 @@ use ozone_core::{
     },
 };
 use ozone_memory::{
-    CreateNoteMemoryRequest, CrossSessionSearchHit, EmbeddingRecord, EmbeddingRecordMetadata,
-    MemoryArtifactId, MemoryContent, PinMessageMemoryRequest, PinnedMemoryContent,
-    PinnedMemoryRecord, PinnedMemoryView, Provenance, SearchSessionMetadata,
+    assess_artifact_staleness, storage_tier_for_age, ArtifactStaleness, CreateNoteMemoryRequest,
+    CrossSessionSearchHit, EmbeddingRecord, EmbeddingRecordMetadata, MemoryArtifactId,
+    MemoryContent, PinMessageMemoryRequest, PinnedMemoryContent, PinnedMemoryRecord,
+    PinnedMemoryView, Provenance, SearchSessionMetadata, StorageTier, StorageTierPolicy,
 };
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 
@@ -196,6 +197,174 @@ pub struct SummaryArtifactRecord {
     pub end_message_id: Option<String>,
     pub created_at: UnixTimestamp,
     pub snapshot_version: u64,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum DerivedArtifactKind {
+    Embedding,
+    ChunkSummary,
+    SessionSynopsis,
+}
+
+impl DerivedArtifactKind {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Embedding => "embedding",
+            Self::ChunkSummary => "chunk_summary",
+            Self::SessionSynopsis => "session_synopsis",
+        }
+    }
+
+    fn from_storage_kind(value: &str) -> Result<Self> {
+        match value {
+            "embedding" => Ok(Self::Embedding),
+            "chunk_summary" => Ok(Self::ChunkSummary),
+            "session_synopsis" => Ok(Self::SessionSynopsis),
+            other => Err(PersistError::InvalidData(format!(
+                "unexpected derived artifact kind: {other}"
+            ))),
+        }
+    }
+}
+
+impl std::fmt::Display for DerivedArtifactKind {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedArtifactRecord {
+    pub artifact_id: MemoryArtifactId,
+    pub session_id: SessionId,
+    pub kind: DerivedArtifactKind,
+    pub provenance: Provenance,
+    pub created_at: UnixTimestamp,
+    pub snapshot_version: u64,
+    pub source_start_message_id: Option<MessageId>,
+    pub source_end_message_id: Option<MessageId>,
+    pub source_exists: bool,
+    pub text_preview: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DerivedArtifactLifecycleRecord {
+    pub artifact_id: MemoryArtifactId,
+    pub session_id: SessionId,
+    pub kind: DerivedArtifactKind,
+    pub provenance: Provenance,
+    pub created_at: UnixTimestamp,
+    pub snapshot_version: u64,
+    pub source_start_message_id: Option<MessageId>,
+    pub source_end_message_id: Option<MessageId>,
+    pub source_exists: bool,
+    pub text_preview: Option<String>,
+    pub age_messages: u64,
+    pub storage_tier: StorageTier,
+    pub staleness: ArtifactStaleness,
+}
+
+impl DerivedArtifactLifecycleRecord {
+    fn from_record(
+        record: DerivedArtifactRecord,
+        current_message_count: u64,
+        storage_policy: &StorageTierPolicy,
+        now_ms: UnixTimestamp,
+        max_age_messages: usize,
+        max_age_hours: u64,
+    ) -> Self {
+        let staleness = assess_artifact_staleness(
+            record.snapshot_version,
+            current_message_count,
+            record.created_at,
+            now_ms,
+            max_age_messages,
+            max_age_hours,
+        );
+        let storage_tier = storage_tier_for_age(staleness.age_messages, storage_policy);
+
+        Self {
+            artifact_id: record.artifact_id,
+            session_id: record.session_id,
+            kind: record.kind,
+            provenance: record.provenance,
+            created_at: record.created_at,
+            snapshot_version: record.snapshot_version,
+            source_start_message_id: record.source_start_message_id,
+            source_end_message_id: record.source_end_message_id,
+            source_exists: record.source_exists,
+            text_preview: record.text_preview,
+            age_messages: staleness.age_messages,
+            storage_tier,
+            staleness,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GarbageCollectionPolicy {
+    pub max_active_embeddings: usize,
+    pub purge_unreferenced_backlog: bool,
+}
+
+impl GarbageCollectionPolicy {
+    pub const fn new(max_active_embeddings: usize, purge_unreferenced_backlog: bool) -> Self {
+        Self {
+            max_active_embeddings,
+            purge_unreferenced_backlog,
+        }
+    }
+}
+
+impl Default for GarbageCollectionPolicy {
+    fn default() -> Self {
+        Self::new(usize::MAX, false)
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum GarbageCollectionReason {
+    OrphanedSource,
+    MinimalTier,
+    SupersededSynopsis,
+    OverEmbeddingLimit,
+}
+
+impl GarbageCollectionReason {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::OrphanedSource => "orphaned_source",
+            Self::MinimalTier => "minimal_tier",
+            Self::SupersededSynopsis => "superseded_synopsis",
+            Self::OverEmbeddingLimit => "over_embedding_limit",
+        }
+    }
+}
+
+impl std::fmt::Display for GarbageCollectionReason {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(self.as_str())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GarbageCollectionCandidate {
+    pub artifact: DerivedArtifactLifecycleRecord,
+    pub reasons: Vec<GarbageCollectionReason>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GarbageCollectionPlan {
+    pub inspected_count: usize,
+    pub candidate_count: usize,
+    pub reason_counts: BTreeMap<GarbageCollectionReason, usize>,
+    pub candidates: Vec<GarbageCollectionCandidate>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct GarbageCollectionOutcome {
+    pub deleted_count: usize,
+    pub deleted_artifact_ids: BTreeMap<SessionId, Vec<MemoryArtifactId>>,
 }
 
 #[derive(Clone)]
@@ -1533,6 +1702,217 @@ impl SqliteRepository {
         Ok(records)
     }
 
+    pub fn list_derived_artifacts(
+        &self,
+        session_id: Option<&SessionId>,
+    ) -> Result<Vec<DerivedArtifactRecord>> {
+        let mut records = Vec::new();
+
+        for session_id in target_artifact_sessions(self, session_id)? {
+            records.extend(self.list_session_derived_artifacts(&session_id)?);
+        }
+
+        records.sort_by(|left, right| {
+            left.session_id
+                .as_str()
+                .cmp(right.session_id.as_str())
+                .then_with(|| left.created_at.cmp(&right.created_at))
+                .then_with(|| left.artifact_id.as_str().cmp(right.artifact_id.as_str()))
+        });
+        Ok(records)
+    }
+
+    pub fn inspect_derived_artifacts(
+        &self,
+        session_id: Option<&SessionId>,
+        storage_policy: &StorageTierPolicy,
+        max_age_messages: usize,
+        max_age_hours: u64,
+    ) -> Result<Vec<DerivedArtifactLifecycleRecord>> {
+        let now_ms = self.now();
+        let current_message_counts = session_message_counts(self, session_id)?;
+
+        self.list_derived_artifacts(session_id)?
+            .into_iter()
+            .map(|record| {
+                let current_message_count = current_message_counts
+                    .get(&record.session_id)
+                    .copied()
+                    .ok_or_else(|| PersistError::SessionNotFound(record.session_id.to_string()))?;
+                Ok(DerivedArtifactLifecycleRecord::from_record(
+                    record,
+                    current_message_count,
+                    storage_policy,
+                    now_ms,
+                    max_age_messages,
+                    max_age_hours,
+                ))
+            })
+            .collect()
+    }
+
+    pub fn plan_garbage_collection(
+        &self,
+        session_id: Option<&SessionId>,
+        storage_policy: &StorageTierPolicy,
+        max_age_messages: usize,
+        max_age_hours: u64,
+        policy: &GarbageCollectionPolicy,
+    ) -> Result<GarbageCollectionPlan> {
+        let inspected = self.inspect_derived_artifacts(
+            session_id,
+            storage_policy,
+            max_age_messages,
+            max_age_hours,
+        )?;
+        let inspected_count = inspected.len();
+        let mut candidate_reasons =
+            BTreeMap::<(SessionId, MemoryArtifactId), Vec<GarbageCollectionReason>>::new();
+
+        if policy.purge_unreferenced_backlog {
+            for artifact in &inspected {
+                if !artifact.source_exists {
+                    mark_gc_reason(
+                        &mut candidate_reasons,
+                        artifact,
+                        GarbageCollectionReason::OrphanedSource,
+                    );
+                }
+            }
+        }
+
+        for artifact in &inspected {
+            if artifact.storage_tier == StorageTier::Minimal
+                && matches!(
+                    artifact.kind,
+                    DerivedArtifactKind::Embedding | DerivedArtifactKind::ChunkSummary
+                )
+            {
+                mark_gc_reason(
+                    &mut candidate_reasons,
+                    artifact,
+                    GarbageCollectionReason::MinimalTier,
+                );
+            }
+        }
+
+        let mut newest_synopses = BTreeMap::<SessionId, MemoryArtifactId>::new();
+        for artifact in inspected
+            .iter()
+            .filter(|artifact| artifact.kind == DerivedArtifactKind::SessionSynopsis)
+        {
+            newest_synopses.insert(artifact.session_id.clone(), artifact.artifact_id.clone());
+        }
+        for artifact in inspected
+            .iter()
+            .filter(|artifact| artifact.kind == DerivedArtifactKind::SessionSynopsis)
+        {
+            if newest_synopses
+                .get(&artifact.session_id)
+                .is_some_and(|latest| latest != &artifact.artifact_id)
+            {
+                mark_gc_reason(
+                    &mut candidate_reasons,
+                    artifact,
+                    GarbageCollectionReason::SupersededSynopsis,
+                );
+            }
+        }
+
+        let mut remaining_embeddings = inspected
+            .iter()
+            .filter(|artifact| artifact.kind == DerivedArtifactKind::Embedding)
+            .filter(|artifact| {
+                !candidate_reasons
+                    .contains_key(&(artifact.session_id.clone(), artifact.artifact_id.clone()))
+            })
+            .collect::<Vec<_>>();
+        remaining_embeddings.sort_by(|left, right| {
+            left.created_at
+                .cmp(&right.created_at)
+                .then_with(|| left.session_id.as_str().cmp(right.session_id.as_str()))
+                .then_with(|| left.artifact_id.as_str().cmp(right.artifact_id.as_str()))
+        });
+
+        let over_limit = remaining_embeddings
+            .len()
+            .saturating_sub(policy.max_active_embeddings);
+        for artifact in remaining_embeddings.into_iter().take(over_limit) {
+            mark_gc_reason(
+                &mut candidate_reasons,
+                artifact,
+                GarbageCollectionReason::OverEmbeddingLimit,
+            );
+        }
+
+        let candidates = inspected
+            .into_iter()
+            .filter_map(|artifact| {
+                candidate_reasons
+                    .remove(&(artifact.session_id.clone(), artifact.artifact_id.clone()))
+                    .map(|reasons| GarbageCollectionCandidate { artifact, reasons })
+            })
+            .collect::<Vec<_>>();
+        let mut reason_counts = BTreeMap::new();
+        for candidate in &candidates {
+            for reason in &candidate.reasons {
+                *reason_counts.entry(*reason).or_insert(0) += 1;
+            }
+        }
+
+        Ok(GarbageCollectionPlan {
+            inspected_count,
+            candidate_count: candidates.len(),
+            reason_counts,
+            candidates,
+        })
+    }
+
+    pub fn apply_garbage_collection_plan(
+        &self,
+        plan: &GarbageCollectionPlan,
+    ) -> Result<GarbageCollectionOutcome> {
+        let mut planned = BTreeMap::<SessionId, BTreeSet<MemoryArtifactId>>::new();
+        for candidate in &plan.candidates {
+            planned
+                .entry(candidate.artifact.session_id.clone())
+                .or_default()
+                .insert(candidate.artifact.artifact_id.clone());
+        }
+
+        let mut deleted_artifact_ids = BTreeMap::<SessionId, Vec<MemoryArtifactId>>::new();
+
+        for (session_id, artifact_ids) in planned {
+            let mut session_conn = self.open_session_connection(&session_id)?;
+            let tx = session_conn.transaction()?;
+            let mut deleted_in_session = Vec::new();
+
+            for artifact_id in artifact_ids {
+                if tx.execute(
+                    "DELETE FROM memory_artifacts
+                     WHERE session_id = ?1 AND artifact_id = ?2
+                     AND kind IN ('embedding', 'chunk_summary', 'session_synopsis')",
+                    params![session_id.as_str(), artifact_id.as_str()],
+                )? > 0
+                {
+                    deleted_in_session.push(artifact_id);
+                }
+            }
+
+            tx.commit()?;
+            if !deleted_in_session.is_empty() {
+                self.refresh_session_size(&session_id)?;
+                deleted_artifact_ids.insert(session_id, deleted_in_session);
+            }
+        }
+
+        let deleted_count = deleted_artifact_ids.values().map(Vec::len).sum();
+        Ok(GarbageCollectionOutcome {
+            deleted_count,
+            deleted_artifact_ids,
+        })
+    }
+
     pub fn remove_embedding_artifacts(&self, session_id: Option<&SessionId>) -> Result<usize> {
         let target_sessions = match session_id {
             Some(session_id) => vec![session_id.clone()],
@@ -1570,10 +1950,7 @@ impl SqliteRepository {
         let mut inserted = 0;
 
         for session_id in target_sessions {
-            let session_records = grouped
-                .get(&session_id)
-                .cloned()
-                .unwrap_or_else(Vec::new);
+            let session_records = grouped.get(&session_id).cloned().unwrap_or_else(Vec::new);
             let mut session_conn = self.open_session_connection(&session_id)?;
             let tx = session_conn.transaction()?;
             tx.execute(
@@ -1786,7 +2163,31 @@ impl SqliteRepository {
             .ok_or_else(|| PersistError::SessionNotFound(session_id.to_string()))
     }
 
-    fn list_session_embedding_artifacts(&self, session_id: &SessionId) -> Result<Vec<EmbeddingRecord>> {
+    fn list_session_derived_artifacts(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<DerivedArtifactRecord>> {
+        let conn = self.open_session_connection(session_id)?;
+        let message_ids = session_message_id_set(&conn, session_id)?;
+        let mut stmt = conn.prepare(
+            "SELECT artifact_id, session_id, kind, content_json, source_start_message_id, source_end_message_id, provenance, created_at, snapshot_version
+             FROM memory_artifacts
+             WHERE session_id = ?1
+             AND kind IN ('embedding', 'chunk_summary', 'session_synopsis')
+             ORDER BY created_at ASC, artifact_id ASC",
+        )?;
+        let rows = stmt.query_map([session_id.as_str()], read_stored_derived_artifact)?;
+
+        rows.collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(|stored| stored.into_record(&message_ids))
+            .collect()
+    }
+
+    fn list_session_embedding_artifacts(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<EmbeddingRecord>> {
         let conn = self.open_session_connection(session_id)?;
         let mut stmt = conn.prepare(
             "SELECT artifact_id, session_id, content_json, source_start_message_id, source_end_message_id, provenance, created_at, snapshot_version
@@ -1961,6 +2362,125 @@ fn insert_pinned_memory_artifact_in_tx(
 }
 
 #[derive(Debug)]
+struct StoredDerivedArtifact {
+    artifact_id: String,
+    session_id: String,
+    kind: String,
+    content_json: String,
+    source_start_message_id: Option<String>,
+    source_end_message_id: Option<String>,
+    provenance: String,
+    created_at: i64,
+    snapshot_version: i64,
+}
+
+impl StoredDerivedArtifact {
+    fn into_record(self, message_ids: &BTreeSet<String>) -> Result<DerivedArtifactRecord> {
+        let kind = DerivedArtifactKind::from_storage_kind(&self.kind)?;
+
+        match kind {
+            DerivedArtifactKind::Embedding => {
+                let record = EmbeddingRecord::try_from(StoredEmbeddingArtifact {
+                    artifact_id: self.artifact_id,
+                    session_id: self.session_id,
+                    content_json: self.content_json,
+                    source_start_message_id: self.source_start_message_id,
+                    source_end_message_id: self.source_end_message_id,
+                    provenance: self.provenance,
+                    created_at: self.created_at,
+                    snapshot_version: self.snapshot_version,
+                })?;
+                let source_start_message_id = record.source_message_id.clone();
+                let source_end_message_id = record.source_message_id;
+
+                Ok(DerivedArtifactRecord {
+                    artifact_id: record.artifact_id,
+                    session_id: record.session_id,
+                    kind,
+                    provenance: record.provenance,
+                    created_at: record.created_at,
+                    snapshot_version: record.snapshot_version,
+                    source_exists: source_exists(
+                        source_start_message_id.as_ref(),
+                        source_end_message_id.as_ref(),
+                        message_ids,
+                    ),
+                    source_start_message_id,
+                    source_end_message_id,
+                    text_preview: None,
+                })
+            }
+            DerivedArtifactKind::ChunkSummary | DerivedArtifactKind::SessionSynopsis => {
+                let artifact_id = MemoryArtifactId::parse(self.artifact_id)?;
+                let session_id = SessionId::parse(self.session_id.clone())?;
+                let provenance = self.provenance.parse()?;
+                let snapshot_version = u64::try_from(self.snapshot_version).map_err(|_| {
+                    PersistError::InvalidData(format!(
+                        "snapshot_version {} is not a valid unsigned integer",
+                        self.snapshot_version
+                    ))
+                })?;
+                let source_start_message_id = self
+                    .source_start_message_id
+                    .map(MessageId::parse)
+                    .transpose()?;
+                let source_end_message_id = self
+                    .source_end_message_id
+                    .map(MessageId::parse)
+                    .transpose()?;
+                let memory_content = serde_json::from_str::<MemoryContent>(&self.content_json)
+                    .map_err(|error| {
+                        PersistError::InvalidData(format!(
+                            "invalid summary artifact JSON for session {}: {error}",
+                            self.session_id
+                        ))
+                    })?;
+                let text_preview = match kind {
+                    DerivedArtifactKind::ChunkSummary => Some(
+                        memory_content
+                            .into_chunk_summary()
+                            .ok_or_else(|| {
+                                PersistError::InvalidData(format!(
+                                    "artifact {artifact_id} did not contain chunk summary content"
+                                ))
+                            })?
+                            .text,
+                    ),
+                    DerivedArtifactKind::SessionSynopsis => Some(
+                        memory_content
+                            .into_session_synopsis()
+                            .ok_or_else(|| {
+                                PersistError::InvalidData(format!(
+                                    "artifact {artifact_id} did not contain session synopsis content"
+                                ))
+                            })?
+                            .text,
+                    ),
+                    DerivedArtifactKind::Embedding => unreachable!(),
+                };
+
+                Ok(DerivedArtifactRecord {
+                    artifact_id,
+                    session_id,
+                    kind,
+                    provenance,
+                    created_at: self.created_at,
+                    snapshot_version,
+                    source_exists: source_exists(
+                        source_start_message_id.as_ref(),
+                        source_end_message_id.as_ref(),
+                        message_ids,
+                    ),
+                    source_start_message_id,
+                    source_end_message_id,
+                    text_preview,
+                })
+            }
+        }
+    }
+}
+
+#[derive(Debug)]
 struct StoredPinnedMemoryArtifact {
     artifact_id: String,
     session_id: String,
@@ -2132,15 +2652,13 @@ impl TryFrom<StoredEmbeddingArtifact> for EmbeddingRecord {
     fn try_from(value: StoredEmbeddingArtifact) -> Result<Self> {
         let artifact_id = MemoryArtifactId::parse(value.artifact_id)?;
         let session_id = SessionId::parse(value.session_id.clone())?;
-        let stored =
-            serde_json::from_str::<StoredEmbeddingArtifactContent>(&value.content_json).map_err(
-                |error| {
-                    PersistError::InvalidData(format!(
-                        "invalid embedding artifact JSON for session {}: {error}",
-                        value.session_id
-                    ))
-                },
-            )?;
+        let stored = serde_json::from_str::<StoredEmbeddingArtifactContent>(&value.content_json)
+            .map_err(|error| {
+                PersistError::InvalidData(format!(
+                    "invalid embedding artifact JSON for session {}: {error}",
+                    value.session_id
+                ))
+            })?;
         if stored.format != EMBEDDING_ARTIFACT_FORMAT {
             return Err(PersistError::InvalidData(format!(
                 "embedding artifact {artifact_id} used unsupported format `{}`",
@@ -2203,15 +2721,13 @@ fn upsert_embedding_artifact_in_tx(tx: &Transaction<'_>, record: &EmbeddingRecor
     if let Some(source_message_id) = record.source_message_id.as_ref() {
         ensure_message_exists_in_tx(tx, source_message_id, &record.session_id)?;
     }
-    let content_json =
-        serde_json::to_string(&StoredEmbeddingArtifactContent::from_record(record)).map_err(
-            |error| {
-                PersistError::InvalidData(format!(
-                    "failed to serialize embedding artifact for session {}: {error}",
-                    record.session_id
-                ))
-            },
-        )?;
+    let content_json = serde_json::to_string(&StoredEmbeddingArtifactContent::from_record(record))
+        .map_err(|error| {
+            PersistError::InvalidData(format!(
+                "failed to serialize embedding artifact for session {}: {error}",
+                record.session_id
+            ))
+        })?;
     let snapshot_version_i64 = i64::try_from(record.snapshot_version).map_err(|_| {
         PersistError::InvalidData("snapshot_version exceeds SQLite INTEGER".to_owned())
     })?;
@@ -2300,6 +2816,79 @@ fn target_embedding_sessions(
             sessions.dedup();
             Ok(sessions)
         }
+    }
+}
+
+fn target_artifact_sessions(
+    repo: &SqliteRepository,
+    session_id: Option<&SessionId>,
+) -> Result<Vec<SessionId>> {
+    match session_id {
+        Some(session_id) => Ok(vec![session_id.clone()]),
+        None => {
+            let mut sessions = repo
+                .list_sessions()?
+                .into_iter()
+                .map(|session| session.session_id)
+                .collect::<Vec<_>>();
+            sessions.sort();
+            Ok(sessions)
+        }
+    }
+}
+
+fn session_message_counts(
+    repo: &SqliteRepository,
+    session_id: Option<&SessionId>,
+) -> Result<BTreeMap<SessionId, u64>> {
+    match session_id {
+        Some(session_id) => Ok(BTreeMap::from([(
+            session_id.clone(),
+            repo.current_message_count(session_id)?,
+        )])),
+        None => Ok(repo
+            .list_sessions()?
+            .into_iter()
+            .map(|session| (session.session_id, session.message_count))
+            .collect()),
+    }
+}
+
+fn session_message_id_set(conn: &Connection, session_id: &SessionId) -> Result<BTreeSet<String>> {
+    let mut stmt = conn.prepare(
+        "SELECT message_id
+         FROM messages
+         WHERE session_id = ?1",
+    )?;
+    let rows = stmt.query_map([session_id.as_str()], |row| row.get::<_, String>(0))?;
+
+    Ok(rows
+        .collect::<rusqlite::Result<Vec<_>>>()?
+        .into_iter()
+        .collect())
+}
+
+fn source_exists(
+    start_message_id: Option<&MessageId>,
+    end_message_id: Option<&MessageId>,
+    message_ids: &BTreeSet<String>,
+) -> bool {
+    start_message_id
+        .into_iter()
+        .chain(end_message_id)
+        .all(|message_id| message_ids.contains(message_id.as_str()))
+}
+
+fn mark_gc_reason(
+    candidate_reasons: &mut BTreeMap<(SessionId, MemoryArtifactId), Vec<GarbageCollectionReason>>,
+    artifact: &DerivedArtifactLifecycleRecord,
+    reason: GarbageCollectionReason,
+) {
+    let reasons = candidate_reasons
+        .entry((artifact.session_id.clone(), artifact.artifact_id.clone()))
+        .or_default();
+    if !reasons.contains(&reason) {
+        reasons.push(reason);
     }
 }
 
@@ -2401,6 +2990,20 @@ fn read_stored_session_summary(row: &Row<'_>) -> rusqlite::Result<StoredSessionS
         message_count: row.get(5)?,
         db_size_bytes: row.get(6)?,
         tags_json: row.get(7)?,
+    })
+}
+
+fn read_stored_derived_artifact(row: &Row<'_>) -> rusqlite::Result<StoredDerivedArtifact> {
+    Ok(StoredDerivedArtifact {
+        artifact_id: row.get(0)?,
+        session_id: row.get(1)?,
+        kind: row.get(2)?,
+        content_json: row.get(3)?,
+        source_start_message_id: row.get(4)?,
+        source_end_message_id: row.get(5)?,
+        provenance: row.get(6)?,
+        created_at: row.get(7)?,
+        snapshot_version: row.get(8)?,
     })
 }
 
@@ -2983,6 +3586,7 @@ fn secure_path(path: &Path, _mode: u32) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use std::{
+        collections::BTreeMap,
         fs,
         path::{Path, PathBuf},
         sync::{
@@ -2991,7 +3595,7 @@ mod tests {
         },
     };
 
-    use ozone_memory::{source_text_hash, EmbeddingProviderKind};
+    use ozone_memory::{source_text_hash, AuthorId, EmbeddingProviderKind};
     use rusqlite::Connection;
 
     use super::*;
@@ -3391,7 +3995,8 @@ mod tests {
             2
         );
         assert_eq!(
-            repo.list_embedding_artifacts(Some(&first.session_id)).unwrap(),
+            repo.list_embedding_artifacts(Some(&first.session_id))
+                .unwrap(),
             vec![first_record.clone()]
         );
         let global = repo.list_embedding_artifacts(None).unwrap();
@@ -3411,7 +4016,8 @@ mod tests {
         repo.upsert_embedding_artifacts(std::slice::from_ref(&updated_first))
             .unwrap();
         assert_eq!(
-            repo.list_embedding_artifacts(Some(&first.session_id)).unwrap(),
+            repo.list_embedding_artifacts(Some(&first.session_id))
+                .unwrap(),
             vec![updated_first.clone()]
         );
 
@@ -3429,11 +4035,12 @@ mod tests {
                 Some(&first.session_id),
                 std::slice::from_ref(&replacement),
             )
-                .unwrap(),
+            .unwrap(),
             1
         );
         assert_eq!(
-            repo.list_embedding_artifacts(Some(&first.session_id)).unwrap(),
+            repo.list_embedding_artifacts(Some(&first.session_id))
+                .unwrap(),
             vec![replacement.clone()]
         );
         let global = repo.list_embedding_artifacts(None).unwrap();
@@ -4495,10 +5102,7 @@ mod tests {
             summaries[0].start_message_id.as_deref(),
             Some(start2.as_str())
         );
-        assert_eq!(
-            summaries[0].end_message_id.as_deref(),
-            Some(end2.as_str())
-        );
+        assert_eq!(summaries[0].end_message_id.as_deref(), Some(end2.as_str()));
 
         assert_eq!(summaries[1].artifact_id, first.artifact_id);
         assert_eq!(summaries[1].text, "Alice greeted Bob.");
@@ -4568,14 +5172,7 @@ mod tests {
         let msg_id = message_id(&msg.message_id);
 
         let chunk = repo
-            .store_chunk_summary(
-                &session.session_id,
-                "A chunk.",
-                1,
-                &msg_id,
-                &msg_id,
-                1,
-            )
+            .store_chunk_summary(&session.session_id, "A chunk.", 1, &msg_id, &msg_id, 1)
             .unwrap();
         let synopsis = repo
             .store_session_synopsis(&session.session_id, "A synopsis.", 5, 2)
@@ -4607,5 +5204,475 @@ mod tests {
             .get_latest_session_synopsis(&session.session_id)
             .unwrap()
             .is_none());
+    }
+
+    #[test]
+    fn derived_artifact_inventory_reports_source_existence_and_previews() {
+        let sandbox = TestSandbox::new("derived-artifact-inventory");
+        let (repo, clock) = test_repo(&sandbox, 1_725_647_200_000);
+        let session = repo
+            .create_session(CreateSessionRequest::new("Derived Inventory"))
+            .unwrap();
+
+        let first = repo
+            .insert_message(
+                &session.session_id,
+                CreateMessageRequest::user("The lantern stays by the observatory door."),
+            )
+            .unwrap();
+        let second = repo
+            .insert_message(
+                &session.session_id,
+                CreateMessageRequest::user("Bring the spare key before dusk."),
+            )
+            .unwrap();
+        let first_message_id = message_id(&first.message_id);
+        let second_message_id = message_id(&second.message_id);
+        let missing_message_id = message_id("c23e4567-e89b-12d3-a456-426614174000");
+
+        let embedding = embedding_record(
+            "c33e4567-e89b-12d3-a456-426614174000",
+            &session.session_id,
+            Some(&first_message_id),
+            vec![0.1, 0.2, 0.3],
+            "The lantern stays by the observatory door.",
+            1_725_647_200_000,
+            1,
+        );
+        repo.upsert_embedding_artifacts(std::slice::from_ref(&embedding))
+            .unwrap();
+
+        clock.store(1_725_647_200_010, Ordering::SeqCst);
+        let chunk = repo
+            .store_chunk_summary(
+                &session.session_id,
+                "Lantern location confirmed.",
+                2,
+                &first_message_id,
+                &second_message_id,
+                2,
+            )
+            .unwrap();
+
+        clock.store(1_725_647_200_020, Ordering::SeqCst);
+        let synopsis = repo
+            .store_session_synopsis(
+                &session.session_id,
+                "A short exchange about lantern placement.",
+                2,
+                2,
+            )
+            .unwrap();
+
+        let conn = repo.open_session_connection(&session.session_id).unwrap();
+        conn.execute(
+            "UPDATE memory_artifacts
+             SET source_end_message_id = ?2
+             WHERE artifact_id = ?1",
+            params![chunk.artifact_id.as_str(), missing_message_id.as_str()],
+        )
+        .unwrap();
+
+        let artifacts = repo
+            .list_derived_artifacts(Some(&session.session_id))
+            .unwrap();
+        assert_eq!(artifacts.len(), 3);
+
+        assert_eq!(artifacts[0].artifact_id, embedding.artifact_id);
+        assert_eq!(artifacts[0].kind, DerivedArtifactKind::Embedding);
+        assert_eq!(
+            artifacts[0].source_start_message_id.as_ref(),
+            Some(&first_message_id)
+        );
+        assert_eq!(
+            artifacts[0].source_end_message_id.as_ref(),
+            Some(&first_message_id)
+        );
+        assert!(artifacts[0].source_exists);
+        assert_eq!(artifacts[0].text_preview, None);
+
+        assert_eq!(artifacts[1].artifact_id, chunk.artifact_id);
+        assert_eq!(artifacts[1].kind, DerivedArtifactKind::ChunkSummary);
+        assert_eq!(
+            artifacts[1].text_preview.as_deref(),
+            Some("Lantern location confirmed.")
+        );
+        assert_eq!(
+            artifacts[1].source_start_message_id.as_ref(),
+            Some(&first_message_id)
+        );
+        assert_eq!(
+            artifacts[1].source_end_message_id.as_ref(),
+            Some(&missing_message_id)
+        );
+        assert!(!artifacts[1].source_exists);
+
+        assert_eq!(artifacts[2].artifact_id, synopsis.artifact_id);
+        assert_eq!(artifacts[2].kind, DerivedArtifactKind::SessionSynopsis);
+        assert_eq!(
+            artifacts[2].text_preview.as_deref(),
+            Some("A short exchange about lantern placement.")
+        );
+        assert!(artifacts[2].source_exists);
+        assert!(artifacts[2].source_start_message_id.is_none());
+        assert!(artifacts[2].source_end_message_id.is_none());
+    }
+
+    #[test]
+    fn minimal_tier_plan_marks_embeddings_chunks_and_superseded_synopses() {
+        let sandbox = TestSandbox::new("gc-minimal-tier");
+        let (repo, clock) = test_repo(&sandbox, 1_725_647_200_000);
+        let session = repo
+            .create_session(CreateSessionRequest::new("Minimal Tier Session"))
+            .unwrap();
+
+        let messages = (0..5)
+            .map(|index| {
+                repo.insert_message(
+                    &session.session_id,
+                    CreateMessageRequest::user(format!("Message #{index}")),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let first_message_id = message_id(&messages[0].message_id);
+        let second_message_id = message_id(&messages[1].message_id);
+
+        let embedding = embedding_record(
+            "d33e4567-e89b-12d3-a456-426614174000",
+            &session.session_id,
+            Some(&first_message_id),
+            vec![0.2, 0.3, 0.4],
+            "Message #0",
+            1_725_647_200_000,
+            1,
+        );
+        repo.upsert_embedding_artifacts(std::slice::from_ref(&embedding))
+            .unwrap();
+
+        clock.store(1_725_647_200_010, Ordering::SeqCst);
+        let chunk = repo
+            .store_chunk_summary(
+                &session.session_id,
+                "Messages summarized.",
+                2,
+                &first_message_id,
+                &second_message_id,
+                1,
+            )
+            .unwrap();
+
+        clock.store(1_725_647_200_020, Ordering::SeqCst);
+        let old_synopsis = repo
+            .store_session_synopsis(&session.session_id, "Older synopsis.", 2, 1)
+            .unwrap();
+
+        clock.store(1_725_647_200_030, Ordering::SeqCst);
+        let new_synopsis = repo
+            .store_session_synopsis(&session.session_id, "Newest synopsis.", 5, 4)
+            .unwrap();
+
+        let plan = repo
+            .plan_garbage_collection(
+                Some(&session.session_id),
+                &StorageTierPolicy::new(1, 2),
+                500,
+                168,
+                &GarbageCollectionPolicy::new(10, false),
+            )
+            .unwrap();
+        let candidates = candidate_reasons_by_artifact(&plan);
+
+        assert_eq!(plan.inspected_count, 4);
+        assert_eq!(plan.candidate_count, 3);
+        assert_eq!(
+            plan.reason_counts
+                .get(&GarbageCollectionReason::MinimalTier),
+            Some(&2)
+        );
+        assert_eq!(
+            plan.reason_counts
+                .get(&GarbageCollectionReason::SupersededSynopsis),
+            Some(&1)
+        );
+        assert_eq!(
+            candidates.get(&(session.session_id.clone(), embedding.artifact_id.clone())),
+            Some(&vec![GarbageCollectionReason::MinimalTier])
+        );
+        assert_eq!(
+            candidates.get(&(session.session_id.clone(), chunk.artifact_id.clone())),
+            Some(&vec![GarbageCollectionReason::MinimalTier])
+        );
+        assert_eq!(
+            candidates.get(&(session.session_id.clone(), old_synopsis.artifact_id.clone())),
+            Some(&vec![GarbageCollectionReason::SupersededSynopsis])
+        );
+        assert!(!candidates.contains_key(&(session.session_id, new_synopsis.artifact_id)));
+    }
+
+    #[test]
+    fn orphaned_source_cleanup_marks_candidates_when_enabled() {
+        let sandbox = TestSandbox::new("gc-orphaned-source");
+        let (repo, _) = test_repo(&sandbox, 1_725_647_200_000);
+        let session = repo
+            .create_session(CreateSessionRequest::new("Orphan Cleanup"))
+            .unwrap();
+        let message = repo
+            .insert_message(
+                &session.session_id,
+                CreateMessageRequest::user("Archive the observatory route."),
+            )
+            .unwrap();
+        let source_message_id = message_id(&message.message_id);
+        let missing_message_id = message_id("e33e4567-e89b-12d3-a456-426614174000");
+
+        let embedding = embedding_record(
+            "f33e4567-e89b-12d3-a456-426614174000",
+            &session.session_id,
+            Some(&source_message_id),
+            vec![0.3, 0.2, 0.1],
+            "Archive the observatory route.",
+            1_725_647_200_000,
+            1,
+        );
+        repo.upsert_embedding_artifacts(std::slice::from_ref(&embedding))
+            .unwrap();
+
+        let conn = repo.open_session_connection(&session.session_id).unwrap();
+        conn.execute(
+            "UPDATE memory_artifacts
+             SET source_start_message_id = ?2, source_end_message_id = ?3
+             WHERE artifact_id = ?1",
+            params![
+                embedding.artifact_id.as_str(),
+                missing_message_id.as_str(),
+                missing_message_id.as_str()
+            ],
+        )
+        .unwrap();
+
+        let plan = repo
+            .plan_garbage_collection(
+                Some(&session.session_id),
+                &StorageTierPolicy::new(100, 1_000),
+                500,
+                168,
+                &GarbageCollectionPolicy::new(10, true),
+            )
+            .unwrap();
+
+        assert_eq!(plan.candidate_count, 1);
+        assert_eq!(
+            plan.reason_counts
+                .get(&GarbageCollectionReason::OrphanedSource),
+            Some(&1)
+        );
+        assert_eq!(
+            plan.candidates[0].artifact.artifact_id,
+            embedding.artifact_id
+        );
+        assert_eq!(
+            plan.candidates[0].reasons,
+            vec![GarbageCollectionReason::OrphanedSource]
+        );
+        assert!(!plan.candidates[0].artifact.source_exists);
+    }
+
+    #[test]
+    fn embedding_cap_marks_oldest_remaining_embeddings() {
+        let sandbox = TestSandbox::new("gc-embedding-cap");
+        let (repo, _) = test_repo(&sandbox, 1_725_647_200_000);
+        let session = repo
+            .create_session(CreateSessionRequest::new("Embedding Cap"))
+            .unwrap();
+
+        let first = embedding_record(
+            "133e4567-e89b-12d3-a456-426614174000",
+            &session.session_id,
+            None,
+            vec![0.1, 0.0, 0.0],
+            "First embedding",
+            1_725_647_200_000,
+            0,
+        );
+        let second = embedding_record(
+            "233e4567-e89b-12d3-a456-426614174000",
+            &session.session_id,
+            None,
+            vec![0.0, 0.1, 0.0],
+            "Second embedding",
+            1_725_647_200_010,
+            0,
+        );
+        let third = embedding_record(
+            "333e4567-e89b-12d3-a456-426614174000",
+            &session.session_id,
+            None,
+            vec![0.0, 0.0, 0.1],
+            "Third embedding",
+            1_725_647_200_020,
+            0,
+        );
+        repo.upsert_embedding_artifacts(&[first.clone(), second.clone(), third.clone()])
+            .unwrap();
+
+        let plan = repo
+            .plan_garbage_collection(
+                Some(&session.session_id),
+                &StorageTierPolicy::new(100, 1_000),
+                500,
+                168,
+                &GarbageCollectionPolicy::new(2, false),
+            )
+            .unwrap();
+
+        assert_eq!(plan.candidate_count, 1);
+        assert_eq!(
+            plan.reason_counts
+                .get(&GarbageCollectionReason::OverEmbeddingLimit),
+            Some(&1)
+        );
+        assert_eq!(plan.candidates[0].artifact.artifact_id, first.artifact_id);
+        assert_eq!(
+            plan.candidates[0].reasons,
+            vec![GarbageCollectionReason::OverEmbeddingLimit]
+        );
+    }
+
+    #[test]
+    fn applying_gc_plan_deletes_only_planned_derived_artifacts() {
+        let sandbox = TestSandbox::new("gc-apply");
+        let (repo, clock) = test_repo(&sandbox, 1_725_647_200_000);
+        let session = repo
+            .create_session(CreateSessionRequest::new("Apply GC"))
+            .unwrap();
+
+        let messages = (0..4)
+            .map(|index| {
+                repo.insert_message(
+                    &session.session_id,
+                    CreateMessageRequest::user(format!("Apply message #{index}")),
+                )
+                .unwrap()
+            })
+            .collect::<Vec<_>>();
+        let first_message_id = message_id(&messages[0].message_id);
+        let second_message_id = message_id(&messages[1].message_id);
+
+        let pinned = repo
+            .pin_message_memory(
+                &session.session_id,
+                &first_message_id,
+                PinMessageMemoryRequest::new(AuthorId::User, Provenance::UserAuthored),
+            )
+            .unwrap();
+
+        let embedding = embedding_record(
+            "433e4567-e89b-12d3-a456-426614174000",
+            &session.session_id,
+            Some(&first_message_id),
+            vec![0.9, 0.1, 0.2],
+            "Apply message #0",
+            1_725_647_200_000,
+            1,
+        );
+        repo.upsert_embedding_artifacts(std::slice::from_ref(&embedding))
+            .unwrap();
+
+        clock.store(1_725_647_200_010, Ordering::SeqCst);
+        let chunk = repo
+            .store_chunk_summary(
+                &session.session_id,
+                "Chunk ready for cleanup.",
+                2,
+                &first_message_id,
+                &second_message_id,
+                1,
+            )
+            .unwrap();
+
+        clock.store(1_725_647_200_020, Ordering::SeqCst);
+        let old_synopsis = repo
+            .store_session_synopsis(&session.session_id, "Old synopsis.", 2, 1)
+            .unwrap();
+
+        clock.store(1_725_647_200_030, Ordering::SeqCst);
+        let new_synopsis = repo
+            .store_session_synopsis(&session.session_id, "Current synopsis.", 4, 4)
+            .unwrap();
+
+        let plan = repo
+            .plan_garbage_collection(
+                Some(&session.session_id),
+                &StorageTierPolicy::new(1, 2),
+                500,
+                168,
+                &GarbageCollectionPolicy::new(10, false),
+            )
+            .unwrap();
+        assert_eq!(plan.candidate_count, 3);
+
+        let outcome = repo.apply_garbage_collection_plan(&plan).unwrap();
+        assert_eq!(outcome.deleted_count, 3);
+        assert_eq!(
+            outcome
+                .deleted_artifact_ids
+                .get(&session.session_id)
+                .map(Vec::len),
+            Some(3)
+        );
+
+        assert!(repo
+            .list_embedding_artifacts(Some(&session.session_id))
+            .unwrap()
+            .is_empty());
+        assert!(repo
+            .list_chunk_summaries(&session.session_id)
+            .unwrap()
+            .is_empty());
+        assert_eq!(
+            repo.get_latest_session_synopsis(&session.session_id)
+                .unwrap()
+                .map(|artifact| artifact.artifact_id),
+            Some(new_synopsis.artifact_id.clone())
+        );
+        let pinned_memories = repo.list_pinned_memories(&session.session_id).unwrap();
+        assert_eq!(pinned_memories.len(), 1);
+        assert_eq!(pinned_memories[0].record.artifact_id, pinned.artifact_id);
+
+        let remaining_derived = repo
+            .list_derived_artifacts(Some(&session.session_id))
+            .unwrap();
+        assert_eq!(remaining_derived.len(), 1);
+        assert_eq!(remaining_derived[0].artifact_id, new_synopsis.artifact_id);
+        assert_eq!(
+            remaining_derived[0].kind,
+            DerivedArtifactKind::SessionSynopsis
+        );
+
+        let deleted_ids = outcome
+            .deleted_artifact_ids
+            .get(&session.session_id)
+            .unwrap();
+        assert!(deleted_ids.contains(&embedding.artifact_id));
+        assert!(deleted_ids.contains(&chunk.artifact_id));
+        assert!(deleted_ids.contains(&old_synopsis.artifact_id));
+    }
+
+    fn candidate_reasons_by_artifact(
+        plan: &GarbageCollectionPlan,
+    ) -> BTreeMap<(SessionId, MemoryArtifactId), Vec<GarbageCollectionReason>> {
+        plan.candidates
+            .iter()
+            .map(|candidate| {
+                (
+                    (
+                        candidate.artifact.session_id.clone(),
+                        candidate.artifact.artifact_id.clone(),
+                    ),
+                    candidate.reasons.clone(),
+                )
+            })
+            .collect()
     }
 }

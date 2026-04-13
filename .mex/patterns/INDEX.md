@@ -23,6 +23,7 @@ Lookup table for all pattern files in this directory. Check here before starting
 
 | Pattern | Use when |
 |---------|----------|
+| [copilot-skill-customization.md](copilot-skill-customization.md) | Creating or updating reusable local Copilot skills in the user-level Copilot skill library |
 | [github-actions-release.md](github-actions-release.md) | Debugging or updating this repo's GitHub Actions CI or release automation |
 | [mex-scaffold-sync.md](mex-scaffold-sync.md) | Detecting or fixing drift in the .mex scaffold, paths, or helper scripts |
 | [ozoneplus-conversation-engine.md](ozoneplus-conversation-engine.md) | Building or extending the Phase 1B ozone+ engine, engine-backed CLI, branches, or swipe flows |

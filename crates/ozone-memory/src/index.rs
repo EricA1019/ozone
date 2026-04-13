@@ -363,7 +363,12 @@ fn sort_records(records: &[EmbeddingRecord]) -> Vec<&EmbeddingRecord> {
                 left.source_message_id
                     .as_ref()
                     .map(|message_id| message_id.as_str())
-                    .cmp(&right.source_message_id.as_ref().map(|message_id| message_id.as_str()))
+                    .cmp(
+                        &right
+                            .source_message_id
+                            .as_ref()
+                            .map(|message_id| message_id.as_str()),
+                    )
             })
             .then_with(|| left.snapshot_version.cmp(&right.snapshot_version))
             .then_with(|| left.artifact_id.as_str().cmp(right.artifact_id.as_str()))
@@ -371,7 +376,10 @@ fn sort_records(records: &[EmbeddingRecord]) -> Vec<&EmbeddingRecord> {
     sorted
 }
 
-fn fingerprint_records(provider: &EmbeddingProviderMetadata, records: &[&EmbeddingRecord]) -> String {
+fn fingerprint_records(
+    provider: &EmbeddingProviderMetadata,
+    records: &[&EmbeddingRecord],
+) -> String {
     let mut hi = StableHasher::new(FNV_OFFSET_BASIS ^ 0x6d0f_27bd_4d20_7f57);
     let mut lo = StableHasher::new(FNV_OFFSET_BASIS ^ 0xa453_96ce_f157_ef21);
     let mut write_shared = |bytes: &[u8]| {
@@ -465,7 +473,8 @@ mod tests {
 
     use super::*;
     use crate::{
-        source_text_hash, EmbeddingContent, EmbeddingProviderKind, EmbeddingRecordMetadata, Provenance,
+        source_text_hash, EmbeddingContent, EmbeddingProviderKind, EmbeddingRecordMetadata,
+        Provenance,
     };
 
     static SANDBOX_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -535,7 +544,9 @@ mod tests {
             2,
         );
 
-        let first_summary = manager.rebuild(&provider, &[first.clone(), second.clone()]).unwrap();
+        let first_summary = manager
+            .rebuild(&provider, &[first.clone(), second.clone()])
+            .unwrap();
         let second_summary = manager.rebuild(&provider, &[second, first]).unwrap();
 
         assert_eq!(first_summary.metadata, second_summary.metadata);
@@ -569,14 +580,19 @@ mod tests {
             2,
         );
 
-        manager.rebuild(&provider, &[first.clone(), second.clone()]).unwrap();
+        manager
+            .rebuild(&provider, &[first.clone(), second.clone()])
+            .unwrap();
         let result = manager
             .query(&[0.9, 0.1, 0.0], 2)
             .unwrap()
             .expect("index should exist");
 
         assert_eq!(result.matches.len(), 2);
-        assert_eq!(result.matches[0].key, artifact_index_key(&first.artifact_id));
+        assert_eq!(
+            result.matches[0].key,
+            artifact_index_key(&first.artifact_id)
+        );
         assert!(result.matches[0].similarity >= result.matches[1].similarity);
         assert_eq!(result.metadata.provider, EmbeddingProviderKind::Mock);
     }

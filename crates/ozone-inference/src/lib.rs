@@ -19,7 +19,10 @@ pub mod stream;
 pub mod templates;
 
 // Convenience re-exports for callers.
-pub use config::{ConfigLoader, MemoryConfig, OzoneConfig, SummaryConfig};
+pub use config::{
+    ConfigLoader, GarbageCollectionPolicy, MemoryConfig, MemoryLifecycleConfig, OzoneConfig,
+    StaleArtifactPolicy, StorageTierPolicy, SummaryConfig,
+};
 pub use error::InferenceError;
 pub use gateway::{BackendHealth, InferenceGateway, InferenceRequest, RequestId};
 pub use stream::{StreamChunk, StreamDecoder, StreamingFormat};

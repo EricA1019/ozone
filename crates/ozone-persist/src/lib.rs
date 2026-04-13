@@ -22,13 +22,16 @@ pub use ozone_core::session::{
     UpdateSessionRequest,
 };
 pub use ozone_memory::{
-    AuthorId, CreateNoteMemoryRequest, CrossSessionSearchHit, EmbeddingContent, EmbeddingRecord,
-    EmbeddingRecordMetadata, MemoryArtifactId, MemoryContent, PinMessageMemoryRequest,
-    PinnedMemoryContent, PinnedMemoryRecord, PinnedMemoryView, Provenance, RecallHit,
-    SearchSessionMetadata,
+    ArtifactStaleness, AuthorId, CreateNoteMemoryRequest, CrossSessionSearchHit, EmbeddingContent,
+    EmbeddingRecord, EmbeddingRecordMetadata, MemoryArtifactId, MemoryContent,
+    PinMessageMemoryRequest, PinnedMemoryContent, PinnedMemoryRecord, PinnedMemoryView, Provenance,
+    RecallHit, SearchSessionMetadata, StorageTier, StorageTierPolicy,
 };
 pub use repository::{
-    BookmarkRecord, BranchRecord, CreateMessageRequest, EditMessageRequest, MessageEditRecord,
-    MessageRecord, MessageSearchHit, PersistencePaths, SessionLock, SqliteRepository,
-    SummaryArtifactRecord, STALE_LOCK_TIMEOUT_MS,
+    BookmarkRecord, BranchRecord, CreateMessageRequest, DerivedArtifactKind,
+    DerivedArtifactLifecycleRecord, DerivedArtifactRecord, EditMessageRequest,
+    GarbageCollectionCandidate, GarbageCollectionOutcome, GarbageCollectionPlan,
+    GarbageCollectionPolicy, GarbageCollectionReason, MessageEditRecord, MessageRecord,
+    MessageSearchHit, PersistencePaths, SessionLock, SqliteRepository, SummaryArtifactRecord,
+    STALE_LOCK_TIMEOUT_MS,
 };

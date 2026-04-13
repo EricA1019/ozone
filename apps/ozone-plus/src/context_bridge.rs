@@ -206,11 +206,18 @@ impl AppContextBridge {
                 session_synopsis,
                 inference.selected_template(),
             ),
-            lines: preview_lines(transcript, &active_pinned_memories, retrieved_memories, session_synopsis),
+            lines: preview_lines(
+                transcript,
+                &active_pinned_memories,
+                retrieved_memories,
+                session_synopsis,
+            ),
             selected_items: Some(
                 transcript.len()
                     + active_pinned_memories.len()
-                    + retrieved_memories.map(|result| result.hits.len()).unwrap_or_default(),
+                    + retrieved_memories
+                        .map(|result| result.hits.len())
+                        .unwrap_or_default(),
             ),
             omitted_items: Some(0),
             token_budget: Some(ContextTokenBudgetPreview {
@@ -300,7 +307,10 @@ fn inject_active_pinned_memories(
     append_system_block(turns, memory_block);
 }
 
-fn inject_retrieved_memories(turns: &mut Vec<TranscriptTurn>, retrieved_memories: Option<&RetrievalResultSet>) {
+fn inject_retrieved_memories(
+    turns: &mut Vec<TranscriptTurn>,
+    retrieved_memories: Option<&RetrievalResultSet>,
+) {
     let Some(memory_block) = retrieved_memory_prompt_block(retrieved_memories) else {
         return;
     };
@@ -318,7 +328,10 @@ fn inject_session_synopsis(turns: &mut Vec<TranscriptTurn>, synopsis: &str) {
         format!("[{layer_label}] {synopsis}"),
     );
     // Insert at position 1 (after system prompt if present, before conversation)
-    let insert_pos = if turns.first().is_some_and(|t| t.role == TranscriptRole::System) {
+    let insert_pos = if turns
+        .first()
+        .is_some_and(|t| t.role == TranscriptRole::System)
+    {
         1
     } else {
         0
@@ -334,7 +347,10 @@ fn session_synopsis_preview_lines(session_synopsis: Option<&str>) -> Vec<String>
         return Vec::new();
     }
     let layer_label = context_layer_label(ContextLayerKind::SessionSynopsis);
-    vec![format!("{layer_label} · {}", compact_single_line(synopsis, 72))]
+    vec![format!(
+        "{layer_label} · {}",
+        compact_single_line(synopsis, 72)
+    )]
 }
 
 fn append_system_block(turns: &mut Vec<TranscriptTurn>, block: String) {
@@ -451,7 +467,9 @@ fn retrieved_memory_preview_lines(retrieved_memories: Option<&RetrievalResultSet
     lines
 }
 
-fn retrieved_memory_prompt_block(retrieved_memories: Option<&RetrievalResultSet>) -> Option<String> {
+fn retrieved_memory_prompt_block(
+    retrieved_memories: Option<&RetrievalResultSet>,
+) -> Option<String> {
     let result = retrieved_memories?;
     if result.hits.is_empty() {
         return None;
@@ -698,6 +716,7 @@ mod tests {
                 provenance: Provenance::UserAuthored,
                 source_state: ozone_memory::RetrievalSourceState::Current,
                 is_active_memory: Some(false),
+                lifecycle: None,
                 score: ozone_memory::HybridScoreInput {
                     mode: ozone_memory::RetrievalSearchMode::Hybrid,
                     hybrid_alpha: 0.5,
@@ -721,7 +740,9 @@ mod tests {
             .expect("context build should succeed");
 
         assert!(result.prompt.contains("retrieved_memory recall"));
-        assert!(result.prompt.contains("Pack the spare lens before leaving camp."));
+        assert!(result
+            .prompt
+            .contains("Pack the spare lens before leaving camp."));
         assert!(result.preview.summary.contains("1 retrieved (hybrid)"));
         assert!(result
             .preview
@@ -774,18 +795,14 @@ mod tests {
 
     #[test]
     fn empty_synopsis_is_not_injected() {
-        let mut turns = vec![
-            TranscriptTurn::new(TranscriptRole::User, "Hello"),
-        ];
+        let mut turns = vec![TranscriptTurn::new(TranscriptRole::User, "Hello")];
         inject_session_synopsis(&mut turns, "");
         assert_eq!(turns.len(), 1);
     }
 
     #[test]
     fn synopsis_inserts_at_position_zero_when_no_system_prompt() {
-        let mut turns = vec![
-            TranscriptTurn::new(TranscriptRole::User, "Hello"),
-        ];
+        let mut turns = vec![TranscriptTurn::new(TranscriptRole::User, "Hello")];
         inject_session_synopsis(&mut turns, "Context from earlier.");
         assert_eq!(turns.len(), 2);
         assert_eq!(turns[0].role, TranscriptRole::System);

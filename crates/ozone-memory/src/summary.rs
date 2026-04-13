@@ -161,7 +161,10 @@ mod tests {
     }
 
     fn turn(role: &str, content: &str) -> SummaryInputTurn {
-        SummaryInputTurn { role: role.into(), content: content.into() }
+        SummaryInputTurn {
+            role: role.into(),
+            content: content.into(),
+        }
     }
 
     #[test]
@@ -190,7 +193,10 @@ mod tests {
     #[test]
     fn session_synopsis_below_threshold() {
         let turns = vec![turn("user", "Hello")];
-        let config = SummaryConfig { synopsis_min_messages: 5, ..cfg() };
+        let config = SummaryConfig {
+            synopsis_min_messages: 5,
+            ..cfg()
+        };
         assert!(generate_session_synopsis(&turns, &config).is_none());
     }
 
@@ -198,11 +204,20 @@ mod tests {
     fn session_synopsis_extracts_first_sentences() {
         let turns = vec![
             turn("user", "Tell me a story."),
-            turn("assistant", "Once upon a time there was a brave knight. He traveled far and wide."),
+            turn(
+                "assistant",
+                "Once upon a time there was a brave knight. He traveled far and wide.",
+            ),
             turn("user", "What happened next?"),
-            turn("assistant", "The knight found a hidden castle. It was surrounded by a dark forest."),
+            turn(
+                "assistant",
+                "The knight found a hidden castle. It was surrounded by a dark forest.",
+            ),
         ];
-        let config = SummaryConfig { synopsis_min_messages: 2, ..cfg() };
+        let config = SummaryConfig {
+            synopsis_min_messages: 2,
+            ..cfg()
+        };
         let result = generate_session_synopsis(&turns, &config).unwrap();
         assert!(result.contains("Once upon a time"));
         assert!(result.contains("The knight found a hidden castle."));
@@ -216,7 +231,11 @@ mod tests {
             turn("user", "Continue."),
             turn("assistant", "Another extremely long sentence that would push us way over the character limit if we included it fully."),
         ];
-        let config = SummaryConfig { synopsis_max_chars: 110, synopsis_min_messages: 2, ..cfg() };
+        let config = SummaryConfig {
+            synopsis_max_chars: 110,
+            synopsis_min_messages: 2,
+            ..cfg()
+        };
         let result = generate_session_synopsis(&turns, &config).unwrap();
         assert!(result.len() <= 115); // small tolerance for join space
     }

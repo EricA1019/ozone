@@ -150,6 +150,15 @@ pub struct RetrievalScoreBreakdown {
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ArtifactLifecycleSummary {
+    pub storage_tier: crate::StorageTier,
+    pub age_messages: u64,
+    pub age_hours: u64,
+    pub is_stale: bool,
+    pub adjusted_provenance_score: f32,
+}
+
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RetrievalHit {
     pub session: SearchSessionMetadata,
     pub hit_kind: RetrievalHitKind,
@@ -162,6 +171,8 @@ pub struct RetrievalHit {
     pub provenance: Provenance,
     pub source_state: RetrievalSourceState,
     pub is_active_memory: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lifecycle: Option<ArtifactLifecycleSummary>,
     pub score: RetrievalScoreBreakdown,
 }
 
@@ -213,7 +224,8 @@ impl HybridScoreInput {
             RetrievalSearchMode::FtsOnly => (1.0, 0.0),
         };
 
-        let semantic_score = (text_ratio * text_score + vector_ratio * vector_score).clamp(0.0, 1.0);
+        let semantic_score =
+            (text_ratio * text_score + vector_ratio * vector_score).clamp(0.0, 1.0);
         let text_contribution = weights.semantic * text_ratio * text_score * stale_penalty;
         let vector_contribution = weights.semantic * vector_ratio * vector_score * stale_penalty;
         let semantic_contribution = text_contribution + vector_contribution;

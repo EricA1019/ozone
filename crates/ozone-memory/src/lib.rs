@@ -1,4 +1,5 @@
 mod index;
+mod lifecycle;
 mod provider;
 mod scoring;
 pub mod summary;
@@ -16,6 +17,10 @@ pub use index::{
     VectorIndexPaths, VectorIndexQueryMatch, VectorIndexQueryResult, VectorIndexRebuildSummary,
     VectorIndexState,
 };
+pub use lifecycle::{
+    adjusted_provenance_weight, assess_artifact_staleness, message_age_since_snapshot,
+    storage_tier_for_age, ArtifactStaleness, StorageTier, StorageTierPolicy,
+};
 #[cfg(feature = "fastembed")]
 pub use provider::FastembedEmbeddingProvider;
 pub use provider::{
@@ -25,9 +30,9 @@ pub use provider::{
     MockEmbeddingProvider,
 };
 pub use scoring::{
-    HybridScoreInput, ProvenanceWeights, RetrievalHit, RetrievalHitKind, RetrievalResultSet,
-    RetrievalScoreBreakdown, RetrievalScoreInput, RetrievalSearchMode, RetrievalSourceState,
-    RetrievalStatus, RetrievalWeights, WeightValidationError,
+    ArtifactLifecycleSummary, HybridScoreInput, ProvenanceWeights, RetrievalHit, RetrievalHitKind,
+    RetrievalResultSet, RetrievalScoreBreakdown, RetrievalScoreInput, RetrievalSearchMode,
+    RetrievalSourceState, RetrievalStatus, RetrievalWeights, WeightValidationError,
 };
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -247,13 +252,9 @@ impl MemoryContent {
 
     pub fn into_chunk_summary(self) -> Option<ChunkSummaryContent> {
         match self {
-            Self::ChunkSummary {
-                text,
-                source_count,
-            } => Some(ChunkSummaryContent {
-                text,
-                source_count,
-            }),
+            Self::ChunkSummary { text, source_count } => {
+                Some(ChunkSummaryContent { text, source_count })
+            }
             _ => None,
         }
     }

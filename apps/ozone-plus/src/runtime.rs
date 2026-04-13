@@ -13,7 +13,7 @@ use ozone_engine::{
     ConversationBranchRecord, ConversationEngine, ConversationStore, EngineCommand,
     EngineCommandResult, SingleWriterConversationEngine,
 };
-use ozone_inference::{InferenceError, StreamChunk};
+use ozone_inference::{InferenceError, MemoryConfig, StreamChunk};
 use ozone_persist::{
     AuthorId, CreateNoteMemoryRequest, MemoryArtifactId, PersistError, PinMessageMemoryRequest,
     PinnedMemoryView, Provenance, SessionId, SqliteRepository, UpdateSessionRequest,
@@ -513,16 +513,16 @@ impl Phase1dRuntime {
             .repo
             .list_pinned_memories(&context.session_id)
             .map_err(|error| error.to_string())?;
-        let retrieved_memories = HybridSearchService::new(&self.repo, &self.inference.config().memory)
-            .context_retrieval(&context.session_id, &transcript, &pinned_memories, 3)?;
-        self.context_bridge
-            .build_from_transcript(
-                &transcript,
-                &pinned_memories,
-                retrieved_memories.as_ref(),
-                None,
-                &self.inference,
-            )
+        let retrieved_memories =
+            HybridSearchService::new(&self.repo, &self.inference.config().memory)
+                .context_retrieval(&context.session_id, &transcript, &pinned_memories, 3)?;
+        self.context_bridge.build_from_transcript(
+            &transcript,
+            &pinned_memories,
+            retrieved_memories.as_ref(),
+            None,
+            &self.inference,
+        )
     }
 
     #[allow(dead_code)]
@@ -554,16 +554,16 @@ impl Phase1dRuntime {
             .repo
             .list_pinned_memories(&context.session_id)
             .map_err(|error| error.to_string())?;
-        let retrieved_memories = HybridSearchService::new(&self.repo, &self.inference.config().memory)
-            .context_retrieval(&context.session_id, &transcript, &pinned_memories, 3)?;
-        self.context_bridge
-            .dry_run_from_transcript(
-                &transcript,
-                &pinned_memories,
-                retrieved_memories.as_ref(),
-                None,
-                &self.inference,
-            )
+        let retrieved_memories =
+            HybridSearchService::new(&self.repo, &self.inference.config().memory)
+                .context_retrieval(&context.session_id, &transcript, &pinned_memories, 3)?;
+        self.context_bridge.dry_run_from_transcript(
+            &transcript,
+            &pinned_memories,
+            retrieved_memories.as_ref(),
+            None,
+            &self.inference,
+        )
     }
 
     fn build_dry_run_context_refresh(
@@ -624,6 +624,7 @@ impl Phase1dRuntime {
         Ok(tui_recall_browser_from_state(
             &pinned_memories,
             self.recent_search.as_ref(),
+            &self.inference.config().memory,
         ))
     }
 
@@ -1246,22 +1247,22 @@ impl SessionRuntime for Phase1dRuntime {
                     .collect();
 
                 let config = ozone_memory::summary::SummaryConfig::default();
-                let status =
-                    match ozone_memory::summary::generate_session_synopsis(&turns, &config) {
-                        Some(synopsis) => {
-                            let _ = self.repo.store_session_synopsis(
-                                &context.session_id,
-                                &synopsis,
-                                transcript.len(),
-                                0,
-                            );
-                            format!("Synopsis: {synopsis}")
-                        }
-                        None => format!(
-                            "Not enough assistant content to generate a synopsis ({} messages)",
-                            transcript.len()
-                        ),
-                    };
+                let status = match ozone_memory::summary::generate_session_synopsis(&turns, &config)
+                {
+                    Some(synopsis) => {
+                        let _ = self.repo.store_session_synopsis(
+                            &context.session_id,
+                            &synopsis,
+                            transcript.len(),
+                            0,
+                        );
+                        format!("Synopsis: {synopsis}")
+                    }
+                    None => format!(
+                        "Not enough assistant content to generate a synopsis ({} messages)",
+                        transcript.len()
+                    ),
+                };
 
                 Ok(Some(Self::status_only_refresh(status)))
             }
@@ -1344,6 +1345,7 @@ fn tui_context_dry_run_from_build(dry_run: &DryRunContextBuild) -> TuiContextDry
 fn tui_recall_browser_from_state(
     pinned_memories: &[PinnedMemoryView],
     recent_search: Option<&RecentSearchSection>,
+    memory: &MemoryConfig,
 ) -> TuiRecallBrowser {
     const MAX_SECTION_LINES: usize = 5;
 
@@ -1364,7 +1366,7 @@ fn tui_recall_browser_from_state(
             active
                 .iter()
                 .take(MAX_SECTION_LINES)
-                .map(|memory| format_pinned_memory_browser_line(memory)),
+                .map(|pinned_memory| format_pinned_memory_browser_line(pinned_memory, memory)),
         );
         let omitted = active.len().saturating_sub(MAX_SECTION_LINES);
         if omitted > 0 {
@@ -1378,7 +1380,7 @@ fn tui_recall_browser_from_state(
             expired
                 .iter()
                 .take(MAX_SECTION_LINES)
-                .map(|memory| format_pinned_memory_browser_line(memory)),
+                .map(|pinned_memory| format_pinned_memory_browser_line(pinned_memory, memory)),
         );
         let omitted = expired.len().saturating_sub(MAX_SECTION_LINES);
         if omitted > 0 {
@@ -1493,9 +1495,16 @@ fn format_retrieval_browser_line(
     } else {
         format!(" · {}", hit.source_state)
     };
+    let lifecycle = hit
+        .lifecycle
+        .as_ref()
+        .map(|lifecycle| crate::lifecycle_badges(lifecycle, true, true))
+        .filter(|badges| !badges.is_empty())
+        .map(|badges| format!(" · {}", badges.join(" · ")))
+        .unwrap_or_default();
 
     format!(
-        "{}{} · s={:.2} t={:.2} v={:.2} p={:.2} · {}{} · {}",
+        "{}{} · s={:.2} t={:.2} v={:.2} p={:.2} · {}{}{} · {}",
         session_label,
         target,
         hit.overall_score(),
@@ -1504,30 +1513,42 @@ fn format_retrieval_browser_line(
         hit.score.provenance_contribution,
         actor,
         state,
+        lifecycle,
         compact_line(&hit.text, 56)
     )
 }
 
-fn format_pinned_memory_browser_line(memory: &PinnedMemoryView) -> String {
-    let source = memory
+fn format_pinned_memory_browser_line(
+    pinned_memory: &PinnedMemoryView,
+    memory_config: &MemoryConfig,
+) -> String {
+    let source = pinned_memory
         .record
         .source_message_id
         .as_ref()
         .map(|message_id| format!("src {}", short_id(message_id.as_str())))
         .unwrap_or_else(|| "note".to_owned());
-    let expiry = match memory.remaining_turns {
-        Some(remaining) if memory.is_active => format!("{remaining} turns left"),
+    let expiry = match pinned_memory.remaining_turns {
+        Some(remaining) if pinned_memory.is_active => format!("{remaining} turns left"),
         Some(_) => "expired".to_owned(),
         None => "no expiry".to_owned(),
     };
+    let lifecycle = crate::pinned_memory_lifecycle_summary(memory_config, pinned_memory);
+    let lifecycle = crate::lifecycle_badges(&lifecycle, false, false);
+    let lifecycle = if lifecycle.is_empty() {
+        String::new()
+    } else {
+        format!(" · {}", lifecycle.join(" · "))
+    };
 
     format!(
-        "{} · {} · {} · {} · {}",
-        short_id(memory.record.artifact_id.as_str()),
-        memory.record.provenance,
+        "{} · {} · {} · {}{} · {}",
+        short_id(pinned_memory.record.artifact_id.as_str()),
+        pinned_memory.record.provenance,
         source,
         expiry,
-        compact_line(&memory.record.content.text, 72)
+        lifecycle,
+        compact_line(&pinned_memory.record.content.text, 72)
     )
 }
 
@@ -1731,6 +1752,22 @@ mod tests {
         remaining_turns: Option<u32>,
         is_active: bool,
     ) -> PinnedMemoryView {
+        pinned_memory_with_turns(
+            text,
+            ordinal,
+            remaining_turns,
+            if is_active { 0 } else { 1 },
+            is_active,
+        )
+    }
+
+    fn pinned_memory_with_turns(
+        text: &str,
+        ordinal: u8,
+        remaining_turns: Option<u32>,
+        turns_elapsed: u64,
+        is_active: bool,
+    ) -> PinnedMemoryView {
         let artifact_id =
             MemoryArtifactId::parse(format!("123e4567-e89b-12d3-a456-4266141740{ordinal:02}"))
                 .unwrap();
@@ -1749,10 +1786,10 @@ mod tests {
                 },
                 source_message_id: Some(message_id),
                 provenance: Provenance::UserAuthored,
-                created_at: 1_700_000_000_000,
+                created_at: crate::now_timestamp_ms(),
                 snapshot_version: 1,
             },
-            turns_elapsed: if is_active { 0 } else { 1 },
+            turns_elapsed,
             remaining_turns,
             is_active,
         }
@@ -1795,17 +1832,64 @@ mod tests {
     }
 
     #[test]
-    fn recall_browser_surfaces_active_expired_and_recent_hits() {
+    fn recall_browser_includes_lifecycle_labels_for_memories_and_hits() {
+        let memory = MemoryConfig::default();
+        let result = ozone_memory::RetrievalResultSet {
+            query: "observatory".into(),
+            status: ozone_memory::RetrievalStatus {
+                mode: ozone_memory::RetrievalSearchMode::Hybrid,
+                reason: None,
+                filtered_stale_embeddings: 0,
+                downranked_embeddings: 0,
+            },
+            hits: vec![ozone_memory::RetrievalHit {
+                session: ozone_memory::SearchSessionMetadata {
+                    session_id: SessionId::parse("423e4567-e89b-12d3-a456-426614174000").unwrap(),
+                    session_name: "Observatory".into(),
+                    character_name: None,
+                    tags: vec!["phase2b".into()],
+                },
+                hit_kind: ozone_memory::RetrievalHitKind::Message,
+                artifact_id: None,
+                message_id: Some(MessageId::parse("523e4567-e89b-12d3-a456-426614174000").unwrap()),
+                source_message_id: None,
+                author_kind: Some("assistant".into()),
+                text: "The key rests under the lamp.".into(),
+                created_at: crate::now_timestamp_ms(),
+                provenance: Provenance::UtilityModel,
+                source_state: ozone_memory::RetrievalSourceState::Current,
+                is_active_memory: None,
+                lifecycle: Some(ozone_memory::ArtifactLifecycleSummary {
+                    storage_tier: ozone_memory::StorageTier::Minimal,
+                    age_messages: 800,
+                    age_hours: 2,
+                    is_stale: true,
+                    adjusted_provenance_score: 0.61,
+                }),
+                score: ozone_memory::HybridScoreInput {
+                    mode: ozone_memory::RetrievalSearchMode::Hybrid,
+                    hybrid_alpha: 0.5,
+                    bm25_score: Some(-1.2),
+                    text_score: 0.9,
+                    vector_similarity: Some(0.8),
+                    importance_score: 0.45,
+                    recency_score: 0.7,
+                    provenance: Provenance::UtilityModel,
+                    stale_penalty: 1.0,
+                }
+                .score(
+                    &ozone_memory::RetrievalWeights::default(),
+                    &ozone_memory::ProvenanceWeights::default(),
+                ),
+            }],
+        };
         let browser = tui_recall_browser_from_state(
             &[
                 pinned_memory("Remember the observatory key.", 1, Some(2), true),
-                pinned_memory("Expired fallback.", 2, Some(0), false),
+                pinned_memory_with_turns("Expired fallback.", 2, Some(0), 1_000, false),
             ],
-            Some(&RecentSearchSection {
-                summary: "session search \"observatory\" · 1 hit".into(),
-                hit_count: 1,
-                lines: vec!["msg 223e4567… · assistant · The key rests under the lamp.".into()],
-            }),
+            Some(&recent_search_section("session", &result, false)),
+            &memory,
         );
 
         assert_eq!(browser.title, "Recall");
@@ -1823,7 +1907,18 @@ mod tests {
         assert!(browser
             .lines
             .iter()
-            .any(|line| line.contains("session search \"observatory\" · 1 hit")));
+            .any(|line| line.contains("session search \"observatory\"")));
+        assert!(browser
+            .lines
+            .iter()
+            .any(|line| line.contains("Expired fallback.") && line.contains("tier minimal")));
+        assert!(browser
+            .lines
+            .iter()
+            .any(|line| line.contains("Expired fallback.") && line.contains("⚠ stale")));
+        assert!(browser.lines.iter().any(
+            |line| line.contains("The key rests under the lamp.") && line.contains("prov 0.61")
+        ));
     }
 
     #[test]
@@ -1845,9 +1940,7 @@ mod tests {
                 },
                 hit_kind: ozone_memory::RetrievalHitKind::Message,
                 artifact_id: None,
-                message_id: Some(
-                    MessageId::parse("523e4567-e89b-12d3-a456-426614174000").unwrap(),
-                ),
+                message_id: Some(MessageId::parse("523e4567-e89b-12d3-a456-426614174000").unwrap()),
                 source_message_id: None,
                 author_kind: Some("assistant".into()),
                 text: "The key rests under the lamp.".into(),
@@ -1855,6 +1948,13 @@ mod tests {
                 provenance: Provenance::UtilityModel,
                 source_state: ozone_memory::RetrievalSourceState::Current,
                 is_active_memory: None,
+                lifecycle: Some(ozone_memory::ArtifactLifecycleSummary {
+                    storage_tier: ozone_memory::StorageTier::Minimal,
+                    age_messages: 600,
+                    age_hours: 12,
+                    is_stale: true,
+                    adjusted_provenance_score: 0.61,
+                }),
                 score: ozone_memory::HybridScoreInput {
                     mode: ozone_memory::RetrievalSearchMode::Hybrid,
                     hybrid_alpha: 0.5,
@@ -1879,6 +1979,9 @@ mod tests {
         assert!(section.lines[0].contains("s="));
         assert!(section.lines[0].contains("t="));
         assert!(section.lines[0].contains("v="));
+        assert!(section.lines[0].contains("tier minimal"));
+        assert!(section.lines[0].contains("⚠ stale"));
+        assert!(section.lines[0].contains("prov 0.61"));
         assert!(section.lines[0].contains("The key rests under the lamp."));
     }
 }

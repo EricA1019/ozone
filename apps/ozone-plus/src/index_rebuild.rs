@@ -83,7 +83,8 @@ pub fn rebuild_index_with_config(
     let persisted_records = repo
         .list_embedding_artifacts(None)
         .map_err(|error| error.to_string())?;
-    let manager = ozone_memory::VectorIndexManager::new(repo.paths().data_dir().join("vector-index"));
+    let manager =
+        ozone_memory::VectorIndexManager::new(repo.paths().data_dir().join("vector-index"));
     let index = manager
         .rebuild(&provider_metadata, &persisted_records)
         .map_err(|error| error.to_string())?;
@@ -120,11 +121,21 @@ fn collect_sources(repo: &SqliteRepository) -> Result<RebuildSources, String> {
         let messages = repo
             .list_session_messages(&session.session_id)
             .map_err(|error| error.to_string())?;
-        append_message_sources(&mut sources, &mut message_source_count, &session.session_id, messages);
+        append_message_sources(
+            &mut sources,
+            &mut message_source_count,
+            &session.session_id,
+            messages,
+        );
         let memories = repo
             .list_pinned_memories(&session.session_id)
             .map_err(|error| error.to_string())?;
-        append_memory_sources(&mut sources, &mut memory_source_count, &session.session_id, memories);
+        append_memory_sources(
+            &mut sources,
+            &mut memory_source_count,
+            &session.session_id,
+            memories,
+        );
     }
 
     sources.sort_by(|left, right| {
@@ -135,7 +146,12 @@ fn collect_sources(repo: &SqliteRepository) -> Result<RebuildSources, String> {
                 left.source_message_id
                     .as_ref()
                     .map(|message_id| message_id.as_str())
-                    .cmp(&right.source_message_id.as_ref().map(|message_id| message_id.as_str()))
+                    .cmp(
+                        &right
+                            .source_message_id
+                            .as_ref()
+                            .map(|message_id| message_id.as_str()),
+                    )
             })
             .then_with(|| left.snapshot_version.cmp(&right.snapshot_version))
             .then_with(|| left.artifact_id.as_str().cmp(right.artifact_id.as_str()))
@@ -160,8 +176,7 @@ fn append_message_sources(
         if text.is_empty() {
             continue;
         }
-        let artifact_id =
-            message_embedding_artifact_id(session_id, message.message_id.as_str());
+        let artifact_id = message_embedding_artifact_id(session_id, message.message_id.as_str());
         let provenance = message_provenance(&message);
         let source_message_id = message.message_id;
         let created_at = message.edited_at.unwrap_or(message.created_at);
@@ -190,11 +205,8 @@ fn append_memory_sources(
         if text.is_empty() {
             continue;
         }
-        let artifact_id = derive_embedding_artifact_id(
-            "memory",
-            session_id,
-            memory.record.artifact_id.as_str(),
-        );
+        let artifact_id =
+            derive_embedding_artifact_id("memory", session_id, memory.record.artifact_id.as_str());
         let source_message_id = memory.record.source_message_id;
         let provenance = memory.record.provenance;
         let created_at = memory.record.created_at;
@@ -243,7 +255,10 @@ fn derive_embedding_records(
             ));
         }
 
-        for (source, embedding) in source_batch.iter().zip(generated_batch.embeddings.into_iter()) {
+        for (source, embedding) in source_batch
+            .iter()
+            .zip(generated_batch.embeddings.into_iter())
+        {
             records.push(EmbeddingRecord {
                 artifact_id: source.artifact_id.clone(),
                 session_id: source.session_id.clone(),

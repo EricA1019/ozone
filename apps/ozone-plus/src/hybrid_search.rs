@@ -2,10 +2,10 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use ozone_inference::{ConfigLoader, MemoryConfig};
 use ozone_memory::{
-    artifact_index_key, build_embedding_provider, EmbeddingAvailability, EmbeddingRecord,
-    EmbeddingRequest, HybridScoreInput, MemoryArtifactId, RetrievalHit, RetrievalHitKind,
-    RetrievalResultSet, RetrievalSearchMode, RetrievalSourceState, RetrievalStatus,
-    SearchSessionMetadata, VectorIndexManager,
+    artifact_index_key, build_embedding_provider, ArtifactLifecycleSummary, EmbeddingAvailability,
+    EmbeddingRecord, EmbeddingRequest, HybridScoreInput, MemoryArtifactId, RetrievalHit,
+    RetrievalHitKind, RetrievalResultSet, RetrievalSearchMode, RetrievalSourceState,
+    RetrievalStatus, SearchSessionMetadata, VectorIndexManager,
 };
 use ozone_persist::{
     ConversationMessage, MessageId, PinnedMemoryView, Provenance, SessionId, SessionRecord,
@@ -67,6 +67,7 @@ impl<'a> HybridSearchService<'a> {
                     provenance: message_provenance_for_author_kind(&hit.author_kind),
                     source_state: RetrievalSourceState::Current,
                     is_active_memory: None,
+                    lifecycle: None,
                     bm25_score: Some(hit.bm25_score),
                     vector_similarity: None,
                 })
@@ -105,6 +106,7 @@ impl<'a> HybridSearchService<'a> {
                 provenance: message_provenance_for_author_kind(&hit.author_kind),
                 source_state: RetrievalSourceState::Current,
                 is_active_memory: None,
+                lifecycle: None,
                 bm25_score: Some(hit.bm25_score),
                 vector_similarity: None,
             })
@@ -209,6 +211,7 @@ impl<'a> HybridSearchService<'a> {
                     provenance: candidate.provenance,
                     source_state: candidate.source_state,
                     is_active_memory: candidate.is_active_memory,
+                    lifecycle: candidate.lifecycle,
                     score,
                 }
             })
@@ -229,13 +232,23 @@ impl<'a> HybridSearchService<'a> {
                     left.message_id
                         .as_ref()
                         .map(|message_id| message_id.as_str())
-                        .cmp(&right.message_id.as_ref().map(|message_id| message_id.as_str()))
+                        .cmp(
+                            &right
+                                .message_id
+                                .as_ref()
+                                .map(|message_id| message_id.as_str()),
+                        )
                 })
                 .then_with(|| {
                     left.artifact_id
                         .as_ref()
                         .map(|artifact_id| artifact_id.as_str())
-                        .cmp(&right.artifact_id.as_ref().map(|artifact_id| artifact_id.as_str()))
+                        .cmp(
+                            &right
+                                .artifact_id
+                                .as_ref()
+                                .map(|artifact_id| artifact_id.as_str()),
+                        )
                 })
         });
 
@@ -246,11 +259,7 @@ impl<'a> HybridSearchService<'a> {
         })
     }
 
-    fn vector_candidates(
-        &self,
-        query: &str,
-        scope: &SearchScope,
-    ) -> Result<VectorOutcome, String> {
+    fn vector_candidates(&self, query: &str, scope: &SearchScope) -> Result<VectorOutcome, String> {
         let provider = build_embedding_provider(self.memory.embedding.clone());
         let provider_metadata = provider.metadata();
         let availability = provider.availability();
@@ -354,8 +363,12 @@ impl<'a> HybridSearchService<'a> {
             let Some(record) = record_map.get(&vector_hit.key) else {
                 continue;
             };
-            let Some(candidate) =
-                self.resolve_vector_candidate(record, vector_hit.similarity, scope, &mut session_cache)?
+            let Some(candidate) = self.resolve_vector_candidate(
+                record,
+                vector_hit.similarity,
+                scope,
+                &mut session_cache,
+            )?
             else {
                 filtered_stale_embeddings += 1;
                 continue;
@@ -385,9 +398,10 @@ impl<'a> HybridSearchService<'a> {
         session_cache: &mut BTreeMap<String, Option<CurrentSessionState>>,
     ) -> Result<Option<Candidate>, String> {
         let session_override = match scope {
-            SearchScope::Session { session_id, session } if session_id == &record.session_id => {
-                Some(session.clone())
-            }
+            SearchScope::Session {
+                session_id,
+                session,
+            } if session_id == &record.session_id => Some(session.clone()),
             _ => None,
         };
         let Some(session_state) =
@@ -395,6 +409,14 @@ impl<'a> HybridSearchService<'a> {
         else {
             return Ok(None);
         };
+        let current_message_count = u64::try_from(session_state.messages.len()).unwrap_or(u64::MAX);
+        let lifecycle = Some(crate::artifact_lifecycle_summary(
+            self.memory,
+            record.snapshot_version,
+            record.created_at,
+            current_message_count,
+            record.provenance,
+        ));
 
         match record_source_kind(record) {
             RetrievalHitKind::Message => {
@@ -424,6 +446,7 @@ impl<'a> HybridSearchService<'a> {
                     provenance: message_provenance_for_author_kind(&message.author_kind),
                     source_state: RetrievalSourceState::Current,
                     is_active_memory: None,
+                    lifecycle: lifecycle.clone(),
                     bm25_score: None,
                     vector_similarity: Some(similarity),
                 }))
@@ -457,6 +480,7 @@ impl<'a> HybridSearchService<'a> {
                     provenance: memory.record.provenance,
                     source_state,
                     is_active_memory: Some(memory.is_active),
+                    lifecycle,
                     bm25_score: None,
                     vector_similarity: Some(similarity),
                 }))
@@ -542,8 +566,14 @@ struct CurrentSessionState {
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
 enum CandidateKey {
-    Message { session_id: String, message_id: String },
-    Memory { session_id: String, artifact_id: String },
+    Message {
+        session_id: String,
+        message_id: String,
+    },
+    Memory {
+        session_id: String,
+        artifact_id: String,
+    },
 }
 
 #[derive(Debug, Clone)]
@@ -560,6 +590,7 @@ struct Candidate {
     provenance: Provenance,
     source_state: RetrievalSourceState,
     is_active_memory: Option<bool>,
+    lifecycle: Option<ArtifactLifecycleSummary>,
     bm25_score: Option<f32>,
     vector_similarity: Option<f32>,
 }
@@ -614,7 +645,10 @@ fn record_source_kind(record: &EmbeddingRecord) -> RetrievalHitKind {
         None => RetrievalHitKind::NoteMemory,
         Some(source_message_id)
             if record.artifact_id
-                == message_embedding_artifact_id(&record.session_id, source_message_id.as_str()) =>
+                == message_embedding_artifact_id(
+                    &record.session_id,
+                    source_message_id.as_str(),
+                ) =>
         {
             RetrievalHitKind::Message
         }
@@ -637,6 +671,7 @@ fn merge_candidate(candidates: &mut BTreeMap<CandidateKey, Candidate>, candidate
             existing.provenance = candidate.provenance;
             existing.source_state = candidate.source_state;
             existing.is_active_memory = candidate.is_active_memory;
+            existing.lifecycle = candidate.lifecycle;
         }
         if existing.bm25_score.is_none() {
             existing.bm25_score = candidate.bm25_score;
@@ -647,7 +682,9 @@ fn merge_candidate(candidates: &mut BTreeMap<CandidateKey, Candidate>, candidate
     candidates.insert(candidate.key.clone(), candidate);
 }
 
-fn normalize_bm25_scores(candidates: &BTreeMap<CandidateKey, Candidate>) -> BTreeMap<CandidateKey, f32> {
+fn normalize_bm25_scores(
+    candidates: &BTreeMap<CandidateKey, Candidate>,
+) -> BTreeMap<CandidateKey, f32> {
     let scored = candidates
         .iter()
         .filter_map(|(key, candidate)| candidate.bm25_score.map(|score| (key.clone(), score)))
@@ -826,6 +863,13 @@ mock_seed = 11
         assert_eq!(result.hits.len(), 1);
         assert!(result.hits[0].score.bm25_score.is_some());
         assert!(result.hits[0].score.vector_similarity.is_some());
+        let lifecycle = result.hits[0]
+            .lifecycle
+            .as_ref()
+            .expect("vector-backed hits should carry lifecycle metadata");
+        assert_eq!(lifecycle.storage_tier, ozone_memory::StorageTier::Full);
+        assert_eq!(lifecycle.age_messages, 0);
+        assert!((lifecycle.adjusted_provenance_score - 1.0).abs() < f32::EPSILON);
     }
 
     #[test]

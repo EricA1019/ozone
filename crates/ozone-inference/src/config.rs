@@ -80,6 +80,19 @@ passage_prefix = "passage: "
 mock_seed = 7
 show_download_progress = false
 
+[memory.lifecycle.storage_tiers]
+reduced_after_messages = 100
+minimal_after_messages = 1000
+
+[memory.lifecycle.stale_artifacts]
+max_age_messages = 500
+max_age_hours = 168
+
+[memory.lifecycle.garbage_collection]
+max_active_embeddings = 10000
+purge_unreferenced_backlog = true
+compaction_interval_hours = 24
+
 [logging]
 level = "info"
 file = true
@@ -298,6 +311,8 @@ pub struct MemoryConfig {
     #[serde(default = "default_compaction_interval_hours")]
     pub compaction_interval_hours: u64,
     #[serde(default)]
+    pub lifecycle: MemoryLifecycleConfig,
+    #[serde(default)]
     pub summary: SummaryConfig,
 }
 
@@ -315,6 +330,90 @@ fn default_archive_after_turns() -> usize {
 
 fn default_compaction_interval_hours() -> u64 {
     24
+}
+
+#[derive(Debug, Clone, Default, Deserialize, Serialize, PartialEq)]
+pub struct MemoryLifecycleConfig {
+    #[serde(default)]
+    pub storage_tiers: StorageTierPolicy,
+    #[serde(default)]
+    pub stale_artifacts: StaleArtifactPolicy,
+    #[serde(default)]
+    pub garbage_collection: GarbageCollectionPolicy,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct StorageTierPolicy {
+    #[serde(default = "default_reduced_after_messages")]
+    pub reduced_after_messages: usize,
+    #[serde(default = "default_minimal_after_messages")]
+    pub minimal_after_messages: usize,
+}
+
+fn default_reduced_after_messages() -> usize {
+    100
+}
+
+fn default_minimal_after_messages() -> usize {
+    default_archive_after_turns()
+}
+
+impl Default for StorageTierPolicy {
+    fn default() -> Self {
+        Self {
+            reduced_after_messages: default_reduced_after_messages(),
+            minimal_after_messages: default_minimal_after_messages(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct StaleArtifactPolicy {
+    #[serde(default = "default_stale_artifact_max_age_messages")]
+    pub max_age_messages: usize,
+    #[serde(default = "default_stale_artifact_max_age_hours")]
+    pub max_age_hours: u64,
+}
+
+fn default_stale_artifact_max_age_messages() -> usize {
+    500
+}
+
+fn default_stale_artifact_max_age_hours() -> u64 {
+    168
+}
+
+impl Default for StaleArtifactPolicy {
+    fn default() -> Self {
+        Self {
+            max_age_messages: default_stale_artifact_max_age_messages(),
+            max_age_hours: default_stale_artifact_max_age_hours(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize, PartialEq)]
+pub struct GarbageCollectionPolicy {
+    #[serde(default = "default_max_active_embeddings")]
+    pub max_active_embeddings: usize,
+    #[serde(default = "default_purge_unreferenced_backlog")]
+    pub purge_unreferenced_backlog: bool,
+    #[serde(default = "default_compaction_interval_hours")]
+    pub compaction_interval_hours: u64,
+}
+
+fn default_purge_unreferenced_backlog() -> bool {
+    true
+}
+
+impl Default for GarbageCollectionPolicy {
+    fn default() -> Self {
+        Self {
+            max_active_embeddings: default_max_active_embeddings(),
+            purge_unreferenced_backlog: default_purge_unreferenced_backlog(),
+            compaction_interval_hours: default_compaction_interval_hours(),
+        }
+    }
 }
 
 /// Configuration for deterministic summary generation.
@@ -371,6 +470,7 @@ impl Default for MemoryConfig {
             max_active_embeddings: default_max_active_embeddings(),
             archive_after_turns: default_archive_after_turns(),
             compaction_interval_hours: default_compaction_interval_hours(),
+            lifecycle: MemoryLifecycleConfig::default(),
             summary: SummaryConfig::default(),
         }
     }
@@ -561,6 +661,69 @@ fn validate_config(cfg: &OzoneConfig) -> anyhow::Result<()> {
         }
         .into());
     }
+    if cfg.memory.lifecycle.storage_tiers.reduced_after_messages == 0 {
+        return Err(InferenceError::ConfigInvalid {
+            key: "memory.lifecycle.storage_tiers.reduced_after_messages".into(),
+            reason: "must be greater than zero".into(),
+        }
+        .into());
+    }
+    if cfg.memory.lifecycle.storage_tiers.minimal_after_messages == 0 {
+        return Err(InferenceError::ConfigInvalid {
+            key: "memory.lifecycle.storage_tiers.minimal_after_messages".into(),
+            reason: "must be greater than zero".into(),
+        }
+        .into());
+    }
+    if cfg.memory.lifecycle.storage_tiers.minimal_after_messages
+        <= cfg.memory.lifecycle.storage_tiers.reduced_after_messages
+    {
+        return Err(InferenceError::ConfigInvalid {
+            key: "memory.lifecycle.storage_tiers.minimal_after_messages".into(),
+            reason: "must be greater than reduced_after_messages".into(),
+        }
+        .into());
+    }
+    if cfg.memory.lifecycle.stale_artifacts.max_age_messages == 0 {
+        return Err(InferenceError::ConfigInvalid {
+            key: "memory.lifecycle.stale_artifacts.max_age_messages".into(),
+            reason: "must be greater than zero".into(),
+        }
+        .into());
+    }
+    if cfg.memory.lifecycle.stale_artifacts.max_age_hours == 0 {
+        return Err(InferenceError::ConfigInvalid {
+            key: "memory.lifecycle.stale_artifacts.max_age_hours".into(),
+            reason: "must be greater than zero".into(),
+        }
+        .into());
+    }
+    if cfg
+        .memory
+        .lifecycle
+        .garbage_collection
+        .max_active_embeddings
+        == 0
+    {
+        return Err(InferenceError::ConfigInvalid {
+            key: "memory.lifecycle.garbage_collection.max_active_embeddings".into(),
+            reason: "must be greater than zero".into(),
+        }
+        .into());
+    }
+    if cfg
+        .memory
+        .lifecycle
+        .garbage_collection
+        .compaction_interval_hours
+        == 0
+    {
+        return Err(InferenceError::ConfigInvalid {
+            key: "memory.lifecycle.garbage_collection.compaction_interval_hours".into(),
+            reason: "must be greater than zero".into(),
+        }
+        .into());
+    }
     if cfg.memory.embedding.batch_size == 0 {
         return Err(InferenceError::ConfigInvalid {
             key: "memory.embedding.batch_size".into(),
@@ -619,6 +782,7 @@ mod tests {
         assert_eq!(cfg.memory.max_active_embeddings, 10_000);
         assert_eq!(cfg.memory.archive_after_turns, 1_000);
         assert_eq!(cfg.memory.compaction_interval_hours, 24);
+        assert_eq!(cfg.memory.lifecycle, MemoryLifecycleConfig::default());
         assert_eq!(cfg.memory.retrieval_weights, RetrievalWeights::default());
         assert_eq!(cfg.memory.provenance_weights, ProvenanceWeights::default());
         assert_eq!(
@@ -675,7 +839,7 @@ max_tokens = 2048
     }
 
     #[test]
-    fn memory_override_parses_nested_embedding_and_weight_config() {
+    fn memory_override_parses_nested_embedding_weight_and_lifecycle_config() {
         let override_toml = r#"
 [memory]
 hybrid_alpha = 0.25
@@ -705,6 +869,19 @@ batch_size = 32
 query_prefix = "q: "
 passage_prefix = "d: "
 mock_seed = 99
+
+[memory.lifecycle.storage_tiers]
+reduced_after_messages = 150
+minimal_after_messages = 1500
+
+[memory.lifecycle.stale_artifacts]
+max_age_messages = 300
+max_age_hours = 72
+
+[memory.lifecycle.garbage_collection]
+max_active_embeddings = 4096
+purge_unreferenced_backlog = false
+compaction_interval_hours = 6
 "#;
 
         let cfg = ConfigLoader::new()
@@ -717,6 +894,28 @@ mock_seed = 99
         assert_eq!(cfg.memory.max_active_embeddings, 2048);
         assert_eq!(cfg.memory.archive_after_turns, 256);
         assert_eq!(cfg.memory.compaction_interval_hours, 12);
+        assert_eq!(
+            cfg.memory.lifecycle.storage_tiers,
+            StorageTierPolicy {
+                reduced_after_messages: 150,
+                minimal_after_messages: 1500,
+            }
+        );
+        assert_eq!(
+            cfg.memory.lifecycle.stale_artifacts,
+            StaleArtifactPolicy {
+                max_age_messages: 300,
+                max_age_hours: 72,
+            }
+        );
+        assert_eq!(
+            cfg.memory.lifecycle.garbage_collection,
+            GarbageCollectionPolicy {
+                max_active_embeddings: 4096,
+                purge_unreferenced_backlog: false,
+                compaction_interval_hours: 6,
+            }
+        );
         assert_eq!(
             cfg.memory.retrieval_weights,
             RetrievalWeights {
@@ -775,5 +974,74 @@ provenance = 0.2
             err.to_string().contains("memory.retrieval_weights"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn invalid_memory_lifecycle_config_is_rejected() {
+        let cases = [
+            (
+                r#"
+[memory.lifecycle.storage_tiers]
+reduced_after_messages = 0
+"#,
+                "memory.lifecycle.storage_tiers.reduced_after_messages",
+            ),
+            (
+                r#"
+[memory.lifecycle.storage_tiers]
+minimal_after_messages = 0
+"#,
+                "memory.lifecycle.storage_tiers.minimal_after_messages",
+            ),
+            (
+                r#"
+[memory.lifecycle.storage_tiers]
+reduced_after_messages = 100
+minimal_after_messages = 100
+"#,
+                "memory.lifecycle.storage_tiers.minimal_after_messages",
+            ),
+            (
+                r#"
+[memory.lifecycle.stale_artifacts]
+max_age_messages = 0
+"#,
+                "memory.lifecycle.stale_artifacts.max_age_messages",
+            ),
+            (
+                r#"
+[memory.lifecycle.stale_artifacts]
+max_age_hours = 0
+"#,
+                "memory.lifecycle.stale_artifacts.max_age_hours",
+            ),
+            (
+                r#"
+[memory.lifecycle.garbage_collection]
+max_active_embeddings = 0
+"#,
+                "memory.lifecycle.garbage_collection.max_active_embeddings",
+            ),
+            (
+                r#"
+[memory.lifecycle.garbage_collection]
+compaction_interval_hours = 0
+"#,
+                "memory.lifecycle.garbage_collection.compaction_interval_hours",
+            ),
+        ];
+
+        for (bad_toml, expected_key) in cases {
+            let result = ConfigLoader::new()
+                .global_config_path("/nonexistent/path/config.toml")
+                .extra_toml_override(bad_toml)
+                .build();
+
+            let err = result.expect_err("invalid lifecycle config should fail");
+            assert!(
+                err.to_string().contains(expected_key),
+                "unexpected error for {expected_key}: {err}"
+            );
+        }
     }
 }

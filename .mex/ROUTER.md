@@ -35,6 +35,7 @@ Then read this file fully before doing anything else in this session.
 - GitHub Actions CI is clippy-clean again, and release automation is wired so pushes to `main` can create a version tag while the actual packaged release is built from the resulting tag run
 - ozone+ now has a concrete phased execution plan: preserve the current `ozone` app, add a workspace pre-phase, then build `1A` through `1G` before Phase 2 memory and later assistive/group-chat layers
 - The `.mex` scaffold passes `mex check` again, and `.mex/setup.sh` / `.mex/sync.sh` now work as repo-root wrappers for `mex setup` and `mex sync`
+- The user Copilot skill library now includes a validated `response-consolidation` skill, and `.mex` now has a reusable pattern for future local skill customization work
 - Phase 0 is now implemented: the repo is a Cargo workspace, `crates/ozone-core` owns shared product/path helpers, and `apps/ozone-plus` exists as a bootstrap CLI target
 - Phase 1A is now implemented: `crates/ozone-persist` owns the ozone+ persistence bootstrap, and `apps/ozone-plus` can create, list, and open persisted sessions
 - Phase 1B is now implemented: `crates/ozone-engine` exists, `crates/ozone-persist` owns durable branch/swipe/message operations, and `apps/ozone-plus` can drive send/edit/transcript/branch/swipe flows through an engine-backed CLI
