@@ -3,6 +3,8 @@ use ozone_core::paths;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
+use crate::ui::{BackendMode, FrontendMode};
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Preferences {
     pub version: u32,
@@ -13,6 +15,10 @@ pub struct Preferences {
     pub last_threads: Option<u32>,
     pub last_blas_threads: Option<u32>,
     pub no_browser: bool,
+    #[serde(default)]
+    pub preferred_backend: Option<BackendMode>,
+    #[serde(default)]
+    pub preferred_frontend: Option<FrontendMode>,
 }
 
 impl Default for Preferences {
@@ -26,6 +32,8 @@ impl Default for Preferences {
             last_threads: None,
             last_blas_threads: None,
             no_browser: false,
+            preferred_backend: None,
+            preferred_frontend: None,
         }
     }
 }

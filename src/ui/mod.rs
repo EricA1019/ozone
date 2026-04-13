@@ -8,6 +8,7 @@ use crossterm::{
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
+use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{error::TryRecvError, UnboundedReceiver};
 
 use crate::catalog::CatalogRecord;
@@ -38,6 +39,7 @@ pub enum Screen {
     ProfileRunning,
     ProfileSuccess,
     ProfileFailure,
+    Settings,
     Monitor,
 }
 
@@ -48,7 +50,7 @@ pub enum ModelPickerMode {
 }
 
 /// Which frontend the user wants to launch (or `--frontend` CLI bypass).
-#[derive(Debug, Clone, PartialEq, clap::ValueEnum)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
 pub enum FrontendMode {
     /// Open browser to the SillyTavern web UI (default existing behaviour)
     #[value(name = "sillyTavern")]
@@ -56,6 +58,13 @@ pub enum FrontendMode {
     /// Launch the ozone+ conversation shell
     #[value(name = "ozonePlus")]
     OzonePlus,
+}
+
+/// Which backend the user wants to launch.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BackendMode {
+    KoboldCpp,
+    Ollama,
 }
 
 pub struct App {
@@ -94,6 +103,10 @@ pub struct App {
     pub frontend_choice_index: usize,
     pub ozone_plus_handoff: bool,
     pub pending_launch_choice: Option<usize>,
+    // Settings screen state
+    pub settings_section: usize,        // 0=backend, 1=frontend
+    pub settings_backend_index: usize,  // 0=KoboldCpp, 1=Ollama
+    pub settings_frontend_index: usize, // 0=SillyTavern, 1=OzonePlus
     // Profiling flow state
     pub profiling_advisory: Option<ProfilingAdvisory>,
     pub profiling_pending_action: Option<ProfilingAction>,
@@ -146,6 +159,9 @@ impl App {
             frontend_choice_index: 0,
             ozone_plus_handoff: false,
             pending_launch_choice: None,
+            settings_section: 0,
+            settings_backend_index: 0,
+            settings_frontend_index: 0,
             profiling_advisory: None,
             profiling_pending_action: None,
             profiling_progress_title: "Preparing".into(),
@@ -280,6 +296,16 @@ pub async fn run_launcher(
 
     let mut app = App::new(prefs);
     app.preferred_frontend = preferred_frontend;
+
+    // Sync settings indices from persisted prefs
+    app.settings_backend_index = match app.prefs.preferred_backend {
+        Some(BackendMode::Ollama) => 1,
+        _ => 0,
+    };
+    app.settings_frontend_index = match app.prefs.preferred_frontend {
+        Some(FrontendMode::OzonePlus) => 1,
+        _ => 0,
+    };
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -453,6 +479,7 @@ pub async fn run_launcher(
             Screen::ProfileRunning => launcher::render_profile_running(f, &app),
             Screen::ProfileSuccess => launcher::render_profile_success(f, &app),
             Screen::ProfileFailure => launcher::render_profile_failure(f, &app),
+            Screen::Settings => launcher::render_settings(f, &app),
             Screen::Monitor => monitor::render(f, &app),
         })?;
 
@@ -476,19 +503,36 @@ pub async fn run_launcher(
                             }
                         }
                         KeyCode::Down => {
-                            if app.selected_action < 5 {
+                            if app.selected_action < 6 {
                                 app.selected_action += 1;
                             }
                         }
                         KeyCode::Enter => match app.selected_action {
                             0 => {
-                                if !app.catalog.is_empty() {
-                                    app.reset_profile_flow();
-                                    app.model_picker_mode = ModelPickerMode::Launch;
-                                    app.screen = Screen::ModelPicker;
+                                // Launch configured stack
+                                match app.prefs.preferred_backend {
+                                    None => {
+                                        app.set_error("Configure backend in Settings first".into());
+                                    }
+                                    Some(BackendMode::KoboldCpp) => {
+                                        if !app.catalog.is_empty() {
+                                            app.reset_profile_flow();
+                                            app.model_picker_mode = ModelPickerMode::Launch;
+                                            app.screen = Screen::ModelPicker;
+                                        }
+                                    }
+                                    Some(BackendMode::Ollama) => {
+                                        if crate::processes::is_url_ready("http://127.0.0.1:11434/api/tags").await {
+                                            app.set_status("Ollama backend ready.".into());
+                                            // For now, just confirm ready - full Ollama launch flow TBD
+                                        } else {
+                                            app.set_error("Ollama not running on :11434".into());
+                                        }
+                                    }
                                 }
                             }
                             1 => {
+                                // Profile / recommend model
                                 if !app.catalog.is_empty() {
                                     app.reset_profile_flow();
                                     app.model_picker_mode = ModelPickerMode::Profile;
@@ -496,9 +540,16 @@ pub async fn run_launcher(
                                 }
                             }
                             2 => {
-                                app.set_status("Launching SillyTavern...".into());
+                                // Open ozone+ shell (direct handoff)
+                                app.ozone_plus_handoff = true;
+                                break Ok(());
                             }
                             3 => {
+                                // Settings
+                                app.screen = Screen::Settings;
+                            }
+                            4 => {
+                                // Clear GPU backends
                                 let _ = crate::processes::clear_gpu_backends().await;
                                 app.services.kobold_running = false;
                                 app.services.kobold_model = None;
@@ -506,13 +557,59 @@ pub async fn run_launcher(
                                 last_refresh = Instant::now();
                                 app.set_status("GPU backends cleared.".into());
                             }
-                            4 => {
+                            5 => {
+                                // Monitor
                                 app.screen = Screen::Monitor;
                                 app.launch_start = Some(Instant::now());
                             }
-                            5 => break Ok(()),
+                            6 => break Ok(()),
                             _ => {}
                         },
+                        _ => {}
+                    },
+                    Screen::Settings => match key.code {
+                        KeyCode::Tab => {
+                            app.settings_section = (app.settings_section + 1) % 2;
+                        }
+                        KeyCode::Up => match app.settings_section {
+                            0 => {
+                                if app.settings_backend_index > 0 {
+                                    app.settings_backend_index -= 1;
+                                }
+                            }
+                            _ => {
+                                if app.settings_frontend_index > 0 {
+                                    app.settings_frontend_index -= 1;
+                                }
+                            }
+                        },
+                        KeyCode::Down => match app.settings_section {
+                            0 => {
+                                if app.settings_backend_index < 1 {
+                                    app.settings_backend_index += 1;
+                                }
+                            }
+                            _ => {
+                                if app.settings_frontend_index < 1 {
+                                    app.settings_frontend_index += 1;
+                                }
+                            }
+                        },
+                        KeyCode::Enter | KeyCode::Esc => {
+                            app.prefs.preferred_backend = match app.settings_backend_index {
+                                0 => Some(BackendMode::KoboldCpp),
+                                1 => Some(BackendMode::Ollama),
+                                _ => None,
+                            };
+                            app.prefs.preferred_frontend = match app.settings_frontend_index {
+                                0 => Some(FrontendMode::SillyTavern),
+                                1 => Some(FrontendMode::OzonePlus),
+                                _ => None,
+                            };
+                            let _ = crate::prefs::save_prefs(&app.prefs).await;
+                            app.set_status("Settings saved.".into());
+                            app.screen = Screen::Launcher;
+                        }
                         _ => {}
                     },
                     Screen::ModelPicker => match key.code {

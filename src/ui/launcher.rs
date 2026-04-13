@@ -6,7 +6,7 @@ use ratatui::{
     Frame,
 };
 
-use super::{App, ModelPickerMode};
+use super::{App, BackendMode, FrontendMode, ModelPickerMode};
 use crate::profiling::{ProfilingAction, WarningSeverity};
 use crate::theme::*;
 
@@ -15,7 +15,7 @@ pub fn render(f: &mut Frame, app: &App) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3), // header
+            Constraint::Length(4), // header (increased for badge line)
             Constraint::Length(4), // resources
             Constraint::Length(4), // services
             Constraint::Fill(1),   // actions
@@ -40,7 +40,10 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
 
     let text_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(1),
+            Constraint::Length(1),
+        ])
         .split(inner);
 
     let title = Line::from(vec![
@@ -49,7 +52,25 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("— ", style_gray()),
         Span::styled(format!("{model_count} models"), style_cyan()),
     ]);
-    let subtitle = Line::from(Span::styled("  Local AI stack operator", style_gray()));
+
+    // Backend/frontend badge line
+    let (backend_label, backend_style) = match app.prefs.preferred_backend {
+        Some(BackendMode::KoboldCpp) => ("KoboldCpp", style_cyan()),
+        Some(BackendMode::Ollama) => ("Ollama", style_green()),
+        None => ("—", style_gray()),
+    };
+    let (frontend_label, frontend_style) = match app.prefs.preferred_frontend {
+        Some(FrontendMode::SillyTavern) => ("SillyTavern", style_cyan()),
+        Some(FrontendMode::OzonePlus) => ("ozone+", style_violet()),
+        None => ("—", style_gray()),
+    };
+    let subtitle = Line::from(vec![
+        Span::styled("  Backend: ", style_gray()),
+        Span::styled(backend_label, backend_style),
+        Span::styled("  Frontend: ", style_gray()),
+        Span::styled(frontend_label, frontend_style),
+    ]);
+
     f.render_widget(Paragraph::new(title), text_chunks[0]);
     f.render_widget(Paragraph::new(subtitle), text_chunks[1]);
 }
@@ -154,18 +175,19 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(block, area);
 
     let actions = [
-        "Launch backend + SillyTavern",
-        "Profile / recommend model",
-        "Start SillyTavern only",
-        "Clear GPU backends",
-        "Monitor services",
-        "Exit",
+        ("Launch", "Start configured backend & frontend"),
+        ("Profile", "Auto-tune GPU layers for a model"),
+        ("Open ozone+", "Direct shell (no model needed)"),
+        ("Settings", "Configure backend & frontend"),
+        ("Clear GPU", "Kill running backends"),
+        ("Monitor", "View system resources"),
+        ("Exit", "Quit launcher"),
     ];
 
     let items: Vec<ListItem> = actions
         .iter()
         .enumerate()
-        .map(|(i, label)| {
+        .map(|(i, (label, desc))| {
             if i == app.selected_action {
                 ListItem::new(Line::from(vec![
                     Span::styled(format!("{} ", HEX_CURSOR), style_cyan()),
@@ -175,6 +197,7 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
                         *label,
                         Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
                     ),
+                    Span::styled(format!("  {}", desc), style_gray()),
                 ]))
             } else {
                 ListItem::new(Line::from(vec![
@@ -182,6 +205,7 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
                     Span::styled(format!("{}", i + 1), style_gray()),
                     Span::raw("  "),
                     Span::styled(*label, style_gray()),
+                    Span::styled(format!("  {}", desc), Style::default().fg(GRAY)),
                 ]))
             }
         })
@@ -1041,4 +1065,120 @@ pub fn render_profile_failure(f: &mut Frame, app: &App) {
     } else {
         f.render_stateful_widget(List::new(items), inner, &mut state);
     }
+}
+
+pub fn render_settings(f: &mut Frame, app: &App) {
+    let area = f.area();
+    let center = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Min(16),
+            Constraint::Fill(1),
+        ])
+        .split(area)[1];
+    let center_h = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Max(50),
+            Constraint::Fill(1),
+        ])
+        .split(center)[1];
+
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // header
+            Constraint::Length(5), // backend block
+            Constraint::Length(5), // frontend block
+            Constraint::Length(3), // hint
+        ])
+        .split(center_h);
+
+    // Header
+    let header = Paragraph::new(Line::from(vec![
+        Span::styled(format!(" {} ", HEX_CURSOR), style_violet()),
+        Span::styled("Settings", style_bold_violet()),
+    ]))
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(style_violet()),
+    );
+    f.render_widget(header, chunks[0]);
+
+    // Backend block
+    let backend_border = if app.settings_section == 0 {
+        style_cyan()
+    } else {
+        style_gray()
+    };
+    let backend_block = Block::default()
+        .title(Span::styled("  Backend ", style_bold_cyan()))
+        .borders(Borders::ALL)
+        .border_style(backend_border);
+    let backend_inner = backend_block.inner(chunks[1]);
+    f.render_widget(backend_block, chunks[1]);
+
+    let backend_options = ["KoboldCpp", "Ollama"];
+    let backend_items: Vec<ListItem> = backend_options
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let selected = i == app.settings_backend_index;
+            let marker = if selected { "●" } else { "○" };
+            let style = if selected { style_cyan() } else { style_gray() };
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("  {marker} "), style),
+                Span::styled(*label, style),
+            ]))
+        })
+        .collect();
+    f.render_widget(List::new(backend_items), backend_inner);
+
+    // Frontend block
+    let frontend_border = if app.settings_section == 1 {
+        style_cyan()
+    } else {
+        style_gray()
+    };
+    let frontend_block = Block::default()
+        .title(Span::styled("  Frontend ", style_bold_cyan()))
+        .borders(Borders::ALL)
+        .border_style(frontend_border);
+    let frontend_inner = frontend_block.inner(chunks[2]);
+    f.render_widget(frontend_block, chunks[2]);
+
+    let frontend_options = ["SillyTavern", "ozone+"];
+    let frontend_items: Vec<ListItem> = frontend_options
+        .iter()
+        .enumerate()
+        .map(|(i, label)| {
+            let selected = i == app.settings_frontend_index;
+            let marker = if selected { "●" } else { "○" };
+            let style = if selected {
+                if *label == "ozone+" {
+                    style_violet()
+                } else {
+                    style_cyan()
+                }
+            } else {
+                style_gray()
+            };
+            ListItem::new(Line::from(vec![
+                Span::styled(format!("  {marker} "), style),
+                Span::styled(*label, style),
+            ]))
+        })
+        .collect();
+    f.render_widget(List::new(frontend_items), frontend_inner);
+
+    // Hint
+    let hint = Paragraph::new(Line::from(Span::styled(
+        "  Tab=switch section · ↑↓=select · Enter=save · Esc=cancel",
+        style_gray(),
+    )))
+    .block(Block::default().borders(Borders::ALL).border_style(style_gray()));
+    f.render_widget(hint, chunks[3]);
 }
