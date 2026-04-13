@@ -51,6 +51,8 @@ pub struct VectorIndexMetadata {
     pub dimensions: usize,
     pub artifact_count: usize,
     pub fingerprint: String,
+    #[serde(default)]
+    pub usearch_version: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -249,6 +251,7 @@ impl VectorIndexManager {
             dimensions: provider.dimensions,
             artifact_count: sorted_records.len(),
             fingerprint: fingerprint_records(provider, &sorted_records),
+            usearch_version: env!("CARGO_PKG_VERSION").to_owned(),
         };
         let metadata_json = serde_json::to_vec_pretty(&metadata)?;
 
@@ -268,6 +271,29 @@ impl VectorIndexManager {
             metadata,
         })
     }
+
+    pub fn check_version_compatibility(&self) -> Option<VersionCompatibilityResult> {
+        let meta = self.load_metadata().ok()??;
+        let linked = Self::linked_usearch_version();
+        let compatible = meta.usearch_version == linked;
+        Some(VersionCompatibilityResult {
+            stored_version: meta.usearch_version.clone(),
+            linked_version: linked,
+            compatible,
+        })
+    }
+
+    fn linked_usearch_version() -> String {
+        // usearch doesn't expose a version constant; use the crate version string
+        env!("CARGO_PKG_VERSION").to_string()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VersionCompatibilityResult {
+    pub stored_version: String,
+    pub linked_version: String,
+    pub compatible: bool,
 }
 
 impl VectorIndexMetadata {

@@ -1926,6 +1926,7 @@ name = "ozone-memory"
 version = "0.1.0"
 dependencies = [
  "fastembed",
+ "libc",
  "ozone-core",
  "serde",
  "serde_json",

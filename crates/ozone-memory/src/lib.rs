@@ -1,5 +1,6 @@
 mod index;
 mod lifecycle;
+pub mod disk_monitor;
 mod provider;
 mod scoring;
 pub mod summary;
@@ -12,10 +13,11 @@ use ozone_core::{
 };
 use serde::{Deserialize, Serialize};
 
+pub use disk_monitor::{check_disk_space, DiskCheckResult, DiskMonitorPolicy, DiskStatus};
 pub use index::{
     artifact_index_key, VectorIndexError, VectorIndexManager, VectorIndexMetadata,
     VectorIndexPaths, VectorIndexQueryMatch, VectorIndexQueryResult, VectorIndexRebuildSummary,
-    VectorIndexState,
+    VectorIndexState, VersionCompatibilityResult,
 };
 pub use lifecycle::{
     adjusted_provenance_weight, assess_artifact_staleness, message_age_since_snapshot,

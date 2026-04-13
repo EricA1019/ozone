@@ -1940,6 +1940,32 @@ impl SqliteRepository {
         Ok(removed)
     }
 
+    pub fn compact_events(&self, session_id: Option<&SessionId>, older_than_ms: u64) -> Result<usize> {
+        let target_sessions = match session_id {
+            Some(session_id) => vec![session_id.clone()],
+            None => self
+                .list_sessions()?
+                .into_iter()
+                .map(|session| session.session_id)
+                .collect(),
+        };
+        let mut removed = 0;
+
+        for session_id in target_sessions {
+            let conn = self.open_session_connection(&session_id)?;
+            let session_removed = conn.execute(
+                "DELETE FROM events WHERE created_at < ?1",
+                [older_than_ms as i64],
+            )?;
+            if session_removed != 0 {
+                self.refresh_session_size(&session_id)?;
+            }
+            removed += session_removed;
+        }
+
+        Ok(removed)
+    }
+
     pub fn replace_embedding_artifacts(
         &self,
         session_id: Option<&SessionId>,

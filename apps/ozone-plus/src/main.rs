@@ -99,6 +99,8 @@ enum Command {
     Lifecycle(LifecycleArgs),
     /// Plan or run garbage collection on derived artifacts
     Gc(GcArgs),
+    /// Manage the session events log
+    Events(EventsArgs),
 }
 
 #[derive(Args)]
@@ -436,6 +438,8 @@ enum LifecycleCommand {
         #[arg(value_name = "SESSION_ID")]
         session_id: Option<String>,
     },
+    /// Check disk space status for the ozone+ data directory
+    DiskStatus,
 }
 
 #[derive(Args)]
@@ -472,6 +476,25 @@ enum GcCommand {
         /// Actually apply the plan (omit for dry-run preview)
         #[arg(long)]
         apply: bool,
+    },
+}
+
+#[derive(Args)]
+struct EventsArgs {
+    #[command(subcommand)]
+    command: EventsCommand,
+}
+
+#[derive(Subcommand)]
+enum EventsCommand {
+    /// Delete old events from the session events log
+    Compact {
+        /// Session UUID to scope the compact (omit for all sessions)
+        #[arg(long, value_name = "SESSION_ID")]
+        session_id: Option<String>,
+        /// Delete events older than N days
+        #[arg(long, value_name = "N", default_value_t = 90u64)]
+        retention_days: u64,
     },
 }
 
@@ -539,6 +562,7 @@ fn run_cli(cli: Cli) -> Result<(), String> {
         Some(Command::Summarize(args)) => handle_summarize_command(args.command),
         Some(Command::Lifecycle(args)) => handle_lifecycle_command(args.command),
         Some(Command::Gc(args)) => handle_gc_command(args.command),
+        Some(Command::Events(args)) => handle_events_command(args.command),
         None => {
             print_bootstrap_summary();
             Ok(())
@@ -1840,6 +1864,7 @@ fn summarize_chunk(
 fn handle_lifecycle_command(command: LifecycleCommand) -> Result<(), String> {
     match command {
         LifecycleCommand::Inspect { session_id } => lifecycle_inspect(session_id),
+        LifecycleCommand::DiskStatus => lifecycle_disk_status(),
     }
 }
 
@@ -1884,6 +1909,25 @@ fn lifecycle_inspect(session_id_raw: Option<String>) -> Result<(), String> {
         println!("    source     {}", if record.source_exists { "present" } else { "missing ⚠" });
         println!("    created    {}", record.created_at);
         println!();
+    }
+    Ok(())
+}
+
+fn lifecycle_disk_status() -> Result<(), String> {
+    let repo = open_repository()?;
+    let data_dir = repo.paths().data_dir();
+    let policy = ozone_memory::DiskMonitorPolicy::default();
+    match ozone_memory::check_disk_space(data_dir, &policy) {
+        Some(result) => {
+            println!("Disk status");
+            println!("  path            {}", data_dir.display());
+            println!("  free            {} MiB", result.free_bytes / (1024 * 1024));
+            println!("  status          {}", result.status);
+            if result.status.should_pause_background_jobs() {
+                println!("  ⚠ emergency: background artifact jobs should be paused");
+            }
+        }
+        None => println!("Disk space check not available on this platform."),
     }
     Ok(())
 }
@@ -2031,6 +2075,29 @@ fn reason_label(reason: GarbageCollectionReason) -> &'static str {
 
 fn open_repository() -> Result<SqliteRepository, String> {
     SqliteRepository::from_xdg().map_err(|error| error.to_string())
+}
+
+fn handle_events_command(command: EventsCommand) -> Result<(), String> {
+    match command {
+        EventsCommand::Compact {
+            session_id,
+            retention_days,
+        } => events_compact(session_id, retention_days),
+    }
+}
+
+fn events_compact(session_id_raw: Option<String>, retention_days: u64) -> Result<(), String> {
+    let session_id = session_id_raw.as_deref().map(parse_session_id).transpose()?;
+    let now_ms = u64::try_from(now_timestamp_ms()).unwrap_or(0);
+    let older_than_ms = now_ms.saturating_sub(retention_days * 24 * 3600 * 1000);
+    let repo = open_repository()?;
+    let count = repo
+        .compact_events(session_id.as_ref(), older_than_ms)
+        .map_err(|e| e.to_string())?;
+    println!("Events compacted");
+    println!("  deleted  {count}");
+    println!("  older than  {retention_days} days");
+    Ok(())
 }
 
 fn map_branch_record(record: BranchRecord) -> ConversationBranchRecord {
