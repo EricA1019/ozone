@@ -31,6 +31,7 @@ pub enum Screen {
     Launcher,
     ModelPicker,
     Confirm,
+    FrontendChoice,
     Launching,
     ProfileAdvisory,
     ProfileConfirm,
@@ -44,6 +45,17 @@ pub enum Screen {
 pub enum ModelPickerMode {
     Launch,
     Profile,
+}
+
+/// Which frontend the user wants to launch (or `--frontend` CLI bypass).
+#[derive(Debug, Clone, PartialEq, clap::ValueEnum)]
+pub enum FrontendMode {
+    /// Open browser to the SillyTavern web UI (default existing behaviour)
+    #[value(name = "sillyTavern")]
+    SillyTavern,
+    /// Launch the ozone+ conversation shell
+    #[value(name = "ozonePlus")]
+    OzonePlus,
 }
 
 pub struct App {
@@ -77,6 +89,11 @@ pub struct App {
     pub status_set_at: Option<Instant>,
     // Model picker filter
     pub model_filter: String,
+    // Frontend choice state
+    pub preferred_frontend: Option<FrontendMode>,
+    pub frontend_choice_index: usize,
+    pub ozone_plus_handoff: bool,
+    pub pending_launch_choice: Option<usize>,
     // Profiling flow state
     pub profiling_advisory: Option<ProfilingAdvisory>,
     pub profiling_pending_action: Option<ProfilingAction>,
@@ -125,6 +142,10 @@ impl App {
             status_msg: None,
             status_set_at: None,
             model_filter: String::new(),
+            preferred_frontend: None,
+            frontend_choice_index: 0,
+            ozone_plus_handoff: false,
+            pending_launch_choice: None,
             profiling_advisory: None,
             profiling_pending_action: None,
             profiling_progress_title: "Preparing".into(),
@@ -230,11 +251,32 @@ impl App {
     }
 }
 
-pub async fn run_launcher(no_browser: bool) -> Result<()> {
+fn build_kc_args(plan: &LaunchPlan) -> Vec<String> {
+    let mut args = vec![
+        "--gpulayers".to_string(),
+        plan.gpu_layers.to_string(),
+        "--contextsize".to_string(),
+        plan.context_size.to_string(),
+        "--quantkv".to_string(),
+        plan.quant_kv.to_string(),
+    ];
+    if let Some(t) = plan.threads {
+        args.push("--threads".to_string());
+        args.push(t.to_string());
+    }
+    if let Some(bt) = plan.blas_threads {
+        args.push("--blasthreads".to_string());
+        args.push(bt.to_string());
+    }
+    args
+}
+
+pub async fn run_launcher(no_browser: bool, preferred_frontend: Option<FrontendMode>) -> Result<()> {
     let mut prefs = crate::prefs::load_prefs().await;
     prefs.no_browser = prefs.no_browser || no_browser;
 
     let mut app = App::new(prefs);
+    app.preferred_frontend = preferred_frontend;
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -346,12 +388,62 @@ pub async fn run_launcher(no_browser: bool) -> Result<()> {
             }
         }
 
+        // Execute a pending frontend launch choice (triggered by FrontendChoice Enter or --frontend bypass).
+        if let Some(choice_idx) = app.pending_launch_choice.take() {
+            if let Some(plan) = app.current_plan.clone() {
+                app.screen = Screen::Launching;
+                app.launch_start = Some(Instant::now());
+                terminal.draw(|f| launcher::render_launching(f, &app))?;
+
+                let home = std::env::var("HOME").unwrap_or_default();
+                let launcher_path = std::path::PathBuf::from(&home)
+                    .join("models/launch-koboldcpp.sh");
+                let model_path = std::path::PathBuf::from(&home)
+                    .join("models")
+                    .join(&plan.model_name);
+                let kc_args = build_kc_args(&plan);
+                match crate::processes::start_kobold(
+                    &launcher_path,
+                    &model_path.to_string_lossy(),
+                    &kc_args,
+                )
+                .await
+                {
+                    Ok(_) => {
+                        let mut updated_prefs = app.prefs.clone();
+                        updated_prefs.last_model_name = plan.model_name.clone();
+                        updated_prefs.last_context_size = Some(plan.context_size);
+                        updated_prefs.last_gpu_layers = Some(plan.gpu_layers);
+                        updated_prefs.last_quant_kv = Some(plan.quant_kv);
+                        let _ = crate::prefs::save_prefs(&updated_prefs).await;
+                        app.prefs = updated_prefs;
+                        if choice_idx == 0 {
+                            // SillyTavern: open browser and enter monitor
+                            if !app.prefs.no_browser {
+                                crate::processes::open_browser_app("http://localhost:8000");
+                            }
+                            app.screen = Screen::Monitor;
+                        } else {
+                            // ozone+: hand off to ozone-plus list
+                            app.ozone_plus_handoff = true;
+                            break Ok(());
+                        }
+                    }
+                    Err(error) => {
+                        app.set_error(format!("Launch failed: {error}"));
+                        app.screen = Screen::Launcher;
+                    }
+                }
+            }
+        }
+
         // Draw
         terminal.draw(|f| match app.screen {
             Screen::Splash => splash::render(f, &app),
             Screen::Launcher => launcher::render(f, &app),
             Screen::ModelPicker => launcher::render_model_picker(f, &app),
             Screen::Confirm => launcher::render_confirm(f, &app),
+            Screen::FrontendChoice => launcher::render_frontend_choice(f, &app),
             Screen::Launching => launcher::render_launching(f, &app),
             Screen::ProfileAdvisory => launcher::render_profile_advisory(f, &app),
             Screen::ProfileConfirm => launcher::render_profile_confirm(f, &app),
@@ -490,60 +582,38 @@ pub async fn run_launcher(no_browser: bool) -> Result<()> {
                     Screen::Confirm => match key.code {
                         KeyCode::Esc | KeyCode::Char('n') => app.screen = Screen::Launcher,
                         KeyCode::Enter | KeyCode::Char('y') => {
-                            if let Some(plan) = app.current_plan.clone() {
-                                app.screen = Screen::Launching;
-                                app.launch_start = Some(Instant::now());
-                                terminal.draw(|f| launcher::render_launching(f, &app))?;
-
-                                let home = std::env::var("HOME").unwrap_or_default();
-                                let launcher_path = std::path::PathBuf::from(&home)
-                                    .join("models/launch-koboldcpp.sh");
-                                let model_path = std::path::PathBuf::from(&home)
-                                    .join("models")
-                                    .join(&plan.model_name);
-                                let mut kc_args = vec![
-                                    "--gpulayers".to_string(),
-                                    plan.gpu_layers.to_string(),
-                                    "--contextsize".to_string(),
-                                    plan.context_size.to_string(),
-                                    "--quantkv".to_string(),
-                                    plan.quant_kv.to_string(),
-                                ];
-                                if let Some(t) = plan.threads {
-                                    kc_args.push("--threads".to_string());
-                                    kc_args.push(t.to_string());
-                                }
-                                if let Some(bt) = plan.blas_threads {
-                                    kc_args.push("--blasthreads".to_string());
-                                    kc_args.push(bt.to_string());
-                                }
-                                match crate::processes::start_kobold(
-                                    &launcher_path,
-                                    &model_path.to_string_lossy(),
-                                    &kc_args,
-                                )
-                                .await
-                                {
-                                    Ok(_) => {
-                                        let mut updated_prefs = app.prefs.clone();
-                                        updated_prefs.last_model_name = plan.model_name.clone();
-                                        updated_prefs.last_context_size = Some(plan.context_size);
-                                        updated_prefs.last_gpu_layers = Some(plan.gpu_layers);
-                                        updated_prefs.last_quant_kv = Some(plan.quant_kv);
-                                        let _ = crate::prefs::save_prefs(&updated_prefs).await;
-                                        app.prefs = updated_prefs;
-                                        if !app.prefs.no_browser {
-                                            crate::processes::open_browser_app(
-                                                "http://localhost:8000",
-                                            );
-                                        }
-                                        app.screen = Screen::Monitor;
+                            if app.current_plan.is_some() {
+                                match &app.preferred_frontend {
+                                    Some(FrontendMode::SillyTavern) => {
+                                        app.pending_launch_choice = Some(0);
                                     }
-                                    Err(error) => {
-                                        app.set_error(format!("Launch failed: {error}"));
-                                        app.screen = Screen::Launcher;
+                                    Some(FrontendMode::OzonePlus) => {
+                                        app.pending_launch_choice = Some(1);
+                                    }
+                                    None => {
+                                        app.frontend_choice_index = 0;
+                                        app.screen = Screen::FrontendChoice;
                                     }
                                 }
+                            }
+                        }
+                        _ => {}
+                    },
+                    Screen::FrontendChoice => match key.code {
+                        KeyCode::Esc => app.screen = Screen::Confirm,
+                        KeyCode::Up => {
+                            if app.frontend_choice_index > 0 {
+                                app.frontend_choice_index -= 1;
+                            }
+                        }
+                        KeyCode::Down => {
+                            if app.frontend_choice_index < 1 {
+                                app.frontend_choice_index += 1;
+                            }
+                        }
+                        KeyCode::Enter => {
+                            if app.current_plan.is_some() {
+                                app.pending_launch_choice = Some(app.frontend_choice_index);
                             }
                         }
                         _ => {}
@@ -845,6 +915,16 @@ pub async fn run_launcher(no_browser: bool) -> Result<()> {
     disable_raw_mode()?;
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
+    if app.ozone_plus_handoff {
+        let ozone_plus_bin = std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|dir| dir.join("ozone-plus")))
+            .filter(|p| p.exists())
+            .unwrap_or_else(|| std::path::PathBuf::from("ozone-plus"));
+        use std::os::unix::process::CommandExt;
+        let err = std::process::Command::new(ozone_plus_bin).arg("list").exec();
+        return Err(anyhow::anyhow!("Failed to exec ozone-plus: {err}"));
+    }
     result
 }
 

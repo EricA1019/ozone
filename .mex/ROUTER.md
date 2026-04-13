@@ -42,13 +42,15 @@ Then read this file fully before doing anything else in this session.
 - Phase 1D is now implemented: `crates/ozone-inference` owns layered config, prompt templates, streaming decode, and the first KoboldCpp gateway, while `apps/ozone-plus` now drives a real async streaming runtime with failure/cancel handling and persisted assistant turns
 - Phase 1E is now implemented: `crates/ozone-engine` owns the first `ContextPlan` / `ContextAssembler` core, `apps/ozone-plus` now bridges context preview + dry-run data, and `crates/ozone-tui` now renders a real context inspector surface with a `Ctrl+D` dry-run trigger
 - Phase 1F is now implemented: `crates/ozone-persist` owns character-card import + session/transcript export, `apps/ozone-plus` has `import card` / `export session` / `export transcript` CLI commands, `crates/ozone-tui` now supports bookmark toggle (`b`), session stats, and `/session` slash commands (rename/character/tags/show)
+- Phase 1G is now implemented: `src/ui/mod.rs` adds `Screen::FrontendChoice` and `FrontendMode` enum; `ozone --frontend ozonePlus` bypasses the choice screen and exec-hands-off to `ozone-plus list`; the choice screen sits between Confirm and Launch with ↑↓/Enter navigation
+
+**Phase 1 complete. Next: Phase 2 (memory systems).**
 
 **Not yet built:**
 - TUI cancellation for in-flight profiling runs
 - A dedicated in-TUI browser for existing benchmark history and Pareto data
 - Rich per-substep sweep visualizations beyond streamed text progress
-- Better startup/launcher flow for "Start SillyTavern only" (still status-only)
-- Phase 1G: launcher on-ramp from `ozone` binary → ozone+ (ST vs ozone+ choice at launch)
+- Phase 2: per-session memory, semantic recall, and summary compression
 
 **Known issues:**
 - Broken `.gguf` symlinks can still appear in the catalog/list and are only surfaced as issues when selected

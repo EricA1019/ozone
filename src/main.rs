@@ -22,6 +22,11 @@ struct Cli {
 
     #[arg(long, help = "Skip browser launch")]
     no_browser: bool,
+
+    /// Choose the frontend to open after launching the backend.
+    /// Omit to see an interactive choice screen.
+    #[arg(long, value_name = "MODE")]
+    frontend: Option<ui::FrontendMode>,
 }
 
 #[derive(Subcommand)]
@@ -81,7 +86,7 @@ enum Commands {
 async fn main() -> Result<()> {
     let cli = Cli::parse();
     match cli.command {
-        None => ui::run_launcher(cli.no_browser).await,
+        None => ui::run_launcher(cli.no_browser, cli.frontend).await,
         Some(Commands::Clear) => {
             let killed = processes::clear_gpu_backends().await?;
             if killed.is_empty() {

@@ -440,6 +440,71 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
     }
 }
 
+pub fn render_frontend_choice(f: &mut Frame, app: &App) {
+    let area = f.area();
+    let center = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Length(10),
+            Constraint::Fill(1),
+        ])
+        .split(area)[1];
+    let center_h = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Max(58),
+            Constraint::Fill(1),
+        ])
+        .split(center)[1];
+
+    let choices: &[(&str, &str)] = &[
+        ("SillyTavern", "open browser to SillyTavern web UI"),
+        ("ozone+", "launch ozone+ conversation shell"),
+    ];
+    let items: Vec<ListItem> = choices
+        .iter()
+        .enumerate()
+        .map(|(i, (label, desc))| {
+            if i == app.frontend_choice_index {
+                ListItem::new(Line::from(vec![
+                    Span::styled(format!("{} ", HEX_CURSOR), style_cyan()),
+                    Span::styled(
+                        *label,
+                        Style::default().fg(crate::theme::CYAN).add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(format!("  — {desc}"), style_gray()),
+                ]))
+            } else {
+                ListItem::new(Line::from(vec![
+                    Span::raw("  "),
+                    Span::styled(*label, style_gray()),
+                    Span::styled(format!("  — {desc}"), style_gray()),
+                ]))
+            }
+        })
+        .collect();
+
+    let block = Block::default()
+        .title(Span::styled(
+            format!(" {} Choose Frontend ", HEX_CURSOR),
+            style_bold_violet(),
+        ))
+        .title_bottom(Line::from(Span::styled(
+            "  ↑↓ choose · Enter launch · Esc back",
+            style_gray(),
+        )))
+        .borders(Borders::ALL)
+        .border_style(style_violet());
+    let inner = block.inner(center_h);
+    f.render_widget(block, center_h);
+
+    let mut list_state = ListState::default();
+    list_state.select(Some(app.frontend_choice_index));
+    f.render_stateful_widget(List::new(items), inner, &mut list_state);
+}
+
 fn warning_style(severity: &WarningSeverity) -> Style {
     match severity {
         WarningSeverity::Info => style_gray(),
