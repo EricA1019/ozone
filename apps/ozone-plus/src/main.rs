@@ -1,10 +1,9 @@
-use clap::{Args, Parser, Subcommand};
+use clap::{Args, Parser, Subcommand, ValueEnum};
 use ozone_core::{
     engine::{
-        ActivateSwipeCommand, BranchId, BranchState, CancelReason, CommitMessageCommand,
-        ConversationBranch, ConversationMessage, CreateBranchCommand, GenerationState, MessageId,
-        RequestId, SetGenerationStateCommand, SwipeCandidate, SwipeCandidateState, SwipeGroup,
-        SwipeGroupId,
+        ActivateSwipeCommand, BranchId, BranchState, CommitMessageCommand, ConversationBranch,
+        ConversationMessage, CreateBranchCommand, MessageId, RequestId, SwipeCandidate,
+        SwipeCandidateState, SwipeGroup, SwipeGroupId,
     },
     paths::{benchmarks_db_path, data_dir, kobold_log_path, preferences_path},
     product::{ProductTier, OZONE_PLUS_DESIGN_DOC_PATH, OZONE_PLUS_DOC_PATH},
@@ -14,23 +13,26 @@ use ozone_engine::{
     ConversationStore, EditMessageCommand, EngineCommand, EngineCommandResult,
     RecordSwipeCandidateRequest, SingleWriterConversationEngine, SwipeGroupSnapshot,
 };
+
+mod context_bridge;
+mod inference_adapter;
+mod runtime;
+
 use ozone_persist::{
-    BranchRecord, CreateMessageRequest, CreateSessionRequest, PersistError, PersistencePaths,
-    SessionId, SessionSummary, SqliteRepository,
+    BranchRecord, CharacterCard, CreateMessageRequest, CreateSessionRequest,
+    ImportCharacterCardRequest, PersistError, PersistencePaths, SessionId, SessionSummary,
+    SqliteRepository, TranscriptExport,
 };
-use ozone_tui::{
-    run_terminal_session, AppBootstrap as TuiBootstrap, BranchItem as TuiBranchItem,
-    DraftState as TuiDraftState, RuntimeCancellation as TuiRuntimeCancellation,
-    RuntimeCompletion as TuiRuntimeCompletion, RuntimeSendReceipt as TuiRuntimeSendReceipt,
-    SessionContext as TuiSessionContext, SessionRuntime, TranscriptItem as TuiTranscriptItem,
-};
+use ozone_tui::{run_terminal_session, SessionContext as TuiSessionContext};
+use runtime::Phase1dRuntime;
 use std::{
+    fmt::Write as _,
     fs,
-    io::ErrorKind,
+    io::Write,
     path::{Path, PathBuf},
     process::ExitCode,
     sync::atomic::{AtomicU64, Ordering},
-    time::{Duration, Instant, SystemTime, UNIX_EPOCH},
+    time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
 static ID_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -39,9 +41,9 @@ static ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 #[command(
     name = "ozone-plus",
     version,
-    about = "Phase 1C ozone+ chat shell with engine-backed persistence",
-    long_about = "Phase 1C ozone+ chat shell with engine-backed persistence.\n\nThis binary now opens a real chat-first terminal shell for persisted sessions, while still exposing the lower-level Phase 1B CLI surfaces for transcripts, branches, and manual swipe seeding. The frontend still uses a mock backend for assistant replies, but user turns, transcript state, session locks, and draft persistence all run through the real ozone+ persistence layer.",
-    after_help = "Examples:\n  ozone-plus create \"First Session\"\n  ozone-plus open <session-id>\n  ozone-plus send <session-id> \"Hello there\"\n  ozone-plus transcript <session-id>\n  ozone-plus branch create <session-id> fork --activate\n  ozone-plus swipe add <session-id> <parent-message-id> \"Alternate reply\"\n  ozone-plus swipe activate <session-id> <swipe-group-id> 1"
+    about = "Phase 1F ozone+ chat shell with engine-backed persistence",
+    long_about = "Phase 1F ozone+ chat shell with engine-backed persistence, real backend inference, and first-pass import/export lanes.\n\nThis binary opens a chat-first terminal shell for persisted sessions while still exposing lower-level CLI surfaces for transcripts, branches, swipes, character-card import, and transcript/session export. User turns, transcript state, session locks, draft persistence, and assistant generation continue to run through the real ozone persistence + inference layers.",
+    after_help = "Examples:\n  ozone-plus create \"First Session\"\n  ozone-plus open <session-id>\n  ozone-plus send <session-id> \"Hello there\"\n  ozone-plus transcript <session-id>\n  ozone-plus branch create <session-id> fork --activate\n  ozone-plus swipe add <session-id> <parent-message-id> \"Alternate reply\"\n  ozone-plus swipe activate <session-id> <swipe-group-id> 1\n  ozone-plus import card ./aster.json\n  ozone-plus export transcript <session-id> --output ./transcript.txt\n  ozone-plus export session <session-id> --output ./session.json"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -74,6 +76,10 @@ enum Command {
     Branch(BranchArgs),
     /// Inspect and manipulate swipe groups/candidates
     Swipe(SwipeArgs),
+    /// Import data into ozone+
+    Import(ImportArgs),
+    /// Export persisted ozone+ data
+    Export(ExportArgs),
 }
 
 #[derive(Args)]
@@ -223,6 +229,83 @@ struct SwipeActivateArgs {
 }
 
 #[derive(Args)]
+struct ImportArgs {
+    #[command(subcommand)]
+    command: ImportCommand,
+}
+
+#[derive(Subcommand)]
+enum ImportCommand {
+    /// Import a character card JSON file into a new session
+    #[command(visible_alias = "character-card")]
+    Card(ImportCharacterCardArgs),
+}
+
+#[derive(Args)]
+struct ImportCharacterCardArgs {
+    /// Path to a character card JSON file
+    input: PathBuf,
+    /// Optional session name override; defaults to the card name
+    #[arg(long = "session-name", value_name = "NAME")]
+    session_name: Option<String>,
+    /// Extra session tag (repeat --tag for multiple values)
+    #[arg(long = "tag", short = 't', value_name = "TAG")]
+    tags: Vec<String>,
+}
+
+#[derive(Args)]
+struct ExportArgs {
+    #[command(subcommand)]
+    command: ExportCommand,
+}
+
+#[derive(Subcommand)]
+enum ExportCommand {
+    /// Export a full session snapshot as JSON
+    Session(ExportSessionArgs),
+    /// Export a transcript as JSON or plain text
+    Transcript(ExportTranscriptArgs),
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum SessionExportFormat {
+    Json,
+}
+
+#[derive(Args)]
+struct ExportSessionArgs {
+    /// Session UUID in 8-4-4-4-12 format
+    session_id: String,
+    /// Export format (currently JSON only)
+    #[arg(long, value_enum, default_value_t = SessionExportFormat::Json)]
+    format: SessionExportFormat,
+    /// Explicit output path for the exported file
+    #[arg(long, short = 'o', value_name = "PATH")]
+    output: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum TranscriptExportFormat {
+    Json,
+    Text,
+}
+
+#[derive(Args)]
+struct ExportTranscriptArgs {
+    /// Session UUID in 8-4-4-4-12 format
+    session_id: String,
+    /// Optional branch UUID; defaults to the active branch
+    #[arg(long = "branch", value_name = "BRANCH_ID")]
+    branch_id: Option<String>,
+    /// Export format (JSON or plain text)
+    #[arg(long, value_enum, default_value_t = TranscriptExportFormat::Text)]
+    format: TranscriptExportFormat,
+    /// Explicit output path for the exported file
+    #[arg(long, short = 'o', value_name = "PATH")]
+    output: PathBuf,
+}
+
+#[derive(Args)]
 struct SessionArgs {
     /// Session UUID in 8-4-4-4-12 format
     session_id: String,
@@ -262,6 +345,8 @@ fn run() -> Result<(), String> {
         Some(Command::Edit(args)) => edit_message(args),
         Some(Command::Branch(args)) => handle_branch_command(args.command),
         Some(Command::Swipe(args)) => handle_swipe_command(args.command),
+        Some(Command::Import(args)) => handle_import_command(args.command),
+        Some(Command::Export(args)) => handle_export_command(args.command),
         None => {
             print_bootstrap_summary();
             Ok(())
@@ -803,381 +888,6 @@ impl Phase1bCliEngine {
     }
 }
 
-#[derive(Debug)]
-struct PendingMockGeneration {
-    branch_id: BranchId,
-    request_id: RequestId,
-    prompt: String,
-    started_at: Instant,
-}
-
-#[derive(Debug)]
-struct Phase1cRuntime {
-    repo: SqliteRepository,
-    engine: SingleWriterConversationEngine<RepoConversationStore>,
-    session_id: SessionId,
-    lock_instance_id: String,
-    pending_generation: Option<PendingMockGeneration>,
-}
-
-impl Phase1cRuntime {
-    fn open(repo: SqliteRepository, session_id: SessionId) -> Result<Self, String> {
-        repo.get_session(&session_id)
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("session {session_id} was not found"))?;
-
-        let instance_id = format!("ozone-plus-phase1c-{}", std::process::id());
-        repo.acquire_session_lock(&session_id, &instance_id)
-            .map_err(|error| match error {
-                PersistError::SessionLocked {
-                    instance_id,
-                    acquired_at,
-                } => format!(
-                    "session {session_id} is locked by instance {instance_id} (since {})",
-                    format_timestamp(acquired_at)
-                ),
-                other => other.to_string(),
-            })?;
-
-        Ok(Self {
-            engine: SingleWriterConversationEngine::new(RepoConversationStore::new(repo.clone())),
-            repo,
-            session_id,
-            lock_instance_id: instance_id,
-            pending_generation: None,
-        })
-    }
-
-    fn release_lock(&mut self) -> Result<(), String> {
-        if !self
-            .repo
-            .release_session_lock(&self.session_id, &self.lock_instance_id)
-            .map_err(|error| error.to_string())?
-        {
-            return Err(format!(
-                "session {} lock was acquired but could not be released cleanly",
-                self.session_id
-            ));
-        }
-
-        Ok(())
-    }
-
-    fn load_bootstrap(&self, context: &TuiSessionContext) -> Result<TuiBootstrap, String> {
-        let session = self
-            .repo
-            .get_session(&context.session_id)
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| format!("session {} was not found", context.session_id))?;
-        let branches = self
-            .engine
-            .store()
-            .list_branches(&context.session_id)
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .map(tui_branch_from_record)
-            .collect();
-        let transcript = self
-            .engine
-            .store()
-            .get_active_branch_transcript(&context.session_id)
-            .map_err(|error| error.to_string())?
-            .into_iter()
-            .map(tui_transcript_item_from_message)
-            .collect();
-
-        Ok(TuiBootstrap {
-            transcript,
-            branches,
-            status_line: Some(format!(
-                "mock backend ready · session locked by {} · Enter sends, Ctrl+C cancels, Ctrl+I toggles inspector",
-                self.lock_instance_id
-            )),
-            draft: self.load_persisted_draft(&session.session_id)?,
-            screen: None,
-        })
-    }
-
-    fn load_persisted_draft(&self, session_id: &SessionId) -> Result<Option<TuiDraftState>, String> {
-        let draft_path = self.repo.paths().session_draft_path(session_id);
-        match fs::read_to_string(&draft_path) {
-            Ok(text) if text.is_empty() => Ok(None),
-            Ok(text) => Ok(Some(TuiDraftState::restore(ozone_tui::app::DraftCheckpoint::new(
-                text.clone(),
-                text.chars().count(),
-            )))),
-            Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-            Err(error) => Err(format!(
-                "failed to read persisted draft at {}: {error}",
-                draft_path.display()
-            )),
-        }
-    }
-
-    fn save_persisted_draft(
-        &self,
-        session_id: &SessionId,
-        draft: Option<&str>,
-    ) -> Result<(), String> {
-        let draft_path = self.repo.paths().session_draft_path(session_id);
-        let parent = draft_path
-            .parent()
-            .ok_or_else(|| format!("draft path {} has no parent directory", draft_path.display()))?;
-        fs::create_dir_all(parent).map_err(|error| {
-            format!(
-                "failed to create draft directory {}: {error}",
-                parent.display()
-            )
-        })?;
-
-        match draft.filter(|text| !text.is_empty()) {
-            Some(text) => fs::write(&draft_path, text.as_bytes()).map_err(|error| {
-                format!("failed to write persisted draft {}: {error}", draft_path.display())
-            })?,
-            None => match fs::remove_file(&draft_path) {
-                Ok(()) => {}
-                Err(error) if error.kind() == ErrorKind::NotFound => {}
-                Err(error) => {
-                    return Err(format!(
-                        "failed to remove persisted draft {}: {error}",
-                        draft_path.display()
-                    ))
-                }
-            },
-        }
-
-        Ok(())
-    }
-
-    fn active_branch(&self, session_id: &SessionId) -> Result<ConversationBranchRecord, String> {
-        self.engine
-            .store()
-            .get_active_branch(session_id)
-            .map_err(|error| error.to_string())?
-            .ok_or_else(|| {
-                format!(
-                    "session {session_id} has no active branch yet; send the first message to bootstrap the conversation"
-                )
-            })
-    }
-
-    fn set_generation_state(
-        &mut self,
-        branch_id: BranchId,
-        state: GenerationState,
-    ) -> Result<(), String> {
-        match self
-            .engine
-            .process(EngineCommand::SetGenerationState(SetGenerationStateCommand {
-                branch_id,
-                state,
-            }))
-            .map_err(|error| error.to_string())?
-        {
-            EngineCommandResult::GenerationStateUpdated { .. } => Ok(()),
-            other => Err(format!(
-                "unexpected engine result for generation state update: {other:?}"
-            )),
-        }
-    }
-}
-
-impl SessionRuntime for Phase1cRuntime {
-    type Error = String;
-
-    fn bootstrap(&mut self, context: &TuiSessionContext) -> Result<TuiBootstrap, Self::Error> {
-        self.load_bootstrap(context)
-    }
-
-    fn send_draft(
-        &mut self,
-        context: &TuiSessionContext,
-        prompt: &str,
-    ) -> Result<Option<TuiRuntimeSendReceipt>, Self::Error> {
-        if prompt.trim().is_empty() {
-            return Ok(None);
-        }
-
-        let active_branch = self
-            .engine
-            .store()
-            .get_active_branch(&context.session_id)
-            .map_err(|error| error.to_string())?;
-        let branch_id = active_branch
-            .as_ref()
-            .map(|record| record.branch.branch_id.clone())
-            .unwrap_or(generate_branch_id()?);
-        let mut message = ConversationMessage::new(
-            context.session_id.clone(),
-            generate_message_id()?,
-            "user",
-            prompt.to_owned(),
-            now_timestamp_ms(),
-        );
-        message.parent_id = active_branch
-            .as_ref()
-            .map(|record| record.branch.tip_message_id.clone());
-
-        let committed = match self
-            .engine
-            .process(EngineCommand::CommitMessage(CommitMessageCommand {
-                branch_id,
-                message,
-            }))
-            .map_err(|error| error.to_string())?
-        {
-            EngineCommandResult::MessageCommitted(message) => message,
-            other => return Err(format!("unexpected engine result for send: {other:?}")),
-        };
-
-        let active_branch = self.active_branch(&context.session_id)?;
-        let request_id = generate_request_id()?;
-        self.set_generation_state(
-            active_branch.branch.branch_id.clone(),
-            GenerationState::Queued {
-                request_id: request_id.clone(),
-            },
-        )?;
-        self.pending_generation = Some(PendingMockGeneration {
-            branch_id: active_branch.branch.branch_id.clone(),
-            request_id: request_id.clone(),
-            prompt: prompt.to_owned(),
-            started_at: Instant::now(),
-        });
-
-        Ok(Some(TuiRuntimeSendReceipt {
-            request_id: request_id.to_string(),
-            user_message: tui_transcript_item_from_message(committed),
-        }))
-    }
-
-    fn complete_generation(
-        &mut self,
-        context: &TuiSessionContext,
-    ) -> Result<Option<TuiRuntimeCompletion>, Self::Error> {
-        let pending = match self.pending_generation.take() {
-            Some(pending) => pending,
-            None => return Ok(None),
-        };
-
-        self.set_generation_state(
-            pending.branch_id.clone(),
-            GenerationState::Streaming {
-                request_id: pending.request_id.clone(),
-                tokens_so_far: 8,
-            },
-        )?;
-
-        let active_branch = self.active_branch(&context.session_id)?;
-        let mut assistant_message = ConversationMessage::new(
-            context.session_id.clone(),
-            generate_message_id()?,
-            "assistant",
-            mock_assistant_reply(&pending.prompt),
-            now_timestamp_ms(),
-        );
-        assistant_message.author_name = Some("mock backend".into());
-        assistant_message.parent_id = Some(active_branch.branch.tip_message_id.clone());
-
-        let committed = match self
-            .engine
-            .process(EngineCommand::CommitMessage(CommitMessageCommand {
-                branch_id: pending.branch_id.clone(),
-                message: assistant_message,
-            }))
-            .map_err(|error| error.to_string())?
-        {
-            EngineCommandResult::MessageCommitted(message) => message,
-            other => {
-                return Err(format!(
-                    "unexpected engine result for assistant completion: {other:?}"
-                ))
-            }
-        };
-
-        let duration_ms = u64::try_from(pending.started_at.elapsed().as_millis()).unwrap_or(u64::MAX);
-        let tokens_generated = u64::try_from(committed.content.split_whitespace().count()).unwrap_or(u64::MAX);
-        self.set_generation_state(
-            pending.branch_id,
-            GenerationState::Completed {
-                request_id: pending.request_id.clone(),
-                message_id: committed.message_id.clone(),
-                tokens_generated,
-                duration_ms,
-            },
-        )?;
-
-        Ok(Some(TuiRuntimeCompletion {
-            request_id: pending.request_id.to_string(),
-            assistant_message: tui_transcript_item_from_message(committed),
-        }))
-    }
-
-    fn cancel_generation(
-        &mut self,
-        _context: &TuiSessionContext,
-    ) -> Result<Option<TuiRuntimeCancellation>, Self::Error> {
-        let pending = match self.pending_generation.take() {
-            Some(pending) => pending,
-            None => return Ok(None),
-        };
-
-        let partial = format!("Mock response cancelled for: {}", pending.prompt);
-        let tokens_generated = u64::try_from(partial.split_whitespace().count()).unwrap_or(u64::MAX);
-        self.set_generation_state(
-            pending.branch_id,
-            GenerationState::Cancelled {
-                request_id: pending.request_id.clone(),
-                partial_content: Some(partial.clone()),
-                tokens_generated,
-                reason: CancelReason::UserRequested,
-            },
-        )?;
-
-        Ok(Some(TuiRuntimeCancellation {
-            request_id: pending.request_id.to_string(),
-            reason: CancelReason::UserRequested,
-            partial_assistant_message: Some(TuiTranscriptItem::new("mock backend", partial)),
-        }))
-    }
-
-    fn persist_draft(
-        &mut self,
-        context: &TuiSessionContext,
-        draft: Option<&str>,
-    ) -> Result<(), Self::Error> {
-        self.save_persisted_draft(&context.session_id, draft)
-    }
-}
-
-fn tui_branch_from_record(record: ConversationBranchRecord) -> TuiBranchItem {
-    TuiBranchItem::new(
-        record.branch.branch_id.to_string(),
-        record.branch.name,
-        record.branch.state == BranchState::Active,
-    )
-}
-
-fn tui_transcript_item_from_message(message: ConversationMessage) -> TuiTranscriptItem {
-    let author = message
-        .author_name
-        .clone()
-        .filter(|value| !value.trim().is_empty())
-        .unwrap_or_else(|| message.author_kind.clone());
-
-    TuiTranscriptItem::new(author, message.content)
-}
-
-fn mock_assistant_reply(prompt: &str) -> String {
-    let summary = prompt.trim();
-    if summary.chars().count() <= 48 {
-        format!("Mock assistant reply: {summary}")
-    } else {
-        let compact = summary.chars().take(48).collect::<String>();
-        format!("Mock assistant reply: {compact}…")
-    }
-}
-
 fn print_bootstrap_summary() {
     println!(
         "{} ({}) — {}",
@@ -1185,8 +895,8 @@ fn print_bootstrap_summary() {
         ProductTier::OzonePlus.slug(),
         ProductTier::OzonePlus.status_label()
     );
-    println!("Phase 1B engine-backed CLI for ozone+ sessions and transcripts.");
-    println!("It can create/open sessions, send and edit messages, branch transcripts, and manually seed or activate swipes.");
+    println!("Phase 1F engine-backed CLI for ozone+ sessions, transcripts, and import/export.");
+    println!("It can create/open sessions, send and edit messages, branch transcripts, seed or activate swipes, import character cards, and export transcripts or session snapshots.");
     println!("It does not launch the final ozone+ chat UI yet.");
     println!();
     println!("Try one of:");
@@ -1195,6 +905,8 @@ fn print_bootstrap_summary() {
     println!("  ozone-plus transcript <session-id>");
     println!("  ozone-plus branch list <session-id>");
     println!("  ozone-plus swipe list <session-id>");
+    println!("  ozone-plus import card ./aster.json");
+    println!("  ozone-plus export session <session-id> --output ./session.json");
 }
 
 fn print_identity() {
@@ -1231,7 +943,7 @@ fn print_docs() {
     println!("  baseline design: {OZONE_PLUS_DESIGN_DOC_PATH}");
     println!();
     println!("These docs describe the future ozone+ scope.");
-    println!("This CLI currently exercises the Phase 1B conversation engine.");
+    println!("This CLI currently exercises the Phase 1F conversation and import/export surfaces.");
 }
 
 fn print_paths() {
@@ -1250,7 +962,7 @@ fn print_paths() {
         Err(error) => println!("  unavailable   {error}"),
     }
     println!();
-    println!("This CLI now talks to the Phase 1B engine, but it still does not launch the final ozone+ chat UI.");
+    println!("This CLI now talks to the Phase 1F persistence and runtime surfaces, but it still does not launch the final ozone+ chat UI.");
 }
 
 fn create_session(args: CreateArgs) -> Result<(), String> {
@@ -1269,7 +981,7 @@ fn create_session(args: CreateArgs) -> Result<(), String> {
     println!("Paths");
     print_session_paths(repo.paths(), &session.session_id);
     println!();
-    println!("Phase 1B note");
+    println!("Phase 1F note");
     println!(
         "  Send the first message with `ozone-plus send {}`.",
         session.session_id
@@ -1301,7 +1013,7 @@ fn list_sessions() -> Result<(), String> {
     }
 
     println!();
-    println!("Phase 1B note");
+    println!("Phase 1F note");
     println!("  Use `ozone-plus send <session-id> \"Hello\"` to bootstrap the active transcript.");
 
     Ok(())
@@ -1320,8 +1032,9 @@ fn open_session(args: OpenArgs) -> Result<(), String> {
     }
 
     let context = TuiSessionContext::new(session_id.clone(), session.name.clone());
-    let mut runtime = Phase1cRuntime::open(repo, session_id)?;
-    let session_result = run_terminal_session(context, &mut runtime).map_err(|error| error.to_string());
+    let mut runtime = Phase1dRuntime::open(repo, session_id)?;
+    let session_result =
+        run_terminal_session(context, &mut runtime).map_err(|error| error.to_string());
     let release_result = runtime.release_lock();
 
     match (session_result, release_result) {
@@ -1537,6 +1250,111 @@ fn activate_swipe(args: SwipeActivateArgs) -> Result<(), String> {
     Ok(())
 }
 
+fn handle_import_command(command: ImportCommand) -> Result<(), String> {
+    match command {
+        ImportCommand::Card(args) => import_character_card(args),
+    }
+}
+
+fn import_character_card(args: ImportCharacterCardArgs) -> Result<(), String> {
+    let repo = open_repository()?;
+    let input_path = require_existing_file(&args.input, "character card JSON")?;
+    let contents = read_utf8_file(&input_path, "character card JSON")?;
+    let card = CharacterCard::from_json_str(&contents).map_err(|error| error.to_string())?;
+    let imported = repo
+        .import_character_card(ImportCharacterCardRequest {
+            card: card.clone(),
+            session_name: optional_value(args.session_name),
+            tags: normalize_tags(args.tags),
+            provenance: input_path.display().to_string(),
+        })
+        .map_err(|error| error.to_string())?;
+
+    println!("Imported character card.");
+    println!("  card name       {}", card.name);
+    println!("  source format   {}", card.source_format);
+    println!(
+        "  greeting seeded {}",
+        if imported.seeded_message_id.is_some() {
+            "yes"
+        } else {
+            "no"
+        }
+    );
+    println!();
+    print_session_details(&imported.session);
+    println!();
+    println!("Paths");
+    print_session_paths(repo.paths(), &imported.session.session_id);
+
+    if let Some(branch_id) = imported.seeded_branch_id {
+        println!();
+        println!("Seeded branch");
+        println!("  branch id       {}", branch_id);
+    }
+
+    if let Some(message_id) = imported.seeded_message_id {
+        println!("  greeting id     {}", message_id);
+    }
+
+    Ok(())
+}
+
+fn handle_export_command(command: ExportCommand) -> Result<(), String> {
+    match command {
+        ExportCommand::Session(args) => export_session(args),
+        ExportCommand::Transcript(args) => export_transcript(args),
+    }
+}
+
+fn export_session(args: ExportSessionArgs) -> Result<(), String> {
+    let repo = open_repository()?;
+    let session_id = parse_session_id(&args.session_id)?;
+    let export = repo
+        .export_session(&session_id)
+        .map_err(|error| error.to_string())?;
+    let contents = match args.format {
+        SessionExportFormat::Json => export.to_pretty_json().map_err(|error| error.to_string())?,
+    };
+    let output_path = write_output_file(&args.output, &contents)?;
+
+    println!("Exported session.");
+    println!("  session id      {}", session_id);
+    println!("  format          {:?}", args.format);
+    println!("  output          {}", output_path.display());
+    Ok(())
+}
+
+fn export_transcript(args: ExportTranscriptArgs) -> Result<(), String> {
+    let repo = open_repository()?;
+    let session_id = parse_session_id(&args.session_id)?;
+    let branch_id = args.branch_id.as_deref().map(parse_branch_id).transpose()?;
+    let export = repo
+        .export_transcript(&session_id, branch_id.as_ref())
+        .map_err(|error| error.to_string())?;
+    let contents = match args.format {
+        TranscriptExportFormat::Json => {
+            export.to_pretty_json().map_err(|error| error.to_string())?
+        }
+        TranscriptExportFormat::Text => render_transcript_text(&export),
+    };
+    let output_path = write_output_file(&args.output, &contents)?;
+
+    println!("Exported transcript.");
+    println!("  session id      {}", session_id);
+    println!(
+        "  branch id       {}",
+        branch_id.map(|id| id.to_string()).unwrap_or_else(|| export
+            .branch
+            .as_ref()
+            .map(|branch| branch.branch_id.clone())
+            .unwrap_or_else(|| "active branch unavailable".to_owned()))
+    );
+    println!("  format          {:?}", args.format);
+    println!("  output          {}", output_path.display());
+    Ok(())
+}
+
 fn open_repository() -> Result<SqliteRepository, String> {
     SqliteRepository::from_xdg().map_err(|error| error.to_string())
 }
@@ -1722,6 +1540,144 @@ fn print_resolved_path(label: &str, path: impl AsRef<Path>) {
     println!("  {label:<13} {}", path.as_ref().display());
 }
 
+fn require_existing_file(path: &Path, label: &str) -> Result<PathBuf, String> {
+    let metadata = fs::metadata(path)
+        .map_err(|error| format!("failed to read {label} at {}: {error}", path.display()))?;
+    if !metadata.is_file() {
+        return Err(format!("{label} at {} is not a file", path.display()));
+    }
+
+    Ok(path.to_path_buf())
+}
+
+fn read_utf8_file(path: &Path, label: &str) -> Result<String, String> {
+    fs::read_to_string(path)
+        .map_err(|error| format!("failed to read {label} at {}: {error}", path.display()))
+}
+
+fn write_output_file(path: &Path, contents: &str) -> Result<PathBuf, String> {
+    if path.as_os_str().is_empty() {
+        return Err("output path must not be empty".to_owned());
+    }
+
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() {
+            fs::create_dir_all(parent).map_err(|error| {
+                format!(
+                    "failed to create output directory {}: {error}",
+                    parent.display()
+                )
+            })?;
+        }
+    }
+
+    let mut file = fs::OpenOptions::new()
+        .write(true)
+        .create_new(true)
+        .open(path)
+        .map_err(|error| {
+            if error.kind() == std::io::ErrorKind::AlreadyExists {
+                format!("output path {} already exists", path.display())
+            } else {
+                format!("failed to create output file {}: {error}", path.display())
+            }
+        })?;
+    file.write_all(contents.as_bytes())
+        .map_err(|error| format!("failed to write output file {}: {error}", path.display()))?;
+
+    Ok(path.to_path_buf())
+}
+
+fn render_transcript_text(export: &TranscriptExport) -> String {
+    let mut output = String::new();
+    let _ = writeln!(output, "# ozone+ transcript export");
+    let _ = writeln!(output, "format: {}", export.format);
+    let _ = writeln!(
+        output,
+        "exported_at: {}",
+        format_timestamp(export.exported_at)
+    );
+    let _ = writeln!(output, "session_id: {}", export.session.session_id);
+    let _ = writeln!(output, "session_name: {}", export.session.name);
+    let _ = writeln!(
+        output,
+        "character_name: {}",
+        export.session.character_name.as_deref().unwrap_or("—")
+    );
+    match export.branch.as_ref() {
+        Some(branch) => {
+            let _ = writeln!(output, "branch_id: {}", branch.branch_id);
+            let _ = writeln!(output, "branch_name: {}", branch.name);
+            let _ = writeln!(output, "branch_state: {}", branch.state);
+            let _ = writeln!(output, "branch_tip_message_id: {}", branch.tip_message_id);
+            let _ = writeln!(
+                output,
+                "branch_forked_from_message_id: {}",
+                branch.forked_from_message_id
+            );
+        }
+        None => {
+            let _ = writeln!(output, "branch_id: —");
+            let _ = writeln!(output, "branch_name: —");
+            let _ = writeln!(output, "branch_state: —");
+            let _ = writeln!(output, "branch_tip_message_id: —");
+            let _ = writeln!(output, "branch_forked_from_message_id: —");
+        }
+    }
+    let _ = writeln!(output, "message_count: {}", export.messages.len());
+    let _ = writeln!(output);
+
+    if export.messages.is_empty() {
+        let _ = writeln!(output, "No transcript messages.");
+        return output;
+    }
+
+    for (index, message) in export.messages.iter().enumerate() {
+        let _ = writeln!(output, "## Message {}", index + 1);
+        let _ = writeln!(output, "message_id: {}", message.message_id);
+        let _ = writeln!(
+            output,
+            "parent_id: {}",
+            message.parent_id.as_deref().unwrap_or("root")
+        );
+        let _ = writeln!(output, "author_kind: {}", message.author_kind);
+        let _ = writeln!(
+            output,
+            "author_name: {}",
+            message.author_name.as_deref().unwrap_or("—")
+        );
+        let _ = writeln!(
+            output,
+            "created_at: {}",
+            format_timestamp(message.created_at)
+        );
+        let _ = writeln!(
+            output,
+            "edited_at: {}",
+            message
+                .edited_at
+                .map(format_timestamp)
+                .unwrap_or_else(|| "—".to_owned())
+        );
+        let _ = writeln!(
+            output,
+            "hidden: {}",
+            if message.is_hidden { "yes" } else { "no" }
+        );
+        let _ = writeln!(output, "content:");
+        if message.content.is_empty() {
+            let _ = writeln!(output, "  ");
+        } else {
+            for line in message.content.lines() {
+                let _ = writeln!(output, "  {line}");
+            }
+        }
+        let _ = writeln!(output);
+    }
+
+    output
+}
+
 fn require_non_empty(label: &str, value: String) -> Result<String, String> {
     let trimmed = value.trim();
     if trimmed.is_empty() {
@@ -1834,9 +1790,19 @@ fn parse_swipe_group_id(value: &str) -> Result<SwipeGroupId, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::atomic::{AtomicU64, Ordering};
+    use ozone_tui::DraftState as TuiDraftState;
+    use ozone_tui::SessionRuntime;
+    use std::{
+        fs,
+        path::Path,
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Mutex,
+        },
+    };
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(1);
+    static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     struct TestSandbox {
         root: PathBuf,
@@ -1844,17 +1810,27 @@ mod tests {
 
     impl TestSandbox {
         fn new(prefix: &str) -> Self {
-            let root = std::env::temp_dir().join(format!(
-                "ozone-plus-{prefix}-{}-{}",
-                std::process::id(),
-                TEST_COUNTER.fetch_add(1, Ordering::Relaxed)
-            ));
+            let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("target")
+                .join("ozone-plus-tests")
+                .join(format!(
+                    "{prefix}-{}-{}",
+                    std::process::id(),
+                    TEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+                ));
+            if root.exists() {
+                fs::remove_dir_all(&root).unwrap();
+            }
             fs::create_dir_all(&root).unwrap();
             Self { root }
         }
 
         fn repo(&self) -> SqliteRepository {
             SqliteRepository::new(PersistencePaths::from_data_dir(self.root.clone()))
+        }
+
+        fn xdg_data_home(&self) -> PathBuf {
+            self.root.join("xdg-data")
         }
     }
 
@@ -1864,31 +1840,115 @@ mod tests {
         }
     }
 
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: impl AsRef<Path>) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value.as_ref());
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            match self.previous.as_ref() {
+                Some(previous) => std::env::set_var(self.key, previous),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
     #[test]
-    fn phase1c_runtime_restores_persisted_draft_on_bootstrap() {
-        let sandbox = TestSandbox::new("phase1c-draft");
+    fn phase1d_runtime_restores_persisted_draft_on_bootstrap() {
+        let sandbox = TestSandbox::new("phase1d-draft");
         let repo = sandbox.repo();
         let session = repo
             .create_session(CreateSessionRequest::new("Draft Session"))
             .unwrap();
         let context = TuiSessionContext::new(session.session_id.clone(), session.name.clone());
 
-        let mut runtime = Phase1cRuntime::open(repo.clone(), session.session_id.clone()).unwrap();
+        let mut runtime = Phase1dRuntime::open(repo.clone(), session.session_id.clone()).unwrap();
         runtime
             .persist_draft(&context, Some("restored from app runtime"))
             .unwrap();
         runtime.release_lock().unwrap();
 
-        let mut reopened = Phase1cRuntime::open(repo, session.session_id.clone()).unwrap();
+        let mut reopened = Phase1dRuntime::open(repo, session.session_id.clone()).unwrap();
         let bootstrap = reopened.bootstrap(&context).unwrap();
         reopened.release_lock().unwrap();
 
         assert_eq!(
             bootstrap.draft,
-            Some(TuiDraftState::restore(ozone_tui::app::DraftCheckpoint::new(
-                "restored from app runtime",
-                "restored from app runtime".chars().count()
-            )))
+            Some(TuiDraftState::restore(
+                ozone_tui::app::DraftCheckpoint::new(
+                    "restored from app runtime",
+                    "restored from app runtime".chars().count()
+                )
+            ))
         );
+    }
+
+    #[test]
+    fn import_and_export_commands_use_xdg_paths() {
+        let _env_guard = ENV_LOCK.lock().unwrap();
+        let sandbox = TestSandbox::new("import-export-smoke");
+        fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
+        let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
+        let _home = ScopedEnvVar::set("HOME", sandbox.root.join("home"));
+
+        let card_path = sandbox.root.join("fixtures").join("aster.json");
+        fs::create_dir_all(card_path.parent().unwrap()).unwrap();
+        fs::write(
+            &card_path,
+            r#"{
+                "name": "Aster",
+                "description": "A patient observatory guide.",
+                "first_mes": "Welcome back to the observatory."
+            }"#,
+        )
+        .unwrap();
+
+        import_character_card(ImportCharacterCardArgs {
+            input: card_path.clone(),
+            session_name: Some("Smoke Session".to_owned()),
+            tags: vec!["smoke".to_owned()],
+        })
+        .unwrap();
+
+        let repo = open_repository().unwrap();
+        let sessions = repo.list_sessions().unwrap();
+        assert_eq!(sessions.len(), 1);
+        let session = sessions[0].clone();
+        assert_eq!(session.name, "Smoke Session");
+        assert_eq!(session.character_name.as_deref(), Some("Aster"));
+
+        let transcript_path = sandbox.root.join("exports").join("transcript.txt");
+        export_transcript(ExportTranscriptArgs {
+            session_id: session.session_id.to_string(),
+            branch_id: None,
+            format: TranscriptExportFormat::Text,
+            output: transcript_path.clone(),
+        })
+        .unwrap();
+
+        let session_path = sandbox.root.join("exports").join("session.json");
+        export_session(ExportSessionArgs {
+            session_id: session.session_id.to_string(),
+            format: SessionExportFormat::Json,
+            output: session_path.clone(),
+        })
+        .unwrap();
+
+        let transcript_text = fs::read_to_string(&transcript_path).unwrap();
+        assert!(transcript_text.contains("ozone+ transcript export"));
+        assert!(transcript_text.contains("Welcome back to the observatory."));
+
+        let session_json = fs::read_to_string(&session_path).unwrap();
+        assert!(session_json.contains("\"format\": \"ozone-plus.session-export.v1\""));
+        assert!(session_json.contains("\"name\": \"Smoke Session\""));
     }
 }

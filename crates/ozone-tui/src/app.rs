@@ -229,15 +229,33 @@ impl InputHistoryState {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TranscriptItem {
+    pub message_id: Option<String>,
     pub author: String,
     pub content: String,
+    pub is_bookmarked: bool,
 }
 
 impl TranscriptItem {
     pub fn new(author: impl Into<String>, content: impl Into<String>) -> Self {
         Self {
+            message_id: None,
             author: author.into(),
             content: content.into(),
+            is_bookmarked: false,
+        }
+    }
+
+    pub fn persisted(
+        message_id: impl Into<String>,
+        author: impl Into<String>,
+        content: impl Into<String>,
+        is_bookmarked: bool,
+    ) -> Self {
+        Self {
+            message_id: Some(message_id.into()),
+            author: author.into(),
+            content: content.into(),
+            is_bookmarked,
         }
     }
 }
@@ -259,6 +277,42 @@ impl BranchItem {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextTokenBudget {
+    pub used_tokens: u32,
+    pub max_tokens: u32,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextPreview {
+    pub source: String,
+    pub summary: String,
+    pub lines: Vec<String>,
+    pub selected_items: Option<usize>,
+    pub omitted_items: Option<usize>,
+    pub token_budget: Option<ContextTokenBudget>,
+    pub inline_status: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextDryRunPreview {
+    pub summary: String,
+    pub built_at: i64,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionMetadata {
+    pub character_name: Option<String>,
+    pub tags: Vec<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionStats {
+    pub message_count: usize,
+    pub branch_count: usize,
+    pub bookmark_count: usize,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub enum RuntimePhase {
     #[default]
@@ -266,9 +320,11 @@ pub enum RuntimePhase {
     Queued {
         prompt: String,
     },
+    /// Actively generating. `partial_content` holds streamed text received so far.
     Generating {
         request_id: String,
         prompt: String,
+        partial_content: Option<String>,
     },
     Cancelling {
         request_id: Option<String>,
@@ -278,6 +334,11 @@ pub enum RuntimePhase {
         request_id: Option<String>,
         prompt: String,
         reason: CancelReason,
+    },
+    Failed {
+        request_id: Option<String>,
+        prompt: String,
+        message: String,
     },
 }
 
@@ -294,7 +355,8 @@ impl RuntimePhase {
             Self::Queued { prompt }
             | Self::Generating { prompt, .. }
             | Self::Cancelling { prompt, .. }
-            | Self::Cancelled { prompt, .. } => Some(prompt),
+            | Self::Cancelled { prompt, .. }
+            | Self::Failed { prompt, .. } => Some(prompt),
             Self::Idle => None,
         }
     }
@@ -302,10 +364,21 @@ impl RuntimePhase {
     fn request_id(&self) -> Option<&str> {
         match self {
             Self::Generating { request_id, .. } => Some(request_id.as_str()),
-            Self::Cancelling { request_id, .. } | Self::Cancelled { request_id, .. } => {
-                request_id.as_deref()
-            }
+            Self::Cancelling { request_id, .. }
+            | Self::Cancelled { request_id, .. }
+            | Self::Failed { request_id, .. } => request_id.as_deref(),
             Self::Idle | Self::Queued { .. } => None,
+        }
+    }
+
+    /// Returns streamed partial content if currently in the `Generating` phase.
+    pub fn partial_content(&self) -> Option<&str> {
+        match self {
+            Self::Generating {
+                partial_content: Some(text),
+                ..
+            } => Some(text.as_str()),
+            _ => None,
         }
     }
 }
@@ -314,12 +387,28 @@ impl RuntimePhase {
 pub enum RuntimeCommand {
     SendDraft { prompt: String },
     CancelGeneration,
+    BuildContextDryRun,
+    ToggleBookmark { message_id: String },
+    RunCommand { input: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeSendReceipt {
     pub request_id: String,
     pub user_message: TranscriptItem,
+    pub context_preview: Option<ContextPreview>,
+    pub context_dry_run: Option<ContextDryRunPreview>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct RuntimeContextRefresh {
+    pub status_line: Option<String>,
+    pub session_title: Option<String>,
+    pub transcript: Option<Vec<TranscriptItem>>,
+    pub session_metadata: Option<SessionMetadata>,
+    pub session_stats: Option<SessionStats>,
+    pub context_preview: Option<ContextPreview>,
+    pub context_dry_run: Option<ContextDryRunPreview>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -333,6 +422,34 @@ pub struct RuntimeCancellation {
     pub request_id: String,
     pub reason: CancelReason,
     pub partial_assistant_message: Option<TranscriptItem>,
+}
+
+/// Partial content streamed from a running generation. `partial_content` is the
+/// full accumulated text so far (not an incremental delta).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeProgress {
+    pub request_id: String,
+    pub partial_content: String,
+}
+
+/// An unrecoverable generation failure reported by the runtime.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeFailure {
+    pub request_id: String,
+    pub message: String,
+}
+
+/// The result of a single `poll_generation` call. The runtime returns this to
+/// tell the TUI shell whether generation is still in progress, completed, or
+/// failed — replacing the fixed-delay timer approach.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum GenerationPoll {
+    /// Generation is still running. Optionally carries a partial-content update.
+    Pending { partial: Option<RuntimeProgress> },
+    /// Generation finished successfully.
+    Completed(RuntimeCompletion),
+    /// Generation failed unrecoverably.
+    Failed(RuntimeFailure),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -365,6 +482,10 @@ pub struct AppBootstrap {
     pub status_line: Option<String>,
     pub draft: Option<DraftState>,
     pub screen: Option<ScreenState>,
+    pub session_metadata: Option<SessionMetadata>,
+    pub session_stats: Option<SessionStats>,
+    pub context_preview: Option<ContextPreview>,
+    pub context_dry_run: Option<ContextDryRunPreview>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -377,6 +498,10 @@ pub struct ShellState {
     pub draft: DraftState,
     pub history: InputHistoryState,
     pub status_line: Option<String>,
+    pub session_metadata: Option<SessionMetadata>,
+    pub session_stats: Option<SessionStats>,
+    pub context_preview: Option<ContextPreview>,
+    pub context_dry_run: Option<ContextDryRunPreview>,
     pub pending_actions: Vec<KeyAction>,
     pub runtime_commands: Vec<RuntimeCommand>,
     pub should_quit: bool,
@@ -393,6 +518,10 @@ impl ShellState {
             draft: DraftState::default(),
             history: InputHistoryState::default(),
             status_line: Some("ozone+ TUI shell skeleton ready".into()),
+            session_metadata: None,
+            session_stats: None,
+            context_preview: None,
+            context_dry_run: None,
             pending_actions: Vec::new(),
             runtime_commands: Vec::new(),
             should_quit: false,
@@ -427,6 +556,11 @@ impl ShellState {
         if let Some(screen) = bootstrap.screen {
             self.screen = screen;
         }
+
+        self.session_metadata = bootstrap.session_metadata;
+        self.session_stats = bootstrap.session_stats;
+        self.context_preview = bootstrap.context_preview;
+        self.context_dry_run = bootstrap.context_dry_run;
     }
 
     pub fn handle_key_event(&mut self, key: KeyEvent) -> KeyAction {
@@ -491,6 +625,8 @@ impl ShellState {
                     "Inspector hidden".into()
                 });
             }
+            KeyAction::TriggerContextDryRun => self.trigger_context_dry_run(),
+            KeyAction::ToggleBookmark => self.trigger_bookmark_toggle(),
             KeyAction::HistoryPrevious => {
                 if let Some(draft) = self.history.previous(&self.draft) {
                     self.focus = FocusTarget::Draft;
@@ -546,20 +682,32 @@ impl ShellState {
 
     pub fn apply_send_receipt(&mut self, receipt: RuntimeSendReceipt) {
         let prompt = receipt.user_message.content.clone();
+        if let Some(context_preview) = receipt.context_preview {
+            self.context_preview = Some(context_preview);
+        }
+        if let Some(context_dry_run) = receipt.context_dry_run {
+            self.context_dry_run = Some(context_dry_run);
+        }
         self.push_transcript_item(receipt.user_message);
         self.session.runtime = RuntimePhase::Generating {
             request_id: receipt.request_id,
             prompt,
+            partial_content: None,
         };
         self.inspector.focus = InspectorFocus::Message;
-        self.status_line = Some("Mock generation in progress".into());
+        self.status_line = Some(
+            self.context_preview
+                .as_ref()
+                .map(|preview| format!("Generation in progress · {}", preview.inline_status))
+                .unwrap_or_else(|| "Generation in progress".into()),
+        );
     }
 
     pub fn apply_runtime_completion(&mut self, completion: RuntimeCompletion) {
         self.push_transcript_item(completion.assistant_message);
         self.session.runtime = RuntimePhase::Idle;
         self.inspector.focus = InspectorFocus::Message;
-        self.status_line = Some("Mock generation completed".into());
+        self.status_line = Some("Generation completed".into());
     }
 
     pub fn apply_runtime_cancellation(&mut self, cancellation: RuntimeCancellation) {
@@ -575,10 +723,71 @@ impl ShellState {
             reason: cancellation.reason,
         };
         self.inspector.focus = InspectorFocus::Message;
-        self.status_line = Some(format!(
-            "Mock generation cancelled ({})",
-            cancellation.reason
-        ));
+        self.status_line = Some(format!("Generation cancelled ({})", cancellation.reason));
+    }
+
+    /// Updates the partial content shown for a streaming generation in progress.
+    pub fn apply_runtime_progress(&mut self, progress: RuntimeProgress) {
+        if let RuntimePhase::Generating {
+            partial_content, ..
+        } = &mut self.session.runtime
+        {
+            *partial_content = Some(progress.partial_content);
+        }
+    }
+
+    /// Transitions the runtime to the `Failed` terminal state.
+    pub fn apply_runtime_failure(&mut self, failure: RuntimeFailure) {
+        let prompt = self.session.runtime.prompt().unwrap_or_default().to_owned();
+        let request_id = self.session.runtime.request_id().map(str::to_owned);
+        self.session.runtime = RuntimePhase::Failed {
+            request_id,
+            prompt,
+            message: failure.message.clone(),
+        };
+        self.inspector.focus = InspectorFocus::Message;
+        self.status_line = Some(format!("Generation failed: {}", failure.message));
+    }
+
+    pub fn apply_context_refresh(&mut self, refresh: RuntimeContextRefresh) {
+        let selected_message_id = self
+            .session
+            .selected_message
+            .and_then(|index| self.session.transcript.get(index))
+            .and_then(|item| item.message_id.clone());
+        if let Some(session_title) = refresh.session_title {
+            self.session.context.title = session_title;
+        }
+        if let Some(transcript) = refresh.transcript {
+            self.session.transcript = transcript;
+            self.session.selected_message = selected_message_id
+                .as_deref()
+                .and_then(|message_id| {
+                    self.session
+                        .transcript
+                        .iter()
+                        .position(|item| item.message_id.as_deref() == Some(message_id))
+                })
+                .or_else(|| {
+                    (!self.session.transcript.is_empty())
+                        .then_some(self.session.transcript.len().saturating_sub(1))
+                });
+        }
+        if let Some(session_metadata) = refresh.session_metadata {
+            self.session_metadata = Some(session_metadata);
+        }
+        if let Some(session_stats) = refresh.session_stats {
+            self.session_stats = Some(session_stats);
+        }
+        if let Some(context_preview) = refresh.context_preview {
+            self.context_preview = Some(context_preview);
+        }
+        if let Some(context_dry_run) = refresh.context_dry_run {
+            self.context_dry_run = Some(context_dry_run);
+        }
+        if let Some(status_line) = refresh.status_line {
+            self.status_line = Some(status_line);
+        }
     }
 
     pub fn persistable_draft(&self) -> Option<DraftCheckpoint> {
@@ -601,6 +810,17 @@ impl ShellState {
             return;
         }
 
+        if prompt.trim_start().starts_with('/') {
+            self.history.push(prompt.clone());
+            self.runtime_commands
+                .push(RuntimeCommand::RunCommand { input: prompt });
+            self.draft = DraftState::default();
+            self.focus = FocusTarget::Draft;
+            self.input_mode = InputMode::Insert;
+            self.status_line = Some("Running session command…".into());
+            return;
+        }
+
         self.history.push(prompt.clone());
         self.session.runtime = RuntimePhase::Queued {
             prompt: prompt.clone(),
@@ -610,12 +830,12 @@ impl ShellState {
         self.draft = DraftState::default();
         self.focus = FocusTarget::Draft;
         self.input_mode = InputMode::Insert;
-        self.status_line = Some("Sending mock prompt…".into());
+        self.status_line = Some("Sending prompt…".into());
     }
 
     fn cancel_generation(&mut self) {
         if !self.session.runtime.is_inflight() {
-            self.status_line = Some("No mock generation is active".into());
+            self.status_line = Some("No generation is active".into());
             return;
         }
 
@@ -624,7 +844,34 @@ impl ShellState {
 
         self.session.runtime = RuntimePhase::Cancelling { request_id, prompt };
         self.runtime_commands.push(RuntimeCommand::CancelGeneration);
-        self.status_line = Some("Cancelling mock generation…".into());
+        self.status_line = Some("Cancelling generation…".into());
+    }
+
+    fn trigger_context_dry_run(&mut self) {
+        self.runtime_commands
+            .push(RuntimeCommand::BuildContextDryRun);
+        self.status_line = Some("Building context dry run…".into());
+        self.inspector.focus = InspectorFocus::Summary;
+    }
+
+    fn trigger_bookmark_toggle(&mut self) {
+        let Some(index) = self.session.selected_message else {
+            self.status_line = Some("No transcript message is selected".into());
+            return;
+        };
+        let Some(item) = self.session.transcript.get(index) else {
+            self.status_line = Some("Selected transcript entry is no longer available".into());
+            return;
+        };
+        let Some(message_id) = item.message_id.clone() else {
+            self.status_line = Some("Only persisted transcript messages can be bookmarked".into());
+            return;
+        };
+
+        self.runtime_commands
+            .push(RuntimeCommand::ToggleBookmark { message_id });
+        self.status_line = Some("Updating bookmark…".into());
+        self.inspector.focus = InspectorFocus::Message;
     }
 
     fn push_transcript_item(&mut self, item: TranscriptItem) {
@@ -651,9 +898,11 @@ mod tests {
     use ozone_core::session::SessionId;
 
     use super::{
-        AppBootstrap, BranchItem, DraftCheckpoint, DraftState, FocusTarget, InspectorFocus,
-        RuntimeCancellation, RuntimeCommand, RuntimePhase, RuntimeSendReceipt, ScreenState,
-        SessionContext, ShellState, TranscriptItem,
+        AppBootstrap, BranchItem, ContextDryRunPreview, ContextPreview, DraftCheckpoint,
+        DraftState, FocusTarget, GenerationPoll, InspectorFocus, RuntimeCancellation,
+        RuntimeCommand, RuntimeContextRefresh, RuntimeFailure, RuntimePhase, RuntimeProgress,
+        RuntimeSendReceipt, ScreenState, SessionContext, SessionMetadata, SessionStats, ShellState,
+        TranscriptItem,
     };
     use crate::input::{InputMode, KeyAction};
 
@@ -675,6 +924,10 @@ mod tests {
             status_line: Some("hydrated".into()),
             draft: Some(DraftState::restore(checkpoint.clone())),
             screen: None,
+            session_metadata: None,
+            session_stats: None,
+            context_preview: None,
+            context_dry_run: None,
         };
 
         app.hydrate(bootstrap);
@@ -756,6 +1009,26 @@ mod tests {
     }
 
     #[test]
+    fn slash_command_routes_to_runtime_command_without_queuing_generation() {
+        let mut app = ShellState::new(session_context());
+
+        app.apply_action(KeyAction::EnterInsert);
+        for ch in "/session show".chars() {
+            app.handle_key_event(KeyEvent::new(KeyCode::Char(ch), KeyModifiers::NONE));
+        }
+        app.handle_key_event(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE));
+
+        assert_eq!(
+            app.take_runtime_commands(),
+            vec![RuntimeCommand::RunCommand {
+                input: "/session show".into()
+            }]
+        );
+        assert!(matches!(app.session.runtime, RuntimePhase::Idle));
+        assert_eq!(app.status_line.as_deref(), Some("Running session command…"));
+    }
+
+    #[test]
     fn ctrl_c_queues_cancel_for_active_generation() {
         let mut app = ShellState::new(session_context());
 
@@ -769,6 +1042,8 @@ mod tests {
         app.apply_send_receipt(RuntimeSendReceipt {
             request_id: "mock-request-1".into(),
             user_message: TranscriptItem::new("user", "hello"),
+            context_preview: None,
+            context_dry_run: None,
         });
 
         assert_eq!(
@@ -801,6 +1076,8 @@ mod tests {
         app.apply_send_receipt(RuntimeSendReceipt {
             request_id: "mock-request-2".into(),
             user_message: TranscriptItem::new("user", "inspect me"),
+            context_preview: None,
+            context_dry_run: None,
         });
         assert_eq!(app.inspector.focus, InspectorFocus::Message);
 
@@ -819,6 +1096,57 @@ mod tests {
     }
 
     #[test]
+    fn ctrl_d_queues_context_dry_run_command() {
+        let mut app = ShellState::new(session_context());
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)),
+            KeyAction::TriggerContextDryRun
+        );
+        assert_eq!(
+            app.take_runtime_commands(),
+            vec![RuntimeCommand::BuildContextDryRun]
+        );
+        assert_eq!(
+            app.status_line.as_deref(),
+            Some("Building context dry run…")
+        );
+    }
+
+    #[test]
+    fn bookmark_action_queues_toggle_for_selected_persisted_message() {
+        let mut app = ShellState::new(session_context());
+        app.hydrate(AppBootstrap {
+            transcript: vec![TranscriptItem::persisted(
+                "msg-1",
+                "assistant",
+                "hello",
+                false,
+            )],
+            branches: vec![BranchItem::new("branch-a", "main", true)],
+            status_line: None,
+            draft: None,
+            screen: None,
+            session_metadata: None,
+            session_stats: None,
+            context_preview: None,
+            context_dry_run: None,
+        });
+
+        assert_eq!(
+            app.handle_key_event(KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE)),
+            KeyAction::ToggleBookmark
+        );
+        assert_eq!(
+            app.take_runtime_commands(),
+            vec![RuntimeCommand::ToggleBookmark {
+                message_id: "msg-1".into()
+            }]
+        );
+        assert_eq!(app.status_line.as_deref(), Some("Updating bookmark…"));
+    }
+
+    #[test]
     fn help_and_quit_actions_update_shell_state() {
         let mut app = ShellState::new(session_context());
 
@@ -831,6 +1159,168 @@ mod tests {
         assert_eq!(
             app.take_pending_actions(),
             vec![KeyAction::ToggleHelp, KeyAction::ConfirmQuit]
+        );
+    }
+
+    #[test]
+    fn apply_runtime_progress_updates_partial_content_while_generating() {
+        let mut app = ShellState::new(session_context());
+        app.apply_send_receipt(RuntimeSendReceipt {
+            request_id: "req-1".into(),
+            user_message: TranscriptItem::new("user", "stream this"),
+            context_preview: None,
+            context_dry_run: None,
+        });
+
+        assert!(app.session.runtime.partial_content().is_none());
+        assert_eq!(app.status_line.as_deref(), Some("Generation in progress"));
+
+        app.apply_runtime_progress(RuntimeProgress {
+            request_id: "req-1".into(),
+            partial_content: "Hello, I am".into(),
+        });
+
+        assert_eq!(app.session.runtime.partial_content(), Some("Hello, I am"));
+
+        app.apply_runtime_progress(RuntimeProgress {
+            request_id: "req-1".into(),
+            partial_content: "Hello, I am streaming text.".into(),
+        });
+
+        assert_eq!(
+            app.session.runtime.partial_content(),
+            Some("Hello, I am streaming text.")
+        );
+    }
+
+    #[test]
+    fn apply_runtime_progress_is_ignored_when_not_generating() {
+        let mut app = ShellState::new(session_context());
+        assert!(matches!(app.session.runtime, RuntimePhase::Idle));
+
+        app.apply_runtime_progress(RuntimeProgress {
+            request_id: "req-phantom".into(),
+            partial_content: "should not stick".into(),
+        });
+
+        assert!(matches!(app.session.runtime, RuntimePhase::Idle));
+    }
+
+    #[test]
+    fn apply_runtime_failure_transitions_to_failed_and_sets_status() {
+        let mut app = ShellState::new(session_context());
+        app.apply_send_receipt(RuntimeSendReceipt {
+            request_id: "req-2".into(),
+            user_message: TranscriptItem::new("user", "will fail"),
+            context_preview: None,
+            context_dry_run: None,
+        });
+
+        app.apply_runtime_failure(RuntimeFailure {
+            request_id: "req-2".into(),
+            message: "connection refused".into(),
+        });
+
+        assert!(matches!(
+            app.session.runtime,
+            RuntimePhase::Failed {
+                ref message,
+                ..
+            } if message == "connection refused"
+        ));
+        assert_eq!(
+            app.status_line.as_deref(),
+            Some("Generation failed: connection refused")
+        );
+        assert!(!app.session.runtime.is_inflight());
+    }
+
+    #[test]
+    fn apply_context_refresh_updates_status_and_previews() {
+        let mut app = ShellState::new(session_context());
+        app.apply_context_refresh(RuntimeContextRefresh {
+            status_line: Some("Context dry run updated".into()),
+            session_title: Some("Renamed Session".into()),
+            transcript: Some(vec![TranscriptItem::persisted(
+                "msg-1",
+                "assistant",
+                "hello",
+                true,
+            )]),
+            session_metadata: Some(SessionMetadata {
+                character_name: Some("Beatrice".into()),
+                tags: vec!["story".into()],
+            }),
+            session_stats: Some(SessionStats {
+                message_count: 1,
+                branch_count: 1,
+                bookmark_count: 1,
+            }),
+            context_preview: Some(ContextPreview {
+                source: "transcript-fallback".into(),
+                summary: "2 turns".into(),
+                lines: vec!["user: hi".into()],
+                selected_items: Some(2),
+                omitted_items: Some(0),
+                token_budget: None,
+                inline_status: "transcript-fallback · 2 turns".into(),
+            }),
+            context_dry_run: Some(ContextDryRunPreview {
+                summary: "2 turns".into(),
+                built_at: 1_700_000_000_000,
+            }),
+        });
+
+        assert_eq!(app.status_line.as_deref(), Some("Context dry run updated"));
+        assert_eq!(app.session.context.title, "Renamed Session");
+        assert_eq!(app.session.transcript.len(), 1);
+        assert!(app.session.transcript[0].is_bookmarked);
+        assert_eq!(
+            app.session_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.character_name.as_deref()),
+            Some("Beatrice")
+        );
+        assert_eq!(
+            app.session_stats.as_ref().map(|stats| stats.bookmark_count),
+            Some(1)
+        );
+        assert!(app.context_preview.is_some());
+        assert!(app.context_dry_run.is_some());
+    }
+
+    #[test]
+    fn generation_poll_variants_are_equality_comparable() {
+        use super::RuntimeCompletion;
+
+        let completion = RuntimeCompletion {
+            request_id: "r1".into(),
+            assistant_message: TranscriptItem::new("assistant", "done"),
+        };
+        let poll = GenerationPoll::Completed(completion.clone());
+        assert_eq!(poll, GenerationPoll::Completed(completion));
+
+        let failure = RuntimeFailure {
+            request_id: "r2".into(),
+            message: "oops".into(),
+        };
+        let poll = GenerationPoll::Failed(failure.clone());
+        assert_eq!(poll, GenerationPoll::Failed(failure));
+
+        let pending = GenerationPoll::Pending {
+            partial: Some(RuntimeProgress {
+                request_id: "r3".into(),
+                partial_content: "so far".into(),
+            }),
+        };
+        assert_eq!(
+            pending,
+            GenerationPoll::Pending {
+                partial: Some(RuntimeProgress {
+                    request_id: "r3".into(),
+                    partial_content: "so far".into(),
+                })
+            }
         );
     }
 }

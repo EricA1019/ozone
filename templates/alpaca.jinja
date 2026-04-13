@@ -1,0 +1,18 @@
+{%- set system_messages = messages | selectattr("role", "equalto", "system") | list -%}
+{%- set non_system = messages | rejectattr("role", "equalto", "system") | list -%}
+{%- if system_messages %}
+{{ system_messages[0].content }}
+
+{% endif -%}
+{%- for message in non_system -%}
+{%- if message.role == "user" %}
+### Instruction:
+{{ message.content }}
+
+{% elif message.role == "assistant" %}
+### Response:
+{{ message.content }}
+
+{% endif -%}
+{%- endfor -%}
+### Response:

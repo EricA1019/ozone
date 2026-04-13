@@ -1,8 +1,8 @@
-use anyhow::{Result, anyhow};
-use std::time::{Duration, Instant};
 use crate::db::{self, BenchmarkRow};
 use crate::hardware;
 use crate::processes;
+use anyhow::{anyhow, Result};
+use std::time::{Duration, Instant};
 
 /// Fixed benchmark prompt — long enough to test throughput, short enough to be fast.
 /// Roughly 200 input tokens, requests 100 output tokens.
@@ -99,11 +99,13 @@ where
         args.push(format!("--threads={t}"));
         args.push(format!("--blasthreads={t}"));
     }
-    processes::start_kobold(launcher_path, model_name, &args).await
+    processes::start_kobold(launcher_path, model_name, &args)
+        .await
         .map_err(|e| anyhow!("Launch failed: {e}"))?;
 
     // Step 3: Confirm model is loaded
-    let loaded_model = processes::get_kobold_model().await
+    let loaded_model = processes::get_kobold_model()
+        .await
         .ok_or_else(|| anyhow!("KoboldCpp launched but model not available via API"))?;
     on_progress(BenchProgress {
         stage: "ready",
@@ -123,7 +125,8 @@ where
 
     // Step 6: Snapshot VRAM during/after generation
     let vram_post = hardware::query_gpu_memory();
-    let vram_peak_mb = vram_post.as_ref()
+    let vram_peak_mb = vram_post
+        .as_ref()
         .map(|v| v.used_mb as u32)
         .or_else(|| vram_pre.as_ref().map(|v| v.used_mb as u32))
         .unwrap_or(0);
@@ -150,7 +153,8 @@ where
             status: "ok".into(),
         }),
         Err(e) => {
-            let status = if e.to_string().contains("OOM") || e.to_string().contains("out of memory") {
+            let status = if e.to_string().contains("OOM") || e.to_string().contains("out of memory")
+            {
                 "oom"
             } else if e.to_string().contains("timeout") || e.to_string().contains("Timeout") {
                 "timeout"
@@ -190,7 +194,8 @@ async fn run_generation() -> Result<GenerationResult> {
     });
 
     let start = Instant::now();
-    let resp = client.post("http://127.0.0.1:5001/api/v1/generate")
+    let resp = client
+        .post("http://127.0.0.1:5001/api/v1/generate")
         .json(&payload)
         .send()
         .await
@@ -204,7 +209,9 @@ async fn run_generation() -> Result<GenerationResult> {
         return Err(anyhow!("Generation failed (HTTP {status}): {body}"));
     }
 
-    let data: serde_json::Value = resp.json().await
+    let data: serde_json::Value = resp
+        .json()
+        .await
         .map_err(|e| anyhow!("Failed to parse generation response: {e}"))?;
 
     // KoboldCpp returns {"results": [{"text": "..."}]}
@@ -224,12 +231,18 @@ async fn run_generation() -> Result<GenerationResult> {
         // TTFT estimation: total_time - (tokens / tps * 1000)
         let gen_time_ms = if perf_tps > 0.0 {
             (token_count as f64 / perf_tps * 1000.0) as u32
-        } else { total_ms };
+        } else {
+            total_ms
+        };
         let ttft = total_ms.saturating_sub(gen_time_ms);
         (perf_tps, ttft)
     } else {
         // Fallback: estimate from wall clock
-        let tps = if total_ms > 0 { token_count as f64 / (total_ms as f64 / 1000.0) } else { 0.0 };
+        let tps = if total_ms > 0 {
+            token_count as f64 / (total_ms as f64 / 1000.0)
+        } else {
+            0.0
+        };
         // Rough TTFT: assume first token takes ~20% of total time for small generations
         let ttft = (total_ms as f64 * 0.15) as u32;
         (tps, ttft)
@@ -292,7 +305,13 @@ fn get_gpu_name() -> Option<String> {
 }
 
 /// Print benchmark results to stdout.
-pub fn print_result(model_name: &str, gpu_layers: i32, context_size: u32, quant_kv: u8, result: &BenchResult) {
+pub fn print_result(
+    model_name: &str,
+    gpu_layers: i32,
+    context_size: u32,
+    quant_kv: u8,
+    result: &BenchResult,
+) {
     println!();
     println!("  ⬡ Benchmark Results");
     println!("  ─────────────────────────────────────────────────");

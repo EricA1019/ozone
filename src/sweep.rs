@@ -95,7 +95,10 @@ pub async fn run_sweep(config: SweepConfig) -> Result<SweepResult> {
     .await
 }
 
-pub async fn run_sweep_with_progress<F>(config: SweepConfig, mut on_progress: F) -> Result<SweepResult>
+pub async fn run_sweep_with_progress<F>(
+    config: SweepConfig,
+    mut on_progress: F,
+) -> Result<SweepResult>
 where
     F: FnMut(SweepProgress),
 {
@@ -165,9 +168,10 @@ where
             // Check if this config would be dominated by an existing Pareto point
             // before spending time benchmarking
             // Only skip if context is dominated and layers are strictly fewer
-            let dominated_hint = result.pareto_frontier.iter().any(|p| {
-                p.context_size >= ctx && p.gpu_layers >= layers && p.context_size > ctx
-            });
+            let dominated_hint = result
+                .pareto_frontier
+                .iter()
+                .any(|p| p.context_size >= ctx && p.gpu_layers >= layers && p.context_size > ctx);
             if dominated_hint {
                 on_progress(SweepProgress {
                     current: step,
@@ -204,7 +208,8 @@ where
 
             if bench_result.status != "ok" {
                 // Retry with fewer layers on OOM/timeout
-                if (bench_result.status == "oom" || bench_result.status == "timeout") && layers > 0 {
+                if (bench_result.status == "oom" || bench_result.status == "timeout") && layers > 0
+                {
                     let retry_layers = (layers - 1).max(0);
                     on_progress(SweepProgress {
                         current: step,
@@ -238,7 +243,13 @@ where
                         });
                         result.configs_tested += 1;
                         update_bests(&mut result, &retry, ctx);
-                        maybe_add_pareto(&mut result.pareto_frontier, retry_layers, ctx, qkv, &retry);
+                        maybe_add_pareto(
+                            &mut result.pareto_frontier,
+                            retry_layers,
+                            ctx,
+                            qkv,
+                            &retry,
+                        );
                         store_quietly(&config, retry_layers, ctx, qkv, &retry);
                         continue;
                     }
@@ -338,7 +349,9 @@ fn update_bests(result: &mut SweepResult, bench: &bench::BenchResult, context_si
     }) {
         // We track best_context simply as the result at the largest working context
         let dominated = result.best_context.as_ref().is_some_and(|b| {
-            b.total_tokens > 0 && bench.tokens_per_sec < b.tokens_per_sec && context_size <= b.vram_peak_mb.max(context_size)
+            b.total_tokens > 0
+                && bench.tokens_per_sec < b.tokens_per_sec
+                && context_size <= b.vram_peak_mb.max(context_size)
         });
         if !dominated {
             result.best_context = Some(bench.clone());
@@ -366,7 +379,13 @@ fn maybe_add_pareto(
     }
 }
 
-fn store_quietly(config: &SweepConfig, gpu_layers: i32, context_size: u32, quant_kv: u8, bench: &bench::BenchResult) {
+fn store_quietly(
+    config: &SweepConfig,
+    gpu_layers: i32,
+    context_size: u32,
+    quant_kv: u8,
+    bench: &bench::BenchResult,
+) {
     match bench::store_result(
         &config.model_name,
         config.model_size_gb,

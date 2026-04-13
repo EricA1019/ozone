@@ -14,6 +14,7 @@ members = [
     "apps/ozone-plus",
     "crates/ozone-core",
     "crates/ozone-engine",
+    "crates/ozone-inference",
     "crates/ozone-persist",
     "crates/ozone-tui",
 ]

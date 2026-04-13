@@ -63,6 +63,13 @@ impl CreateSessionRequest {
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
+pub struct UpdateSessionRequest {
+    pub name: Option<String>,
+    pub character_name: Option<Option<String>>,
+    pub tags: Option<Vec<String>>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionSummary {
     pub session_id: SessionId,
@@ -125,7 +132,9 @@ fn normalize_uuid_string(value: &str) -> Result<String, SessionIdError> {
 
 #[cfg(test)]
 mod tests {
-    use super::{CreateSessionRequest, SessionId, SessionRecord, SessionSummary};
+    use super::{
+        CreateSessionRequest, SessionId, SessionRecord, SessionSummary, UpdateSessionRequest,
+    };
 
     #[test]
     fn session_id_parsing_normalizes_uuid_strings() {
@@ -160,5 +169,14 @@ mod tests {
         assert_eq!(summary.message_count, 0);
         assert_eq!(summary.db_size_bytes, None);
         assert!(summary.tags.is_empty());
+    }
+
+    #[test]
+    fn update_session_request_defaults_to_no_changes() {
+        let request = UpdateSessionRequest::default();
+
+        assert_eq!(request.name, None);
+        assert_eq!(request.character_name, None);
+        assert_eq!(request.tags, None);
     }
 }

@@ -277,7 +277,10 @@ pub async fn run_launcher(no_browser: bool) -> Result<()> {
         }
         if let Ok(catalog) = cat_rx.try_recv() {
             let last = app.prefs.last_model_name.clone();
-            app.selected_model = catalog.iter().position(|r| r.model_name == last).unwrap_or(0);
+            app.selected_model = catalog
+                .iter()
+                .position(|r| r.model_name == last)
+                .unwrap_or(0);
             app.catalog = catalog;
             if app.hardware.is_some() {
                 app.splash_ready = true;
@@ -299,7 +302,9 @@ pub async fn run_launcher(no_browser: bool) -> Result<()> {
                 },
                 None => None,
             };
-            let Some(event) = event else { break; };
+            let Some(event) = event else {
+                break;
+            };
             match event {
                 WorkflowEvent::Status { title, detail } => {
                     app.profiling_progress_title = title;
@@ -474,7 +479,9 @@ pub async fn run_launcher(no_browser: bool) -> Result<()> {
                                 }
                             }
                         }
-                        KeyCode::Char(c) if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' => {
+                        KeyCode::Char(c)
+                            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' =>
+                        {
                             app.model_filter.push(c);
                             app.selected_model = 0;
                         }
@@ -489,10 +496,11 @@ pub async fn run_launcher(no_browser: bool) -> Result<()> {
                                 terminal.draw(|f| launcher::render_launching(f, &app))?;
 
                                 let home = std::env::var("HOME").unwrap_or_default();
-                                let launcher_path =
-                                    std::path::PathBuf::from(&home).join("models/launch-koboldcpp.sh");
-                                let model_path =
-                                    std::path::PathBuf::from(&home).join("models").join(&plan.model_name);
+                                let launcher_path = std::path::PathBuf::from(&home)
+                                    .join("models/launch-koboldcpp.sh");
+                                let model_path = std::path::PathBuf::from(&home)
+                                    .join("models")
+                                    .join(&plan.model_name);
                                 let mut kc_args = vec![
                                     "--gpulayers".to_string(),
                                     plan.gpu_layers.to_string(),
@@ -525,7 +533,9 @@ pub async fn run_launcher(no_browser: bool) -> Result<()> {
                                         let _ = crate::prefs::save_prefs(&updated_prefs).await;
                                         app.prefs = updated_prefs;
                                         if !app.prefs.no_browser {
-                                            crate::processes::open_browser_app("http://localhost:8000");
+                                            crate::processes::open_browser_app(
+                                                "http://localhost:8000",
+                                            );
                                         }
                                         app.screen = Screen::Monitor;
                                     }
@@ -557,15 +567,19 @@ pub async fn run_launcher(no_browser: bool) -> Result<()> {
                         }
                         KeyCode::Enter => {
                             if let Some(advisory) = &app.profiling_advisory {
-                                if let Some(action) =
-                                    advisory.available_actions.get(app.profiling_choice_index).cloned()
+                                if let Some(action) = advisory
+                                    .available_actions
+                                    .get(app.profiling_choice_index)
+                                    .cloned()
                                 {
                                     match action {
                                         ProfilingAction::LaunchRecommended => {
-                                            if let (Some(record), Some(hw)) =
-                                                (app.filtered_catalog_get(app.selected_model), app.hardware.as_ref())
-                                            {
-                                                match profiling::preferred_launch_plan(&record, hw) {
+                                            if let (Some(record), Some(hw)) = (
+                                                app.filtered_catalog_get(app.selected_model),
+                                                app.hardware.as_ref(),
+                                            ) {
+                                                match profiling::preferred_launch_plan(&record, hw)
+                                                {
                                                     Ok(plan) => {
                                                         app.current_plan = Some(plan);
                                                         app.screen = Screen::Confirm;
@@ -580,7 +594,9 @@ pub async fn run_launcher(no_browser: bool) -> Result<()> {
                                             }
                                         }
                                         ProfilingAction::ReviewIssue => {
-                                            if let Some(record) = app.filtered_catalog_get(app.selected_model) {
+                                            if let Some(record) =
+                                                app.filtered_catalog_get(app.selected_model)
+                                            {
                                                 app.profiling_failure =
                                                     Some(profiling::blocking_issue_report(&record));
                                                 app.profiling_choice_index = 0;
@@ -622,7 +638,8 @@ pub async fn run_launcher(no_browser: bool) -> Result<()> {
                                 app.profiling_choice_index = 0;
                                 app.screen = Screen::ProfileRunning;
                                 tokio::spawn(async move {
-                                    let _ = profiling::run_workflow(request, tx, cancel_clone).await;
+                                    let _ =
+                                        profiling::run_workflow(request, tx, cancel_clone).await;
                                 });
                             }
                         }
@@ -683,13 +700,17 @@ pub async fn run_launcher(no_browser: bool) -> Result<()> {
                         KeyCode::Enter => {
                             if let Some(report) = &app.profiling_success {
                                 let actions = report.available_actions();
-                                if let Some(action) = actions.get(app.profiling_choice_index).cloned() {
+                                if let Some(action) =
+                                    actions.get(app.profiling_choice_index).cloned()
+                                {
                                     match action {
                                         ProfilingAction::LaunchRecommended => {
-                                            if let (Some(record), Some(hw)) =
-                                                (app.filtered_catalog_get(app.selected_model), app.hardware.as_ref())
-                                            {
-                                                match profiling::preferred_launch_plan(&record, hw) {
+                                            if let (Some(record), Some(hw)) = (
+                                                app.filtered_catalog_get(app.selected_model),
+                                                app.hardware.as_ref(),
+                                            ) {
+                                                match profiling::preferred_launch_plan(&record, hw)
+                                                {
                                                     Ok(plan) => {
                                                         app.current_plan = Some(plan);
                                                         app.screen = Screen::Confirm;
@@ -762,7 +783,9 @@ pub async fn run_launcher(no_browser: bool) -> Result<()> {
                         KeyCode::Enter => {
                             if let Some(report) = &app.profiling_failure {
                                 let actions = report.available_actions();
-                                if let Some(action) = actions.get(app.profiling_choice_index).cloned() {
+                                if let Some(action) =
+                                    actions.get(app.profiling_choice_index).cloned()
+                                {
                                     app.profiling_pending_action = Some(action);
                                     app.screen = Screen::ProfileConfirm;
                                 }

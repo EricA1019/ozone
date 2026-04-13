@@ -16,11 +16,21 @@ use ozone_core::{
         SwipeCandidate, SwipeCandidateState, SwipeGroup, SwipeGroupId,
     },
     paths as core_paths,
-    session::{CreateSessionRequest, SessionId, SessionRecord, SessionSummary, UnixTimestamp},
+    session::{
+        CreateSessionRequest, SessionId, SessionRecord, SessionSummary, UnixTimestamp,
+        UpdateSessionRequest,
+    },
 };
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 
 use crate::{
+    import_export::{
+        ImportCharacterCardRequest, ImportedCharacterCard, SessionExport, SessionExportBookmark,
+        SessionExportBranch, SessionExportMessage, SessionExportSummary,
+        SessionExportSwipeCandidate, SessionExportSwipeGroup, StoredCharacterCard,
+        TranscriptExport, TranscriptExportBranch, TranscriptExportSession, SESSION_EXPORT_FORMAT,
+        TRANSCRIPT_EXPORT_FORMAT,
+    },
     schema::{ensure_global_schema, SESSION_MIGRATOR},
     PersistError, Result,
 };
@@ -153,6 +163,14 @@ pub struct MessageEditRecord {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BookmarkRecord {
+    pub bookmark_id: String,
+    pub message_id: MessageId,
+    pub note: Option<String>,
+    pub created_at: UnixTimestamp,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct BranchRecord {
     pub branch: ConversationBranch,
     pub forked_from: MessageId,
@@ -212,6 +230,67 @@ impl SqliteRepository {
         Ok(summary)
     }
 
+    pub fn import_character_card(
+        &self,
+        request: ImportCharacterCardRequest,
+    ) -> Result<ImportedCharacterCard> {
+        let session_name = request
+            .session_name
+            .filter(|name| !name.trim().is_empty())
+            .unwrap_or_else(|| request.card.name.clone());
+        let mut create_request = CreateSessionRequest::new(session_name);
+        create_request.character_name = Some(request.card.name.clone());
+        create_request.tags = merge_tags(&request.card.tags, &request.tags);
+
+        let session = self.create_session(create_request)?;
+        let imported_at = self.now();
+        let stored_card = StoredCharacterCard {
+            imported_at,
+            provenance: request.provenance,
+            card: request.card,
+        };
+        self.store_character_card(&session.session_id, &stored_card)?;
+
+        let (seeded_branch_id, seeded_message_id) =
+            if let Some(greeting) = stored_card.card.greeting.clone() {
+                let message = self.insert_message(
+                    &session.session_id,
+                    CreateMessageRequest {
+                        parent_id: None,
+                        author_kind: "assistant".to_owned(),
+                        author_name: Some(stored_card.card.name.clone()),
+                        content: greeting,
+                    },
+                )?;
+                let message_id = MessageId::parse(message.message_id)?;
+                let mut branch = ConversationBranch::new(
+                    BranchId::parse(generate_uuid_like())?,
+                    session.session_id.clone(),
+                    "main",
+                    message_id.clone(),
+                    message.created_at,
+                );
+                branch.state = BranchState::Active;
+                let branch = self.create_branch(CreateBranchCommand {
+                    branch,
+                    forked_from: message_id.clone(),
+                })?;
+                (Some(branch.branch.branch_id), Some(message_id))
+            } else {
+                (None, None)
+            };
+
+        let session = self
+            .get_session(&session.session_id)?
+            .ok_or_else(|| PersistError::SessionNotFound(session.session_id.to_string()))?;
+
+        Ok(ImportedCharacterCard {
+            session,
+            seeded_branch_id,
+            seeded_message_id,
+        })
+    }
+
     pub fn list_sessions(&self) -> Result<Vec<SessionSummary>> {
         let conn = self.ensure_global_connection()?;
         let mut stmt = conn.prepare(
@@ -241,6 +320,33 @@ impl SqliteRepository {
             .optional()?;
 
         stored.map(SessionSummary::try_from).transpose()
+    }
+
+    pub fn update_session_metadata(
+        &self,
+        session_id: &SessionId,
+        request: UpdateSessionRequest,
+    ) -> Result<SessionRecord> {
+        let mut summary = self
+            .get_session(session_id)?
+            .ok_or_else(|| PersistError::SessionNotFound(session_id.to_string()))?;
+        let touched_at = self.now();
+
+        if let Some(name) = request.name {
+            summary.name = name;
+        }
+        if let Some(character_name) = request.character_name {
+            summary.character_name = character_name;
+        }
+        if let Some(tags) = request.tags {
+            summary.tags = tags;
+        }
+        summary.last_opened_at = summary.last_opened_at.max(touched_at);
+        summary.db_size_bytes = self.session_db_size(session_id);
+
+        let conn = self.ensure_global_connection()?;
+        upsert_session_summary(&conn, &summary)?;
+        Ok(summary)
     }
 
     pub fn acquire_session_lock(
@@ -429,6 +535,79 @@ impl SqliteRepository {
 
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(PersistError::from)
+    }
+
+    pub fn list_bookmarks(&self, session_id: &SessionId) -> Result<Vec<BookmarkRecord>> {
+        let conn = self.open_session_connection(session_id)?;
+        let mut stmt = conn.prepare(
+            "SELECT b.bookmark_id, b.message_id, b.note, b.created_at
+             FROM bookmarks b
+             JOIN messages m ON m.message_id = b.message_id
+             WHERE m.session_id = ?1
+             ORDER BY b.created_at ASC, b.bookmark_id ASC",
+        )?;
+        let rows = stmt.query_map([session_id.as_str()], read_bookmark_record)?;
+
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(PersistError::from)
+    }
+
+    pub fn set_message_bookmark(
+        &self,
+        session_id: &SessionId,
+        message_id: &MessageId,
+        bookmarked: bool,
+        note: Option<String>,
+    ) -> Result<Option<BookmarkRecord>> {
+        let touched_at = self.now();
+        let mut session_conn = self.open_session_connection(session_id)?;
+        let tx = session_conn.transaction()?;
+        ensure_message_exists_in_tx(&tx, message_id, session_id)?;
+
+        tx.execute(
+            "DELETE FROM bookmarks WHERE message_id = ?1",
+            [message_id.as_str()],
+        )?;
+
+        let bookmark = if bookmarked {
+            let bookmark = BookmarkRecord {
+                bookmark_id: generate_uuid_like(),
+                message_id: message_id.clone(),
+                note,
+                created_at: touched_at,
+            };
+            tx.execute(
+                "INSERT INTO bookmarks (bookmark_id, message_id, note, created_at)
+                 VALUES (?1, ?2, ?3, ?4)",
+                params![
+                    bookmark.bookmark_id.as_str(),
+                    bookmark.message_id.as_str(),
+                    bookmark.note.as_deref(),
+                    bookmark.created_at,
+                ],
+            )?;
+            tx.execute(
+                "UPDATE messages
+                 SET bookmarked = 1,
+                     bookmark_note = ?2
+                 WHERE message_id = ?1",
+                params![message_id.as_str(), bookmark.note.as_deref()],
+            )?;
+            Some(bookmark)
+        } else {
+            tx.execute(
+                "UPDATE messages
+                 SET bookmarked = 0,
+                     bookmark_note = NULL
+                 WHERE message_id = ?1",
+                [message_id.as_str()],
+            )?;
+            None
+        };
+
+        tx.commit()?;
+        self.touch_session_summary(session_id, touched_at, 0)?;
+        Ok(bookmark)
     }
 
     pub fn create_branch(&self, command: CreateBranchCommand) -> Result<BranchRecord> {
@@ -807,6 +986,132 @@ impl SqliteRepository {
         }
     }
 
+    pub fn list_session_messages(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Vec<ConversationMessage>> {
+        let conn = self.open_session_connection(session_id)?;
+        let mut stmt = conn.prepare(
+            "SELECT message_id, session_id, parent_id, author_kind, author_name, content, created_at, edited_at, is_hidden
+             FROM messages
+             WHERE session_id = ?1
+             ORDER BY created_at ASC, message_id ASC",
+        )?;
+        let rows = stmt.query_map([session_id.as_str()], read_conversation_message)?;
+
+        rows.collect::<rusqlite::Result<Vec<_>>>()
+            .map_err(PersistError::from)
+    }
+
+    pub fn get_character_card(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Option<StoredCharacterCard>> {
+        let conn = self.open_session_connection(session_id)?;
+        conn.query_row(
+            "SELECT content_json
+             FROM memory_artifacts
+             WHERE session_id = ?1 AND kind = 'character_card'
+             ORDER BY created_at DESC, artifact_id DESC
+             LIMIT 1",
+            [session_id.as_str()],
+            |row| row.get::<_, String>(0),
+        )
+        .optional()?
+        .map(|content_json| {
+            serde_json::from_str::<StoredCharacterCard>(&content_json).map_err(|error| {
+                PersistError::InvalidData(format!(
+                    "invalid stored character card JSON for session {session_id}: {error}"
+                ))
+            })
+        })
+        .transpose()
+    }
+
+    pub fn export_session(&self, session_id: &SessionId) -> Result<SessionExport> {
+        let session = self
+            .get_session(session_id)?
+            .ok_or_else(|| PersistError::SessionNotFound(session_id.to_string()))?;
+        let branches = self.list_branches(session_id)?;
+        let messages = self.list_session_messages(session_id)?;
+        let bookmarks = self.list_bookmarks(session_id)?;
+        let swipe_groups = self
+            .list_swipe_groups(session_id)?
+            .into_iter()
+            .map(|group| {
+                let candidates = self
+                    .list_swipe_candidates(session_id, &group.swipe_group_id)?
+                    .into_iter()
+                    .map(export_swipe_candidate)
+                    .collect();
+                Ok(export_swipe_group(group, candidates))
+            })
+            .collect::<Result<Vec<_>>>()?;
+        let branches = branches
+            .into_iter()
+            .map(|record| {
+                let transcript_message_ids = self
+                    .list_branch_messages(session_id, &record.branch.branch_id)?
+                    .into_iter()
+                    .map(|message| message.message_id.to_string())
+                    .collect();
+                Ok(export_branch(record, transcript_message_ids))
+            })
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(SessionExport {
+            format: SESSION_EXPORT_FORMAT.to_owned(),
+            exported_at: self.now(),
+            session: export_session_summary(&session),
+            active_branch_id: self
+                .get_active_branch(session_id)?
+                .map(|record| record.branch.branch_id.to_string()),
+            character_card: self.get_character_card(session_id)?,
+            branches,
+            messages: messages.into_iter().map(export_message).collect(),
+            bookmarks: bookmarks.into_iter().map(export_bookmark).collect(),
+            swipe_groups,
+        })
+    }
+
+    pub fn export_transcript(
+        &self,
+        session_id: &SessionId,
+        branch_id: Option<&BranchId>,
+    ) -> Result<TranscriptExport> {
+        let session = self
+            .get_session(session_id)?
+            .ok_or_else(|| PersistError::SessionNotFound(session_id.to_string()))?;
+        let branch = match branch_id {
+            Some(branch_id) => {
+                let record = self
+                    .get_branch(session_id, branch_id)?
+                    .ok_or_else(|| PersistError::BranchNotFound(branch_id.to_string()))?;
+                if record.branch.session_id != *session_id {
+                    return Err(PersistError::BranchNotFound(branch_id.to_string()));
+                }
+                Some(record)
+            }
+            None => self.get_active_branch(session_id)?,
+        };
+        let messages = match branch.as_ref() {
+            Some(record) => self.list_branch_messages(session_id, &record.branch.branch_id)?,
+            None => Vec::new(),
+        };
+
+        Ok(TranscriptExport {
+            format: TRANSCRIPT_EXPORT_FORMAT.to_owned(),
+            exported_at: self.now(),
+            session: TranscriptExportSession {
+                session_id: session.session_id.to_string(),
+                name: session.name,
+                character_name: session.character_name,
+            },
+            branch: branch.map(export_transcript_branch),
+            messages: messages.into_iter().map(export_message).collect(),
+        })
+    }
+
     pub fn insert_message(
         &self,
         session_id: &SessionId,
@@ -872,6 +1177,34 @@ impl SqliteRepository {
 
         rows.collect::<rusqlite::Result<Vec<_>>>()
             .map_err(PersistError::from)
+    }
+
+    fn store_character_card(
+        &self,
+        session_id: &SessionId,
+        card: &StoredCharacterCard,
+    ) -> Result<()> {
+        let conn = self.open_session_connection(session_id)?;
+        let content_json = serde_json::to_string(card).map_err(|error| {
+            PersistError::InvalidData(format!(
+                "failed to serialize character card artifact for session {session_id}: {error}"
+            ))
+        })?;
+        conn.execute(
+            "INSERT INTO memory_artifacts (
+                artifact_id, session_id, kind, content_json, source_start_message_id, source_end_message_id, provenance, created_at, snapshot_version
+             ) VALUES (?1, ?2, 'character_card', ?3, NULL, NULL, ?4, ?5, ?6)",
+            params![
+                generate_uuid_like(),
+                session_id.as_str(),
+                content_json,
+                card.provenance.as_str(),
+                card.imported_at,
+                1_i64,
+            ],
+        )?;
+
+        Ok(())
     }
 
     fn sync_message_search_entry(&self, message: &ConversationMessage) -> Result<()> {
@@ -1006,6 +1339,104 @@ impl SqliteRepository {
     fn session_db_size_i64(&self, session_id: &SessionId) -> Option<i64> {
         self.session_db_size(session_id)
             .and_then(|size| i64::try_from(size).ok())
+    }
+}
+
+fn merge_tags(primary: &[String], secondary: &[String]) -> Vec<String> {
+    let mut tags = Vec::new();
+    for candidate in primary.iter().chain(secondary.iter()) {
+        let trimmed = candidate.trim();
+        if trimmed.is_empty() || tags.iter().any(|existing| existing == trimmed) {
+            continue;
+        }
+        tags.push(trimmed.to_owned());
+    }
+    tags
+}
+
+fn export_session_summary(session: &SessionSummary) -> SessionExportSummary {
+    SessionExportSummary {
+        session_id: session.session_id.to_string(),
+        name: session.name.clone(),
+        character_name: session.character_name.clone(),
+        created_at: session.created_at,
+        last_opened_at: session.last_opened_at,
+        message_count: session.message_count,
+        db_size_bytes: session.db_size_bytes,
+        tags: session.tags.clone(),
+    }
+}
+
+fn export_branch(record: BranchRecord, transcript_message_ids: Vec<String>) -> SessionExportBranch {
+    SessionExportBranch {
+        branch_id: record.branch.branch_id.to_string(),
+        name: record.branch.name,
+        state: record.branch.state.as_str().to_owned(),
+        tip_message_id: record.branch.tip_message_id.to_string(),
+        forked_from_message_id: record.forked_from.to_string(),
+        created_at: record.branch.created_at,
+        description: record.branch.description,
+        transcript_message_ids,
+    }
+}
+
+fn export_transcript_branch(record: BranchRecord) -> TranscriptExportBranch {
+    TranscriptExportBranch {
+        branch_id: record.branch.branch_id.to_string(),
+        name: record.branch.name,
+        state: record.branch.state.as_str().to_owned(),
+        tip_message_id: record.branch.tip_message_id.to_string(),
+        forked_from_message_id: record.forked_from.to_string(),
+        created_at: record.branch.created_at,
+        description: record.branch.description,
+    }
+}
+
+fn export_message(message: ConversationMessage) -> SessionExportMessage {
+    SessionExportMessage {
+        message_id: message.message_id.to_string(),
+        session_id: message.session_id.to_string(),
+        parent_id: message.parent_id.map(|parent_id| parent_id.to_string()),
+        author_kind: message.author_kind,
+        author_name: message.author_name,
+        content: message.content,
+        created_at: message.created_at,
+        edited_at: message.edited_at,
+        is_hidden: message.is_hidden,
+    }
+}
+
+fn export_bookmark(bookmark: BookmarkRecord) -> SessionExportBookmark {
+    SessionExportBookmark {
+        bookmark_id: bookmark.bookmark_id,
+        message_id: bookmark.message_id.to_string(),
+        note: bookmark.note,
+        created_at: bookmark.created_at,
+    }
+}
+
+fn export_swipe_group(
+    group: SwipeGroup,
+    candidates: Vec<SessionExportSwipeCandidate>,
+) -> SessionExportSwipeGroup {
+    SessionExportSwipeGroup {
+        swipe_group_id: group.swipe_group_id.to_string(),
+        parent_message_id: group.parent_message_id.to_string(),
+        parent_context_message_id: group
+            .parent_context_message_id
+            .map(|message_id| message_id.to_string()),
+        active_ordinal: group.active_ordinal,
+        candidates,
+    }
+}
+
+fn export_swipe_candidate(candidate: SwipeCandidate) -> SessionExportSwipeCandidate {
+    SessionExportSwipeCandidate {
+        ordinal: candidate.ordinal,
+        message_id: candidate.message_id.to_string(),
+        state: candidate.state.as_str().to_owned(),
+        partial_content: candidate.partial_content,
+        tokens_generated: candidate.tokens_generated,
     }
 }
 
@@ -1380,6 +1811,15 @@ fn read_message_edit_record(row: &Row<'_>) -> rusqlite::Result<MessageEditRecord
     })
 }
 
+fn read_bookmark_record(row: &Row<'_>) -> rusqlite::Result<BookmarkRecord> {
+    Ok(BookmarkRecord {
+        bookmark_id: row.get(0)?,
+        message_id: parse_sqlite_text::<MessageId>(row.get(1)?, 1)?,
+        note: row.get(2)?,
+        created_at: row.get(3)?,
+    })
+}
+
 fn read_branch_record(row: &Row<'_>) -> rusqlite::Result<BranchRecord> {
     let branch_id = parse_sqlite_text::<BranchId>(row.get(0)?, 0)?;
     let session_id = SessionId::parse(row.get::<_, String>(1)?)
@@ -1709,6 +2149,35 @@ mod tests {
     }
 
     #[test]
+    fn update_session_metadata_rewrites_global_summary_fields() {
+        let sandbox = TestSandbox::new("update-session-metadata");
+        let (repo, clock) = test_repo(&sandbox, 1_725_647_200_000);
+        let session = repo
+            .create_session(CreateSessionRequest::new("Original Session"))
+            .unwrap();
+
+        clock.store(1_725_647_260_000, Ordering::SeqCst);
+        let updated = repo
+            .update_session_metadata(
+                &session.session_id,
+                UpdateSessionRequest {
+                    name: Some("Renamed Session".to_owned()),
+                    character_name: Some(Some("Beatrice".to_owned())),
+                    tags: Some(vec!["story".to_owned(), "phase1f".to_owned()]),
+                },
+            )
+            .unwrap();
+
+        assert_eq!(updated.name, "Renamed Session");
+        assert_eq!(updated.character_name.as_deref(), Some("Beatrice"));
+        assert_eq!(updated.tags, vec!["story".to_owned(), "phase1f".to_owned()]);
+        assert_eq!(updated.last_opened_at, 1_725_647_260_000);
+
+        let fetched = repo.get_session(&session.session_id).unwrap().unwrap();
+        assert_eq!(fetched, updated);
+    }
+
+    #[test]
     fn message_fts_triggers_sync_on_insert() {
         let sandbox = TestSandbox::new("message-fts");
         let (repo, _) = test_repo(&sandbox, 1_725_647_200_000);
@@ -1740,6 +2209,54 @@ mod tests {
             )
             .unwrap();
         assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn set_message_bookmark_round_trips_and_clears() {
+        let sandbox = TestSandbox::new("message-bookmarks");
+        let (repo, _) = test_repo(&sandbox, 1_725_647_200_000);
+        let session = repo
+            .create_session(CreateSessionRequest::new("Bookmark Session"))
+            .unwrap();
+        let record = repo
+            .insert_message(
+                &session.session_id,
+                CreateMessageRequest::user("remember this line"),
+            )
+            .unwrap();
+        let message_id = MessageId::parse(&record.message_id).unwrap();
+
+        let bookmark = repo
+            .set_message_bookmark(
+                &session.session_id,
+                &message_id,
+                true,
+                Some("favorite".to_owned()),
+            )
+            .unwrap()
+            .expect("bookmark should be created");
+        assert_eq!(bookmark.note.as_deref(), Some("favorite"));
+
+        let bookmarks = repo.list_bookmarks(&session.session_id).unwrap();
+        assert_eq!(bookmarks.len(), 1);
+        assert_eq!(bookmarks[0].message_id, message_id);
+        assert_eq!(bookmarks[0].note.as_deref(), Some("favorite"));
+
+        let conn = Connection::open(repo.paths().session_db_path(&session.session_id)).unwrap();
+        let flagged: i64 = conn
+            .query_row(
+                "SELECT bookmarked FROM messages WHERE message_id = ?1",
+                [record.message_id.as_str()],
+                |row| row.get(0),
+            )
+            .unwrap();
+        assert_eq!(flagged, 1);
+
+        let removed = repo
+            .set_message_bookmark(&session.session_id, &message_id, false, None)
+            .unwrap();
+        assert_eq!(removed, None);
+        assert!(repo.list_bookmarks(&session.session_id).unwrap().is_empty());
     }
 
     #[test]
@@ -2242,6 +2759,213 @@ mod tests {
                 .map(|candidate| candidate.ordinal)
                 .collect::<Vec<_>>(),
             vec![0, 1, 2]
+        );
+    }
+
+    #[test]
+    fn importing_character_card_stores_artifact_and_seeds_greeting() {
+        let sandbox = TestSandbox::new("character-card-import");
+        let (repo, _) = test_repo(&sandbox, 1_725_647_200_000);
+
+        let imported = repo
+            .import_character_card(crate::ImportCharacterCardRequest {
+                card: crate::CharacterCard::from_json_str(
+                    r#"{
+                        "name": "Aster",
+                        "description": "A patient observatory guide.",
+                        "first_mes": "Welcome back to the observatory.",
+                        "tags": ["stellar"]
+                    }"#,
+                )
+                .unwrap(),
+                session_name: Some("Aster Intake".to_owned()),
+                tags: vec!["phase1f".to_owned()],
+                provenance: "tests/cards/aster.json".to_owned(),
+            })
+            .unwrap();
+
+        assert_eq!(imported.session.name, "Aster Intake");
+        assert_eq!(imported.session.character_name.as_deref(), Some("Aster"));
+        assert_eq!(
+            imported.session.tags,
+            vec!["stellar".to_owned(), "phase1f".to_owned()]
+        );
+        assert!(imported.seeded_branch_id.is_some());
+        assert!(imported.seeded_message_id.is_some());
+
+        let stored = repo
+            .get_character_card(&imported.session.session_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(stored.provenance, "tests/cards/aster.json");
+        assert_eq!(stored.card.name, "Aster");
+
+        let transcript = repo
+            .get_active_branch_transcript(&imported.session.session_id)
+            .unwrap();
+        assert_eq!(transcript.len(), 1);
+        assert_eq!(transcript[0].author_kind, "assistant");
+        assert_eq!(transcript[0].author_name.as_deref(), Some("Aster"));
+        assert_eq!(transcript[0].content, "Welcome back to the observatory.");
+    }
+
+    #[test]
+    fn session_export_includes_character_cards_bookmarks_and_swipes() {
+        let sandbox = TestSandbox::new("session-export");
+        let (repo, _) = test_repo(&sandbox, 1_725_647_200_000);
+
+        let imported = repo
+            .import_character_card(crate::ImportCharacterCardRequest {
+                card: crate::CharacterCard::from_json_str(
+                    r#"{
+                        "name": "Aster",
+                        "description": "A patient observatory guide.",
+                        "first_mes": "Welcome back to the observatory."
+                    }"#,
+                )
+                .unwrap(),
+                session_name: None,
+                tags: vec!["phase1f".to_owned()],
+                provenance: "tests/cards/aster.json".to_owned(),
+            })
+            .unwrap();
+        let session_id = imported.session.session_id.clone();
+        let greeting_id = imported.seeded_message_id.clone().unwrap();
+
+        repo.set_message_bookmark(&session_id, &greeting_id, true, Some("opening".to_owned()))
+            .unwrap();
+
+        let swipe_group_id = swipe_group_id("d23e4567-e89b-12d3-a456-426614174000");
+        repo.record_swipe_candidate(
+            &session_id,
+            RecordSwipeCandidateCommand {
+                group: SwipeGroup::new(swipe_group_id.clone(), greeting_id.clone()),
+                candidate: SwipeCandidate::new(swipe_group_id.clone(), 0, greeting_id.clone()),
+            },
+        )
+        .unwrap();
+        let alternate = repo
+            .insert_message(
+                &session_id,
+                CreateMessageRequest {
+                    parent_id: None,
+                    author_kind: "assistant".to_owned(),
+                    author_name: Some("Aster".to_owned()),
+                    content: "The stars have shifted since your last visit.".to_owned(),
+                },
+            )
+            .unwrap();
+        repo.record_swipe_candidate(
+            &session_id,
+            RecordSwipeCandidateCommand {
+                group: SwipeGroup::new(swipe_group_id.clone(), greeting_id.clone()),
+                candidate: SwipeCandidate::new(
+                    swipe_group_id.clone(),
+                    1,
+                    MessageId::parse(alternate.message_id).unwrap(),
+                ),
+            },
+        )
+        .unwrap();
+
+        let export = repo.export_session(&session_id).unwrap();
+        let json = export.to_pretty_json().unwrap();
+
+        assert_eq!(export.format, SESSION_EXPORT_FORMAT);
+        assert_eq!(export.session.session_id, session_id.to_string());
+        assert_eq!(export.character_card.as_ref().unwrap().card.name, "Aster");
+        assert_eq!(export.branches.len(), 1);
+        assert_eq!(
+            export.branches[0].transcript_message_ids,
+            vec![greeting_id.to_string()]
+        );
+        assert_eq!(export.messages.len(), 2);
+        assert_eq!(export.bookmarks.len(), 1);
+        assert_eq!(export.swipe_groups.len(), 1);
+        assert_eq!(export.swipe_groups[0].candidates.len(), 2);
+        assert!(json.contains("\"format\": \"ozone-plus.session-export.v1\""));
+    }
+
+    #[test]
+    fn transcript_export_preserves_branch_message_order() {
+        let sandbox = TestSandbox::new("transcript-export");
+        let (repo, _) = test_repo(&sandbox, 1_725_647_200_000);
+        let session = repo
+            .create_session(CreateSessionRequest::new("Transcript Export Session"))
+            .unwrap();
+        let root = repo
+            .insert_message(
+                &session.session_id,
+                CreateMessageRequest::user("Root prompt"),
+            )
+            .unwrap();
+        let root_id = MessageId::parse(root.message_id).unwrap();
+        let branch_id = branch_id("e23e4567-e89b-12d3-a456-426614174000");
+        let mut branch = ConversationBranch::new(
+            branch_id.clone(),
+            session.session_id.clone(),
+            "main",
+            root_id.clone(),
+            1_725_647_200_050,
+        );
+        branch.state = BranchState::Active;
+        repo.create_branch(CreateBranchCommand {
+            branch,
+            forked_from: root_id.clone(),
+        })
+        .unwrap();
+
+        let assistant_id = message_id("f23e4567-e89b-12d3-a456-426614174000");
+        let mut assistant = ConversationMessage::new(
+            session.session_id.clone(),
+            assistant_id.clone(),
+            "assistant",
+            "Assistant reply",
+            1_725_647_200_100,
+        );
+        assistant.parent_id = Some(root_id.clone());
+        repo.commit_message(CommitMessageCommand {
+            branch_id: branch_id.clone(),
+            message: assistant,
+        })
+        .unwrap();
+
+        let user_follow_up_id = message_id("123e4567-e89b-42d3-a456-426614174000");
+        let mut user_follow_up = ConversationMessage::new(
+            session.session_id.clone(),
+            user_follow_up_id.clone(),
+            "user",
+            "User follow-up",
+            1_725_647_200_150,
+        );
+        user_follow_up.parent_id = Some(assistant_id.clone());
+        repo.commit_message(CommitMessageCommand {
+            branch_id: branch_id.clone(),
+            message: user_follow_up,
+        })
+        .unwrap();
+
+        let export = repo
+            .export_transcript(&session.session_id, Some(&branch_id))
+            .unwrap();
+        let ids = export
+            .messages
+            .iter()
+            .map(|message| message.message_id.clone())
+            .collect::<Vec<_>>();
+
+        assert_eq!(export.format, TRANSCRIPT_EXPORT_FORMAT);
+        assert_eq!(
+            export.branch.as_ref().unwrap().branch_id,
+            branch_id.to_string()
+        );
+        assert_eq!(
+            ids,
+            vec![
+                root_id.to_string(),
+                assistant_id.to_string(),
+                user_follow_up_id.to_string()
+            ]
         );
     }
 

@@ -6,7 +6,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{FocusTarget, InspectorFocus, RuntimePhase, ScreenState, ShellState},
+    app::{ContextPreview, FocusTarget, InspectorFocus, RuntimePhase, ScreenState, ShellState},
     input::InputMode,
     layout::{LayoutMode, LayoutModel, PaneId, PaneLayout},
 };
@@ -15,6 +15,7 @@ use crate::{
 pub struct ConversationEntryModel {
     pub author: String,
     pub content: String,
+    pub is_bookmarked: bool,
     pub selected: bool,
 }
 
@@ -101,19 +102,34 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
     let conversation = ConversationPaneModel {
         title: "Conversation".into(),
         subtitle: format!("{} · {}", indicators.selection, indicators.branch),
-        entries: state
-            .session
-            .transcript
-            .iter()
-            .enumerate()
-            .map(|(index, item)| ConversationEntryModel {
-                author: item.author.clone(),
-                content: item.content.clone(),
-                selected: state.session.selected_message == Some(index),
-            })
-            .collect(),
+        entries: {
+            let mut entries: Vec<ConversationEntryModel> = state
+                .session
+                .transcript
+                .iter()
+                .enumerate()
+                .map(|(index, item)| ConversationEntryModel {
+                    author: item.author.clone(),
+                    content: item.content.clone(),
+                    is_bookmarked: item.is_bookmarked,
+                    selected: state.session.selected_message == Some(index),
+                })
+                .collect();
+            // Show streamed partial content as a transient entry while generating.
+            if let Some(partial) = state.session.runtime.partial_content() {
+                entries.push(ConversationEntryModel {
+                    author: "assistant".into(),
+                    content: format!("{partial}▍"),
+                    is_bookmarked: false,
+                    selected: false,
+                });
+            }
+            entries
+        },
         empty_state: "Transcript will appear here once ozone+ opens a live session.".into(),
-        hint: "j/k move · Tab composer · i insert · Ctrl+I inspector · ? help".into(),
+        hint:
+            "j/k move · b bookmark · Tab composer · i insert · Ctrl+D dry run · Ctrl+I inspector · ? help"
+                .into(),
     };
 
     let composer = ComposerPaneModel {
@@ -139,23 +155,26 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         notifications: vec![
             format!("screen {} · focus {}", indicators.screen, indicators.focus),
             format!("{} · {}", indicators.selection, indicators.branch),
+            state
+                .session_stats
+                .as_ref()
+                .map(|stats| {
+                    format!(
+                        "{} messages · {} branches · {} bookmarks",
+                        stats.message_count, stats.branch_count, stats.bookmark_count
+                    )
+                })
+                .unwrap_or_else(|| "session stats pending".into()),
             runtime_label(&state.session.runtime),
             inspector_visibility_label(layout, state),
+            context_status_line(state),
         ],
         hint: "? help · q quit".into(),
     };
 
     let inspector = layout.inspector.map(|_| InspectorPaneModel {
         title: "Inspector".into(),
-        lines: vec![
-            format!("session {}", state.session.context.session_id),
-            indicators.branch.clone(),
-            indicators.selection.clone(),
-            format!("focus {}", inspector_focus_label(state.inspector.focus)),
-            runtime_label(&state.session.runtime),
-            "placeholder pane for metadata, tools, and branch context".into(),
-            "later phases can replace this with richer ozone+ detail".into(),
-        ],
+        lines: inspector_lines(state, &indicators),
     });
 
     RenderModel {
@@ -230,9 +249,18 @@ fn render_conversation(frame: &mut Frame, pane: &PaneLayout, model: &RenderModel
             } else {
                 Style::default().fg(Color::Gray)
             };
+            let bookmark_style = if entry.is_bookmarked {
+                Style::default().fg(Color::Yellow)
+            } else {
+                muted_style()
+            };
 
             lines.push(Line::from(vec![
                 Span::styled(marker, marker_style),
+                Span::styled(
+                    if entry.is_bookmarked { "★ " } else { "  " },
+                    bookmark_style,
+                ),
                 Span::styled(format!("{:<10}", entry.author), author_style),
                 Span::raw(" "),
                 Span::raw(entry.content.clone()),
@@ -453,6 +481,98 @@ fn runtime_label(runtime: &RuntimePhase) -> String {
             Some(request_id) => format!("runtime cancelled · {} · {}", request_id, reason),
             None => format!("runtime cancelled · {}", reason),
         },
+        RuntimePhase::Failed {
+            request_id,
+            message,
+            ..
+        } => match request_id {
+            Some(request_id) => format!("runtime failed · {} · {}", request_id, message),
+            None => format!("runtime failed · {}", message),
+        },
+    }
+}
+
+fn context_status_line(state: &ShellState) -> String {
+    state
+        .context_preview
+        .as_ref()
+        .map(|preview| format!("context {}", preview.inline_status))
+        .unwrap_or_else(|| "context preview pending".into())
+}
+
+fn inspector_lines(state: &ShellState, indicators: &ShellIndicators) -> Vec<String> {
+    let mut lines = vec![
+        format!("session {}", state.session.context.session_id),
+        format!("name {}", state.session.context.title),
+        indicators.branch.clone(),
+        indicators.selection.clone(),
+        format!("focus {}", inspector_focus_label(state.inspector.focus)),
+        state
+            .session_metadata
+            .as_ref()
+            .map(|metadata| {
+                format!(
+                    "character {}",
+                    metadata
+                        .character_name
+                        .as_deref()
+                        .filter(|value| !value.is_empty())
+                        .unwrap_or("—")
+                )
+            })
+            .unwrap_or_else(|| "character —".into()),
+        state
+            .session_metadata
+            .as_ref()
+            .map(|metadata| format!("tags {}", format_tags(&metadata.tags)))
+            .unwrap_or_else(|| "tags —".into()),
+        state
+            .session_stats
+            .as_ref()
+            .map(|stats| {
+                format!(
+                    "stats {} messages · {} branches · {} bookmarks",
+                    stats.message_count, stats.branch_count, stats.bookmark_count
+                )
+            })
+            .unwrap_or_else(|| "stats pending".into()),
+        selected_message_line(state),
+        runtime_label(&state.session.runtime),
+    ];
+
+    if let Some(preview) = state.context_preview.as_ref() {
+        lines.push(format!("context preview · {}", preview.summary));
+        if let Some(selected_items) = preview.selected_items {
+            lines.push(format!("included items {selected_items}"));
+        }
+        if let Some(omitted_items) = preview.omitted_items {
+            lines.push(format!("omitted items {omitted_items}"));
+        }
+        if let Some(token_budget) = preview.token_budget.as_ref() {
+            lines.push(format!(
+                "token budget {} / {}",
+                token_budget.used_tokens, token_budget.max_tokens
+            ));
+        }
+        append_context_preview_lines(&mut lines, preview);
+    } else {
+        lines.push("context preview unavailable (send a prompt to build one)".into());
+    }
+
+    match state.context_dry_run.as_ref() {
+        Some(dry_run) => lines.push(format!(
+            "dry run captured at {} · {}",
+            dry_run.built_at, dry_run.summary
+        )),
+        None => lines.push("dry run not captured yet".into()),
+    }
+
+    lines
+}
+
+fn append_context_preview_lines(lines: &mut Vec<String>, preview: &ContextPreview) {
+    for line in &preview.lines {
+        lines.push(format!("· {line}"));
     }
 }
 
@@ -480,9 +600,11 @@ fn inspector_focus_label(focus: InspectorFocus) -> &'static str {
 
 fn composer_hint(input_mode: InputMode) -> &'static str {
     match input_mode {
-        InputMode::Normal => "i insert · Tab conversation · Ctrl+I inspector · ? help",
-        InputMode::Insert => "Enter send · Ctrl+C cancel · Ctrl+I inspector",
-        InputMode::Command => "Enter send · Ctrl+C cancel · Esc normal",
+        InputMode::Normal => {
+            "i insert · b bookmark · Tab conversation · Ctrl+D dry run · Ctrl+I inspector · ? help"
+        }
+        InputMode::Insert => "Enter send · Ctrl+C cancel · Ctrl+D dry run · Ctrl+I inspector",
+        InputMode::Command => "Enter send · Ctrl+C cancel · Ctrl+D dry run · Esc normal",
     }
 }
 
@@ -496,9 +618,15 @@ fn overlay_model(screen: ScreenState, input_mode: InputMode) -> Option<OverlayRe
                 "j / k move selection".into(),
                 "Tab switch conversation and composer focus".into(),
                 "i enter insert mode".into(),
+                "b toggle bookmark on the selected persisted message".into(),
                 "Enter sends the current draft".into(),
-                "Ctrl+C cancels mock generation".into(),
+                "Ctrl+C cancels generation".into(),
+                "Ctrl+D builds a context dry run preview".into(),
                 "Ctrl+I toggles the inspector".into(),
+                "/session show prints current session metadata".into(),
+                "/session rename NAME updates the session title".into(),
+                "/session character NAME|clear updates the character field".into(),
+                "/session tags a,b|clear replaces the session tags".into(),
                 "q requests quit".into(),
             ],
         }),
@@ -510,6 +638,33 @@ fn overlay_model(screen: ScreenState, input_mode: InputMode) -> Option<OverlayRe
                 "pending runtime work stays outside this render slice".into(),
             ],
         }),
+    }
+}
+
+fn selected_message_line(state: &ShellState) -> String {
+    state
+        .session
+        .selected_message
+        .and_then(|index| state.session.transcript.get(index))
+        .map(|item| {
+            format!(
+                "selected {}{}",
+                item.author,
+                if item.is_bookmarked {
+                    " · bookmarked"
+                } else {
+                    ""
+                }
+            )
+        })
+        .unwrap_or_else(|| "selected message unavailable".into())
+}
+
+fn format_tags(tags: &[String]) -> String {
+    if tags.is_empty() {
+        "—".into()
+    } else {
+        tags.join(", ")
     }
 }
 
@@ -531,8 +686,8 @@ mod tests {
         let mut state = ShellState::new(context);
         state.hydrate(AppBootstrap {
             transcript: vec![
-                TranscriptItem::new("user", "hello skeleton"),
-                TranscriptItem::new("assistant", "believable shell ready"),
+                TranscriptItem::persisted("msg-1", "user", "hello skeleton", false),
+                TranscriptItem::persisted("msg-2", "assistant", "believable shell ready", true),
             ],
             branches: vec![
                 BranchItem::new("main", "main", true),
@@ -541,6 +696,17 @@ mod tests {
             status_line: Some("mock runtime ready".into()),
             draft: Some(DraftState::with_text("draft reply")),
             screen: None,
+            session_metadata: Some(crate::app::SessionMetadata {
+                character_name: Some("Beatrice".into()),
+                tags: vec!["story".into()],
+            }),
+            session_stats: Some(crate::app::SessionStats {
+                message_count: 2,
+                branch_count: 2,
+                bookmark_count: 1,
+            }),
+            context_preview: None,
+            context_dry_run: None,
         });
         state.session.selected_message = Some(1);
         state
@@ -605,6 +771,72 @@ mod tests {
         assert!(rendered.contains("branch main"));
         assert!(rendered.contains("INSERT"));
         assert!(rendered.contains("123e4567"));
+        assert!(rendered.contains("context preview unavailable"));
+    }
+
+    #[test]
+    fn streaming_partial_content_appears_as_transient_entry_while_generating() {
+        use crate::app::{RuntimeProgress, RuntimeSendReceipt, TranscriptItem};
+
+        let mut state = seeded_state();
+        state.apply_send_receipt(RuntimeSendReceipt {
+            request_id: "req-stream-1".into(),
+            user_message: TranscriptItem::new("user", "stream test"),
+            context_preview: None,
+            context_dry_run: None,
+        });
+        state.apply_runtime_progress(RuntimeProgress {
+            request_id: "req-stream-1".into(),
+            partial_content: "streaming reply so far".into(),
+        });
+
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
+        let model = build_render_model(&state, &layout);
+
+        // The partial content should appear as an extra entry with a cursor marker
+        let partial_entry = model
+            .conversation
+            .entries
+            .last()
+            .expect("at least one entry");
+        assert_eq!(partial_entry.author, "assistant");
+        assert!(
+            partial_entry.content.contains("streaming reply so far"),
+            "partial entry should contain streamed text"
+        );
+        assert!(
+            partial_entry.content.contains('▍'),
+            "partial entry should have cursor marker"
+        );
+    }
+
+    #[test]
+    fn failed_runtime_label_includes_message() {
+        use crate::app::{RuntimeFailure, RuntimeSendReceipt, TranscriptItem};
+
+        let mut state = seeded_state();
+        state.apply_send_receipt(RuntimeSendReceipt {
+            request_id: "req-fail-1".into(),
+            user_message: TranscriptItem::new("user", "fail test"),
+            context_preview: None,
+            context_dry_run: None,
+        });
+        state.apply_runtime_failure(RuntimeFailure {
+            request_id: "req-fail-1".into(),
+            message: "context window exceeded".into(),
+        });
+
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
+        let model = build_render_model(&state, &layout);
+
+        assert!(
+            model
+                .status
+                .notifications
+                .iter()
+                .any(|n| n.contains("runtime failed") && n.contains("req-fail-1")),
+            "status notifications should mention runtime failed"
+        );
     }
 
     fn render_to_string(

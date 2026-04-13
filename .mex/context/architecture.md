@@ -10,7 +10,7 @@ edges:
     condition: when specific technology details are needed
   - target: context/decisions.md
     condition: when understanding why the architecture is structured this way
-last_updated: 2026-04-12
+last_updated: 2026-04-13
 ---
 
 # Architecture
@@ -30,11 +30,12 @@ Monitor mode shows live VRAM/RAM/CPU/services with 2s refresh.
 ## Key Components
 
 - Cargo root package `ozone`: the current middle-tier Rust TUI app in `src/`.
-- apps/ozone-plus: Phase 1C ozone+ app that now combines the persisted session CLI surfaces with the default `open` TUI shell, a local session-runtime adapter, and mock assistant generation on top of the real engine/persistence path.
+- apps/ozone-plus: Phase 1D ozone+ app that now combines the persisted session CLI surfaces with the default `open` TUI shell, an app-side inference adapter, and a real async session-runtime bridge that streams assistant turns on top of the engine/persistence path.
 - crates/ozone-core: shared product metadata and ozone data/log path helpers.
-- crates/ozone-engine: trait-first single-writer conversation engine surface with command processing, broadcast events, snapshots, and an in-memory store used by engine tests.
+- crates/ozone-engine: trait-first single-writer conversation engine surface with command processing, broadcast events, snapshots, an in-memory store used by engine tests, and the first explicit Phase 1E context-assembly module (`ContextPlan` / `ContextAssembler`).
+- crates/ozone-inference: layered config loader, prompt-template registry, streaming decoder, backend descriptors, and the first KoboldCpp gateway implementation for ozone+.
 - crates/ozone-persist: ozone+ persistence layer with schema setup, migrations, advisory locks, and durable transcript/branch/swipe repository APIs.
-- crates/ozone-tui: ozone+ shell crate with session state, key/input handling, responsive layout models, ratatui rendering, and the generic terminal event loop used by `apps/ozone-plus`.
+- crates/ozone-tui: ozone+ shell crate with session state, key/input handling, responsive layout models, ratatui rendering, the generic terminal event loop used by `apps/ozone-plus`, plus the generic context preview / dry-run / inspector surface introduced in Phase 1E.
 - catalog.rs: Reads model files, parses presets/benchmarks. Produces CatalogRecord.
 - planner.rs: Mixed-memory launch planner. estimate_vram_mb() predicts VRAM usage.
 - profiling.rs: TUI-facing advisory/orchestration layer. Validates model/launcher paths, recommends next actions, runs profiling workflows, and classifies failures into actionable reports.
@@ -58,4 +59,4 @@ Monitor mode shows live VRAM/RAM/CPU/services with 2s refresh.
 - No direct inference.
 - No web UI (terminal only).
 - No Windows support (Linux only).
-- No real backend streaming or context assembly yet; Phase 1C now provides the TUI shell, but Phase 1D still needs to replace the mock assistant path with a real local model adapter.
+- No ozone+ memory system, assistive layer, or scenes/group-chat foundation yet; Phase 1E now provides the first explicit context pipeline and inspector, while later phases extend product polish and higher-level systems.

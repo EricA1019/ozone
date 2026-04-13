@@ -1,9 +1,17 @@
 mod error;
+mod import_export;
 mod migration;
 mod repository;
 mod schema;
 
 pub use error::{PersistError, Result};
+pub use import_export::{
+    CharacterCard, ImportCharacterCardRequest, ImportedCharacterCard, SessionExport,
+    SessionExportBookmark, SessionExportBranch, SessionExportMessage, SessionExportSummary,
+    SessionExportSwipeCandidate, SessionExportSwipeGroup, StoredCharacterCard, TranscriptExport,
+    TranscriptExportBranch, TranscriptExportSession, CHARACTER_CARD_FORMAT, SESSION_EXPORT_FORMAT,
+    TRANSCRIPT_EXPORT_FORMAT,
+};
 pub use ozone_core::engine::{
     ActivateSwipeCommand, BranchId, BranchState, CommitMessageCommand, ConversationBranch,
     ConversationMessage, CreateBranchCommand, MessageId, RecordSwipeCandidateCommand,
@@ -11,8 +19,10 @@ pub use ozone_core::engine::{
 };
 pub use ozone_core::session::{
     CreateSessionRequest, SessionId, SessionRecord, SessionSummary, UnixTimestamp,
+    UpdateSessionRequest,
 };
 pub use repository::{
-    BranchRecord, CreateMessageRequest, EditMessageRequest, MessageEditRecord, MessageRecord,
-    MessageSearchHit, PersistencePaths, SessionLock, SqliteRepository, STALE_LOCK_TIMEOUT_MS,
+    BookmarkRecord, BranchRecord, CreateMessageRequest, EditMessageRequest, MessageEditRecord,
+    MessageRecord, MessageSearchHit, PersistencePaths, SessionLock, SqliteRepository,
+    STALE_LOCK_TIMEOUT_MS,
 };

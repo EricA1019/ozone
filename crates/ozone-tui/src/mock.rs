@@ -4,8 +4,9 @@ use ozone_core::engine::CancelReason;
 
 use crate::{
     app::{
-        AppBootstrap, BranchItem, DraftCheckpoint, DraftState, RuntimeCancellation, RuntimeCompletion,
-        RuntimeSendReceipt, SessionContext, TranscriptItem,
+        AppBootstrap, BranchItem, DraftCheckpoint, DraftState, GenerationPoll, RuntimeCancellation,
+        RuntimeCompletion, RuntimeContextRefresh, RuntimeSendReceipt, SessionContext,
+        TranscriptItem,
     },
     input::KeyAction,
 };
@@ -31,6 +32,29 @@ pub trait SessionRuntime {
         Ok(None)
     }
 
+    /// Poll the runtime for generation progress. Called on every event-loop
+    /// tick while the shell is in `RuntimePhase::Generating`.
+    ///
+    /// - Return `Some(GenerationPoll::Pending { .. })` while still running.
+    /// - Return `Some(GenerationPoll::Completed(...))` when done.
+    /// - Return `Some(GenerationPoll::Failed(...))` on unrecoverable error.
+    /// - Return `None` when no generation is active (idempotent, safe to call).
+    ///
+    /// The default implementation delegates to `complete_generation` for
+    /// backward compatibility with runtimes that implemented the Phase 1C
+    /// timer-based interface.
+    fn poll_generation(
+        &mut self,
+        context: &SessionContext,
+    ) -> Result<Option<GenerationPoll>, Self::Error> {
+        Ok(self
+            .complete_generation(context)?
+            .map(GenerationPoll::Completed))
+    }
+
+    /// Legacy single-shot completion hook. Prefer `poll_generation` for new
+    /// implementations; this method is retained so existing runtimes that only
+    /// implement it still work via the `poll_generation` default.
     fn complete_generation(
         &mut self,
         _context: &SessionContext,
@@ -42,6 +66,29 @@ pub trait SessionRuntime {
         &mut self,
         _context: &SessionContext,
     ) -> Result<Option<RuntimeCancellation>, Self::Error> {
+        Ok(None)
+    }
+
+    fn build_context_dry_run(
+        &mut self,
+        _context: &SessionContext,
+    ) -> Result<Option<RuntimeContextRefresh>, Self::Error> {
+        Ok(None)
+    }
+
+    fn toggle_bookmark(
+        &mut self,
+        _context: &SessionContext,
+        _message_id: &str,
+    ) -> Result<Option<RuntimeContextRefresh>, Self::Error> {
+        Ok(None)
+    }
+
+    fn run_command(
+        &mut self,
+        _context: &SessionContext,
+        _input: &str,
+    ) -> Result<Option<RuntimeContextRefresh>, Self::Error> {
         Ok(None)
     }
 
@@ -69,6 +116,7 @@ pub struct MockRuntime {
     pub sent_prompts: Vec<String>,
     pub completed_requests: Vec<String>,
     pub cancelled_requests: Vec<String>,
+    pub polled_requests: Vec<String>,
     pub persisted_drafts: BTreeMap<String, String>,
     pub active_generation: Option<MockGeneration>,
     next_request_number: u64,
@@ -83,6 +131,7 @@ impl Default for MockRuntime {
             sent_prompts: Vec::new(),
             completed_requests: Vec::new(),
             cancelled_requests: Vec::new(),
+            polled_requests: Vec::new(),
             persisted_drafts: BTreeMap::new(),
             active_generation: None,
             next_request_number: 1,
@@ -105,6 +154,10 @@ impl MockRuntime {
             status_line: Some("mock runtime ready".into()),
             draft: Some(DraftState::default()),
             screen: None,
+            session_metadata: None,
+            session_stats: None,
+            context_preview: None,
+            context_dry_run: None,
         })
     }
 
@@ -173,6 +226,8 @@ impl SessionRuntime for MockRuntime {
         Ok(Some(RuntimeSendReceipt {
             request_id,
             user_message,
+            context_preview: None,
+            context_dry_run: None,
         }))
     }
 
@@ -195,6 +250,21 @@ impl SessionRuntime for MockRuntime {
             request_id: generation.request_id,
             assistant_message,
         }))
+    }
+
+    /// Overrides the default to record polling activity and immediately return
+    /// `Completed` — the mock has no real async work so it completes on the
+    /// first poll rather than waiting for an external timer.
+    fn poll_generation(
+        &mut self,
+        context: &SessionContext,
+    ) -> Result<Option<GenerationPoll>, Self::Error> {
+        if let Some(ref gen) = self.active_generation {
+            self.polled_requests.push(gen.request_id.clone());
+        }
+        Ok(self
+            .complete_generation(context)?
+            .map(GenerationPoll::Completed))
     }
 
     fn cancel_generation(
@@ -242,7 +312,7 @@ mod tests {
     use ozone_core::{engine::CancelReason, session::SessionId};
 
     use super::{MockRuntime, SessionRuntime};
-    use crate::app::{DraftState, SessionContext, TranscriptItem};
+    use crate::app::{DraftState, GenerationPoll, SessionContext, TranscriptItem};
 
     fn session_context() -> SessionContext {
         let session_id = SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap();
@@ -328,5 +398,48 @@ mod tests {
                 "draft from persistence".chars().count()
             )))
         );
+    }
+
+    #[test]
+    fn poll_generation_completes_immediately_and_records_poll() {
+        let context = session_context();
+        let mut runtime = MockRuntime::seeded();
+
+        runtime.send_draft(&context, "poll me").unwrap();
+        assert_eq!(runtime.polled_requests, Vec::<String>::new());
+
+        let poll = runtime.poll_generation(&context).unwrap().unwrap();
+        assert!(
+            matches!(poll, GenerationPoll::Completed(ref c) if c.request_id == "mock-request-1")
+        );
+        assert_eq!(runtime.polled_requests, vec!["mock-request-1".to_string()]);
+        assert!(runtime.active_generation.is_none());
+        assert_eq!(
+            runtime.completed_requests,
+            vec!["mock-request-1".to_string()]
+        );
+    }
+
+    #[test]
+    fn poll_generation_returns_none_when_idle() {
+        let context = session_context();
+        let mut runtime = MockRuntime::seeded();
+
+        let poll = runtime.poll_generation(&context).unwrap();
+        assert!(poll.is_none());
+        assert!(runtime.polled_requests.is_empty());
+    }
+
+    #[test]
+    fn poll_generation_does_not_fire_after_cancel() {
+        let context = session_context();
+        let mut runtime = MockRuntime::seeded();
+
+        runtime.send_draft(&context, "cancel before poll").unwrap();
+        runtime.cancel_generation(&context).unwrap();
+
+        let poll = runtime.poll_generation(&context).unwrap();
+        assert!(poll.is_none());
+        assert!(runtime.polled_requests.is_empty());
     }
 }

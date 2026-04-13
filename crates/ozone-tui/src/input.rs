@@ -19,6 +19,8 @@ pub enum KeyAction {
     SubmitDraft,
     CancelGeneration,
     ToggleInspector,
+    TriggerContextDryRun,
+    ToggleBookmark,
     HistoryPrevious,
     HistoryNext,
     DraftInsertChar(char),
@@ -41,6 +43,10 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
         return KeyAction::ToggleInspector;
     }
 
+    if is_ctrl_d(key) {
+        return KeyAction::TriggerContextDryRun;
+    }
+
     match input_mode {
         InputMode::Normal => match key.code {
             KeyCode::Up | KeyCode::Char('k') => KeyAction::MoveSelectionUp,
@@ -48,6 +54,7 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
             KeyCode::Char('i') => KeyAction::EnterInsert,
             KeyCode::Tab => KeyAction::FocusDraft,
             KeyCode::Char('t') => KeyAction::FocusTranscript,
+            KeyCode::Char('b') => KeyAction::ToggleBookmark,
             KeyCode::Char('?') => KeyAction::ToggleHelp,
             KeyCode::Esc | KeyCode::Char('q') => KeyAction::ConfirmQuit,
             _ => KeyAction::Noop,
@@ -96,6 +103,11 @@ fn is_ctrl_i(key: KeyEvent) -> bool {
         )
 }
 
+fn is_ctrl_d(key: KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Char('d') | KeyCode::Char('D'))
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -117,6 +129,13 @@ mod tests {
                 KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)
             ),
             KeyAction::MoveSelectionDown
+        );
+        assert_eq!(
+            dispatch_key(
+                InputMode::Normal,
+                KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE)
+            ),
+            KeyAction::ToggleBookmark
         );
     }
 
@@ -142,6 +161,13 @@ mod tests {
                 KeyEvent::new(KeyCode::Char('i'), KeyModifiers::CONTROL)
             ),
             KeyAction::ToggleInspector
+        );
+        assert_eq!(
+            dispatch_key(
+                InputMode::Insert,
+                KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)
+            ),
+            KeyAction::TriggerContextDryRun
         );
     }
 

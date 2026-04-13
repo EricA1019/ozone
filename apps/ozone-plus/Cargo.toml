@@ -3,12 +3,14 @@ name = "ozone-plus"
 version = "0.1.0"
 edition = "2021"
 publish = false
-description = "Phase 1C ozone+ chat shell with engine-backed persistence"
+description = "Phase 1F ozone+ chat shell — import/export + product polish"
 license = "MIT"
 
 [dependencies]
 clap = { version = "4", features = ["derive"] }
 ozone-core = { path = "../../crates/ozone-core" }
 ozone-engine = { path = "../../crates/ozone-engine" }
+ozone-inference = { path = "../../crates/ozone-inference" }
 ozone-persist = { path = "../../crates/ozone-persist" }
 ozone-tui = { path = "../../crates/ozone-tui" }
+tokio = { version = "1", features = ["rt", "sync"] }

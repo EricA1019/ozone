@@ -11,6 +11,8 @@ use ozone_core::{
 };
 use tokio::sync::broadcast;
 
+pub mod context;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditMessageCommand {
     pub session_id: SessionId,

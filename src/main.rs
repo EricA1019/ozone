@@ -5,8 +5,8 @@ mod db;
 mod hardware;
 mod planner;
 mod prefs;
-mod profiling;
 mod processes;
+mod profiling;
 mod sweep;
 mod theme;
 mod ui;
@@ -39,7 +39,12 @@ enum Commands {
     Bench {
         /// Model filename (e.g. mn-12b-mag-mell-r1.gguf)
         model: String,
-        #[arg(long, default_value = "-1", allow_hyphen_values = true, help = "GPU layers (-1 = all)")]
+        #[arg(
+            long,
+            default_value = "-1",
+            allow_hyphen_values = true,
+            help = "GPU layers (-1 = all)"
+        )]
         gpu_layers: i32,
         #[arg(long, default_value = "4096", help = "Context size")]
         context: u32,
@@ -82,7 +87,9 @@ async fn main() -> Result<()> {
             if killed.is_empty() {
                 println!("No GPU backends running.");
             } else {
-                for k in &killed { println!("  Stopped: {k}"); }
+                for k in &killed {
+                    println!("  Stopped: {k}");
+                }
             }
             Ok(())
         }
@@ -92,23 +99,40 @@ async fn main() -> Result<()> {
             let model_dir = std::path::PathBuf::from(&home).join("models");
             let preset_file = model_dir.join("koboldcpp-presets.conf");
             let bench_file = model_dir.join("bench-results.txt");
-            let records = catalog::load_catalog(&model_dir, &preset_file, &bench_file).await.unwrap_or_default();
+            let records = catalog::load_catalog(&model_dir, &preset_file, &bench_file)
+                .await
+                .unwrap_or_default();
             if json {
                 println!("[");
                 for (i, r) in records.iter().enumerate() {
                     let comma = if i + 1 < records.len() { "," } else { "" };
-                    println!("  {{\"model\": \"{}\", \"size_gb\": {}, \"source\": \"{}\"}}{comma}",
-                        r.model_name, r.model_size_gb, r.recommendation.source.label());
+                    println!(
+                        "  {{\"model\": \"{}\", \"size_gb\": {}, \"source\": \"{}\"}}{comma}",
+                        r.model_name,
+                        r.model_size_gb,
+                        r.recommendation.source.label()
+                    );
                 }
                 println!("]");
             } else {
                 for r in &records {
-                    println!("  [{:5}]  {:.1} GB  {}", r.recommendation.source.label(), r.model_size_gb, r.model_name);
+                    println!(
+                        "  [{:5}]  {:.1} GB  {}",
+                        r.recommendation.source.label(),
+                        r.model_size_gb,
+                        r.model_name
+                    );
                 }
             }
             Ok(())
         }
-        Some(Commands::Bench { model, gpu_layers, context, quant_kv, threads }) => {
+        Some(Commands::Bench {
+            model,
+            gpu_layers,
+            context,
+            quant_kv,
+            threads,
+        }) => {
             let home = std::env::var("HOME").unwrap_or_default();
             let model_dir = std::path::PathBuf::from(&home).join("models");
             let model_path = model_dir.join(&model);
@@ -137,21 +161,39 @@ async fn main() -> Result<()> {
             println!();
 
             let result = bench::run_benchmark(
-                &model, &model_path, &launcher_path,
-                gpu_layers, context, quant_kv, threads,
-            ).await?;
+                &model,
+                &model_path,
+                &launcher_path,
+                gpu_layers,
+                context,
+                quant_kv,
+                threads,
+            )
+            .await?;
 
             bench::print_result(&model, gpu_layers, context, quant_kv, &result);
 
             // Store result
             let thread_count = threads.unwrap_or(0);
-            match bench::store_result(&model, model_size_gb, gpu_layers, context, quant_kv as u32, thread_count, &result) {
+            match bench::store_result(
+                &model,
+                model_size_gb,
+                gpu_layers,
+                context,
+                quant_kv as u32,
+                thread_count,
+                &result,
+            ) {
                 Ok(id) => eprintln!("  Stored as benchmark #{id}"),
                 Err(e) => eprintln!("  Warning: failed to store result: {e}"),
             }
             Ok(())
         }
-        Some(Commands::Sweep { model, max_context, quick }) => {
+        Some(Commands::Sweep {
+            model,
+            max_context,
+            quick,
+        }) => {
             let home = std::env::var("HOME").unwrap_or_default();
             let model_dir = std::path::PathBuf::from(&home).join("models");
             let model_path = model_dir.join(&model);
@@ -167,7 +209,9 @@ async fn main() -> Result<()> {
                 .unwrap_or(0.0);
 
             let hw = hardware::load_hardware();
-            let gpu_vram_budget_mb = hw.gpu.as_ref()
+            let gpu_vram_budget_mb = hw
+                .gpu
+                .as_ref()
                 .map(|g| (g.total_mb as f64 * 0.9) as u32)
                 .unwrap_or(0);
             let ram_total_mb = hw.ram_total_mb as u32;
@@ -196,10 +240,17 @@ async fn main() -> Result<()> {
             sweep::run_sweep(sweep_config).await?;
             Ok(())
         }
-        Some(Commands::Analyze { model, all, generate, profiles, export }) => {
+        Some(Commands::Analyze {
+            model,
+            all,
+            generate,
+            profiles,
+            export,
+        }) => {
             if export {
                 let home = std::env::var("HOME").unwrap_or_default();
-                let conf_path = std::path::PathBuf::from(&home).join("models/koboldcpp-presets.conf");
+                let conf_path =
+                    std::path::PathBuf::from(&home).join("models/koboldcpp-presets.conf");
                 analyze::export_presets_conf(&conf_path, model.as_deref())?;
             } else if profiles {
                 analyze::show_profiles(model.as_deref())?;

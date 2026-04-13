@@ -1,14 +1,14 @@
 use ratatui::{
-    Frame,
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph},
+    Frame,
 };
 
+use super::{App, ModelPickerMode};
 use crate::profiling::{ProfilingAction, WarningSeverity};
 use crate::theme::*;
-use super::{App, ModelPickerMode};
 
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
@@ -171,7 +171,10 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
                     Span::styled(format!("{} ", HEX_CURSOR), style_cyan()),
                     Span::styled(format!("{}", i + 1), style_gray()),
                     Span::raw("  "),
-                    Span::styled(*label, Style::default().fg(CYAN).add_modifier(Modifier::BOLD)),
+                    Span::styled(
+                        *label,
+                        Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+                    ),
                 ]))
             } else {
                 ListItem::new(Line::from(vec![
@@ -207,8 +210,14 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
     let total = filtered.len();
 
     let (mode_label, hint_label) = match app.model_picker_mode {
-        ModelPickerMode::Launch => ("Model Picker · Launch", " ↑↓ scroll · Enter launch plan · Esc back · type to filter"),
-        ModelPickerMode::Profile => ("Model Picker · Profile", " ↑↓ scroll · Enter advisory · Esc back · type to filter"),
+        ModelPickerMode::Launch => (
+            "Model Picker · Launch",
+            " ↑↓ scroll · Enter launch plan · Esc back · type to filter",
+        ),
+        ModelPickerMode::Profile => (
+            "Model Picker · Profile",
+            " ↑↓ scroll · Enter advisory · Esc back · type to filter",
+        ),
     };
 
     let mut title_spans = vec![
@@ -244,10 +253,7 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
         } else {
             "  No models match filter"
         };
-        f.render_widget(
-            Paragraph::new(Span::styled(msg, style_amber())),
-            inner,
-        );
+        f.render_widget(Paragraph::new(Span::styled(msg, style_amber())), inner);
         return;
     }
 
@@ -336,11 +342,19 @@ pub fn render_launching(f: &mut Frame, app: &App) {
     let area = f.area();
     let center = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Fill(1), Constraint::Length(8), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Length(8),
+            Constraint::Fill(1),
+        ])
         .split(area)[1];
     let center_h = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Fill(1), Constraint::Max(50), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Max(50),
+            Constraint::Fill(1),
+        ])
         .split(center)[1];
 
     let model = app
@@ -373,11 +387,19 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
     let area = f.area();
     let center = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Fill(1), Constraint::Length(12), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Length(12),
+            Constraint::Fill(1),
+        ])
         .split(area)[1];
     let center_h = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Fill(1), Constraint::Max(60), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Max(60),
+            Constraint::Fill(1),
+        ])
         .split(center)[1];
 
     if let Some(plan) = &app.current_plan {
@@ -488,13 +510,19 @@ pub fn render_profile_advisory(f: &mut Frame, app: &App) {
             Span::styled("  Recommendation: ", style_gray()),
             Span::styled(advisory.recommended_action.label(), style_amber()),
         ]),
-        Line::from(Span::styled(format!("  {}", advisory.rationale), style_gray())),
+        Line::from(Span::styled(
+            format!("  {}", advisory.rationale),
+            style_gray(),
+        )),
     ];
     let summary_block = Block::default()
         .title(Span::styled("  Profiling Advisor ", style_bold_cyan()))
         .borders(Borders::ALL)
         .border_style(style_violet());
-    f.render_widget(Paragraph::new(summary_lines).block(summary_block), chunks[0]);
+    f.render_widget(
+        Paragraph::new(summary_lines).block(summary_block),
+        chunks[0],
+    );
 
     let mut snapshot_lines = Vec::new();
     if let Some(vram) = advisory.estimated_vram_mb {
@@ -528,9 +556,7 @@ pub fn render_profile_advisory(f: &mut Frame, app: &App) {
             Span::styled(
                 format!(
                     "{} · {:.1} t/s · ctx {}",
-                    profile.profile_name,
-                    profile.tokens_per_sec,
-                    profile.context_size
+                    profile.profile_name, profile.tokens_per_sec, profile.context_size
                 ),
                 style_cyan(),
             ),
@@ -546,7 +572,10 @@ pub fn render_profile_advisory(f: &mut Frame, app: &App) {
         .title(Span::styled("  Snapshot ", style_bold_cyan()))
         .borders(Borders::ALL)
         .border_style(style_gray());
-    f.render_widget(Paragraph::new(snapshot_lines).block(snapshot_block), chunks[1]);
+    f.render_widget(
+        Paragraph::new(snapshot_lines).block(snapshot_block),
+        chunks[1],
+    );
 
     let mut warning_lines: Vec<Line> = advisory
         .warnings
@@ -568,7 +597,10 @@ pub fn render_profile_advisory(f: &mut Frame, app: &App) {
         .title(Span::styled("  Warnings ", style_bold_cyan()))
         .borders(Borders::ALL)
         .border_style(style_gray());
-    f.render_widget(Paragraph::new(warning_lines).block(warnings_block), chunks[2]);
+    f.render_widget(
+        Paragraph::new(warning_lines).block(warnings_block),
+        chunks[2],
+    );
 
     let actions = advisory.available_actions.clone();
     let (items, mut state) = action_items(&actions, app.profiling_choice_index);
@@ -592,21 +624,35 @@ pub fn render_profile_confirm(f: &mut Frame, app: &App) {
     let area = f.area();
     let center = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Fill(1), Constraint::Length(14), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Length(14),
+            Constraint::Fill(1),
+        ])
         .split(area)[1];
     let center_h = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Fill(1), Constraint::Max(76), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Max(76),
+            Constraint::Fill(1),
+        ])
         .split(center)[1];
 
     let mut lines = vec![
-        Line::from(Span::styled("  Confirm Profiling Step", style_bold_violet())),
+        Line::from(Span::styled(
+            "  Confirm Profiling Step",
+            style_bold_violet(),
+        )),
         Line::from(Span::raw("")),
         Line::from(vec![
             Span::styled("  Action: ", style_gray()),
             Span::styled(action.label(), style_cyan()),
         ]),
-        Line::from(Span::styled(format!("  {}", action.description()), style_gray())),
+        Line::from(Span::styled(
+            format!("  {}", action.description()),
+            style_gray(),
+        )),
     ];
     if action.clears_backends() {
         lines.push(Line::from(Span::styled(
@@ -642,14 +688,25 @@ pub fn render_profile_running(f: &mut Frame, app: &App) {
     let area = f.area();
     let center = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Fill(1), Constraint::Min(14), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Min(14),
+            Constraint::Fill(1),
+        ])
         .split(area)[1];
     let center_h = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Fill(1), Constraint::Max(84), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Max(84),
+            Constraint::Fill(1),
+        ])
         .split(center)[1];
     let block = Block::default()
-        .title(Span::styled("  Profiling In Progress ", style_bold_violet()))
+        .title(Span::styled(
+            "  Profiling In Progress ",
+            style_bold_violet(),
+        ))
         .title_bottom(Line::from(Span::styled(
             "  Esc cancel · please wait…",
             style_gray(),
@@ -661,7 +718,11 @@ pub fn render_profile_running(f: &mut Frame, app: &App) {
 
     let chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(2), Constraint::Length(3), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Length(2),
+            Constraint::Length(3),
+            Constraint::Fill(1),
+        ])
         .split(inner);
 
     let title = Paragraph::new(Line::from(vec![
@@ -671,8 +732,8 @@ pub fn render_profile_running(f: &mut Frame, app: &App) {
     f.render_widget(title, chunks[0]);
 
     if app.profiling_progress_total > 0 {
-        let ratio =
-            (app.profiling_progress_current as f64 / app.profiling_progress_total as f64).clamp(0.0, 1.0);
+        let ratio = (app.profiling_progress_current as f64 / app.profiling_progress_total as f64)
+            .clamp(0.0, 1.0);
         let gauge = Gauge::default()
             .label(format!(
                 "{}/{}",

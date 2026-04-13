@@ -1,11 +1,15 @@
-use crate::hardware::HardwareProfile;
 use crate::catalog::CatalogRecord;
+use crate::hardware::HardwareProfile;
 
 const MIB_PER_GIB: f64 = 1024.0;
 const VRAM_HEADROOM_RATIO: f64 = 0.9;
 
 #[derive(Debug, Clone, PartialEq)]
-pub enum RecommendationMode { VramFirst, MixedMemory, CpuOnly }
+pub enum RecommendationMode {
+    VramFirst,
+    MixedMemory,
+    CpuOnly,
+}
 
 impl RecommendationMode {
     pub fn label(&self) -> &'static str {
@@ -37,10 +41,15 @@ pub struct LaunchPlan {
 
 pub fn estimate_total_layers(size_gb: f64) -> u32 {
     let s = size_gb.max(0.1);
-    if s <= 8.0 { 32 }
-    else if s <= 12.5 { 40 }
-    else if s <= 20.0 { 48 }
-    else { 64 }
+    if s <= 8.0 {
+        32
+    } else if s <= 12.5 {
+        40
+    } else if s <= 20.0 {
+        48
+    } else {
+        64
+    }
 }
 
 fn quant_kv_memory_factor(quant_kv: u8) -> f64 {
@@ -49,17 +58,33 @@ fn quant_kv_memory_factor(quant_kv: u8) -> f64 {
 }
 
 fn gpu_layer_fraction(gpu_layers: i32, total_layers: u32) -> f64 {
-    if gpu_layers < 0 { return 1.0; }
-    if gpu_layers == 0 { return 0.0; }
+    if gpu_layers < 0 {
+        return 1.0;
+    }
+    if gpu_layers == 0 {
+        return 0.0;
+    }
     (gpu_layers as f64 / total_layers as f64).clamp(0.0, 1.0)
 }
 
-pub fn estimate_vram_mb(context_size: u32, gpu_layers: i32, size_gb: f64, quant_kv: u8, total_layers: u32) -> u32 {
+pub fn estimate_vram_mb(
+    context_size: u32,
+    gpu_layers: i32,
+    size_gb: f64,
+    quant_kv: u8,
+    total_layers: u32,
+) -> u32 {
     let safe_size = size_gb.max(0.1);
     let safe_ctx = context_size.max(1024) as f64;
-    let clamp_layers = if gpu_layers < 0 { total_layers as i32 } else { gpu_layers.min(total_layers as i32) };
+    let clamp_layers = if gpu_layers < 0 {
+        total_layers as i32
+    } else {
+        gpu_layers.min(total_layers as i32)
+    };
     let layer_frac = gpu_layer_fraction(clamp_layers, total_layers);
-    if layer_frac <= 0.0 { return 0; }
+    if layer_frac <= 0.0 {
+        return 0;
+    }
     let quant_factor = quant_kv_memory_factor(quant_kv);
     let ctx_mult = safe_ctx / 4096.0;
     let model_weights_mb = safe_size * MIB_PER_GIB * layer_frac;
@@ -80,13 +105,22 @@ fn estimate_ram_need_mb(context_size: u32, size_gb: f64, quant_kv: u8) -> u32 {
 }
 
 pub fn classify_mode(gpu_layers: i32, total_layers: u32) -> RecommendationMode {
-    if gpu_layers == 0 { return RecommendationMode::CpuOnly; }
-    if gpu_layers < 0 { return RecommendationMode::VramFirst; }
-    if gpu_layers >= total_layers as i32 { return RecommendationMode::VramFirst; }
+    if gpu_layers == 0 {
+        return RecommendationMode::CpuOnly;
+    }
+    if gpu_layers < 0 {
+        return RecommendationMode::VramFirst;
+    }
+    if gpu_layers >= total_layers as i32 {
+        return RecommendationMode::VramFirst;
+    }
     RecommendationMode::MixedMemory
 }
 
-pub fn recommend_threads(hw: &HardwareProfile, mode: &RecommendationMode) -> (Option<u32>, Option<u32>) {
+pub fn recommend_threads(
+    hw: &HardwareProfile,
+    mode: &RecommendationMode,
+) -> (Option<u32>, Option<u32>) {
     let logical = hw.cpu_logical.max(1) as u32;
     let physical = hw.cpu_physical.max(1) as u32;
     match mode {
@@ -102,11 +136,17 @@ pub fn plan_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
     let total_layers = estimate_total_layers(size_gb);
 
     let context_size = rec.context_size.max(1024);
-    let mut gpu_layers = if rec.gpu_layers < 0 { -1i32 } else { rec.gpu_layers.min(total_layers as i32) };
+    let mut gpu_layers = if rec.gpu_layers < 0 {
+        -1i32
+    } else {
+        rec.gpu_layers.min(total_layers as i32)
+    };
     let mut quant_kv = rec.quant_kv.max(1);
     let mut rationale = match rec.source {
         crate::catalog::RecSource::Tuned => format!("Using tuned preset: {}", rec.note),
-        crate::catalog::RecSource::Benchmarked => format!("Using benchmark-backed recommendation: {}", rec.note),
+        crate::catalog::RecSource::Benchmarked => {
+            format!("Using benchmark-backed recommendation: {}", rec.note)
+        }
         crate::catalog::RecSource::Heuristic => format!("Using heuristic fallback: {}", rec.note),
     };
     let mut estimated = matches!(rec.source, crate::catalog::RecSource::Heuristic);
@@ -123,8 +163,13 @@ pub fn plan_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
     if is_heuristic {
         if let Some(gpu) = hw.gpu.as_ref() {
             let gpu_budget = (gpu.free_mb as f64 * VRAM_HEADROOM_RATIO) as u32;
-            let preferred = if gpu_layers < 0 { total_layers as i32 } else { gpu_layers };
-            let preferred_vram = estimate_vram_mb(context_size, preferred, size_gb, quant_kv, total_layers);
+            let preferred = if gpu_layers < 0 {
+                total_layers as i32
+            } else {
+                gpu_layers
+            };
+            let preferred_vram =
+                estimate_vram_mb(context_size, preferred, size_gb, quant_kv, total_layers);
 
             if preferred_vram > gpu_budget {
                 let mut selected_layers = 0i32;
@@ -149,9 +194,14 @@ pub fn plan_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
     }
 
     let mode = classify_mode(gpu_layers, total_layers);
-    let estimated_vram_mb = record.benchmark.as_ref().map(|b| b.vram_mb)
+    let estimated_vram_mb = record
+        .benchmark
+        .as_ref()
+        .map(|b| b.vram_mb)
         .filter(|&v| v > 0)
-        .unwrap_or_else(|| estimate_vram_mb(context_size, gpu_layers, size_gb, quant_kv, total_layers));
+        .unwrap_or_else(|| {
+            estimate_vram_mb(context_size, gpu_layers, size_gb, quant_kv, total_layers)
+        });
 
     let (threads, blas_threads) = recommend_threads(hw, &mode);
 

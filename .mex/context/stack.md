@@ -12,14 +12,14 @@ edges:
     condition: when the reasoning behind a tech choice is needed
   - target: context/conventions.md
     condition: when understanding how to use a technology in this codebase
-last_updated: 2026-04-12
+last_updated: 2026-04-13
 ---
 
 # Stack
 
 ## Core Technologies
 
-- **Rust 2021 edition** — primary language, now organized as a Cargo workspace with the root `ozone` package plus `ozone-core`, `ozone-engine`, `ozone-persist`, `ozone-tui`, and the `ozone-plus` app
+- **Rust 2021 edition** — primary language, now organized as a Cargo workspace with the root `ozone` package plus `ozone-core`, `ozone-engine`, `ozone-inference`, `ozone-persist`, `ozone-tui`, and the `ozone-plus` app
 - **ratatui 0.29** — TUI framework (crossterm backend)
 - **crossterm 0.28** — terminal event handling (key input, raw mode)
 - **tokio 1 (full)** — async runtime for HTTP polling and process management
@@ -40,6 +40,9 @@ last_updated: 2026-04-12
 - **rusqlite FTS5 + WAL** — Phase 1A persistence uses SQLite content-sync FTS tables and WAL-backed session/global databases
 - **tokio broadcast** — Phase 1B engine events use a lightweight broadcast channel so future UI layers can subscribe without owning writes
 - **ratatui TestBackend** — Phase 1C shell layout/render tests use `TestBackend` to verify 80x24 and 120x40 shell behavior without requiring a live terminal
+- **config + TOML layering** — Phase 1D inference config merges baked defaults, XDG global config, per-session config, and environment overrides
+- **minijinja** — Phase 1D prompt rendering for built-in ChatML / Alpaca / Llama-3-style templates plus optional overrides
+- **tokio-util codecs + tokio mpsc/oneshot** — Phase 1D streaming decode, cancellation, and app-runtime/background-worker coordination between `ozone-inference` and `apps/ozone-plus`
 
 ## What We Deliberately Do NOT Use
 

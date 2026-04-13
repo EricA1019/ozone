@@ -20,16 +20,25 @@ pub struct HardwareProfile {
 
 pub fn query_gpu_memory() -> Option<GpuMemory> {
     let out = Command::new("nvidia-smi")
-        .args(["--query-gpu=memory.used,memory.free", "--format=csv,noheader,nounits"])
+        .args([
+            "--query-gpu=memory.used,memory.free",
+            "--format=csv,noheader,nounits",
+        ])
         .output()
         .ok()?;
     let text = String::from_utf8_lossy(&out.stdout);
     let line = text.lines().next()?;
     let parts: Vec<&str> = line.split(',').collect();
-    if parts.len() < 2 { return None; }
+    if parts.len() < 2 {
+        return None;
+    }
     let used_mb: u64 = parts[0].trim().parse().ok()?;
     let free_mb: u64 = parts[1].trim().parse().ok()?;
-    Some(GpuMemory { used_mb, free_mb, total_mb: used_mb + free_mb })
+    Some(GpuMemory {
+        used_mb,
+        free_mb,
+        total_mb: used_mb + free_mb,
+    })
 }
 
 pub fn load_hardware() -> HardwareProfile {
