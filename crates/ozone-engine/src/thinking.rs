@@ -63,6 +63,19 @@ impl ThinkingBlockDecoder {
     pub fn display_mode(&self) -> ThinkingDisplayMode {
         self.display_mode
     }
+
+    /// Feed a string token and return all decoded outputs.
+    ///
+    /// This is the ergonomic streaming API: call once per incoming token
+    /// and dispatch the resulting `ThinkingOutput` items.
+    pub fn feed(&mut self, input: &str) -> Vec<ThinkingOutput> {
+        let mut src = BytesMut::from(input.as_bytes());
+        let mut outputs = Vec::new();
+        while let Ok(Some(output)) = self.decode(&mut src) {
+            outputs.push(output);
+        }
+        outputs
+    }
 }
 
 impl Decoder for ThinkingBlockDecoder {

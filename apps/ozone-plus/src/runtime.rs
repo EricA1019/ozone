@@ -11,8 +11,10 @@ use ozone_core::engine::{
 };
 use ozone_engine::{
     ConversationBranchRecord, ConversationEngine, ConversationStore, EngineCommand,
-    EngineCommandResult, SingleWriterConversationEngine,
+    EngineCommandResult, SingleWriterConversationEngine, ThinkingBlockDecoder, ThinkingDisplayMode,
+    ThinkingOutput,
 };
+use ozone_memory::{ImportanceScorer, KeywordExtractor};
 use ozone_inference::{InferenceError, MemoryConfig, StreamChunk};
 use ozone_persist::{
     AuthorId, CreateNoteMemoryRequest, MemoryArtifactId, PersistError, PinMessageMemoryRequest,
@@ -53,6 +55,8 @@ struct PendingGeneration {
     request_id: RequestId,
     started_at: Instant,
     partial_content: String,
+    thinking_content: String,
+    thinking_decoder: ThinkingBlockDecoder,
     tokens_generated: u64,
     receiver: Receiver<WorkerEvent>,
     cancel_tx: Option<oneshot::Sender<()>>,
@@ -93,11 +97,41 @@ enum ShellCommand {
     Memory(MemoryCommand),
     Search(SearchCommand),
     Summarize(SummarizeShellCommand),
+    Thinking(ThinkingCommand),
+    TierB(TierBCommand),
+    Hooks(HooksCommand),
+    SafeMode(SafeModeCommand),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum SummarizeShellCommand {
     Session,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum ThinkingCommand {
+    Status,
+    SetMode(ThinkingDisplayMode),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum TierBCommand {
+    Status,
+    Toggle,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum HooksCommand {
+    Status,
+    List,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+enum SafeModeCommand {
+    Status,
+    On,
+    Off,
+    Toggle,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -116,6 +150,8 @@ impl PendingGeneration {
             request_id,
             started_at: Instant::now(),
             partial_content: String::new(),
+            thinking_content: String::new(),
+            thinking_decoder: ThinkingBlockDecoder::new(ThinkingDisplayMode::Hidden),
             tokens_generated: 0,
             receiver,
             cancel_tx: None,
@@ -132,6 +168,12 @@ pub(crate) struct Phase1dRuntime {
     context_bridge: AppContextBridge,
     pending_generation: Option<PendingGeneration>,
     recent_search: Option<RecentSearchSection>,
+    thinking_display_mode: ThinkingDisplayMode,
+    importance_scorer: ImportanceScorer,
+    keyword_extractor: KeywordExtractor,
+    custom_commands: Vec<crate::hooks::CustomCommand>,
+    hooks_config: crate::hooks::HooksConfig,
+    safe_mode: bool,
 }
 
 impl Phase1dRuntime {
@@ -173,6 +215,12 @@ impl Phase1dRuntime {
             context_bridge: AppContextBridge::default(),
             pending_generation: None,
             recent_search: None,
+            thinking_display_mode: ThinkingDisplayMode::Hidden,
+            importance_scorer: ImportanceScorer::default(),
+            keyword_extractor: KeywordExtractor::new(),
+            custom_commands: crate::hooks::discover_commands(),
+            hooks_config: crate::hooks::HooksConfig::default(),
+            safe_mode: false,
         })
     }
 
@@ -361,6 +409,10 @@ impl Phase1dRuntime {
             })
     }
 
+    fn is_tier_b_active(&self) -> bool {
+        !self.safe_mode && self.inference.config().memory.tier_b.enabled
+    }
+
     fn branch_by_id(
         &self,
         session_id: &SessionId,
@@ -399,6 +451,7 @@ impl Phase1dRuntime {
         branch_id: BranchId,
         request_id: RequestId,
         prompt: String,
+        thinking_mode: ThinkingDisplayMode,
     ) -> Result<PendingGeneration, String> {
         let gateway = self.inference.gateway().clone();
         let request = self.inference.build_request(prompt);
@@ -494,6 +547,8 @@ impl Phase1dRuntime {
             request_id,
             started_at: Instant::now(),
             partial_content: String::new(),
+            thinking_content: String::new(),
+            thinking_decoder: ThinkingBlockDecoder::new(thinking_mode),
             tokens_generated: 0,
             receiver: event_rx,
             cancel_tx: Some(cancel_tx),
@@ -661,6 +716,8 @@ impl Phase1dRuntime {
         pending: PendingGeneration,
     ) -> Result<TuiRuntimeCompletion, String> {
         let branch = self.branch_by_id(&context.session_id, &pending.branch_id)?;
+        let thinking_content = pending.thinking_content.clone();
+        let session_id_str = context.session_id.to_string();
         let mut assistant_message = ConversationMessage::new(
             context.session_id.clone(),
             crate::generate_message_id()?,
@@ -702,6 +759,37 @@ impl Phase1dRuntime {
                 duration_ms,
             },
         )?;
+
+        // Tier B: post-generation assistive artifacts
+        if self.is_tier_b_active() {
+            let tier_b = self.inference.config().memory.tier_b.clone();
+
+            if tier_b.importance_proposals {
+                if let Some(_proposal) = self.importance_scorer.propose(&committed.content, false, 0) {
+                    // Proposal computed — available for future display/storage on user request
+                }
+            }
+
+            if tier_b.retrieval_keys {
+                let _retrieval_key = self.keyword_extractor.to_retrieval_key(&committed.content);
+                // Retrieval key computed — available for future indexing
+            }
+
+            if tier_b.thinking_summaries && !thinking_content.is_empty() {
+                let preview = &thinking_content[..thinking_content.len().min(480)];
+                let _ = self.repo.create_note_memory(
+                    &context.session_id,
+                    CreateNoteMemoryRequest::new(
+                        format!("[thinking] {preview}"),
+                        AuthorId::System,
+                        Provenance::SystemGenerated,
+                    ),
+                );
+            }
+        }
+
+        // Post-generation hook
+        let _ = self.hooks_config.run_post_generation(&session_id_str, &committed.content);
 
         Ok(TuiRuntimeCompletion {
             request_id: pending.request_id.to_string(),
@@ -828,11 +916,14 @@ impl SessionRuntime for Phase1dRuntime {
             .map(tui_context_dry_run_from_build);
         let prompt = context_build.prompt;
 
+        let _ = self.hooks_config.run_pre_generation(context.session_id.as_ref());
+        let thinking_mode = self.thinking_display_mode;
         self.pending_generation = Some(
             self.start_generation_task(
                 active_branch.branch.branch_id.clone(),
                 request_id.clone(),
                 prompt,
+                thinking_mode,
             )
             .unwrap_or_else(|error| {
                 PendingGeneration::failed(active_branch.branch.branch_id.clone(), request_id, error)
@@ -862,7 +953,23 @@ impl SessionRuntime for Phase1dRuntime {
         loop {
             match pending.receiver.try_recv() {
                 Ok(WorkerEvent::Token(token)) => {
-                    pending.partial_content.push_str(&token);
+                    let outputs = pending.thinking_decoder.feed(&token);
+                    let mode = pending.thinking_decoder.display_mode();
+                    for output in outputs {
+                        match output {
+                            ThinkingOutput::Content(text) => {
+                                pending.partial_content.push_str(&text);
+                            }
+                            ThinkingOutput::Thinking(text) => {
+                                if mode == ThinkingDisplayMode::Debug {
+                                    pending.partial_content.push_str(&text);
+                                } else {
+                                    pending.thinking_content.push_str(&text);
+                                }
+                            }
+                            ThinkingOutput::ThinkingStart | ThinkingOutput::ThinkingEnd => {}
+                        }
+                    }
                     pending.tokens_generated = pending.tokens_generated.saturating_add(1);
                     progress_changed = true;
                 }
@@ -1266,6 +1373,113 @@ impl SessionRuntime for Phase1dRuntime {
 
                 Ok(Some(Self::status_only_refresh(status)))
             }
+            ShellCommand::Thinking(ThinkingCommand::Status) => {
+                let mode = match self.thinking_display_mode {
+                    ThinkingDisplayMode::Hidden => "hidden",
+                    ThinkingDisplayMode::Assisted => "assisted",
+                    ThinkingDisplayMode::Debug => "debug",
+                };
+                Ok(Some(Self::status_only_refresh(format!(
+                    "Thinking display: {mode}"
+                ))))
+            }
+            ShellCommand::Thinking(ThinkingCommand::SetMode(mode)) => {
+                self.thinking_display_mode = mode;
+                let label = match mode {
+                    ThinkingDisplayMode::Hidden => "hidden (thinking blocks stripped)",
+                    ThinkingDisplayMode::Assisted => "assisted (thinking accumulated, not inline)",
+                    ThinkingDisplayMode::Debug => "debug (thinking shown inline)",
+                };
+                Ok(Some(Self::status_only_refresh(format!(
+                    "Thinking display set to {label}"
+                ))))
+            }
+            ShellCommand::TierB(TierBCommand::Status) => {
+                let active = self.is_tier_b_active();
+                let tier_b = &self.inference.config().memory.tier_b;
+                let status = if self.safe_mode {
+                    "Tier B: OFF (safe mode)".to_owned()
+                } else if !tier_b.enabled {
+                    "Tier B: OFF (disabled in config)".to_owned()
+                } else {
+                    format!(
+                        "Tier B: ON · importance_proposals={} retrieval_keys={} thinking_summaries={}",
+                        tier_b.importance_proposals,
+                        tier_b.retrieval_keys,
+                        tier_b.thinking_summaries,
+                    )
+                };
+                let _ = active;
+                Ok(Some(Self::status_only_refresh(status)))
+            }
+            ShellCommand::TierB(TierBCommand::Toggle) => {
+                self.safe_mode = !self.safe_mode;
+                let status = if self.safe_mode {
+                    "Safe mode ON — Tier B features disabled"
+                } else {
+                    "Safe mode OFF — Tier B features enabled"
+                };
+                Ok(Some(Self::status_only_refresh(status)))
+            }
+            ShellCommand::Hooks(HooksCommand::Status) => {
+                let has_pre = self.hooks_config.pre_generation.is_some();
+                let has_post = self.hooks_config.post_generation.is_some();
+                Ok(Some(Self::status_only_refresh(format!(
+                    "Hooks: pre_generation={} post_generation={}",
+                    if has_pre { "configured" } else { "—" },
+                    if has_post { "configured" } else { "—" },
+                ))))
+            }
+            ShellCommand::Hooks(HooksCommand::List) => {
+                if self.custom_commands.is_empty() {
+                    Ok(Some(Self::status_only_refresh(
+                        "No custom commands found in $XDG_CONFIG_HOME/ozone/commands/".to_owned(),
+                    )))
+                } else {
+                    let list = self
+                        .custom_commands
+                        .iter()
+                        .map(|cmd| {
+                            if let Some(desc) = &cmd.description {
+                                format!("  {}  — {desc}", cmd.name)
+                            } else {
+                                format!("  {}", cmd.name)
+                            }
+                        })
+                        .collect::<Vec<_>>()
+                        .join("\n");
+                    Ok(Some(Self::status_only_refresh(format!(
+                        "Custom commands:\n{list}"
+                    ))))
+                }
+            }
+            ShellCommand::SafeMode(SafeModeCommand::Status) => {
+                Ok(Some(Self::status_only_refresh(format!(
+                    "Safe mode: {}",
+                    if self.safe_mode { "ON" } else { "OFF" }
+                ))))
+            }
+            ShellCommand::SafeMode(SafeModeCommand::On) => {
+                self.safe_mode = true;
+                Ok(Some(Self::status_only_refresh(
+                    "Safe mode ON — Tier B features disabled".to_owned(),
+                )))
+            }
+            ShellCommand::SafeMode(SafeModeCommand::Off) => {
+                self.safe_mode = false;
+                Ok(Some(Self::status_only_refresh(
+                    "Safe mode OFF — Tier B features enabled".to_owned(),
+                )))
+            }
+            ShellCommand::SafeMode(SafeModeCommand::Toggle) => {
+                self.safe_mode = !self.safe_mode;
+                let status = if self.safe_mode {
+                    "Safe mode ON — Tier B features disabled"
+                } else {
+                    "Safe mode OFF — Tier B features enabled"
+                };
+                Ok(Some(Self::status_only_refresh(status)))
+            }
         }
     }
 
@@ -1600,6 +1814,10 @@ fn parse_shell_command(input: &str) -> Result<ShellCommand, String> {
         "memories" if remainder.is_empty() => Ok(ShellCommand::Memory(MemoryCommand::List)),
         "search" => parse_search_subcommand(remainder).map(ShellCommand::Search),
         "summarize" => parse_summarize_subcommand(remainder).map(ShellCommand::Summarize),
+        "thinking" => parse_thinking_subcommand(remainder).map(ShellCommand::Thinking),
+        "tierb" => parse_tierb_subcommand(remainder).map(ShellCommand::TierB),
+        "hooks" => parse_hooks_subcommand(remainder).map(ShellCommand::Hooks),
+        "safemode" => parse_safemode_subcommand(remainder).map(ShellCommand::SafeMode),
         _ => Err(unknown_shell_command_message()),
     }
 }
@@ -1696,8 +1914,47 @@ fn parse_summarize_subcommand(remainder: &str) -> Result<SummarizeShellCommand, 
     }
 }
 
+fn parse_thinking_subcommand(remainder: &str) -> Result<ThinkingCommand, String> {
+    match remainder.trim() {
+        "status" | "" => Ok(ThinkingCommand::Status),
+        "hidden" => Ok(ThinkingCommand::SetMode(ThinkingDisplayMode::Hidden)),
+        "assisted" => Ok(ThinkingCommand::SetMode(ThinkingDisplayMode::Assisted)),
+        "debug" => Ok(ThinkingCommand::SetMode(ThinkingDisplayMode::Debug)),
+        _ => Err("Usage: /thinking [status|hidden|assisted|debug]".to_string()),
+    }
+}
+
+fn parse_tierb_subcommand(remainder: &str) -> Result<TierBCommand, String> {
+    match remainder.trim() {
+        "status" | "" => Ok(TierBCommand::Status),
+        "toggle" => Ok(TierBCommand::Toggle),
+        _ => Err("Usage: /tierb [status|toggle]".to_string()),
+    }
+}
+
+fn parse_hooks_subcommand(remainder: &str) -> Result<HooksCommand, String> {
+    match remainder.trim() {
+        "status" | "" => Ok(HooksCommand::Status),
+        "list" => Ok(HooksCommand::List),
+        _ => Err("Usage: /hooks [status|list]".to_string()),
+    }
+}
+
+fn parse_safemode_subcommand(remainder: &str) -> Result<SafeModeCommand, String> {
+    match remainder.trim() {
+        "status" | "" => Ok(SafeModeCommand::Status),
+        "on" => Ok(SafeModeCommand::On),
+        "off" => Ok(SafeModeCommand::Off),
+        "toggle" => Ok(SafeModeCommand::Toggle),
+        _ => Err("Usage: /safemode [status|on|off|toggle]".to_string()),
+    }
+}
+
 fn unknown_shell_command_message() -> String {
-    "Unknown command. Try /session show | /session rename NAME | /session character NAME|clear | /session tags a,b|clear | /memory list | /memory note TEXT | /memory unpin <artifact-id> | /search session QUERY | /search global QUERY | /summarize session | :memories".to_owned()
+    "Unknown command. Try /session show|rename|character|tags | /memory list|note|unpin | \
+/search session|global | /summarize session | /thinking status|hidden|assisted|debug | \
+/tierb status|toggle | /hooks status|list | /safemode status|on|off|toggle | :memories"
+        .to_owned()
 }
 
 fn require_non_empty(label: &str, value: String) -> Result<String, String> {
