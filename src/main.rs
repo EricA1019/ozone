@@ -3,6 +3,7 @@ mod bench;
 mod catalog;
 mod db;
 mod hardware;
+mod model;
 mod planner;
 mod prefs;
 mod processes;
@@ -106,6 +107,11 @@ enum Commands {
         max_context: Option<u32>,
         #[arg(long, help = "Quick sweep (fewer configs)")]
         quick: bool,
+    },
+    /// Manage local model files (list, add, remove, info)
+    Model {
+        #[command(subcommand)]
+        command: model::ModelCommand,
     },
 }
 
@@ -326,5 +332,6 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
+        Some(Commands::Model { command }) => model::run(command).await,
     }
 }

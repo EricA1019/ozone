@@ -153,6 +153,26 @@ ozone analyze --export  # write profiles to presets file
 
 ---
 
+## ⬡ Upgrading
+
+```bash
+cd ozone-rs
+git pull
+cargo install --path . --locked
+cargo install --path apps/ozone-plus --locked
+```
+
+Check your current version:
+
+```bash
+ozone --version
+ozone-plus --version
+```
+
+See [CHANGELOG.md](CHANGELOG.md) for what's new in each release.
+
+---
+
 ## ⬡ License
 
 MIT

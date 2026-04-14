@@ -50,8 +50,8 @@ static ID_COUNTER: AtomicU64 = AtomicU64::new(1);
 #[command(
     name = "ozone-plus",
     version,
-    about = "Phase 2B ozone+ chat shell with manual memory, recall foundations, and vector-index rebuild support",
-    long_about = "Phase 2B ozone+ chat shell with engine-backed persistence, real backend inference, import/export lanes, manual memory + recall foundations, and an explicit vector-index rebuild surface.\n\nThis binary opens a chat-first terminal shell for persisted sessions while still exposing lower-level CLI surfaces for transcripts, branches, swipes, memory pinning, keyword search, character-card import, transcript/session export, and on-demand vector-index rebuilds. User turns, transcript state, session locks, draft persistence, active pinned memory, assistant generation, embedding persistence, and disk-backed index rebuilds continue to run through the real ozone persistence + inference layers.",
+    about = "⬡ ozone+ — local-LLM chat shell with persistent memory and sessions",
+    long_about = "⬡ ozone+ — a chat-first terminal shell for local LLM conversations with persistent memory across sessions.\n\nFeatures: session management, pinned memories, freeform notes, session and global FTS search, branching and swipes, character card import, transcript and session export, hybrid vector/keyword recall, and streaming inference via KoboldCpp or Ollama.",
     after_help = "Examples:\n  ozone-plus create \"First Session\"\n  ozone-plus open <session-id>\n  ozone-plus send <session-id> \"Hello there\"\n  ozone-plus transcript <session-id>\n  ozone-plus memory pin <session-id> <message-id>\n  ozone-plus memory note <session-id> \"Remember the observatory key\"\n  ozone-plus search session <session-id> nebula\n  ozone-plus search global nebula\n  ozone-plus index rebuild\n  ozone-plus branch create <session-id> fork --activate\n  ozone-plus swipe add <session-id> <parent-message-id> \"Alternate reply\"\n  ozone-plus swipe activate <session-id> <swipe-group-id> 1\n  ozone-plus import card ./aster.json\n  ozone-plus export transcript <session-id> --output ./transcript.txt\n  ozone-plus export session <session-id> --output ./session.json"
 )]
 struct Cli {
@@ -121,7 +121,7 @@ struct CreateArgs {
 struct OpenArgs {
     /// Session UUID in 8-4-4-4-12 format
     session_id: String,
-    /// Print the Phase 1B metadata summary instead of launching the TUI shell
+    /// Print session metadata instead of launching the TUI shell
     #[arg(long)]
     metadata: bool,
 }
@@ -1113,9 +1113,9 @@ fn print_bootstrap_summary() {
         ProductTier::OzonePlus.slug(),
         ProductTier::OzonePlus.status_label()
     );
-    println!("Phase 1F engine-backed CLI for ozone+ sessions, transcripts, and import/export.");
-    println!("It can create/open sessions, send and edit messages, branch transcripts, seed or activate swipes, import character cards, and export transcripts or session snapshots.");
-    println!("It does not launch the final ozone+ chat UI yet.");
+    println!("⬡ Local-LLM chat shell with persistent memory and sessions.");
+    println!("Create sessions, chat with streaming inference, pin memories, search across sessions,");
+    println!("branch transcripts, import characters, and export your data.");
     println!();
     println!("Try one of:");
     println!("  ozone-plus create \"First Session\"");
@@ -1161,7 +1161,7 @@ fn print_docs() {
     println!("  baseline design: {OZONE_PLUS_DESIGN_DOC_PATH}");
     println!();
     println!("These docs describe the future ozone+ scope.");
-    println!("This CLI currently exercises the Phase 1F conversation and import/export surfaces.");
+    println!("Run `ozone-plus --help` for the full command reference.");
 }
 
 fn print_paths() {
@@ -1180,7 +1180,7 @@ fn print_paths() {
         Err(error) => println!("  unavailable   {error}"),
     }
     println!();
-    println!("This CLI now talks to the Phase 1F persistence and runtime surfaces, but it still does not launch the final ozone+ chat UI.");
+    println!("Run `ozone-plus open <session-id>` to launch the chat TUI.");
 }
 
 fn create_session(args: CreateArgs) -> Result<(), String> {
@@ -1199,7 +1199,7 @@ fn create_session(args: CreateArgs) -> Result<(), String> {
     println!("Paths");
     print_session_paths(repo.paths(), &session.session_id);
     println!();
-    println!("Phase 1F note");
+    println!("Next step");
     println!(
         "  Send the first message with `ozone-plus send {}`.",
         session.session_id
@@ -1231,7 +1231,7 @@ fn list_sessions() -> Result<(), String> {
     }
 
     println!();
-    println!("Phase 1F note");
+    println!("Tip");
     println!("  Use `ozone-plus send <session-id> \"Hello\"` to bootstrap the active transcript.");
 
     Ok(())
@@ -2719,7 +2719,28 @@ fn format_tags(tags: &[String]) -> String {
 }
 
 fn format_timestamp(timestamp: i64) -> String {
-    format!("{timestamp} ms since Unix epoch")
+    use chrono::{Local, TimeZone, Utc};
+    let secs = timestamp / 1000;
+    let Some(dt) = Utc.timestamp_opt(secs, 0).single() else {
+        return format!("{timestamp} ms");
+    };
+    let local = dt.with_timezone(&Local);
+    let formatted = local.format("%Y-%m-%d %H:%M").to_string();
+
+    let now = Utc::now();
+    let diff = now.signed_duration_since(dt);
+    let ago = if diff.num_seconds() < 60 {
+        "just now".to_owned()
+    } else if diff.num_minutes() < 60 {
+        format!("{}m ago", diff.num_minutes())
+    } else if diff.num_hours() < 24 {
+        format!("{}h ago", diff.num_hours())
+    } else if diff.num_days() < 30 {
+        format!("{}d ago", diff.num_days())
+    } else {
+        format!("{}mo ago", diff.num_days() / 30)
+    };
+    format!("{formatted} ({ago})")
 }
 
 fn format_author_id(author: &AuthorId) -> String {

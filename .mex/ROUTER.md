@@ -14,7 +14,7 @@ edges:
     condition: when setting up the dev environment or running the project for the first time
   - target: patterns/INDEX.md
     condition: when starting a task — check the pattern index for a matching pattern file
-last_updated: 2026-04-13
+last_updated: 2026-04-14
 ---
 
 # Session Bootstrap
@@ -46,7 +46,9 @@ Then read this file fully before doing anything else in this session.
 - Phase 1G is now implemented: `src/ui/mod.rs` adds `Screen::FrontendChoice` and `FrontendMode` enum; `ozone --frontend ozonePlus` bypasses the choice screen and exec-hands-off to `ozone-plus list`; the choice screen sits between Confirm and Launch with ↑↓/Enter navigation
 - Phase 2A is now implemented: `crates/ozone-memory` owns typed pinned-memory / provenance / recall models, `crates/ozone-persist` reuses `memory_artifacts` + `session_search` for pinned memory and cross-session FTS recall, `apps/ozone-plus` now has `memory` / `search` CLI commands, and `crates/ozone-tui` supports `Ctrl+K`, `/memory ...`, `/search ...`, and `:memories` with recall output in the existing inspector/status surfaces
 - Phase 2B is now implemented: `crates/ozone-memory` now owns optional embedding providers, retrieval scoring, and the disk-backed `usearch` vector index manager; `crates/ozone-persist` now persists embedding artifacts in `memory_artifacts`; and `apps/ozone-plus` now supports `index rebuild`, hybrid session/global search, stale-embedding filtering, and `RetrievedMemory` context injection with explicit FTS-only fallback
-- Phase 2C is now implemented (alpha → gamma): `apps/ozone-plus` now has `/summarize` command, `memory recall` lifecycle labels, `lifecycle inspect`, `gc plan/run`, `events compact`, and `lifecycle disk-status`; `crates/ozone-memory` owns `StorageTierPolicy`, `ArtifactStaleness`, `DiskMonitorPolicy/DiskStatus/DiskCheckResult`, and `VersionCompatibilityResult`; `crates/ozone-persist` owns derived-artifact GC plan/apply and events compaction; `crates/ozone-inference` has full `MemoryLifecycleConfig` under `[memory.lifecycle]`
+- Phase 2C is now implemented (alpha → gamma): `apps/ozone-plus` now has `/summarize`, memory-recall lifecycle labels, `lifecycle inspect`, GC planning and execution commands, `events compact`, and `lifecycle disk-status`; `crates/ozone-memory` owns `StorageTierPolicy`, `ArtifactStaleness`, the disk-monitor policy/status/check result types, and `VersionCompatibilityResult`; `crates/ozone-persist` owns derived-artifact GC planning/application and events compaction; `crates/ozone-inference` has full `MemoryLifecycleConfig` under `[memory.lifecycle]`
+- Phase 5 is now implemented: the launcher ships the lime-green brand refresh, the tier picker, and `--mode` / `--pick` family selection for ozonelite / ozone / ozone+
+- Phase 5.5 is now implemented: ozone now has `model list|add|remove|info`, ozone+ copy and metadata reflect the shipped MVP state, timestamps are human-readable, and release docs/changelog now cover `v0.4.0-alpha`
 
 **Phase 2 is COMPLETE. All of Phase 2A, 2B, and 2C (alpha/beta/gamma) have shipped.**
 
@@ -73,6 +75,7 @@ Then read this file fully before doing anything else in this session.
 - The Phase 1E live smoke verified inline context preview with a mock backend, but the `Ctrl+D` path itself was verified through cargo tests because this PTY automation channel cannot reliably send every control chord
 - The Phase 2A live smoke verified `:memories` and `/search ...` in the TUI, but `Ctrl+K` itself was validated through tests because this PTY automation channel cannot reliably send every control chord
 - The Phase 2B live smoke verified CLI fallback -> `index rebuild` -> hybrid search with the mock embedding provider; the full-screen TUI hybrid-recall path is still better covered by cargo tests than PTY-driven visual automation
+- `cargo build --release` at the repo root is not sufficient when you want a fresh `target/release/ozone-plus` artifact; explicitly building `-p ozone-plus` avoids stale smoke-test binaries
 
 ## Routing Table
 

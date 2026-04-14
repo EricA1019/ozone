@@ -3,7 +3,7 @@ name = "ozone-engine"
 version = "0.4.0"
 edition = "2021"
 publish = false
-description = "Phase 1B conversation engine foundations for ozone+"
+description = "Conversation engine with branching, swipes, and context assembly for ozone+"
 license = "MIT"
 
 [dependencies]

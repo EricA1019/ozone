@@ -3,10 +3,11 @@ name = "ozone-plus"
 version = "0.4.0-alpha"
 edition = "2021"
 publish = false
-description = "Phase 2A ozone+ chat shell — manual memory + recall foundations"
+description = "⬡ ozone+ — local-LLM chat shell with persistent memory and sessions"
 license = "MIT"
 
 [dependencies]
+chrono = { version = "0.4", features = ["clock"] }
 clap = { version = "4", features = ["derive"] }
 ozone-core = { path = "../../crates/ozone-core" }
 ozone-engine = { path = "../../crates/ozone-engine" }

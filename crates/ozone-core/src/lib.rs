@@ -29,8 +29,8 @@ pub mod product {
         pub const fn status_label(self) -> &'static str {
             match self {
                 Self::Ozonelite => "Planned",
-                Self::Ozone => "Current repo",
-                Self::OzonePlus => "Upcoming",
+                Self::Ozone => "v0.4.0-alpha",
+                Self::OzonePlus => "v0.4.0-alpha",
             }
         }
     }
@@ -111,8 +111,8 @@ mod tests {
     fn product_tiers_expose_stable_metadata() {
         let cases = [
             (ProductTier::Ozonelite, "ozonelite", "ozonelite", "Planned"),
-            (ProductTier::Ozone, "ozone", "ozone", "Current repo"),
-            (ProductTier::OzonePlus, "ozone+", "ozone-plus", "Upcoming"),
+            (ProductTier::Ozone, "ozone", "ozone", "v0.4.0-alpha"),
+            (ProductTier::OzonePlus, "ozone+", "ozone-plus", "v0.4.0-alpha"),
         ];
 
         for (tier, display_name, slug, status_label) in cases {

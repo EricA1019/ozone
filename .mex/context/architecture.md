@@ -10,7 +10,7 @@ edges:
     condition: when specific technology details are needed
   - target: context/decisions.md
     condition: when understanding why the architecture is structured this way
-last_updated: 2026-04-13
+last_updated: 2026-04-14
 ---
 
 # Architecture
@@ -30,7 +30,7 @@ Monitor mode shows live VRAM/RAM/CPU/services with 2s refresh.
 ## Key Components
 
 - Cargo root package `ozone`: the current middle-tier Rust TUI app in `src/`.
-- apps/ozone-plus: Phase 2B ozone+ app that now combines the persisted session CLI surfaces with the default `open` TUI shell, an app-side inference adapter, manual and hybrid recall commands, explicit `index rebuild`, and a real async session-runtime bridge that streams assistant turns on top of the engine/persistence path.
+- apps/ozone-plus: ozone+ app that now combines the persisted session CLI surfaces with the default `open` TUI shell, an app-side inference adapter, manual and hybrid recall commands, explicit `index rebuild`, human-readable metadata surfaces, and a real async session-runtime bridge that streams assistant turns on top of the engine/persistence path.
 - crates/ozone-core: shared product metadata and ozone data/log path helpers.
 - crates/ozone-engine: trait-first single-writer conversation engine surface with command processing, broadcast events, snapshots, an in-memory store used by engine tests, and the first explicit Phase 1E context-assembly module (`ContextPlan` / `ContextAssembler`).
 - crates/ozone-inference: layered config loader, prompt-template registry, streaming decoder, backend descriptors, and the first KoboldCpp gateway implementation for ozone+.
@@ -44,6 +44,7 @@ Monitor mode shows live VRAM/RAM/CPU/services with 2s refresh.
 - processes.rs: Process management, disk I/O from /proc/diskstats.
 - prefs.rs: JSON preferences via `ozone_core::paths::preferences_path()`.
 - db.rs: SQLite wrapper for benchmarks + profiles via `ozone_core::paths::benchmarks_db_path()`.
+- model.rs: local GGUF model-management commands for the base `ozone` app (`model list|add|remove|info`), including HuggingFace downloads and Ollama/blob symlink management.
 - src/ui/: ratatui TUI (`src/ui/mod.rs`, `src/ui/launcher.rs`, `src/ui/monitor.rs`, `src/ui/splash.rs`). `src/ui/mod.rs` owns event/state flow; `src/ui/launcher.rs` now renders the advisory/confirm/running/success/failure profiling screens too.
 - theme.rs: Color palette, style helpers, ASCII wordmark, HEX_CURSOR.
 
@@ -56,7 +57,6 @@ Monitor mode shows live VRAM/RAM/CPU/services with 2s refresh.
 
 ## What Does NOT Exist Here
 
-- No model downloading.
 - No direct inference.
 - No web UI (terminal only).
 - No Windows support (Linux only).

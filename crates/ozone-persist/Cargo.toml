@@ -3,7 +3,7 @@ name = "ozone-persist"
 version = "0.4.0"
 edition = "2021"
 publish = false
-description = "Phase 1A SQLite persistence for ozone+"
+description = "SQLite persistence layer for sessions, messages, memories, and search in ozone+"
 license = "MIT"
 
 [dependencies]

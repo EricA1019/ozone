@@ -3,7 +3,7 @@ name = "ozone-memory"
 version = "0.4.0"
 edition = "2021"
 publish = false
-description = "Phase 2A memory domain foundations for ozone+"
+description = "Memory domain types, embeddings, hybrid retrieval, and lifecycle for ozone+"
 license = "MIT"
 
 [features]

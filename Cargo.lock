@@ -1952,6 +1952,7 @@ dependencies = [
 name = "ozone-plus"
 version = "0.4.0-alpha"
 dependencies = [
+ "chrono",
  "clap",
  "dirs",
  "ozone-core",
