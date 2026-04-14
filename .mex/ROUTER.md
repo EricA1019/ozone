@@ -50,11 +50,19 @@ Then read this file fully before doing anything else in this session.
 
 **Phase 2 is COMPLETE. All of Phase 2A, 2B, and 2C (alpha/beta/gamma) have shipped.**
 
+**Phase 3 is COMPLETE (2026-04-14).** All cleanup tasks a–e shipped in commits db33494 and af96d0c:
+- `ThinkingBlockDecoder` wired into streaming token loop; `/thinking [status|hidden|assisted|debug]`
+- `ImportanceScorer` + `KeywordExtractor` wired post-generation when Tier B enabled; `/tierb [status|toggle]`
+- `HooksConfig` fires pre/post generation; `/hooks [status|list]`
+- Safe mode (`/safemode [status|on|off|toggle]`) gates all Tier B features
+- 8 new integration tests; workspace total 218 → 226
+
 **Not yet built:**
 - TUI cancellation for in-flight profiling runs
 - A dedicated in-TUI browser for existing benchmark history and Pareto data
 - Rich per-substep sweep visualizations beyond streamed text progress
-- Phase 3 (group chat, assistive layer, original ozone integration)
+- Phase 3 (group chat, assistive layer, original ozone integration) — **COMPLETE, see above**
+- Phase 4 (scene foundation: multi-actor scenes, speaker routing, group-chat model)
 
 **Known issues:**
 - Broken `.gguf` symlinks can still appear in the catalog/list and are only surfaced as issues when selected
