@@ -83,13 +83,7 @@ fn human_size(bytes: u64) -> String {
 /// Extract quant level from a GGUF filename stem.
 /// Looks for patterns like Q4_K_M, Q5_K_S, Q8_0, IQ4_XS, Q2_K, Q6_K, etc.
 fn parse_quant(stem: &str) -> Option<String> {
-    // Split on common delimiters and search tokens
     let upper = stem.to_uppercase();
-    for token in upper.split(|c: char| c == '-' || c == '_' || c == '.') {
-        // Single-token quants like Q8, IQ4 — but these are usually part of multi-token
-        // We handle multi-token below
-        let _ = token;
-    }
 
     // Try multi-token patterns: Q4_K_M, IQ4_XS, Q5_K_S, Q8_0, Q2_K, Q6_K, etc.
     // Strategy: scan for Qn or IQn then greedily consume _LETTER sequences
@@ -243,8 +237,8 @@ async fn cmd_list() -> Result<()> {
 
     println!("Models in ~/models/");
     println!(
-        "  {:<col_name$}  {:>8}  {:<8}  {}",
-        "NAME", "SIZE", "QUANT", "TYPE"
+        "  {:<col_name$}  {:>8}  {:<8}  TYPE",
+        "NAME", "SIZE", "QUANT"
     );
     for e in &entries {
         let size = human_size(e.size);

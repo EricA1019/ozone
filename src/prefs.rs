@@ -14,24 +14,6 @@ pub enum Tier {
     Plus,
 }
 
-impl Tier {
-    pub fn name(&self) -> &'static str {
-        match self {
-            Tier::Lite => "ozonelite",
-            Tier::Base => "ozone",
-            Tier::Plus => "ozone+",
-        }
-    }
-
-    pub fn description(&self) -> &'static str {
-        match self {
-            Tier::Lite => "Launch + monitor only",
-            Tier::Base => "Launch + bench + sweep + analyze",
-            Tier::Plus => "Chat shell with memory & sessions",
-        }
-    }
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Preferences {
     pub version: u32,
