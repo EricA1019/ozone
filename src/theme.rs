@@ -2,8 +2,9 @@ use ratatui::style::{Color, Modifier, Style};
 
 // ── Palette ────────────────────────────────────────────────────────────────
 
-pub const LIME: Color = Color::Rgb(168, 230, 0);   // #a8e600 — primary accent
+pub const LIME: Color = Color::Rgb(168, 230, 0); // #a8e600 — primary accent
 pub const VIOLET: Color = Color::Rgb(124, 58, 237); // #7c3aed — ozone+ accent
+pub const VIOLET_BRIGHT: Color = Color::Rgb(196, 181, 253); // lighter ozone+ accent for selected/high-contrast states
 pub const CYAN: Color = Color::Rgb(6, 182, 212);
 pub const GREEN: Color = Color::Rgb(34, 197, 94);
 pub const AMBER: Color = Color::Rgb(245, 158, 11);
@@ -15,6 +16,9 @@ pub fn style_lime() -> Style {
 }
 pub fn style_violet() -> Style {
     Style::default().fg(VIOLET)
+}
+pub fn style_bright_violet() -> Style {
+    Style::default().fg(VIOLET_BRIGHT)
 }
 pub fn style_cyan() -> Style {
     Style::default().fg(CYAN)
@@ -36,6 +40,11 @@ pub fn style_bold_lime() -> Style {
 }
 pub fn style_bold_violet() -> Style {
     Style::default().fg(VIOLET).add_modifier(Modifier::BOLD)
+}
+pub fn style_bold_bright_violet() -> Style {
+    Style::default()
+        .fg(VIOLET_BRIGHT)
+        .add_modifier(Modifier::BOLD)
 }
 pub fn style_bold_cyan() -> Style {
     Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
@@ -61,7 +70,6 @@ pub const HEX_CURSOR: &str = "⬡";
 pub const TAGLINE: &str = "⬡ Use AI smarter. Not bigger.";
 pub const TAGLINE_SHORT: &str = "local-first AI tooling";
 pub const VERSION: &str = env!("CARGO_PKG_VERSION");
-pub const MATURITY: &str = "alpha";
 pub const LICENSE: &str = "MIT";
 
 /// Tier names for display

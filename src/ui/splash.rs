@@ -64,9 +64,10 @@ pub fn render(f: &mut Frame, app: &App) {
         .split(content);
 
     // Hex flourish at top
-    let hex_top = Paragraph::new(Line::from(vec![
-        Span::styled(format!("{HEX} {HEX} {HEX}"), style_lime()),
-    ]))
+    let hex_top = Paragraph::new(Line::from(vec![Span::styled(
+        format!("{HEX} {HEX} {HEX}"),
+        style_lime(),
+    )]))
     .alignment(Alignment::Center);
     f.render_widget(hex_top, sections[0]);
 
@@ -92,11 +93,9 @@ pub fn render(f: &mut Frame, app: &App) {
     // Hex divider
     render_hex_divider(f, sections[6]);
 
-    // Version line: v0.4.0-alpha · MIT · local-first
+    // Version line: v0.4.0-alpha · MIT · local-first AI tooling
     let version_line = Paragraph::new(Line::from(vec![
         Span::styled(format!("v{VERSION}"), style_gray()),
-        Span::styled("-", style_gray()),
-        Span::styled(MATURITY, style_lime()),
         Span::styled("  ·  ", style_gray()),
         Span::styled(LICENSE, style_gray()),
         Span::styled("  ·  ", style_gray()),
@@ -167,8 +166,8 @@ pub fn render(f: &mut Frame, app: &App) {
     f.render_widget(prompt, sections[12]);
 
     // Hex footer
-    let hex_footer = Paragraph::new(Line::from(Span::styled(HEX, style_lime())))
-        .alignment(Alignment::Center);
+    let hex_footer =
+        Paragraph::new(Line::from(Span::styled(HEX, style_lime()))).alignment(Alignment::Center);
     f.render_widget(hex_footer, sections[13]);
 }
 
@@ -177,7 +176,7 @@ fn render_hex_divider(f: &mut Frame, area: Rect) {
     let width = area.width as usize;
     let dash_count = width.saturating_sub(6) / 2;
     let dashes: String = "─".repeat(dash_count);
-    
+
     let divider = Paragraph::new(Line::from(vec![
         Span::styled(HEX, style_lime()),
         Span::styled(" ", Style::default()),
@@ -209,10 +208,18 @@ fn render_tier_preview(f: &mut Frame, area: Rect, current: SplashTier) {
     for (i, (name, desc, tier)) in tiers.iter().enumerate() {
         let is_current = *tier == current;
         let hex = if is_current { HEX_FILLED } else { HEX };
-        let hex_style = if is_current { style_lime() } else { style_gray() };
-        let name_style = if is_current { style_lime() } else { style_gray() };
+        let hex_style = if is_current {
+            style_lime()
+        } else {
+            style_gray()
+        };
+        let name_style = if is_current {
+            style_lime()
+        } else {
+            style_gray()
+        };
         let arrow = if is_current { " ◄" } else { "  " };
-        
+
         let line = Paragraph::new(Line::from(vec![
             Span::styled(hex, hex_style),
             Span::styled(" ", Style::default()),

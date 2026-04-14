@@ -15,9 +15,9 @@ pub struct DiskMonitorPolicy {
 impl Default for DiskMonitorPolicy {
     fn default() -> Self {
         Self {
-            warn_bytes: 500 * 1024 * 1024,      // 500 MiB
-            critical_bytes: 100 * 1024 * 1024,   // 100 MiB
-            emergency_bytes: 20 * 1024 * 1024,   // 20 MiB
+            warn_bytes: 500 * 1024 * 1024,     // 500 MiB
+            critical_bytes: 100 * 1024 * 1024, // 100 MiB
+            emergency_bytes: 20 * 1024 * 1024, // 20 MiB
         }
     }
 }
@@ -39,8 +39,12 @@ impl DiskStatus {
             Self::Emergency => "emergency",
         }
     }
-    pub const fn is_ok(self) -> bool { matches!(self, Self::Ok) }
-    pub const fn is_warn_or_worse(self) -> bool { !matches!(self, Self::Ok) }
+    pub const fn is_ok(self) -> bool {
+        matches!(self, Self::Ok)
+    }
+    pub const fn is_warn_or_worse(self) -> bool {
+        !matches!(self, Self::Ok)
+    }
     pub const fn should_pause_background_jobs(self) -> bool {
         matches!(self, Self::Emergency)
     }
@@ -118,10 +122,22 @@ mod tests {
     #[test]
     fn test_disk_status_thresholds() {
         let policy = DiskMonitorPolicy::default();
-        assert_eq!(DiskCheckResult::new(1024 * 1024 * 1024, &policy).status, DiskStatus::Ok);
-        assert_eq!(DiskCheckResult::new(200 * 1024 * 1024, &policy).status, DiskStatus::Warn);
-        assert_eq!(DiskCheckResult::new(50 * 1024 * 1024, &policy).status, DiskStatus::Critical);
-        assert_eq!(DiskCheckResult::new(5 * 1024 * 1024, &policy).status, DiskStatus::Emergency);
+        assert_eq!(
+            DiskCheckResult::new(1024 * 1024 * 1024, &policy).status,
+            DiskStatus::Ok
+        );
+        assert_eq!(
+            DiskCheckResult::new(200 * 1024 * 1024, &policy).status,
+            DiskStatus::Warn
+        );
+        assert_eq!(
+            DiskCheckResult::new(50 * 1024 * 1024, &policy).status,
+            DiskStatus::Critical
+        );
+        assert_eq!(
+            DiskCheckResult::new(5 * 1024 * 1024, &policy).status,
+            DiskStatus::Emergency
+        );
     }
 
     #[test]

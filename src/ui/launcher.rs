@@ -40,10 +40,7 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
 
     let text_chunks = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
         .split(inner);
 
     let title = Line::from(vec![
@@ -1179,6 +1176,10 @@ pub fn render_settings(f: &mut Frame, app: &App) {
         "  Tab=switch section · ↑↓=select · Enter=save · Esc=cancel",
         style_gray(),
     )))
-    .block(Block::default().borders(Borders::ALL).border_style(style_gray()));
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(style_gray()),
+    );
     f.render_widget(hint, chunks[3]);
 }

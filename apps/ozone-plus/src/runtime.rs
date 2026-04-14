@@ -14,8 +14,8 @@ use ozone_engine::{
     EngineCommandResult, SingleWriterConversationEngine, ThinkingBlockDecoder, ThinkingDisplayMode,
     ThinkingOutput,
 };
-use ozone_memory::{ImportanceScorer, KeywordExtractor};
 use ozone_inference::{InferenceError, MemoryConfig, StreamChunk};
+use ozone_memory::{ImportanceScorer, KeywordExtractor};
 use ozone_persist::{
     AuthorId, CreateNoteMemoryRequest, MemoryArtifactId, PersistError, PinMessageMemoryRequest,
     PinnedMemoryView, Provenance, SessionId, SqliteRepository, UpdateSessionRequest,
@@ -765,7 +765,9 @@ impl Phase1dRuntime {
             let tier_b = self.inference.config().memory.tier_b.clone();
 
             if tier_b.importance_proposals {
-                if let Some(_proposal) = self.importance_scorer.propose(&committed.content, false, 0) {
+                if let Some(_proposal) =
+                    self.importance_scorer.propose(&committed.content, false, 0)
+                {
                     // Proposal computed — available for future display/storage on user request
                 }
             }
@@ -789,7 +791,9 @@ impl Phase1dRuntime {
         }
 
         // Post-generation hook
-        let _ = self.hooks_config.run_post_generation(&session_id_str, &committed.content);
+        let _ = self
+            .hooks_config
+            .run_post_generation(&session_id_str, &committed.content);
 
         Ok(TuiRuntimeCompletion {
             request_id: pending.request_id.to_string(),
@@ -916,7 +920,9 @@ impl SessionRuntime for Phase1dRuntime {
             .map(tui_context_dry_run_from_build);
         let prompt = context_build.prompt;
 
-        let _ = self.hooks_config.run_pre_generation(context.session_id.as_ref());
+        let _ = self
+            .hooks_config
+            .run_pre_generation(context.session_id.as_ref());
         let thinking_mode = self.thinking_display_mode;
         self.pending_generation = Some(
             self.start_generation_task(
@@ -1453,12 +1459,9 @@ impl SessionRuntime for Phase1dRuntime {
                     ))))
                 }
             }
-            ShellCommand::SafeMode(SafeModeCommand::Status) => {
-                Ok(Some(Self::status_only_refresh(format!(
-                    "Safe mode: {}",
-                    if self.safe_mode { "ON" } else { "OFF" }
-                ))))
-            }
+            ShellCommand::SafeMode(SafeModeCommand::Status) => Ok(Some(Self::status_only_refresh(
+                format!("Safe mode: {}", if self.safe_mode { "ON" } else { "OFF" }),
+            ))),
             ShellCommand::SafeMode(SafeModeCommand::On) => {
                 self.safe_mode = true;
                 Ok(Some(Self::status_only_refresh(
@@ -2381,7 +2384,10 @@ mod tests {
         let o2 = dec.feed("nk>inner</think> end");
         let all: Vec<_> = o1.into_iter().chain(o2).collect();
         let has_content = all.iter().any(|o| matches!(o, ThinkingOutput::Content(_)));
-        assert!(has_content, "expected some Content output across both chunks");
+        assert!(
+            has_content,
+            "expected some Content output across both chunks"
+        );
     }
 
     #[test]

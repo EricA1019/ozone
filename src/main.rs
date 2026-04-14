@@ -121,21 +121,20 @@ async fn main() -> Result<()> {
 
     // Determine tier from --mode, argv[0], or saved preference
     let tier_override = cli.mode.map(prefs::Tier::from).or_else(|| {
-        std::env::args()
-            .next()
-            .and_then(|arg0| {
-                let name = std::path::Path::new(&arg0)
-                    .file_name()
-                    .and_then(|n| n.to_str())
-                    .unwrap_or("");
-                if name.contains("lite") || name.contains("ozone-lite") || name.contains("ozonelite") {
-                    Some(prefs::Tier::Lite)
-                } else if name.contains("ozone+") || name.contains("ozoneplus") || name.contains("plus") {
-                    Some(prefs::Tier::Plus)
-                } else {
-                    None // regular "ozone" → use saved pref or picker
-                }
-            })
+        std::env::args().next().and_then(|arg0| {
+            let name = std::path::Path::new(&arg0)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("");
+            if name.contains("lite") || name.contains("ozone-lite") || name.contains("ozonelite") {
+                Some(prefs::Tier::Lite)
+            } else if name.contains("ozone+") || name.contains("ozoneplus") || name.contains("plus")
+            {
+                Some(prefs::Tier::Plus)
+            } else {
+                None // regular "ozone" → use saved pref or picker
+            }
+        })
     });
 
     match cli.command {

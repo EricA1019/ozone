@@ -112,7 +112,12 @@ mod tests {
         let cases = [
             (ProductTier::Ozonelite, "ozonelite", "ozonelite", "Planned"),
             (ProductTier::Ozone, "ozone", "ozone", "v0.4.0-alpha"),
-            (ProductTier::OzonePlus, "ozone+", "ozone-plus", "v0.4.0-alpha"),
+            (
+                ProductTier::OzonePlus,
+                "ozone+",
+                "ozone-plus",
+                "v0.4.0-alpha",
+            ),
         ];
 
         for (tier, display_name, slug, status_label) in cases {

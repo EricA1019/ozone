@@ -22,9 +22,13 @@ pub enum ThinkingDisplayMode {
 pub enum ThinkingState {
     #[default]
     Normal,
-    InThinkTag { depth: usize },
+    InThinkTag {
+        depth: usize,
+    },
     InThinking,
-    InCloseTag { depth: usize },
+    InCloseTag {
+        depth: usize,
+    },
 }
 
 /// Output from the thinking decoder
@@ -261,16 +265,13 @@ mod tests {
 
         // Add more data to complete the tag
         src.extend_from_slice(b"nk>inside</think>");
-        let results: Vec<_> = std::iter::from_fn(|| decoder.decode(&mut src).ok().flatten())
-            .collect();
+        let results: Vec<_> =
+            std::iter::from_fn(|| decoder.decode(&mut src).ok().flatten()).collect();
 
         // Events: ThinkingStart, Thinking("inside"), ThinkingEnd
         assert_eq!(results.len(), 3);
         assert_eq!(results[0], ThinkingOutput::ThinkingStart);
-        assert_eq!(
-            results[1],
-            ThinkingOutput::Thinking("inside".to_string())
-        );
+        assert_eq!(results[1], ThinkingOutput::Thinking("inside".to_string()));
         assert_eq!(results[2], ThinkingOutput::ThinkingEnd);
     }
 
@@ -294,8 +295,8 @@ mod tests {
 
         // Complete the close tag
         src.extend_from_slice(b"nk>after");
-        let results: Vec<_> = std::iter::from_fn(|| decoder.decode(&mut src).ok().flatten())
-            .collect();
+        let results: Vec<_> =
+            std::iter::from_fn(|| decoder.decode(&mut src).ok().flatten()).collect();
 
         assert_eq!(results.len(), 2);
         assert_eq!(results[0], ThinkingOutput::ThinkingEnd);
@@ -326,7 +327,10 @@ mod tests {
     #[test]
     fn test_multiple_thinking_blocks() {
         let mut decoder = ThinkingBlockDecoder::new(ThinkingDisplayMode::Debug);
-        let results = decode_all(&mut decoder, "<think>first</think>middle<think>second</think>");
+        let results = decode_all(
+            &mut decoder,
+            "<think>first</think>middle<think>second</think>",
+        );
 
         // Events: ThinkingStart, Thinking("first"), ThinkingEnd, Content("middle"),
         //         ThinkingStart, Thinking("second"), ThinkingEnd

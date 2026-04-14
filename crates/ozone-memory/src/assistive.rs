@@ -30,10 +30,24 @@ pub struct ImportanceScorer {
 }
 
 const IMPORTANT_KEYWORDS: &[&str] = &[
-    "important", "remember", "never forget", "always",
-    "promise", "secret", "love", "hate", "fear",
-    "goal", "dream", "wish", "must", "critical",
-    "birthday", "anniversary", "name", "favorite",
+    "important",
+    "remember",
+    "never forget",
+    "always",
+    "promise",
+    "secret",
+    "love",
+    "hate",
+    "fear",
+    "goal",
+    "dream",
+    "wish",
+    "must",
+    "critical",
+    "birthday",
+    "anniversary",
+    "name",
+    "favorite",
 ];
 
 impl ImportanceScorer {
@@ -54,7 +68,10 @@ impl ImportanceScorer {
         }
 
         let lower = text.to_lowercase();
-        let kw_matches = IMPORTANT_KEYWORDS.iter().filter(|k| lower.contains(*k)).count();
+        let kw_matches = IMPORTANT_KEYWORDS
+            .iter()
+            .filter(|k| lower.contains(*k))
+            .count();
         score += (kw_matches as f32 * 0.15).min(0.5) * self.config.keyword_weight;
 
         let ref_count = ["i ", "my ", "you ", "your ", "me "]
@@ -97,14 +114,12 @@ pub struct KeywordExtractor {
 }
 
 const STOP_WORDS: &[&str] = &[
-    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being",
-    "have", "has", "had", "do", "does", "did", "will", "would", "could",
-    "should", "may", "might", "must", "shall", "can", "to", "of", "in",
-    "for", "on", "with", "at", "by", "from", "as", "into", "about", "like",
-    "this", "that", "these", "those", "i", "you", "he", "she", "it", "we",
-    "they", "what", "which", "who", "when", "where", "why", "how", "all",
-    "and", "but", "or", "not", "so", "than", "very", "just", "also",
-    "over", "up", "out", "if", "its", "our", "their", "my", "your",
+    "the", "a", "an", "is", "are", "was", "were", "be", "been", "being", "have", "has", "had",
+    "do", "does", "did", "will", "would", "could", "should", "may", "might", "must", "shall",
+    "can", "to", "of", "in", "for", "on", "with", "at", "by", "from", "as", "into", "about",
+    "like", "this", "that", "these", "those", "i", "you", "he", "she", "it", "we", "they", "what",
+    "which", "who", "when", "where", "why", "how", "all", "and", "but", "or", "not", "so", "than",
+    "very", "just", "also", "over", "up", "out", "if", "its", "our", "their", "my", "your",
 ];
 
 impl Default for KeywordExtractor {
@@ -133,7 +148,11 @@ impl KeywordExtractor {
         }
         let mut pairs: Vec<_> = freq.into_iter().collect();
         pairs.sort_by(|a, b| b.1.cmp(&a.1));
-        pairs.into_iter().take(self.max_keywords).map(|(w, _)| w.to_string()).collect()
+        pairs
+            .into_iter()
+            .take(self.max_keywords)
+            .map(|(w, _)| w.to_string())
+            .collect()
     }
 
     pub fn to_retrieval_key(&self, text: &str) -> MemoryContent {
@@ -157,7 +176,9 @@ mod tests {
     fn scorer_proposal_threshold() {
         let scorer = ImportanceScorer::default();
         assert!(scorer.propose("ok", false, 100).is_none());
-        assert!(scorer.propose("I promise to always remember your name", true, 0).is_some());
+        assert!(scorer
+            .propose("I promise to always remember your name", true, 0)
+            .is_some());
     }
 
     #[test]
@@ -165,7 +186,8 @@ mod tests {
         let scorer = ImportanceScorer::default();
         let score = scorer.score(
             "important critical must always remember promise love hate fear goal dream",
-            true, 0,
+            true,
+            0,
         );
         assert!(score <= 1.0);
     }

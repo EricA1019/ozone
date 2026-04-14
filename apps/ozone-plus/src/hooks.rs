@@ -1,8 +1,8 @@
 //! Shell extensibility: custom commands, pre/post hooks, theme loading stubs.
 
+use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
 use std::process::Command;
-use serde::{Deserialize, Serialize};
 
 /// Hook configuration (stored in ozone+ config)
 #[derive(Debug, Clone, Default, Serialize, Deserialize)]
@@ -31,11 +31,21 @@ pub enum HookResult {
 
 impl HooksConfig {
     pub fn run_pre_generation(&self, session_id: &str) -> HookResult {
-        run_script(self.pre_generation.as_ref(), "pre_generation", session_id, "")
+        run_script(
+            self.pre_generation.as_ref(),
+            "pre_generation",
+            session_id,
+            "",
+        )
     }
 
     pub fn run_post_generation(&self, session_id: &str, response: &str) -> HookResult {
-        run_script(self.post_generation.as_ref(), "post_generation", session_id, response)
+        run_script(
+            self.post_generation.as_ref(),
+            "post_generation",
+            session_id,
+            response,
+        )
     }
 }
 
@@ -59,7 +69,9 @@ fn run_script(path: Option<&PathBuf>, name: &str, session_id: &str, response: &s
         Ok(out) => HookResult::Failed {
             error: String::from_utf8_lossy(&out.stderr).to_string(),
         },
-        Err(e) => HookResult::Failed { error: e.to_string() },
+        Err(e) => HookResult::Failed {
+            error: e.to_string(),
+        },
     }
 }
 
@@ -115,7 +127,9 @@ pub fn run_custom_command(cmd: &CustomCommand, args: &str, session_id: &str) -> 
         Ok(out) => HookResult::Failed {
             error: String::from_utf8_lossy(&out.stderr).to_string(),
         },
-        Err(e) => HookResult::Failed { error: e.to_string() },
+        Err(e) => HookResult::Failed {
+            error: e.to_string(),
+        },
     }
 }
 
@@ -136,7 +150,10 @@ mod tests {
     fn hooks_default_skips() {
         let cfg = HooksConfig::default();
         assert!(matches!(cfg.run_pre_generation("s1"), HookResult::Skipped));
-        assert!(matches!(cfg.run_post_generation("s1", "resp"), HookResult::Skipped));
+        assert!(matches!(
+            cfg.run_post_generation("s1", "resp"),
+            HookResult::Skipped
+        ));
     }
 
     #[test]

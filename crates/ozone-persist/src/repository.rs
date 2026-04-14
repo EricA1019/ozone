@@ -1940,7 +1940,11 @@ impl SqliteRepository {
         Ok(removed)
     }
 
-    pub fn compact_events(&self, session_id: Option<&SessionId>, older_than_ms: u64) -> Result<usize> {
+    pub fn compact_events(
+        &self,
+        session_id: Option<&SessionId>,
+        older_than_ms: u64,
+    ) -> Result<usize> {
         let target_sessions = match session_id {
             Some(session_id) => vec![session_id.clone()],
             None => self

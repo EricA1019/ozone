@@ -1,17 +1,17 @@
 //! Tier picker screen for first-run or --pick flag
 
 use ratatui::{
-    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, List, ListItem, Paragraph},
+    Frame,
 };
 
 use crate::prefs::Tier;
 use crate::theme::{
-    style_bold_lime, style_cyan, style_gray, style_lime, style_violet,
-    HEX, HEX_FILLED, LIME, TAGLINE, VIOLET,
+    style_bold_bright_violet, style_bold_lime, style_bright_violet, style_cyan, style_gray,
+    style_lime, HEX, HEX_FILLED, LIME, TAGLINE,
 };
 
 /// State for the tier picker
@@ -102,18 +102,17 @@ pub fn render_tier_picker(f: &mut Frame, area: Rect, state: &TierPickerState) {
         .split(inner);
 
     // Hex flourish
-    let flourish = Line::from(vec![
-        Span::styled(format!(" {HEX}  {HEX}  {HEX}"), style_lime()),
-    ]);
+    let flourish = Line::from(vec![Span::styled(
+        format!(" {HEX}  {HEX}  {HEX}"),
+        style_lime(),
+    )]);
     f.render_widget(
         Paragraph::new(flourish).alignment(Alignment::Center),
         chunks[0],
     );
 
     // Title
-    let title = Line::from(vec![
-        Span::styled(" Choose Your Tier ", style_bold_lime()),
-    ]);
+    let title = Line::from(vec![Span::styled(" Choose Your Tier ", style_bold_lime())]);
     f.render_widget(
         Paragraph::new(title).alignment(Alignment::Center),
         chunks[2],
@@ -141,16 +140,19 @@ pub fn render_tier_picker(f: &mut Frame, area: Rect, state: &TierPickerState) {
         .map(|(i, (tier, name, desc))| {
             let selected = i == state.selected;
             let bullet = if selected { HEX_FILLED } else { HEX };
-            
-            // ozone+ gets violet accent, others get lime/cyan
+
+            // ozone+ gets a brighter accent when selected so it stays legible on the dark theme.
             let (name_style, bullet_style) = if *tier == Tier::Plus {
                 if selected {
-                    (Style::default().fg(VIOLET).add_modifier(Modifier::BOLD), style_violet())
+                    (style_bold_bright_violet(), style_bright_violet())
                 } else {
                     (style_gray(), style_gray())
                 }
             } else if selected {
-                (Style::default().fg(LIME).add_modifier(Modifier::BOLD), style_lime())
+                (
+                    Style::default().fg(LIME).add_modifier(Modifier::BOLD),
+                    style_lime(),
+                )
             } else {
                 (style_gray(), style_gray())
             };
@@ -177,15 +179,13 @@ pub fn render_tier_picker(f: &mut Frame, area: Rect, state: &TierPickerState) {
         Span::styled("[Q] ", style_lime()),
         Span::styled("Quit", style_gray()),
     ]);
-    f.render_widget(
-        Paragraph::new(hint).alignment(Alignment::Center),
-        chunks[8],
-    );
+    f.render_widget(Paragraph::new(hint).alignment(Alignment::Center), chunks[8]);
 
     // Hex footer
-    let footer = Line::from(vec![
-        Span::styled(format!(" {HEX}  {HEX}  {HEX}"), style_lime()),
-    ]);
+    let footer = Line::from(vec![Span::styled(
+        format!(" {HEX}  {HEX}  {HEX}"),
+        style_lime(),
+    )]);
     f.render_widget(
         Paragraph::new(footer).alignment(Alignment::Center),
         chunks[9],

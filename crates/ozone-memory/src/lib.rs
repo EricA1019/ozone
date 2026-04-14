@@ -1,7 +1,7 @@
 pub mod assistive;
+pub mod disk_monitor;
 mod index;
 mod lifecycle;
-pub mod disk_monitor;
 mod provider;
 mod scoring;
 pub mod summary;
@@ -738,8 +738,10 @@ mod tests {
 
     #[test]
     fn importance_proposal_content_roundtrip() {
-        let content =
-            MemoryContent::importance_proposal(0.85, "This memory is critical for plot continuity.");
+        let content = MemoryContent::importance_proposal(
+            0.85,
+            "This memory is critical for plot continuity.",
+        );
         let json = serde_json::to_string(&content).unwrap();
         assert!(json.contains("\"kind\":\"importance_proposal\""));
         let parsed = serde_json::from_str::<MemoryContent>(&json).unwrap();
@@ -763,7 +765,10 @@ mod tests {
     fn importance_proposal_constructor_works() {
         let content = MemoryContent::importance_proposal(0.75, "High relevance to current scene.");
         match content {
-            MemoryContent::ImportanceProposal { score, justification } => {
+            MemoryContent::ImportanceProposal {
+                score,
+                justification,
+            } => {
                 assert!((score - 0.75).abs() < f32::EPSILON);
                 assert_eq!(justification, "High relevance to current scene.");
             }

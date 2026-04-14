@@ -7,7 +7,7 @@ use crossterm::{
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{backend::CrosstermBackend, Terminal};
+use ratatui::{backend::CrosstermBackend, widgets::Clear, Terminal};
 use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc::{error::TryRecvError, UnboundedReceiver};
 
@@ -292,6 +292,24 @@ fn build_kc_args(plan: &LaunchPlan) -> Vec<String> {
     args
 }
 
+fn queue_frontend_launch(app: &mut App) {
+    match app.preferred_frontend {
+        Some(FrontendMode::SillyTavern) => {
+            app.pending_launch_choice = Some(0);
+        }
+        Some(FrontendMode::OzonePlus) => {
+            app.pending_launch_choice = Some(1);
+        }
+        None => {
+            app.frontend_choice_index = match app.prefs.preferred_frontend {
+                Some(FrontendMode::OzonePlus) => 1,
+                _ => 0,
+            };
+            app.screen = Screen::FrontendChoice;
+        }
+    }
+}
+
 pub async fn run_launcher(
     no_browser: bool,
     preferred_frontend: Option<FrontendMode>,
@@ -307,7 +325,7 @@ pub async fn run_launcher(
     }
 
     let mut app = App::new(prefs);
-    app.preferred_frontend = preferred_frontend;
+    app.preferred_frontend = preferred_frontend.or(app.prefs.preferred_frontend);
 
     // If --pick flag, clear the tier preference so picker shows
     if force_picker {
@@ -436,69 +454,93 @@ pub async fn run_launcher(
 
         // Execute a pending frontend launch choice (triggered by FrontendChoice Enter or --frontend bypass).
         if let Some(choice_idx) = app.pending_launch_choice.take() {
-            if let Some(plan) = app.current_plan.clone() {
-                app.screen = Screen::Launching;
-                app.launch_start = Some(Instant::now());
-                terminal.draw(|f| launcher::render_launching(f, &app))?;
+            match app.prefs.preferred_backend {
+                Some(BackendMode::KoboldCpp) => {
+                    if let Some(plan) = app.current_plan.clone() {
+                        app.screen = Screen::Launching;
+                        app.launch_start = Some(Instant::now());
 
-                let home = std::env::var("HOME").unwrap_or_default();
-                let launcher_path =
-                    std::path::PathBuf::from(&home).join("models/launch-koboldcpp.sh");
-                let model_path = std::path::PathBuf::from(&home)
-                    .join("models")
-                    .join(&plan.model_name);
-                let kc_args = build_kc_args(&plan);
-                match crate::processes::start_kobold(
-                    &launcher_path,
-                    &model_path.to_string_lossy(),
-                    &kc_args,
-                )
-                .await
-                {
-                    Ok(_) => {
-                        let mut updated_prefs = app.prefs.clone();
-                        updated_prefs.last_model_name = plan.model_name.clone();
-                        updated_prefs.last_context_size = Some(plan.context_size);
-                        updated_prefs.last_gpu_layers = Some(plan.gpu_layers);
-                        updated_prefs.last_quant_kv = Some(plan.quant_kv);
-                        let _ = crate::prefs::save_prefs(&updated_prefs).await;
-                        app.prefs = updated_prefs;
-                        if choice_idx == 0 {
-                            // SillyTavern: open browser and enter monitor
-                            if !app.prefs.no_browser {
-                                crate::processes::open_browser_app("http://localhost:8000");
+                        let home = std::env::var("HOME").unwrap_or_default();
+                        let launcher_path =
+                            std::path::PathBuf::from(&home).join("models/launch-koboldcpp.sh");
+                        let model_path = std::path::PathBuf::from(&home)
+                            .join("models")
+                            .join(&plan.model_name);
+                        let kc_args = build_kc_args(&plan);
+                        match crate::processes::start_kobold(
+                            &launcher_path,
+                            &model_path.to_string_lossy(),
+                            &kc_args,
+                        )
+                        .await
+                        {
+                            Ok(_) => {
+                                let mut updated_prefs = app.prefs.clone();
+                                updated_prefs.last_model_name = plan.model_name.clone();
+                                updated_prefs.last_context_size = Some(plan.context_size);
+                                updated_prefs.last_gpu_layers = Some(plan.gpu_layers);
+                                updated_prefs.last_quant_kv = Some(plan.quant_kv);
+                                let _ = crate::prefs::save_prefs(&updated_prefs).await;
+                                app.prefs = updated_prefs;
+                                if choice_idx == 0 {
+                                    if !app.prefs.no_browser {
+                                        crate::processes::open_browser_app("http://localhost:8000");
+                                    }
+                                    app.screen = Screen::Monitor;
+                                } else {
+                                    app.ozone_plus_handoff = true;
+                                    break Ok(());
+                                }
                             }
-                            app.screen = Screen::Monitor;
-                        } else {
-                            // ozone+: hand off to ozone-plus list
-                            app.ozone_plus_handoff = true;
-                            break Ok(());
+                            Err(error) => {
+                                app.set_error(format!("Launch failed: {error}"));
+                                app.screen = Screen::Launcher;
+                            }
                         }
-                    }
-                    Err(error) => {
-                        app.set_error(format!("Launch failed: {error}"));
+                    } else {
+                        app.set_error("No launch plan selected.".into());
                         app.screen = Screen::Launcher;
                     }
+                }
+                Some(BackendMode::Ollama) => {
+                    if choice_idx == 0 {
+                        if !app.prefs.no_browser {
+                            crate::processes::open_browser_app("http://localhost:8000");
+                        }
+                        app.screen = Screen::Monitor;
+                    } else {
+                        app.ozone_plus_handoff = true;
+                        break Ok(());
+                    }
+                }
+                None => {
+                    app.set_error("Configure backend in Settings first".into());
+                    app.screen = Screen::Launcher;
                 }
             }
         }
 
         // Draw
-        terminal.draw(|f| match app.screen {
-            Screen::Splash => splash::render(f, &app),
-            Screen::TierPicker => tier_picker::render_tier_picker(f, f.area(), &app.tier_picker),
-            Screen::Launcher => launcher::render(f, &app),
-            Screen::ModelPicker => launcher::render_model_picker(f, &app),
-            Screen::Confirm => launcher::render_confirm(f, &app),
-            Screen::FrontendChoice => launcher::render_frontend_choice(f, &app),
-            Screen::Launching => launcher::render_launching(f, &app),
-            Screen::ProfileAdvisory => launcher::render_profile_advisory(f, &app),
-            Screen::ProfileConfirm => launcher::render_profile_confirm(f, &app),
-            Screen::ProfileRunning => launcher::render_profile_running(f, &app),
-            Screen::ProfileSuccess => launcher::render_profile_success(f, &app),
-            Screen::ProfileFailure => launcher::render_profile_failure(f, &app),
-            Screen::Settings => launcher::render_settings(f, &app),
-            Screen::Monitor => monitor::render(f, &app),
+        terminal.draw(|f| {
+            f.render_widget(Clear, f.area());
+            match app.screen {
+                Screen::Splash => splash::render(f, &app),
+                Screen::TierPicker => {
+                    tier_picker::render_tier_picker(f, f.area(), &app.tier_picker)
+                }
+                Screen::Launcher => launcher::render(f, &app),
+                Screen::ModelPicker => launcher::render_model_picker(f, &app),
+                Screen::Confirm => launcher::render_confirm(f, &app),
+                Screen::FrontendChoice => launcher::render_frontend_choice(f, &app),
+                Screen::Launching => launcher::render_launching(f, &app),
+                Screen::ProfileAdvisory => launcher::render_profile_advisory(f, &app),
+                Screen::ProfileConfirm => launcher::render_profile_confirm(f, &app),
+                Screen::ProfileRunning => launcher::render_profile_running(f, &app),
+                Screen::ProfileSuccess => launcher::render_profile_success(f, &app),
+                Screen::ProfileFailure => launcher::render_profile_failure(f, &app),
+                Screen::Settings => launcher::render_settings(f, &app),
+                Screen::Monitor => monitor::render(f, &app),
+            }
         })?;
 
         // Handle events
@@ -533,7 +575,7 @@ pub async fn run_launcher(
                             app.screen = Screen::Launcher;
                         }
                         _ => {}
-                    }
+                    },
                     Screen::Launcher => match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
                         KeyCode::Up => {
@@ -561,9 +603,13 @@ pub async fn run_launcher(
                                         }
                                     }
                                     Some(BackendMode::Ollama) => {
-                                        if crate::processes::is_url_ready("http://127.0.0.1:11434/api/tags").await {
+                                        if crate::processes::is_url_ready(
+                                            "http://127.0.0.1:11434/api/tags",
+                                        )
+                                        .await
+                                        {
                                             app.set_status("Ollama backend ready.".into());
-                                            // For now, just confirm ready - full Ollama launch flow TBD
+                                            queue_frontend_launch(&mut app);
                                         } else {
                                             app.set_error("Ollama not running on :11434".into());
                                         }
@@ -646,6 +692,8 @@ pub async fn run_launcher(
                                 _ => None,
                             };
                             let _ = crate::prefs::save_prefs(&app.prefs).await;
+                            app.preferred_frontend =
+                                preferred_frontend.or(app.prefs.preferred_frontend);
                             app.set_status("Settings saved.".into());
                             app.screen = Screen::Launcher;
                         }
@@ -722,18 +770,7 @@ pub async fn run_launcher(
                         KeyCode::Esc | KeyCode::Char('n') => app.screen = Screen::Launcher,
                         KeyCode::Enter | KeyCode::Char('y') => {
                             if app.current_plan.is_some() {
-                                match &app.preferred_frontend {
-                                    Some(FrontendMode::SillyTavern) => {
-                                        app.pending_launch_choice = Some(0);
-                                    }
-                                    Some(FrontendMode::OzonePlus) => {
-                                        app.pending_launch_choice = Some(1);
-                                    }
-                                    None => {
-                                        app.frontend_choice_index = 0;
-                                        app.screen = Screen::FrontendChoice;
-                                    }
-                                }
+                                queue_frontend_launch(&mut app);
                             }
                         }
                         _ => {}
@@ -1085,12 +1122,16 @@ pub async fn run_monitor() -> Result<()> {
     execute!(stdout, EnterAlternateScreen)?;
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
+    terminal.hide_cursor()?;
 
     let mut last_tick = Instant::now();
     let mut last_refresh = Instant::now();
 
     loop {
-        terminal.draw(|f| monitor::render(f, &app))?;
+        terminal.draw(|f| {
+            f.render_widget(Clear, f.area());
+            monitor::render(f, &app);
+        })?;
 
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {

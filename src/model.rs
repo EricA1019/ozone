@@ -155,12 +155,7 @@ fn parse_quant(stem: &str) -> Option<String> {
         }
 
         // Must end at a delimiter or end-of-string
-        if i < len
-            && bytes[i] != b'-'
-            && bytes[i] != b'_'
-            && bytes[i] != b'.'
-            && bytes[i] != b' '
-        {
+        if i < len && bytes[i] != b'-' && bytes[i] != b'_' && bytes[i] != b'.' && bytes[i] != b' ' {
             continue;
         }
 
@@ -293,8 +288,7 @@ async fn add_hf(repo: &str, filename: Option<&str>) -> Result<()> {
     let dir = models_dir();
     fs::create_dir_all(&dir)?;
 
-    let hf_bin = PathBuf::from(std::env::var("HOME").unwrap_or_default())
-        .join(".local/bin/hf");
+    let hf_bin = PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/bin/hf");
     if !hf_bin.exists() {
         bail!(
             "HuggingFace CLI not found at {}. Install with: pip install huggingface_hub[cli]",
@@ -324,9 +318,7 @@ async fn add_hf(repo: &str, filename: Option<&str>) -> Result<()> {
         args.join(" ")
     });
 
-    let status = cmd
-        .status()
-        .context("Failed to run hf CLI")?;
+    let status = cmd.status().context("Failed to run hf CLI")?;
     if !status.success() {
         bail!("hf download exited with {}", status);
     }
@@ -401,11 +393,7 @@ fn add_ollama(model: &str) -> Result<()> {
 
     unix_fs::symlink(&blob_path, &link_path)
         .with_context(|| format!("Failed to create symlink {}", link_path.display()))?;
-    println!(
-        "✓ Linked {} → {}",
-        link_name,
-        blob_path.display()
-    );
+    println!("✓ Linked {} → {}", link_name, blob_path.display());
     Ok(())
 }
 
@@ -420,9 +408,7 @@ fn add_link(path: &str) -> Result<()> {
     let model_dir = models_dir();
     fs::create_dir_all(&model_dir)?;
 
-    let fname = source
-        .file_name()
-        .context("Cannot determine filename")?;
+    let fname = source.file_name().context("Cannot determine filename")?;
     let link_path = model_dir.join(fname);
 
     if link_path.exists() {
@@ -506,8 +492,7 @@ async fn cmd_info(name: &str) -> Result<()> {
         .unwrap_or_else(|| "unknown".into());
 
     let stem = name.trim_end_matches(".gguf");
-    let quant = parse_quant(stem)
-        .unwrap_or_else(|| "—".into());
+    let quant = parse_quant(stem).unwrap_or_else(|| "—".into());
 
     println!();
     println!("  Model:    {name}");

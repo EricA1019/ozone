@@ -16,8 +16,8 @@ use ozone_engine::{
 use ozone_inference::MemoryConfig;
 
 pub mod config;
-pub mod hooks;
 mod context_bridge;
+pub mod hooks;
 mod hybrid_search;
 mod index_rebuild;
 mod inference_adapter;
@@ -27,10 +27,10 @@ use hybrid_search::{load_memory_config, HybridSearchService};
 use index_rebuild::rebuild_index;
 use ozone_persist::{
     AuthorId, BranchRecord, CharacterCard, CreateMessageRequest, CreateNoteMemoryRequest,
-    CreateSessionRequest, GarbageCollectionOutcome, GarbageCollectionPlan,
-    GarbageCollectionPolicy, GarbageCollectionReason, ImportCharacterCardRequest,
-    MemoryArtifactId, PersistError, PersistencePaths, PinMessageMemoryRequest, PinnedMemoryView,
-    Provenance, SessionId, SessionSummary, SqliteRepository, TranscriptExport,
+    CreateSessionRequest, GarbageCollectionOutcome, GarbageCollectionPlan, GarbageCollectionPolicy,
+    GarbageCollectionReason, ImportCharacterCardRequest, MemoryArtifactId, PersistError,
+    PersistencePaths, PinMessageMemoryRequest, PinnedMemoryView, Provenance, SessionId,
+    SessionSummary, SqliteRepository, TranscriptExport,
 };
 use ozone_tui::{run_terminal_session, SessionContext as TuiSessionContext};
 use runtime::Phase1dRuntime;
@@ -1114,7 +1114,9 @@ fn print_bootstrap_summary() {
         ProductTier::OzonePlus.status_label()
     );
     println!("⬡ Local-LLM chat shell with persistent memory and sessions.");
-    println!("Create sessions, chat with streaming inference, pin memories, search across sessions,");
+    println!(
+        "Create sessions, chat with streaming inference, pin memories, search across sessions,"
+    );
     println!("branch transcripts, import characters, and export your data.");
     println!();
     println!("Try one of:");
@@ -1898,17 +1900,31 @@ fn lifecycle_inspect(session_id_raw: Option<String>) -> Result<(), String> {
     println!("Derived artifacts  ({} total)", records.len());
     println!();
     for record in &records {
-        println!("  {}  {}  {}", record.artifact_id, record.kind, record.session_id);
+        println!(
+            "  {}  {}  {}",
+            record.artifact_id, record.kind, record.session_id
+        );
         println!("    tier       {}", record.storage_tier);
         println!(
             "    stale      {}",
-            if record.staleness.is_stale { "yes ⚠" } else { "no" }
+            if record.staleness.is_stale {
+                "yes ⚠"
+            } else {
+                "no"
+            }
         );
         println!(
             "    age        {} messages  {} hours",
             record.age_messages, record.staleness.age_hours
         );
-        println!("    source     {}", if record.source_exists { "present" } else { "missing ⚠" });
+        println!(
+            "    source     {}",
+            if record.source_exists {
+                "present"
+            } else {
+                "missing ⚠"
+            }
+        );
         println!("    created    {}", record.created_at);
         println!();
     }
@@ -1923,7 +1939,10 @@ fn lifecycle_disk_status() -> Result<(), String> {
         Some(result) => {
             println!("Disk status");
             println!("  path            {}", data_dir.display());
-            println!("  free            {} MiB", result.free_bytes / (1024 * 1024));
+            println!(
+                "  free            {} MiB",
+                result.free_bytes / (1024 * 1024)
+            );
             println!("  status          {}", result.status);
             if result.status.should_pause_background_jobs() {
                 println!("  ⚠ emergency: background artifact jobs should be paused");
@@ -1955,7 +1974,10 @@ fn build_gc_policy_and_session(
     max_embeddings: usize,
     purge_orphans: bool,
 ) -> Result<(Option<SessionId>, GarbageCollectionPolicy), String> {
-    let session_id = session_id_raw.as_deref().map(parse_session_id).transpose()?;
+    let session_id = session_id_raw
+        .as_deref()
+        .map(parse_session_id)
+        .transpose()?;
     let policy = GarbageCollectionPolicy::new(max_embeddings, purge_orphans);
     Ok((session_id, policy))
 }
@@ -2089,7 +2111,10 @@ fn handle_events_command(command: EventsCommand) -> Result<(), String> {
 }
 
 fn events_compact(session_id_raw: Option<String>, retention_days: u64) -> Result<(), String> {
-    let session_id = session_id_raw.as_deref().map(parse_session_id).transpose()?;
+    let session_id = session_id_raw
+        .as_deref()
+        .map(parse_session_id)
+        .transpose()?;
     let now_ms = u64::try_from(now_timestamp_ms()).unwrap_or(0);
     let older_than_ms = now_ms.saturating_sub(retention_days * 24 * 3600 * 1000);
     let repo = open_repository()?;

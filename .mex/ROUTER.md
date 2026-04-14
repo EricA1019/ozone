@@ -49,6 +49,8 @@ Then read this file fully before doing anything else in this session.
 - Phase 2C is now implemented (alpha → gamma): `apps/ozone-plus` now has `/summarize`, memory-recall lifecycle labels, `lifecycle inspect`, GC planning and execution commands, `events compact`, and `lifecycle disk-status`; `crates/ozone-memory` owns `StorageTierPolicy`, `ArtifactStaleness`, the disk-monitor policy/status/check result types, and `VersionCompatibilityResult`; `crates/ozone-persist` owns derived-artifact GC planning/application and events compaction; `crates/ozone-inference` has full `MemoryLifecycleConfig` under `[memory.lifecycle]`
 - Phase 5 is now implemented: the launcher ships the lime-green brand refresh, the tier picker, and `--mode` / `--pick` family selection for ozonelite / ozone / ozone+
 - Phase 5.5 is now implemented: ozone now has `model list|add|remove|info`, ozone+ copy and metadata reflect the shipped MVP state, timestamps are human-readable, and release docs/changelog now cover `v0.4.0-alpha`
+- MVP launcher polish landed after live install testing: saved frontend preference is now honored when launching, and the selected `ozone+` row in the tier picker uses a higher-contrast accent so it remains readable on the dark theme
+- Launcher smoke-fix pass landed after live testing: the splash version label no longer duplicates `alpha`, `Launch` with saved `Ollama + ozone+` now hands off into `ozone-plus`, and the TUI now clears the frame before redraws to reduce stale-screen overlap during launcher, monitor, and profiling transitions
 
 **Phase 2 is COMPLETE. All of Phase 2A, 2B, and 2C (alpha/beta/gamma) have shipped.**
 
@@ -76,6 +78,7 @@ Then read this file fully before doing anything else in this session.
 - The Phase 2A live smoke verified `:memories` and `/search ...` in the TUI, but `Ctrl+K` itself was validated through tests because this PTY automation channel cannot reliably send every control chord
 - The Phase 2B live smoke verified CLI fallback -> `index rebuild` -> hybrid search with the mock embedding provider; the full-screen TUI hybrid-recall path is still better covered by cargo tests than PTY-driven visual automation
 - `cargo build --release` at the repo root is not sufficient when you want a fresh `target/release/ozone-plus` artifact; explicitly building `-p ozone-plus` avoids stale smoke-test binaries
+- PTY/script transcript captures can still show raw ANSI/control-sequence noise even after the redraw hardening pass; treat that as a capture limitation unless it is also reproducible in a normal interactive terminal
 
 ## Routing Table
 

@@ -37,7 +37,7 @@ fn render_header(f: &mut Frame, area: Rect, _app: &App) {
     let title = Line::from(vec![
         Span::styled(
             format!(" {} Ozone Monitor ", crate::theme::HEX_CURSOR),
-            style_bold_violet(),
+            style_bold_lime(),
         ),
         Span::styled("—", style_gray()),
         Span::styled(" live ", style_green()),
@@ -45,7 +45,7 @@ fn render_header(f: &mut Frame, area: Rect, _app: &App) {
     ]);
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(style_violet());
+        .border_style(style_lime());
     f.render_widget(Paragraph::new(title).block(block), area);
 }
 
