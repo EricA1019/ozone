@@ -2241,4 +2241,155 @@ mod tests {
         assert!(section.lines[0].contains("prov 0.61"));
         assert!(section.lines[0].contains("The key rests under the lamp."));
     }
+
+    // ── Phase 3 cleanup-e: integration tests ────────────────────────────────
+
+    #[test]
+    fn parse_thinking_commands() {
+        assert_eq!(
+            parse_shell_command("/thinking"),
+            Ok(ShellCommand::Thinking(ThinkingCommand::Status))
+        );
+        assert_eq!(
+            parse_shell_command("/thinking status"),
+            Ok(ShellCommand::Thinking(ThinkingCommand::Status))
+        );
+        assert_eq!(
+            parse_shell_command("/thinking hidden"),
+            Ok(ShellCommand::Thinking(ThinkingCommand::SetMode(
+                ThinkingDisplayMode::Hidden
+            )))
+        );
+        assert_eq!(
+            parse_shell_command("/thinking assisted"),
+            Ok(ShellCommand::Thinking(ThinkingCommand::SetMode(
+                ThinkingDisplayMode::Assisted
+            )))
+        );
+        assert_eq!(
+            parse_shell_command("/thinking debug"),
+            Ok(ShellCommand::Thinking(ThinkingCommand::SetMode(
+                ThinkingDisplayMode::Debug
+            )))
+        );
+        assert!(parse_shell_command("/thinking bogus").is_err());
+    }
+
+    #[test]
+    fn parse_tierb_commands() {
+        assert_eq!(
+            parse_shell_command("/tierb"),
+            Ok(ShellCommand::TierB(TierBCommand::Status))
+        );
+        assert_eq!(
+            parse_shell_command("/tierb status"),
+            Ok(ShellCommand::TierB(TierBCommand::Status))
+        );
+        assert_eq!(
+            parse_shell_command("/tierb toggle"),
+            Ok(ShellCommand::TierB(TierBCommand::Toggle))
+        );
+        assert!(parse_shell_command("/tierb bogus").is_err());
+    }
+
+    #[test]
+    fn parse_hooks_commands() {
+        assert_eq!(
+            parse_shell_command("/hooks"),
+            Ok(ShellCommand::Hooks(HooksCommand::Status))
+        );
+        assert_eq!(
+            parse_shell_command("/hooks status"),
+            Ok(ShellCommand::Hooks(HooksCommand::Status))
+        );
+        assert_eq!(
+            parse_shell_command("/hooks list"),
+            Ok(ShellCommand::Hooks(HooksCommand::List))
+        );
+        assert!(parse_shell_command("/hooks bogus").is_err());
+    }
+
+    #[test]
+    fn parse_safemode_commands() {
+        assert_eq!(
+            parse_shell_command("/safemode"),
+            Ok(ShellCommand::SafeMode(SafeModeCommand::Status))
+        );
+        assert_eq!(
+            parse_shell_command("/safemode status"),
+            Ok(ShellCommand::SafeMode(SafeModeCommand::Status))
+        );
+        assert_eq!(
+            parse_shell_command("/safemode on"),
+            Ok(ShellCommand::SafeMode(SafeModeCommand::On))
+        );
+        assert_eq!(
+            parse_shell_command("/safemode off"),
+            Ok(ShellCommand::SafeMode(SafeModeCommand::Off))
+        );
+        assert_eq!(
+            parse_shell_command("/safemode toggle"),
+            Ok(ShellCommand::SafeMode(SafeModeCommand::Toggle))
+        );
+        assert!(parse_shell_command("/safemode bogus").is_err());
+    }
+
+    #[test]
+    fn thinking_decoder_feed_splits_think_blocks() {
+        use ozone_engine::{ThinkingDisplayMode, ThinkingOutput};
+        let mut dec = ozone_engine::ThinkingBlockDecoder::new(ThinkingDisplayMode::Debug);
+        let outputs = dec.feed("hello <think>reasoning</think> world");
+        let texts: Vec<_> = outputs
+            .iter()
+            .filter_map(|o| {
+                if let ThinkingOutput::Content(t) = o {
+                    Some(t.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        let thinking: Vec<_> = outputs
+            .iter()
+            .filter_map(|o| {
+                if let ThinkingOutput::Thinking(t) = o {
+                    Some(t.as_str())
+                } else {
+                    None
+                }
+            })
+            .collect();
+        assert!(texts.iter().any(|t| t.contains("hello")));
+        assert!(texts.iter().any(|t| t.contains("world")));
+        assert!(thinking.iter().any(|t| t.contains("reasoning")));
+    }
+
+    #[test]
+    fn thinking_decoder_feed_empty_input() {
+        use ozone_engine::ThinkingDisplayMode;
+        let mut dec = ozone_engine::ThinkingBlockDecoder::new(ThinkingDisplayMode::Hidden);
+        let outputs = dec.feed("");
+        assert!(outputs.is_empty());
+    }
+
+    #[test]
+    fn thinking_decoder_feed_partial_chunks() {
+        use ozone_engine::{ThinkingDisplayMode, ThinkingOutput};
+        let mut dec = ozone_engine::ThinkingBlockDecoder::new(ThinkingDisplayMode::Assisted);
+        // feed in two partial chunks that together form a complete think block
+        let o1 = dec.feed("start <thi");
+        let o2 = dec.feed("nk>inner</think> end");
+        let all: Vec<_> = o1.into_iter().chain(o2).collect();
+        let has_content = all.iter().any(|o| matches!(o, ThinkingOutput::Content(_)));
+        assert!(has_content, "expected some Content output across both chunks");
+    }
+
+    #[test]
+    fn unknown_shell_command_message_lists_new_commands() {
+        let msg = unknown_shell_command_message();
+        assert!(msg.contains("/thinking"));
+        assert!(msg.contains("/tierb"));
+        assert!(msg.contains("/hooks"));
+        assert!(msg.contains("/safemode"));
+    }
 }
