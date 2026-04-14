@@ -6,108 +6,91 @@
  ██████  ███████  ██████  ██   ████ ███████
 ```
 
-**⬡ local AI stack operator**
+**⬡ Use AI smarter. Not bigger.**
 
-![Current repo](https://img.shields.io/badge/current%20repo-ozone-7c3aed?style=for-the-badge)
-![Product family](https://img.shields.io/badge/family-ozonelite_%E2%86%92_ozone_%E2%86%92_ozone%2B-06b6d4?style=for-the-badge)
-![Upcoming](https://img.shields.io/badge/upcoming-ozone%2B-f59e0b?style=for-the-badge)
-
-Ozone is a **local-first tooling family** for running, tuning, and eventually interacting with local AI stacks.
-
-This repository currently tracks **ozone** — the middle tier in that family:
-- **ozonelite** *(planned)* — ultra-lean backend manager for constrained systems and power users
-- **ozone** *(current repo)* — backend tuning, benchmarking, sweeps, profile generation, and operator workflows
-- **ozone+** *(upcoming)* — the full local-LLM pipeline with a polished TUI/frontend built on top of the backend-management foundation
-
-Configure, benchmark, profile, launch, and monitor [KoboldCpp](https://github.com/LostRuins/koboldcpp) + [SillyTavern](https://github.com/SillyTavern/SillyTavern) from a single terminal workflow. Ozone reads your hardware, picks a layer split that fits in available VRAM (spilling to RAM if needed), helps you test alternatives, and turns good runs into reusable profiles.
-
-Built in Rust. Single binary. No Node.js, no Python, no daemon.
-
-**Contact:** ScribeALB@proton.me
-
-For the product-family guide and the upcoming ozone+ direction, see [`ozone+/README.md`](ozone+/README.md).
+![Version](https://img.shields.io/badge/v0.4.0--alpha-a8e600?style=for-the-badge)
+![License](https://img.shields.io/badge/MIT-7c3aed?style=for-the-badge)
+![Local-first](https://img.shields.io/badge/local--first-06b6d4?style=for-the-badge)
 
 ---
 
-## ⬡ Ozone product line
+## ⬡ The Ozone Family
 
-| Build | Status | Purpose | Best for |
-|---|---|---|---|
-| **ozonelite** | Planned | Ultra-lean backend manager | Weak hardware, SSH boxes, users who want the smallest possible operational layer |
-| **ozone** | Current repo | Benchmarking, sweeps, profiles, and hardware-aware launch workflows | Users who want repeatable tuning and backend management without a full frontend stack |
-| **ozone+** | Upcoming | Full local-LLM pipeline with a polished TUI/frontend | Users who want one cohesive workflow from backend control to end-user interaction |
+One codebase, three tiers. Choose your level:
 
----
+| Tier | What it does | Who it's for |
+|---|---|---|
+| **ozonelite** | Launch + monitor only | Minimal footprint, SSH boxes, power users |
+| **ozone** | Bench · Sweep · Analyze | Repeatable tuning and hardware-aware launch workflows |
+| **ozone+** | Chat shell with memory & sessions | Full local-LLM chat experience in one TUI |
 
-## What this repo does today
+```bash
+ozone --mode=lite   # ozonelite mode
+ozone               # ozone base mode  
+ozone --mode=plus   # ozone+ mode
+ozone --pick        # force tier picker
+```
 
-- Splash screen with live VRAM and RAM gauges on startup
-- Scrollable model list — each entry shows size, source (`Tuned` / `Bench` / `Heur`), and a fit indicator
-- Hardware-aware planner: checks free VRAM, computes GPU layer count, falls back to mixed-memory or CPU-only automatically
-- Confirm screen shows the exact KoboldCpp flags before anything launches
-- Launches KoboldCpp, waits for the API to come up, then opens SillyTavern in a browser app window
-- `ozone bench` measures concrete model/settings combinations and stores benchmark results
-- `ozone sweep` explores multiple context / quantization combinations to find better operating points
-- `ozone analyze` reviews benchmark history, surfaces strong configurations, and generates reusable profiles
-- `ozone analyze --export` writes generated profiles back out to `koboldcpp-presets.conf`
-- Live monitor screen: VRAM %, RAM %, disk I/O sparkline, detected token/s
-- `ozone clear` stops KoboldCpp and any Ollama runner processes and frees VRAM
+Binary name detection: `ozone-lite`, `ozone+`, `ozoneplus` auto-select their tier.
 
 ---
 
-## Requirements
-
-- Linux (tested on Ubuntu 24.04)
-- NVIDIA GPU — `nvidia-smi` must be in `$PATH`
-- [KoboldCpp](https://github.com/LostRuins/koboldcpp) binary at `~/koboldcpp/koboldcpp`
-- A launch wrapper script at `~/models/launch-koboldcpp.sh` (see [Setup](#setup))
-- [SillyTavern](https://github.com/SillyTavern/SillyTavern) running or launchable on `localhost:8000`
-- Rust toolchain (`cargo`) for building
-
-Models are read from `~/models/`. Symlinks work — if you use Ollama, symlink the `.gguf` blobs into `~/models/`.
-
----
-
-## Install
+## ⬡ Quick Start
 
 ```bash
 git clone https://github.com/EricA1019/ozone.git
 cd ozone
-cargo build -p ozone --release
-cp target/release/ozone ~/.local/bin/    # or anywhere on $PATH
-```
-
----
-
-## Workspace build / dev
-
-Phase 0 keeps the current `ozone` app intact while the repo grows into a Cargo workspace. The new `ozone+` target is only an early stub in this phase — useful for workspace wiring and smoke tests, not a finished frontend yet.
-
-If you only want today's `ozone` binary, the install commands above are still the main path. For day-to-day development from the repo root, prefer workspace-aware cargo commands:
-
-```bash
 cargo build --workspace --release
-cargo run -p ozone --
-cargo check --workspace --all-targets
-cargo clippy --workspace --all-targets -- -D warnings
+
+# Install both binaries
+cp target/release/ozone ~/.local/bin/
+cp target/release/ozone-plus ~/.local/bin/
+
+# Run
+ozone              # launches tier picker on first run
+ozone-plus         # direct to chat shell
 ```
-
-Once the `apps/ozone-plus` member exists, you can also build or run the stub from the workspace root:
-
-```bash
-cargo build -p ozone-plus
-cargo run -p ozone-plus
-```
-
-Expect `ozone+` to stay skeletal throughout Phase 0 while the shared workspace layout settles.
 
 ---
 
-## Setup
+## ⬡ What Ozone Does
 
-### Launch script
+**All tiers:**
+- Splash screen with live VRAM/RAM gauges
+- Hardware-aware model recommendations
+- KoboldCpp + Ollama backend support
 
-Ozone delegates to `~/models/launch-koboldcpp.sh` when starting KoboldCpp. This script receives the model path and any flags Ozone computed (e.g. `--gpulayers 28 --contextsize 8192 --quantkv 1`). A minimal version:
+**ozone (base):**
+- `ozone bench` — measure model/settings combinations
+- `ozone sweep` — explore context/quantization space
+- `ozone analyze` — surface good configs, generate profiles
+- `ozone analyze --export` — write profiles to `koboldcpp-presets.conf`
+- Live monitor: VRAM %, RAM %, disk I/O sparkline, token/s
+
+**ozone+:**
+- Full chat TUI with conversations and characters
+- Persistent memory with semantic recall
+- Session isolation — each session has its own context
+- Export conversations to Markdown
+
+---
+
+## ⬡ Requirements
+
+- Linux (tested on Ubuntu 24.04)
+- NVIDIA GPU with `nvidia-smi` in `$PATH`
+- [KoboldCpp](https://github.com/LostRuins/koboldcpp) at `~/koboldcpp/koboldcpp`
+- Launch wrapper at `~/models/launch-koboldcpp.sh` (see below)
+- Models in `~/models/` (symlinks work for Ollama blobs)
+- Rust toolchain for building
+
+---
+
+## ⬡ Setup
+
+### Launch Script
+
+Create `~/models/launch-koboldcpp.sh`:
 
 ```bash
 #!/usr/bin/env bash
@@ -115,117 +98,63 @@ KCPP="$HOME/koboldcpp/koboldcpp"
 exec "$KCPP" --model "$1" --usecuda "${@:2}"
 ```
 
-A fuller version that handles model-size categories and preset files is included in `contrib/launch-koboldcpp.sh`.
+### Preset File (Optional)
 
-### Preset file
-
-Create `~/models/koboldcpp-presets.conf` to lock specific settings per model. Presets override all heuristics.
+Create `~/models/koboldcpp-presets.conf` to lock specific settings:
 
 ```
 # filename | gpu_layers | context_size | quant_kv | note
 my-model-7b.gguf      | -1 | 32768 | 1 | Full VRAM, 32K context
 big-model-13b.gguf    | 28 | 8192  | 2 | Mixed memory — 28 of 40 layers on GPU
-huge-model-30b.gguf   |  0 | 4096  | 1 | CPU-only
-```
-
-| Field | Values | Notes |
-|---|---|---|
-| `gpu_layers` | `-1` = all layers, `0` = CPU-only, `N` = pin N layers | Split point between VRAM and RAM |
-| `context_size` | `2048` – `131072` | KV cache context window |
-| `quant_kv` | `1` – `3` | KV cache quantization — higher = less VRAM, less precision |
-| `note` | any text | Shown on the confirm screen |
-
-### Benchmark file
-
-After a model has run well, record the result in `~/models/bench-results.txt`. Ozone uses these as a secondary source, ranked below Tuned presets and above heuristics.
-
-```
----
-model: my-model-7b.gguf
-context: 32768
-gen_speed: 14.2
-gpu_layers: -1
-quant_kv: 1
-vram_mb: 7800
-size_gb: 7.0
 ```
 
 ---
 
-## Usage
+## ⬡ Commands
 
 ```bash
 ozone                   # interactive launcher (default)
 ozone monitor           # live monitor dashboard
-ozone clear             # stop KoboldCpp + Ollama runner, free VRAM
-ozone list              # list models with size and VRAM estimate
+ozone clear             # stop KoboldCpp + Ollama, free VRAM
+ozone list              # list models with VRAM estimates
 ozone list --json       # machine-readable output
-ozone --no-browser      # launch without opening the browser
+ozone bench <model>     # benchmark specific model
+ozone sweep <model>     # parameter sweep
+ozone analyze           # review benchmark history
+ozone analyze --export  # write profiles to presets file
 ```
 
-### Launcher keys
+### Launcher Keys
 
 | Key | Action |
 |---|---|
 | `↑` `↓` | Navigate |
 | `Enter` | Select |
-| `Esc` | Back / cancel |
+| `Esc` | Back |
 | `q` | Quit |
 
-### Monitor keys
-
-| Key | Action |
-|---|---|
-| `s` | Return to launcher |
-| `r` | Force refresh |
-| `q` / `Esc` | Quit |
-
 ---
 
-## Hardware modes
-
-The planner outputs one of three modes for each launch:
-
-| Mode | What it means |
-|---|---|
-| **VRAM** | All model layers fit in GPU memory |
-| **Mixed** | Layers are split — part on GPU, part spilling to system RAM |
-| **CPU** | No GPU offload; all layers run on CPU |
-
-For models with no preset or benchmark (`Heur` source), Ozone checks free VRAM at launch time and steps down the layer count until the estimate fits. For `Tuned` and `Bench` sources, it uses the stored values as-is.
-
-The confirm screen shows the resolved plan before anything launches:
-
-```
- Model    mn-12b-mag-mell-r1.gguf
- Mode     VRAM  (est. 8832 MiB)
- Context  28672
- Layers   -1 / 32
- QuantKV  1
- Source   Tuned — high-context preset (>=10 T/s)
-
- Launch?  [y] yes   [n] cancel
-```
-
----
-
-## Data locations
+## ⬡ Data Locations
 
 | Path | Contents |
 |---|---|
-| `~/.local/share/ozone/preferences.json` | Last-used model, context size, GPU layers |
-| `~/.local/share/ozone/koboldcpp.log` | KoboldCpp stdout / stderr |
+| `~/.local/share/ozone/` | Preferences, logs |
+| `~/.local/share/ozone-plus/` | Sessions, memory index |
+| `~/models/` | Model files, presets, benchmarks |
 
 ---
 
-## Tested on
+## ⬡ Tested On
 
 - RTX 3060 12 GB VRAM + 32 GB RAM
-- Ubuntu 24.04, KoboldCpp 1.111+, SillyTavern (latest)
-- Models from 7 B to 30 B parameters
+- Ubuntu 24.04, KoboldCpp 1.111+
+- Models 7B – 30B parameters
 
 ---
 
-## License
+## ⬡ License
 
 MIT
+
+**Contact:** ScribeALB@proton.me

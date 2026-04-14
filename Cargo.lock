@@ -1865,7 +1865,7 @@ dependencies = [
 
 [[package]]
 name = "ozone"
-version = "0.1.0"
+version = "0.4.0-alpha"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1886,7 +1886,7 @@ dependencies = [
 
 [[package]]
 name = "ozone-core"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "directories",
  "serde",
@@ -1894,7 +1894,7 @@ dependencies = [
 
 [[package]]
 name = "ozone-engine"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "bytes",
  "ozone-core",
@@ -1904,7 +1904,7 @@ dependencies = [
 
 [[package]]
 name = "ozone-inference"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1925,7 +1925,7 @@ dependencies = [
 
 [[package]]
 name = "ozone-memory"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "fastembed",
  "libc",
@@ -1938,7 +1938,7 @@ dependencies = [
 
 [[package]]
 name = "ozone-persist"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "ozone-core",
  "ozone-memory",
@@ -1950,7 +1950,7 @@ dependencies = [
 
 [[package]]
 name = "ozone-plus"
-version = "0.1.0"
+version = "0.4.0-alpha"
 dependencies = [
  "clap",
  "dirs",
@@ -1967,7 +1967,7 @@ dependencies = [
 
 [[package]]
 name = "ozone-tui"
-version = "0.1.0"
+version = "0.4.0"
 dependencies = [
  "crossterm",
  "ozone-core",

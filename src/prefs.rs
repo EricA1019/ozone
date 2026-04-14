@@ -5,6 +5,33 @@ use tokio::fs;
 
 use crate::ui::{BackendMode, FrontendMode};
 
+/// Product tier for the ozone family
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Tier {
+    Lite,
+    Base,
+    Plus,
+}
+
+impl Tier {
+    pub fn name(&self) -> &'static str {
+        match self {
+            Tier::Lite => "ozonelite",
+            Tier::Base => "ozone",
+            Tier::Plus => "ozone+",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            Tier::Lite => "Launch + monitor only",
+            Tier::Base => "Launch + bench + sweep + analyze",
+            Tier::Plus => "Chat shell with memory & sessions",
+        }
+    }
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Preferences {
     pub version: u32,
@@ -19,6 +46,8 @@ pub struct Preferences {
     pub preferred_backend: Option<BackendMode>,
     #[serde(default)]
     pub preferred_frontend: Option<FrontendMode>,
+    #[serde(default)]
+    pub preferred_tier: Option<Tier>,
 }
 
 impl Default for Preferences {
@@ -34,6 +63,7 @@ impl Default for Preferences {
             no_browser: false,
             preferred_backend: None,
             preferred_frontend: None,
+            preferred_tier: None,
         }
     }
 }

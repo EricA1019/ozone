@@ -1,6 +1,6 @@
 [package]
 name = "ozone-plus"
-version = "0.1.0"
+version = "0.4.0-alpha"
 edition = "2021"
 publish = false
 description = "Phase 2A ozone+ chat shell — manual memory + recall foundations"
@@ -11,7 +11,7 @@ clap = { version = "4", features = ["derive"] }
 ozone-core = { path = "../../crates/ozone-core" }
 ozone-engine = { path = "../../crates/ozone-engine" }
 ozone-inference = { path = "../../crates/ozone-inference" }
-ozone-memory = { version = "0.1.0", path = "../../crates/ozone-memory" }
+ozone-memory = { path = "../../crates/ozone-memory" }
 ozone-persist = { path = "../../crates/ozone-persist" }
 ozone-tui = { path = "../../crates/ozone-tui" }
 tokio = { version = "1", features = ["rt", "sync"] }

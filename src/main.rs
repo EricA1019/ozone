@@ -12,7 +12,25 @@ mod theme;
 mod ui;
 
 use anyhow::Result;
-use clap::{Parser, Subcommand};
+use clap::{Parser, Subcommand, ValueEnum};
+
+/// Product tier for mode selection
+#[derive(Debug, Clone, Copy, ValueEnum)]
+pub enum TierArg {
+    Lite,
+    Base,
+    Plus,
+}
+
+impl From<TierArg> for prefs::Tier {
+    fn from(arg: TierArg) -> Self {
+        match arg {
+            TierArg::Lite => prefs::Tier::Lite,
+            TierArg::Base => prefs::Tier::Base,
+            TierArg::Plus => prefs::Tier::Plus,
+        }
+    }
+}
 
 #[derive(Parser)]
 #[command(name = "ozone", about = "⬡ Ozone — local AI stack operator", version)]
@@ -27,6 +45,15 @@ struct Cli {
     /// Omit to see an interactive choice screen.
     #[arg(long, value_name = "MODE")]
     frontend: Option<ui::FrontendMode>,
+
+    /// Override product tier (lite, base, plus).
+    /// Also detectable via binary name (ozone-lite, ozone, ozone+).
+    #[arg(long, value_enum)]
+    mode: Option<TierArg>,
+
+    /// Force the tier picker to appear, ignoring saved preference.
+    #[arg(long)]
+    pick: bool,
 }
 
 #[derive(Subcommand)]
@@ -85,8 +112,28 @@ enum Commands {
 #[tokio::main]
 async fn main() -> Result<()> {
     let cli = Cli::parse();
+
+    // Determine tier from --mode, argv[0], or saved preference
+    let tier_override = cli.mode.map(prefs::Tier::from).or_else(|| {
+        std::env::args()
+            .next()
+            .and_then(|arg0| {
+                let name = std::path::Path::new(&arg0)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                if name.contains("lite") || name.contains("ozone-lite") || name.contains("ozonelite") {
+                    Some(prefs::Tier::Lite)
+                } else if name.contains("ozone+") || name.contains("ozoneplus") || name.contains("plus") {
+                    Some(prefs::Tier::Plus)
+                } else {
+                    None // regular "ozone" → use saved pref or picker
+                }
+            })
+    });
+
     match cli.command {
-        None => ui::run_launcher(cli.no_browser, cli.frontend).await,
+        None => ui::run_launcher(cli.no_browser, cli.frontend, tier_override, cli.pick).await,
         Some(Commands::Clear) => {
             let killed = processes::clear_gpu_backends().await?;
             if killed.is_empty() {

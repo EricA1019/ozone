@@ -25,10 +25,12 @@ use tokio_util::sync::CancellationToken;
 pub mod launcher;
 pub mod monitor;
 pub mod splash;
+pub mod tier_picker;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
     Splash,
+    TierPicker,
     Launcher,
     ModelPicker,
     Confirm,
@@ -119,6 +121,8 @@ pub struct App {
     pub profiling_failure: Option<ProfilingFailureReport>,
     pub profiling_event_rx: Option<UnboundedReceiver<WorkflowEvent>>,
     pub profiling_cancel: Option<CancellationToken>,
+    // Tier picker state
+    pub tier_picker: tier_picker::TierPickerState,
 }
 
 impl App {
@@ -173,6 +177,7 @@ impl App {
             profiling_failure: None,
             profiling_event_rx: None,
             profiling_cancel: None,
+            tier_picker: tier_picker::TierPickerState::default(),
         }
     }
 
@@ -290,12 +295,24 @@ fn build_kc_args(plan: &LaunchPlan) -> Vec<String> {
 pub async fn run_launcher(
     no_browser: bool,
     preferred_frontend: Option<FrontendMode>,
+    tier_override: Option<crate::prefs::Tier>,
+    force_picker: bool,
 ) -> Result<()> {
     let mut prefs = crate::prefs::load_prefs().await;
     prefs.no_browser = prefs.no_browser || no_browser;
 
+    // Apply tier override if given
+    if let Some(tier) = tier_override {
+        prefs.preferred_tier = Some(tier);
+    }
+
     let mut app = App::new(prefs);
     app.preferred_frontend = preferred_frontend;
+
+    // If --pick flag, clear the tier preference so picker shows
+    if force_picker {
+        app.prefs.preferred_tier = None;
+    }
 
     // Sync settings indices from persisted prefs
     app.settings_backend_index = match app.prefs.preferred_backend {
@@ -469,6 +486,7 @@ pub async fn run_launcher(
         // Draw
         terminal.draw(|f| match app.screen {
             Screen::Splash => splash::render(f, &app),
+            Screen::TierPicker => tier_picker::render_tier_picker(f, f.area(), &app.tier_picker),
             Screen::Launcher => launcher::render(f, &app),
             Screen::ModelPicker => launcher::render_model_picker(f, &app),
             Screen::Confirm => launcher::render_confirm(f, &app),
@@ -492,8 +510,29 @@ pub async fn run_launcher(
                 match app.screen {
                     Screen::Splash => {
                         if app.splash_ready {
+                            // Go to tier picker if no saved preference, otherwise to launcher
+                            if app.prefs.preferred_tier.is_none() {
+                                app.screen = Screen::TierPicker;
+                            } else {
+                                app.screen = Screen::Launcher;
+                            }
+                        }
+                    }
+                    Screen::TierPicker => match key.code {
+                        KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
+                        KeyCode::Up => app.tier_picker.up(),
+                        KeyCode::Down => app.tier_picker.down(),
+                        KeyCode::Enter => {
+                            let tier = app.tier_picker.selected_tier();
+                            app.prefs.preferred_tier = Some(tier);
+                            // Save preference
+                            let prefs_clone = app.prefs.clone();
+                            tokio::spawn(async move {
+                                let _ = crate::prefs::save_prefs(&prefs_clone).await;
+                            });
                             app.screen = Screen::Launcher;
                         }
+                        _ => {}
                     }
                     Screen::Launcher => match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => break Ok(()),

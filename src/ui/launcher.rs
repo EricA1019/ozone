@@ -34,7 +34,7 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
     let model_count = app.catalog.len();
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(style_violet());
+        .border_style(style_lime());
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -47,7 +47,7 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         .split(inner);
 
     let title = Line::from(vec![
-        Span::styled(format!(" {} Ozone ", HEX_CURSOR), style_bold_violet()),
+        Span::styled(format!(" {} Ozone ", HEX_CURSOR), style_bold_lime()),
         Span::styled(format!("v{} ", VERSION), style_gray()),
         Span::styled("— ", style_gray()),
         Span::styled(format!("{model_count} models"), style_cyan()),
@@ -96,7 +96,7 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
             } else if ratio > 0.75 {
                 AMBER
             } else {
-                VIOLET
+                LIME
             };
             let gauge = Gauge::default()
                 .label(format!(
@@ -190,12 +190,12 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
         .map(|(i, (label, desc))| {
             if i == app.selected_action {
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("{} ", HEX_CURSOR), style_cyan()),
+                    Span::styled(format!("{} ", HEX_CURSOR), style_lime()),
                     Span::styled(format!("{}", i + 1), style_gray()),
                     Span::raw("  "),
                     Span::styled(
                         *label,
-                        Style::default().fg(CYAN).add_modifier(Modifier::BOLD),
+                        Style::default().fg(LIME).add_modifier(Modifier::BOLD),
                     ),
                     Span::styled(format!("  {}", desc), style_gray()),
                 ]))
@@ -245,7 +245,7 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
     };
 
     let mut title_spans = vec![
-        Span::styled(format!(" {} Ozone ", HEX_CURSOR), style_bold_violet()),
+        Span::styled(format!(" {} Ozone ", HEX_CURSOR), style_bold_lime()),
         Span::styled(mode_label, style_bold_cyan()),
     ];
     // Show active filter
@@ -267,7 +267,7 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
         .title(Line::from(title_spans))
         .title_bottom(Line::from(Span::styled(hint_label, style_gray())))
         .borders(Borders::ALL)
-        .border_style(style_violet());
+        .border_style(style_lime());
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -401,7 +401,7 @@ pub fn render_launching(f: &mut Frame, app: &App) {
     ];
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(style_violet())
+        .border_style(style_lime())
         .title_bottom(Line::from(Span::styled("  loading…", style_gray())));
     let para = Paragraph::new(lines).block(block);
     f.render_widget(para, center_h);
@@ -455,7 +455,7 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
         ];
         let block = Block::default()
             .borders(Borders::ALL)
-            .border_style(style_violet())
+            .border_style(style_lime())
             .title_bottom(Line::from(Span::styled(
                 "  Enter launch · Esc cancel",
                 style_gray(),
@@ -522,7 +522,7 @@ pub fn render_frontend_choice(f: &mut Frame, app: &App) {
             style_gray(),
         )))
         .borders(Borders::ALL)
-        .border_style(style_violet());
+        .border_style(style_lime());
     let inner = block.inner(center_h);
     f.render_widget(block, center_h);
 
@@ -609,7 +609,7 @@ pub fn render_profile_advisory(f: &mut Frame, app: &App) {
     let summary_block = Block::default()
         .title(Span::styled("  Profiling Advisor ", style_bold_cyan()))
         .borders(Borders::ALL)
-        .border_style(style_violet());
+        .border_style(style_lime());
     f.render_widget(
         Paragraph::new(summary_lines).block(summary_block),
         chunks[0],
@@ -702,7 +702,7 @@ pub fn render_profile_advisory(f: &mut Frame, app: &App) {
             style_gray(),
         )))
         .borders(Borders::ALL)
-        .border_style(style_violet());
+        .border_style(style_lime());
     let inner = actions_block.inner(chunks[3]);
     f.render_widget(actions_block, chunks[3]);
     f.render_stateful_widget(List::new(items), inner, &mut state);
@@ -771,7 +771,7 @@ pub fn render_profile_confirm(f: &mut Frame, app: &App) {
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(style_violet());
+        .border_style(style_lime());
     f.render_widget(Paragraph::new(lines).block(block), center_h);
 }
 
@@ -803,7 +803,7 @@ pub fn render_profile_running(f: &mut Frame, app: &App) {
             style_gray(),
         )))
         .borders(Borders::ALL)
-        .border_style(style_violet());
+        .border_style(style_lime());
     let inner = block.inner(center_h);
     f.render_widget(block, center_h);
 
@@ -902,7 +902,7 @@ pub fn render_profile_success(f: &mut Frame, app: &App) {
     let header_block = Block::default()
         .title(Span::styled("  Success ", style_bold_cyan()))
         .borders(Borders::ALL)
-        .border_style(style_violet());
+        .border_style(style_lime());
     f.render_widget(Paragraph::new(header_lines).block(header_block), chunks[0]);
 
     let mut report_lines = Vec::new();
@@ -973,7 +973,7 @@ pub fn render_profile_success(f: &mut Frame, app: &App) {
             style_gray(),
         )))
         .borders(Borders::ALL)
-        .border_style(style_violet());
+        .border_style(style_lime());
     let inner = actions_block.inner(chunks[3]);
     f.render_widget(actions_block, chunks[3]);
     if actions.is_empty() {
@@ -1051,7 +1051,7 @@ pub fn render_profile_failure(f: &mut Frame, app: &App) {
             style_gray(),
         )))
         .borders(Borders::ALL)
-        .border_style(style_violet());
+        .border_style(style_lime());
     let inner = actions_block.inner(chunks[2]);
     f.render_widget(actions_block, chunks[2]);
     if actions.is_empty() {
@@ -1098,13 +1098,13 @@ pub fn render_settings(f: &mut Frame, app: &App) {
 
     // Header
     let header = Paragraph::new(Line::from(vec![
-        Span::styled(format!(" {} ", HEX_CURSOR), style_violet()),
-        Span::styled("Settings", style_bold_violet()),
+        Span::styled(format!(" {} ", HEX_CURSOR), style_lime()),
+        Span::styled("Settings", style_bold_lime()),
     ]))
     .block(
         Block::default()
             .borders(Borders::ALL)
-            .border_style(style_violet()),
+            .border_style(style_lime()),
     );
     f.render_widget(header, chunks[0]);
 
