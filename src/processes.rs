@@ -1,9 +1,22 @@
 use anyhow::{anyhow, Result};
 use ozone_core::paths;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::time::sleep;
+
+pub const KOBOLDCPP_LAUNCHER_ENV: &str = "OZONE_KOBOLDCPP_LAUNCHER";
+const KOBOLD_READY_URL: &str = "http://127.0.0.1:5001/api/v1/model";
+const KOBOLD_START_TIMEOUT_SECS: u64 = 120;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum KoboldStartupFailureKind {
+    PyInstallerExtraction,
+    MissingSharedLibrary,
+    RuntimeCrash,
+    Timeout,
+    Unknown,
+}
 
 pub async fn is_url_ready(url: &str) -> bool {
     let client = match reqwest::Client::builder()
@@ -21,27 +34,12 @@ pub async fn is_url_ready(url: &str) -> bool {
         .unwrap_or(false)
 }
 
-pub async fn wait_for_url(url: &str, timeout_secs: u64) -> bool {
-    let deadline = std::time::Instant::now() + Duration::from_secs(timeout_secs);
-    while std::time::Instant::now() < deadline {
-        if is_url_ready(url).await {
-            return true;
-        }
-        sleep(Duration::from_millis(800)).await;
-    }
-    false
-}
-
 pub async fn get_kobold_model() -> Option<String> {
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
         .ok()?;
-    let resp = client
-        .get("http://127.0.0.1:5001/api/v1/model")
-        .send()
-        .await
-        .ok()?;
+    let resp = client.get(KOBOLD_READY_URL).send().await.ok()?;
     let data: serde_json::Value = resp.json().await.ok()?;
     data["result"].as_str().map(|s| s.to_string())
 }
@@ -75,7 +73,7 @@ pub struct ServiceStatus {
 
 pub async fn get_service_status() -> ServiceStatus {
     let (kobold_ready, st_ready) = tokio::join!(
-        is_url_ready("http://127.0.0.1:5001/api/v1/model"),
+        is_url_ready(KOBOLD_READY_URL),
         is_url_ready("http://127.0.0.1:8000"),
     );
     let kobold_model = if kobold_ready {
@@ -124,14 +122,33 @@ fn nix_kill(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
+pub fn default_kobold_launcher_path() -> PathBuf {
+    let home = std::env::var("HOME").unwrap_or_default();
+    PathBuf::from(home).join("models/launch-koboldcpp.sh")
+}
+
+pub fn resolved_kobold_launcher_path() -> PathBuf {
+    std::env::var_os(KOBOLDCPP_LAUNCHER_ENV)
+        .and_then(|value| {
+            let trimmed = value.to_string_lossy().trim().to_owned();
+            if trimmed.is_empty() {
+                None
+            } else {
+                Some(PathBuf::from(trimmed))
+            }
+        })
+        .unwrap_or_else(default_kobold_launcher_path)
+}
+
 pub async fn start_kobold(launcher_path: &Path, model_name: &str, args: &[String]) -> Result<()> {
     if !launcher_path.exists() {
         return Err(anyhow!(
-            "KoboldCpp launcher not found: {}",
-            launcher_path.display()
+            "KoboldCpp launcher not found: {}\nSet {}=/path/to/launch-koboldcpp.sh to use a repaired launcher.",
+            launcher_path.display(),
+            KOBOLDCPP_LAUNCHER_ENV
         ));
     }
-    if is_url_ready("http://127.0.0.1:5001/api/v1/model").await {
+    if is_url_ready(KOBOLD_READY_URL).await {
         return Ok(()); // already running
     }
 
@@ -166,13 +183,37 @@ pub async fn start_kobold(launcher_path: &Path, model_name: &str, args: &[String
         }
     }
 
-    cmd.spawn()?;
+    let mut child = cmd.spawn()?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(KOBOLD_START_TIMEOUT_SECS);
+    loop {
+        if is_url_ready(KOBOLD_READY_URL).await {
+            return Ok(());
+        }
 
-    if !wait_for_url("http://127.0.0.1:5001/api/v1/model", 120).await {
-        let tail = tail_file(&log_path, 40).await;
-        return Err(anyhow!("KoboldCpp did not start.\n{tail}"));
+        if let Some(status) = child.try_wait()? {
+            let tail = tail_file(&log_path, 40).await;
+            return Err(anyhow!(format_startup_failure(
+                launcher_path,
+                Some(status),
+                &tail,
+                classify_startup_failure(&tail),
+            )));
+        }
+
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let tail = tail_file(&log_path, 40).await;
+            return Err(anyhow!(format_startup_failure(
+                launcher_path,
+                None,
+                &tail,
+                KoboldStartupFailureKind::Timeout,
+            )));
+        }
+
+        sleep(Duration::from_millis(800)).await;
     }
-    Ok(())
 }
 
 async fn tail_file(path: &std::path::Path, n: usize) -> String {
@@ -184,6 +225,131 @@ async fn tail_file(path: &std::path::Path, n: usize) -> String {
             lines[start..].join("\n")
         })
         .unwrap_or_default()
+}
+
+fn classify_startup_failure(log_tail: &str) -> KoboldStartupFailureKind {
+    let lower = log_tail.to_lowercase();
+    if lower.contains("failed to extract")
+        || lower.contains("failed to extract entry")
+        || lower.contains("decompression resulted in return code")
+    {
+        KoboldStartupFailureKind::PyInstallerExtraction
+    } else if (lower.contains("cannot open shared object file")
+        || lower.contains("error while loading shared libraries")
+        || lower.contains("no such file or directory"))
+        && lower.contains(".so")
+    {
+        KoboldStartupFailureKind::MissingSharedLibrary
+    } else if lower.contains("segmentation fault")
+        || lower.contains("sigsegv")
+        || lower.contains("core dumped")
+    {
+        KoboldStartupFailureKind::RuntimeCrash
+    } else if lower.trim().is_empty() {
+        KoboldStartupFailureKind::Timeout
+    } else {
+        KoboldStartupFailureKind::Unknown
+    }
+}
+
+fn format_startup_failure(
+    launcher_path: &Path,
+    status: Option<std::process::ExitStatus>,
+    log_tail: &str,
+    classified: KoboldStartupFailureKind,
+) -> String {
+    let headline = match classified {
+        KoboldStartupFailureKind::PyInstallerExtraction => {
+            "KoboldCpp failed during packaged-binary extraction."
+        }
+        KoboldStartupFailureKind::MissingSharedLibrary => {
+            "KoboldCpp is missing a required shared library."
+        }
+        KoboldStartupFailureKind::RuntimeCrash => "KoboldCpp crashed before its API became ready.",
+        KoboldStartupFailureKind::Timeout => {
+            "KoboldCpp did not become ready before the startup timeout."
+        }
+        KoboldStartupFailureKind::Unknown => "KoboldCpp exited before its API became ready.",
+    };
+    let mut message = String::from(headline);
+    if let Some(status) = status {
+        message.push_str(&format!(
+            "\nProcess status: {}",
+            describe_exit_status(status)
+        ));
+    }
+    message.push_str(&format!("\nLauncher: {}", launcher_path.display()));
+    for suggestion in remediation_steps(classified, launcher_path) {
+        message.push_str("\n- ");
+        message.push_str(&suggestion);
+    }
+    if !log_tail.trim().is_empty() {
+        message.push_str("\n\nLauncher log tail:\n");
+        message.push_str(log_tail.trim());
+    }
+    message
+}
+
+fn remediation_steps(kind: KoboldStartupFailureKind, launcher_path: &Path) -> Vec<String> {
+    let mut steps = match kind {
+        KoboldStartupFailureKind::PyInstallerExtraction => vec![
+            "The installed packaged KoboldCpp binary looks corrupt or incomplete; replace it or point ozone at a repaired launcher.".to_owned(),
+            format!(
+                "If you have a working wrapper elsewhere, set {}=/path/to/launch-koboldcpp.sh before launching ozone.",
+                KOBOLDCPP_LAUNCHER_ENV
+            ),
+        ],
+        KoboldStartupFailureKind::MissingSharedLibrary => vec![
+            "The configured KoboldCpp install is missing one of its bundled .so files.".to_owned(),
+            format!(
+                "Repair the install behind {} or override it with {}.",
+                launcher_path.display(),
+                KOBOLDCPP_LAUNCHER_ENV
+            ),
+        ],
+        KoboldStartupFailureKind::RuntimeCrash => vec![
+            "Retry with a repaired launcher or a CPU-safe fallback wrapper before profiling or handing off into ozone+.".to_owned(),
+            format!(
+                "You can override the launcher path temporarily with {}.",
+                KOBOLDCPP_LAUNCHER_ENV
+            ),
+        ],
+        KoboldStartupFailureKind::Timeout => vec![
+            "Inspect the launcher log for backend startup progress or crashes.".to_owned(),
+            "Retry with a smaller context or lower GPU layers if the backend is just slow to load."
+                .to_owned(),
+        ],
+        KoboldStartupFailureKind::Unknown => vec![
+            "Run the configured launcher manually once to confirm the backend can start outside ozone."
+                .to_owned(),
+            format!(
+                "If the configured launcher is bad, set {} to a repaired wrapper and retry.",
+                KOBOLDCPP_LAUNCHER_ENV
+            ),
+        ],
+    };
+    if let Some(log_path) = paths::kobold_log_path() {
+        steps.push(format!(
+            "Inspect the launcher log at {}.",
+            log_path.display()
+        ));
+    }
+    steps
+}
+
+fn describe_exit_status(status: std::process::ExitStatus) -> String {
+    if let Some(code) = status.code() {
+        format!("exit code {code}")
+    } else {
+        #[cfg(unix)]
+        {
+            use std::os::unix::process::ExitStatusExt;
+            if let Some(signal) = status.signal() {
+                return format!("terminated by signal {signal}");
+            }
+        }
+        "terminated without an exit code".to_owned()
+    }
 }
 
 pub fn open_browser_app(url: &str) {
@@ -218,6 +384,62 @@ fn which_exists(cmd: &str) -> bool {
         .output()
         .map(|o| o.status.success())
         .unwrap_or(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::path::PathBuf;
+    use std::sync::{Mutex, OnceLock};
+
+    use super::{
+        classify_startup_failure, describe_exit_status, resolved_kobold_launcher_path,
+        KoboldStartupFailureKind, KOBOLDCPP_LAUNCHER_ENV,
+    };
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    #[test]
+    fn launcher_override_env_wins_when_present() {
+        let _guard = env_lock().lock().unwrap();
+        std::env::set_var(KOBOLDCPP_LAUNCHER_ENV, "/tmp/custom-kobold-launcher.sh");
+        let path = resolved_kobold_launcher_path();
+        std::env::remove_var(KOBOLDCPP_LAUNCHER_ENV);
+        assert_eq!(path, PathBuf::from("/tmp/custom-kobold-launcher.sh"));
+    }
+
+    #[test]
+    fn startup_classification_detects_pyinstaller_extract_failure() {
+        let kind = classify_startup_failure(
+            "[PYI-32814:ERROR] Failed to extract koboldcpp_cublas.so: decompression resulted in return code -3!",
+        );
+        assert_eq!(kind, KoboldStartupFailureKind::PyInstallerExtraction);
+    }
+
+    #[test]
+    fn startup_classification_detects_missing_shared_library() {
+        let kind = classify_startup_failure(
+            "error while loading shared libraries: koboldcpp_default.so: cannot open shared object file: No such file or directory",
+        );
+        assert_eq!(kind, KoboldStartupFailureKind::MissingSharedLibrary);
+    }
+
+    #[test]
+    fn startup_classification_detects_runtime_crash() {
+        let kind = classify_startup_failure("Segmentation fault (core dumped)");
+        assert_eq!(kind, KoboldStartupFailureKind::RuntimeCrash);
+    }
+
+    #[test]
+    fn exit_status_description_reports_numeric_code() {
+        let status = std::process::Command::new("sh")
+            .args(["-c", "exit 7"])
+            .status()
+            .unwrap();
+        assert_eq!(describe_exit_status(status), "exit code 7");
+    }
 }
 
 pub fn get_root_disk_name() -> Option<String> {

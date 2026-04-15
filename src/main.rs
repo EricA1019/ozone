@@ -193,7 +193,7 @@ async fn main() -> Result<()> {
             let home = std::env::var("HOME").unwrap_or_default();
             let model_dir = std::path::PathBuf::from(&home).join("models");
             let model_path = model_dir.join(&model);
-            let launcher_path = model_dir.join("launch-koboldcpp.sh");
+            let launcher_path = processes::resolved_kobold_launcher_path();
 
             if !model_path.exists() {
                 eprintln!("Model not found: {}", model_path.display());
@@ -254,7 +254,7 @@ async fn main() -> Result<()> {
             let home = std::env::var("HOME").unwrap_or_default();
             let model_dir = std::path::PathBuf::from(&home).join("models");
             let model_path = model_dir.join(&model);
-            let launcher_path = model_dir.join("launch-koboldcpp.sh");
+            let launcher_path = processes::resolved_kobold_launcher_path();
 
             if !model_path.exists() {
                 eprintln!("Model not found: {}", model_path.display());

@@ -461,8 +461,7 @@ pub async fn run_launcher(
                         app.launch_start = Some(Instant::now());
 
                         let home = std::env::var("HOME").unwrap_or_default();
-                        let launcher_path =
-                            std::path::PathBuf::from(&home).join("models/launch-koboldcpp.sh");
+                        let launcher_path = crate::processes::resolved_kobold_launcher_path();
                         let model_path = std::path::PathBuf::from(&home)
                             .join("models")
                             .join(&plan.model_name);

@@ -11,7 +11,7 @@ use crate::{
     db::{self, ProfileRow},
     hardware::HardwareProfile,
     planner::{self, LaunchPlan, RecommendationMode},
-    processes::ServiceStatus,
+    processes::{self, ServiceStatus},
     sweep,
 };
 
@@ -94,6 +94,7 @@ pub struct ProfilingWarning {
 pub enum FailureClass {
     InvalidModelPath,
     LauncherMissing,
+    LauncherBrokenInstall,
     BackendTimeout,
     OomOrOvercommit,
     GenerationHttpError,
@@ -104,7 +105,8 @@ impl FailureClass {
     pub fn title(&self) -> &'static str {
         match self {
             FailureClass::InvalidModelPath => "Model path is invalid",
-            FailureClass::LauncherMissing => "Launcher script is missing",
+            FailureClass::LauncherMissing => "Configured launcher is missing",
+            FailureClass::LauncherBrokenInstall => "KoboldCpp install is broken",
             FailureClass::BackendTimeout => "KoboldCpp never became ready",
             FailureClass::OomOrOvercommit => "Model likely exceeded memory limits",
             FailureClass::GenerationHttpError => "Generation request failed",
@@ -222,7 +224,7 @@ struct ModelHistory {
 }
 
 pub fn launcher_path() -> PathBuf {
-    models_dir().join("launch-koboldcpp.sh")
+    processes::resolved_kobold_launcher_path()
 }
 
 pub fn presets_path() -> PathBuf {
@@ -437,7 +439,10 @@ pub fn build_advisory(
     if !launcher_ok {
         warnings.push(ProfilingWarning {
             severity: WarningSeverity::Critical,
-            message: "launch-koboldcpp.sh is missing or not executable.".into(),
+            message: format!(
+                "Configured KoboldCpp launcher is missing or not executable: {}.",
+                launcher.display()
+            ),
         });
     }
     if services.kobold_running {
@@ -602,6 +607,15 @@ fn build_failure_report(
         FailureClass::InvalidModelPath
     } else if !(launcher.exists() && is_executable(&launcher)) {
         FailureClass::LauncherMissing
+    } else if lower.contains("failed to extract")
+        || lower.contains("failed to extract entry")
+        || lower.contains("decompression resulted in return code")
+        || lower.contains("cannot open shared object file")
+        || lower.contains("error while loading shared libraries")
+        || lower.contains("segmentation fault")
+        || lower.contains("core dumped")
+    {
+        FailureClass::LauncherBrokenInstall
     } else if status == Some("oom") || lower.contains("out of memory") || lower.contains("oom") {
         FailureClass::OomOrOvercommit
     } else if status == Some("timeout")
@@ -625,7 +639,24 @@ fn build_failure_report(
             "Re-open the model picker after the file resolves correctly.".into(),
         ],
         FailureClass::LauncherMissing => vec![
-            "Restore ~/models/launch-koboldcpp.sh and make it executable.".into(),
+            format!(
+                "Restore the configured launcher and make it executable: {}.",
+                launcher.display()
+            ),
+            format!(
+                "Set {}=/path/to/launch-koboldcpp.sh if you want ozone to use a repaired wrapper elsewhere.",
+                processes::KOBOLDCPP_LAUNCHER_ENV
+            ),
+        ],
+        FailureClass::LauncherBrokenInstall => vec![
+            format!(
+                "The configured KoboldCpp install behind {} looks broken; repair or replace it before retrying.",
+                launcher.display()
+            ),
+            format!(
+                "Set {}=/path/to/launch-koboldcpp.sh to point ozone at a repaired launcher.",
+                processes::KOBOLDCPP_LAUNCHER_ENV
+            ),
             "Run the launcher script manually once to confirm KoboldCpp can start.".into(),
         ],
         FailureClass::BackendTimeout => vec![
@@ -652,7 +683,9 @@ fn build_failure_report(
     }
 
     let retry_action = match class {
-        FailureClass::InvalidModelPath | FailureClass::LauncherMissing => None,
+        FailureClass::InvalidModelPath
+        | FailureClass::LauncherMissing
+        | FailureClass::LauncherBrokenInstall => None,
         FailureClass::OomOrOvercommit => Some(ProfilingAction::QuickSweep),
         FailureClass::BackendTimeout
         | FailureClass::GenerationHttpError
@@ -999,6 +1032,19 @@ mod tests {
         );
         assert_eq!(report.class, FailureClass::OomOrOvercommit);
         assert_eq!(report.retry_action, Some(ProfilingAction::QuickSweep));
+    }
+
+    #[test]
+    fn launcher_extract_failure_classifies_as_broken_install() {
+        let record = sample_record(&format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR")));
+        let report = build_failure_report(
+            &record,
+            ProfilingAction::SingleBenchmark,
+            "[PYI-32814:ERROR] Failed to extract koboldcpp_cublas.so: decompression resulted in return code -3!".into(),
+            None,
+        );
+        assert_eq!(report.class, FailureClass::LauncherBrokenInstall);
+        assert!(report.retry_action.is_none());
     }
 
     #[test]
