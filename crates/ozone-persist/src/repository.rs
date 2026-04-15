@@ -147,6 +147,19 @@ pub struct MessageSearchHit {
     pub bm25_score: f32,
 }
 
+#[derive(Debug, Clone)]
+pub struct PinnedMemorySearchHit {
+    pub memory: PinnedMemoryView,
+    pub bm25_score: f32,
+}
+
+#[derive(Debug, Clone)]
+pub struct CrossSessionPinnedMemorySearchHit {
+    pub session: SearchSessionMetadata,
+    pub memory: PinnedMemoryView,
+    pub bm25_score: f32,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EditMessageRequest {
     pub content: String,
@@ -1374,6 +1387,34 @@ impl SqliteRepository {
             .map_err(PersistError::from)
     }
 
+    pub fn search_pinned_memories(
+        &self,
+        session_id: &SessionId,
+        query: &str,
+    ) -> Result<Vec<PinnedMemorySearchHit>> {
+        let Some(query) = plain_text_fts_query(query) else {
+            return Ok(Vec::new());
+        };
+        let current_message_count = self.current_message_count(session_id)?;
+        let conn = self.open_session_connection(session_id)?;
+        let mut stmt = conn.prepare(
+            "SELECT ma.artifact_id, ma.session_id, ma.content_json, ma.source_start_message_id, ma.source_end_message_id, ma.provenance, ma.created_at, ma.snapshot_version, bm25(artifacts_fts)
+             FROM artifacts_fts
+             JOIN memory_artifacts ma ON ma.rowid = artifacts_fts.rowid
+             WHERE ma.session_id = ?1 AND ma.kind = 'pinned_memory' AND artifacts_fts MATCH ?2
+             ORDER BY bm25(artifacts_fts), ma.created_at DESC, ma.rowid ASC",
+        )?;
+        let rows = stmt.query_map(
+            params![session_id.as_str(), query],
+            read_stored_pinned_memory_search_hit,
+        )?;
+        let stored_hits = rows.collect::<rusqlite::Result<Vec<_>>>()?;
+        stored_hits
+            .into_iter()
+            .map(|hit| hit.into_search_hit(current_message_count))
+            .collect()
+    }
+
     pub fn pin_message_memory(
         &self,
         session_id: &SessionId,
@@ -2018,6 +2059,52 @@ impl SqliteRepository {
             .into_iter()
             .map(CrossSessionSearchHit::try_from)
             .collect()
+    }
+
+    pub fn search_pinned_memories_across_sessions(
+        &self,
+        query: &str,
+    ) -> Result<Vec<CrossSessionPinnedMemorySearchHit>> {
+        if plain_text_fts_query(query).is_none() {
+            return Ok(Vec::new());
+        }
+        let sessions = self.list_sessions()?;
+        let mut hits = Vec::new();
+        for session in sessions {
+            let session_meta = SearchSessionMetadata {
+                session_id: session.session_id.clone(),
+                session_name: session.name.clone(),
+                character_name: session.character_name.clone(),
+                tags: session.tags.clone(),
+            };
+            for hit in self.search_pinned_memories(&session.session_id, query)? {
+                hits.push(CrossSessionPinnedMemorySearchHit {
+                    session: session_meta.clone(),
+                    memory: hit.memory,
+                    bm25_score: hit.bm25_score,
+                });
+            }
+        }
+        hits.sort_by(|left, right| {
+            left.bm25_score
+                .partial_cmp(&right.bm25_score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| {
+                    right
+                        .memory
+                        .record
+                        .created_at
+                        .cmp(&left.memory.record.created_at)
+                })
+                .then_with(|| {
+                    left.memory
+                        .record
+                        .artifact_id
+                        .as_str()
+                        .cmp(right.memory.record.artifact_id.as_str())
+                })
+        });
+        Ok(hits)
     }
 
     fn store_character_card(
@@ -2935,6 +3022,38 @@ struct StoredCrossSessionSearchHit {
     bm25_score: f32,
 }
 
+#[derive(Debug)]
+struct StoredPinnedMemorySearchHit {
+    artifact_id: String,
+    session_id: String,
+    content_json: String,
+    source_start_message_id: Option<String>,
+    source_end_message_id: Option<String>,
+    provenance: String,
+    created_at: i64,
+    snapshot_version: i64,
+    bm25_score: f32,
+}
+
+impl StoredPinnedMemorySearchHit {
+    fn into_search_hit(self, current_message_count: u64) -> Result<PinnedMemorySearchHit> {
+        let record = PinnedMemoryRecord::try_from(StoredPinnedMemoryArtifact {
+            artifact_id: self.artifact_id,
+            session_id: self.session_id,
+            content_json: self.content_json,
+            source_start_message_id: self.source_start_message_id,
+            source_end_message_id: self.source_end_message_id,
+            provenance: self.provenance,
+            created_at: self.created_at,
+            snapshot_version: self.snapshot_version,
+        })?;
+        Ok(PinnedMemorySearchHit {
+            memory: record.into_view(current_message_count),
+            bm25_score: self.bm25_score,
+        })
+    }
+}
+
 impl TryFrom<StoredCrossSessionSearchHit> for CrossSessionSearchHit {
     type Error = PersistError;
 
@@ -3077,6 +3196,22 @@ fn read_stored_cross_session_search_hit(
         author_kind: row.get(5)?,
         content: row.get(6)?,
         created_at: row.get(7)?,
+        bm25_score: row.get(8)?,
+    })
+}
+
+fn read_stored_pinned_memory_search_hit(
+    row: &Row<'_>,
+) -> rusqlite::Result<StoredPinnedMemorySearchHit> {
+    Ok(StoredPinnedMemorySearchHit {
+        artifact_id: row.get(0)?,
+        session_id: row.get(1)?,
+        content_json: row.get(2)?,
+        source_start_message_id: row.get(3)?,
+        source_end_message_id: row.get(4)?,
+        provenance: row.get(5)?,
+        created_at: row.get(6)?,
+        snapshot_version: row.get(7)?,
         bm25_score: row.get(8)?,
     })
 }
@@ -4141,6 +4276,58 @@ mod tests {
         assert_eq!(
             second_hit.session.tags,
             vec!["grounded".to_owned(), "phase2a".to_owned()]
+        );
+    }
+
+    #[test]
+    fn pinned_memory_search_surfaces_note_memories_locally_and_globally() {
+        let sandbox = TestSandbox::new("memory-fts-search");
+        let (repo, _) = test_repo(&sandbox, 1_725_647_200_000);
+
+        let first = repo
+            .create_session(CreateSessionRequest::new("Observatory Notes"))
+            .unwrap();
+        let second = repo
+            .create_session(CreateSessionRequest::new("Village Notes"))
+            .unwrap();
+
+        repo.create_note_memory(
+            &first.session_id,
+            CreateNoteMemoryRequest::new(
+                "Remember the observatory dome rendezvous point.",
+                AuthorId::User,
+                Provenance::UserAuthored,
+            ),
+        )
+        .unwrap();
+        repo.create_note_memory(
+            &second.session_id,
+            CreateNoteMemoryRequest::new(
+                "Remember the orchard ladder behind the mill.",
+                AuthorId::User,
+                Provenance::UserAuthored,
+            ),
+        )
+        .unwrap();
+
+        let local_hits = repo
+            .search_pinned_memories(&first.session_id, "observatory dome")
+            .unwrap();
+        assert_eq!(local_hits.len(), 1);
+        assert_eq!(
+            local_hits[0].memory.record.content.text,
+            "Remember the observatory dome rendezvous point."
+        );
+        assert!(local_hits[0].memory.record.source_message_id.is_none());
+
+        let global_hits = repo
+            .search_pinned_memories_across_sessions("observatory dome")
+            .unwrap();
+        assert_eq!(global_hits.len(), 1);
+        assert_eq!(global_hits[0].session.session_id, first.session_id);
+        assert_eq!(
+            global_hits[0].memory.record.content.text,
+            "Remember the observatory dome rendezvous point."
         );
     }
 

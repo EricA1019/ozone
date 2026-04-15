@@ -28,10 +28,10 @@ pub use ozone_memory::{
     RecallHit, SearchSessionMetadata, StorageTier, StorageTierPolicy,
 };
 pub use repository::{
-    BookmarkRecord, BranchRecord, CreateMessageRequest, DerivedArtifactKind,
-    DerivedArtifactLifecycleRecord, DerivedArtifactRecord, EditMessageRequest,
+    BookmarkRecord, BranchRecord, CreateMessageRequest, CrossSessionPinnedMemorySearchHit,
+    DerivedArtifactKind, DerivedArtifactLifecycleRecord, DerivedArtifactRecord, EditMessageRequest,
     GarbageCollectionCandidate, GarbageCollectionOutcome, GarbageCollectionPlan,
     GarbageCollectionPolicy, GarbageCollectionReason, MessageEditRecord, MessageRecord,
-    MessageSearchHit, PersistencePaths, SessionLock, SqliteRepository, SummaryArtifactRecord,
-    STALE_LOCK_TIMEOUT_MS,
+    MessageSearchHit, PersistencePaths, PinnedMemorySearchHit, SessionLock, SqliteRepository,
+    SummaryArtifactRecord, STALE_LOCK_TIMEOUT_MS,
 };

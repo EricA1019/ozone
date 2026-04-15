@@ -8,8 +8,8 @@ use ozone_memory::{
     RetrievalStatus, SearchSessionMetadata, VectorIndexManager,
 };
 use ozone_persist::{
-    ConversationMessage, MessageId, PinnedMemoryView, Provenance, SessionId, SessionRecord,
-    SqliteRepository,
+    ConversationMessage, CrossSessionPinnedMemorySearchHit, MessageId, PinnedMemorySearchHit,
+    PinnedMemoryView, Provenance, SessionId, SessionRecord, SqliteRepository,
 };
 
 use crate::index_rebuild::{
@@ -46,7 +46,7 @@ impl<'a> HybridSearchService<'a> {
             .repo
             .search_messages(session_id, query)
             .map_err(|error| error.to_string())?;
-        let fts_candidates = fts_hits
+        let mut fts_candidates = fts_hits
             .into_iter()
             .map(|hit| -> Result<Candidate, String> {
                 let message_id =
@@ -73,6 +73,15 @@ impl<'a> HybridSearchService<'a> {
                 })
             })
             .collect::<Result<Vec<_>, _>>()?;
+        let memory_hits = self
+            .repo
+            .search_pinned_memories(session_id, query)
+            .map_err(|error| error.to_string())?;
+        fts_candidates.extend(
+            memory_hits
+                .into_iter()
+                .map(|hit| memory_candidate_from_search_hit(session_meta.clone(), hit)),
+        );
 
         self.build_result(
             query,
@@ -85,7 +94,7 @@ impl<'a> HybridSearchService<'a> {
     }
 
     pub fn search_global(&self, query: &str) -> Result<RetrievalResultSet, String> {
-        let fts_candidates = self
+        let mut fts_candidates: Vec<Candidate> = self
             .repo
             .search_across_sessions(query)
             .map_err(|error| error.to_string())?
@@ -111,6 +120,13 @@ impl<'a> HybridSearchService<'a> {
                 vector_similarity: None,
             })
             .collect();
+        fts_candidates.extend(
+            self.repo
+                .search_pinned_memories_across_sessions(query)
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .map(memory_candidate_from_cross_session_hit),
+        );
 
         self.build_result(query, SearchScope::Global, fts_candidates)
     }
@@ -656,6 +672,54 @@ fn record_source_kind(record: &EmbeddingRecord) -> RetrievalHitKind {
     }
 }
 
+fn pinned_memory_source_kind(memory: &PinnedMemoryView) -> RetrievalHitKind {
+    match memory.record.source_message_id {
+        Some(_) => RetrievalHitKind::PinnedMemory,
+        None => RetrievalHitKind::NoteMemory,
+    }
+}
+
+fn memory_candidate_from_search_hit(
+    session: SearchSessionMetadata,
+    hit: PinnedMemorySearchHit,
+) -> Candidate {
+    let source_state = if hit.memory.is_active {
+        RetrievalSourceState::Current
+    } else {
+        RetrievalSourceState::InactiveMemory
+    };
+    Candidate {
+        key: CandidateKey::Memory {
+            session_id: hit.memory.record.session_id.as_str().to_owned(),
+            artifact_id: hit.memory.record.artifact_id.as_str().to_owned(),
+        },
+        session,
+        hit_kind: pinned_memory_source_kind(&hit.memory),
+        artifact_id: Some(hit.memory.record.artifact_id.clone()),
+        message_id: None,
+        source_message_id: hit.memory.record.source_message_id.clone(),
+        author_kind: None,
+        text: hit.memory.record.content.text.clone(),
+        created_at: hit.memory.record.created_at,
+        provenance: hit.memory.record.provenance,
+        source_state,
+        is_active_memory: Some(hit.memory.is_active),
+        lifecycle: None,
+        bm25_score: Some(hit.bm25_score),
+        vector_similarity: None,
+    }
+}
+
+fn memory_candidate_from_cross_session_hit(hit: CrossSessionPinnedMemorySearchHit) -> Candidate {
+    memory_candidate_from_search_hit(
+        hit.session,
+        PinnedMemorySearchHit {
+            memory: hit.memory,
+            bm25_score: hit.bm25_score,
+        },
+    )
+}
+
 fn merge_candidate(candidates: &mut BTreeMap<CandidateKey, Candidate>, candidate: Candidate) {
     if let Some(existing) = candidates.get_mut(&candidate.key) {
         if candidate.vector_similarity.is_some() {
@@ -900,6 +964,43 @@ mock_seed = 11
             .contains("disabled"));
         assert_eq!(result.hits.len(), 1);
         assert_eq!(result.hits[0].score.vector_contribution, 0.0);
+    }
+
+    #[test]
+    fn fts_only_search_includes_note_memories() {
+        let sandbox = TestSandbox::new("fts-note-memory");
+        let repo = sandbox.repo();
+        let session = repo
+            .create_session(CreateSessionRequest::new("FTS Note Memory"))
+            .unwrap();
+        repo.create_note_memory(
+            &session.session_id,
+            CreateNoteMemoryRequest::new(
+                "Remember the observatory dome rendezvous point.",
+                AuthorId::User,
+                Provenance::UserAuthored,
+            ),
+        )
+        .unwrap();
+
+        let memory = MemoryConfig::default();
+        let service = HybridSearchService::new(&repo, &memory);
+
+        let session_result = service
+            .search_session(&session.session_id, "observatory dome")
+            .unwrap();
+        assert_eq!(session_result.status.mode, RetrievalSearchMode::FtsOnly);
+        assert!(session_result
+            .hits
+            .iter()
+            .any(|hit| hit.hit_kind == RetrievalHitKind::NoteMemory));
+
+        let global_result = service.search_global("observatory dome").unwrap();
+        assert_eq!(global_result.status.mode, RetrievalSearchMode::FtsOnly);
+        assert!(global_result
+            .hits
+            .iter()
+            .any(|hit| hit.hit_kind == RetrievalHitKind::NoteMemory));
     }
 
     #[test]
