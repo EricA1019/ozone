@@ -344,16 +344,21 @@ pub fn preferred_launch_plan(
     record: &CatalogRecord,
     hardware: &HardwareProfile,
 ) -> Result<LaunchPlan> {
+    let fallback_layers = planner::estimate_total_layers(record.model_size_gb);
+    let topology = crate::gguf::inspect_model_topology(&record.model_path, fallback_layers);
     let history = load_history(&record.model_name)?;
     if let Some(profile) = pick_recommended_profile(&history.profiles) {
-        let total_layers = planner::estimate_total_layers(record.model_size_gb);
+        let total_layers = topology.total_layers;
         let gpu_layers = profile.gpu_layers;
         let mode = planner::classify_mode(gpu_layers, total_layers);
+        let cpu_layers = planner::estimate_cpu_resident_layers(gpu_layers, total_layers);
         let (threads, blas_threads) = planner::recommend_threads(hardware, &mode);
         return Ok(LaunchPlan {
             model_name: record.model_name.clone(),
             context_size: profile.context_size,
             gpu_layers,
+            total_layers,
+            cpu_layers,
             quant_kv: profile.quant_kv as u8,
             threads,
             blas_threads,
@@ -364,10 +369,19 @@ pub fn preferred_launch_plan(
             ),
             estimated: false,
             estimated_vram_mb: profile.vram_mb,
+            estimated_ram_mb: planner::estimate_ram_mb(
+                profile.context_size,
+                gpu_layers,
+                record.model_size_gb,
+                profile.quant_kv as u8,
+                total_layers,
+            ),
             source: "Profile".into(),
+            layer_source_label: topology.source.label().to_string(),
+            layer_source_note: topology.note,
         });
     }
-    Ok(planner::plan_launch(record, hardware))
+    Ok(planner::plan_profiling_launch(record, hardware))
 }
 
 pub fn build_advisory(
@@ -491,15 +505,42 @@ pub fn build_advisory(
                 });
             }
         }
-        if matches!(
-            plan.mode,
-            RecommendationMode::MixedMemory | RecommendationMode::CpuOnly
-        ) {
+        if hw.ram_free_mb > 0 && plan.estimated_ram_mb as u64 > hw.ram_free_mb {
             warnings.push(ProfilingWarning {
                 severity: WarningSeverity::Warning,
-                message:
-                    "The current launch plan already expects mixed-memory or CPU-heavy execution."
-                        .into(),
+                message: format!(
+                    "Estimated RAM {} MiB is above currently free system RAM {} MiB.",
+                    plan.estimated_ram_mb, hw.ram_free_mb
+                ),
+            });
+        }
+        if plan.layer_source_label != crate::gguf::TopologySource::GgufMetadata.label() {
+            warnings.push(ProfilingWarning {
+                severity: WarningSeverity::Info,
+                message: plan
+                    .layer_source_note
+                    .clone()
+                    .unwrap_or_else(|| {
+                        "Layer count was estimated from model size because GGUF metadata was unavailable.".into()
+                    }),
+            });
+        }
+        if plan.mode == RecommendationMode::CpuOnly {
+            warnings.push(ProfilingWarning {
+                severity: WarningSeverity::Warning,
+                message: format!(
+                    "The current profiling start point is CPU-only ({} CPU-resident layers).",
+                    plan.total_layers
+                ),
+            });
+        } else if plan.cpu_layers > 0 {
+            warnings.push(ProfilingWarning {
+                severity: WarningSeverity::Warning,
+                message: format!(
+                    "The current profiling start point is mixed-memory ({} GPU / {} CPU-resident layers).",
+                    plan.gpu_layers_display(),
+                    plan.cpu_layers
+                ),
             });
         }
     }
@@ -645,7 +686,7 @@ fn build_failure_report(
             ),
             format!(
                 "Set {}=/path/to/launch-koboldcpp.sh if you want ozone to use a repaired wrapper elsewhere.",
-                processes::KOBOLDCPP_LAUNCHER_ENV
+                "OZONE_KOBOLDCPP_LAUNCHER"
             ),
         ],
         FailureClass::LauncherBrokenInstall => vec![
@@ -655,7 +696,7 @@ fn build_failure_report(
             ),
             format!(
                 "Set {}=/path/to/launch-koboldcpp.sh to point ozone at a repaired launcher.",
-                processes::KOBOLDCPP_LAUNCHER_ENV
+                "OZONE_KOBOLDCPP_LAUNCHER"
             ),
             "Run the launcher script manually once to confirm KoboldCpp can start.".into(),
         ],
@@ -751,11 +792,13 @@ pub async fn run_workflow(
                 .as_ref()
                 .map(|gpu| (gpu.total_mb as f64 * 0.9) as u32)
                 .unwrap_or(0);
+            let seed_plan = planner::plan_profiling_launch(&request.record, &request.hardware);
             let config = sweep::SweepConfig {
                 model_name: request.record.model_name.clone(),
                 model_path: request.record.model_path.clone(),
                 launcher_path: launcher,
                 model_size_gb: request.record.model_size_gb,
+                total_layers: seed_plan.total_layers,
                 context_sizes,
                 quant_kv_levels,
                 gpu_vram_budget_mb,
@@ -821,12 +864,16 @@ pub async fn run_workflow(
                 let _ = tx.send(WorkflowEvent::Cancelled);
                 return Ok(());
             }
-            let plan = planner::plan_launch(&request.record, &request.hardware);
+            let plan = planner::plan_profiling_launch(&request.record, &request.hardware);
             let _ = tx.send(WorkflowEvent::Status {
                 title: "Benchmark".into(),
                 detail: format!(
-                    "Benchmarking ctx={} layers={} qkv={}",
-                    plan.context_size, plan.gpu_layers, plan.quant_kv,
+                    "Benchmarking ctx={} gpu={}/{} cpu={} qkv={}",
+                    plan.context_size,
+                    plan.gpu_layers_display(),
+                    plan.total_layers,
+                    plan.cpu_layers,
+                    plan.quant_kv,
                 ),
             });
             match bench::run_benchmark_with_progress(
@@ -1065,5 +1112,32 @@ mod tests {
     fn stale_timestamp_returns_false_for_garbage() {
         assert!(!is_stale_timestamp("not-a-date"));
         assert!(!is_stale_timestamp(""));
+    }
+
+    #[test]
+    fn advisory_warns_when_layer_count_falls_back_to_size_heuristic() {
+        let record = sample_record(&format!("{}/Cargo.toml", env!("CARGO_MANIFEST_DIR")));
+        let advisory = build_advisory(
+            &record,
+            Some(&HardwareProfile {
+                gpu: None,
+                ram_total_mb: 32000,
+                ram_free_mb: 24000,
+                ram_used_mb: 8000,
+                cpu_logical: 8,
+                cpu_physical: 4,
+            }),
+            &ServiceStatus {
+                kobold_running: false,
+                kobold_model: None,
+                st_running: false,
+            },
+        )
+        .expect("advisory should build");
+
+        assert!(advisory
+            .warnings
+            .iter()
+            .any(|warning| warning.message.contains("fell back to file-size estimation")));
     }
 }

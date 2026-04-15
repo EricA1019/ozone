@@ -14,7 +14,7 @@ edges:
     condition: when setting up the dev environment or running the project for the first time
   - target: patterns/INDEX.md
     condition: when starting a task — check the pattern index for a matching pattern file
-last_updated: 2026-04-14
+last_updated: 2026-04-15
 ---
 
 # Session Bootstrap
@@ -55,6 +55,9 @@ Then read this file fully before doing anything else in this session.
 - ozone+ MVP smoke surfaces were validated on a fresh imported character session: `open` loaded the real TUI shell, a generated assistant turn persisted, `memory pin`, `memory note`, `memory list`, and `search session` worked, and pinned/note memories reached generation context in the live shell
 - Post-smoke hardening landed for the remaining ozone+ blockers: `start_kobold()` now fails fast with classified launcher/install diagnostics and supports `OZONE_KOBOLDCPP_LAUNCHER` for repaired wrapper overrides, ozone+ insert/command modes now treat `?` as literal text instead of hijacking Help, and FTS-only search now includes note-memory hits in both session and global recall flows
 - Fresh temp-XDG smoke on the current release artifacts still works end-to-end for the main paths: `Launch` with saved `Ollama + SillyTavern` reaches `Monitor`, `Open ozone+` execs into `ozone-plus list`, profiling a missing-model symlink lands on the issue report instead of crashing, and a real CPU-only KoboldCpp run (`mn-12b-mag-mell-r1.gguf`) can serve ozone+ with persisted assistant turns plus memory/search flows
+- Base Ozone profiling is now layer-aware inside the profiling workflow: GGUF metadata feeds GPU/CPU split recommendations, estimated RAM, and sweep seeding, while a live Pantheon 22B profiling smoke completed advisory -> confirm -> running -> saved benchmark with a 42 GPU / 14 CPU split at ctx 2048 (`8.08 tok/s`, `10498 MiB` VRAM peak)
+- User-facing docs now describe the base `Profile` workflow as **autoprofiling**: a strong benchmark-backed starting point for manual GPU/CPU layer tweaking rather than a promise of final automatic tuning
+- Documentation overhauled (philosophy-first pass): README.md fully restructured with philosophy/family story leading, KoboldCpp install guide, model setup guide, first-run walkthrough, autoprofiling walkthrough, ozone+ TUI reference, CPU-only mode, env vars, troubleshooting; `ozone+/README.md` Section 10 updated to reflect shipped MVP state and TUI slash command reference added; `CONTRIBUTING.md` updated for workspace structure and ozone+ crates; `ozone_plus_documentation_stack.md` Section 6 updated to reflect what is actually still pending
 
 **Phase 2 is COMPLETE. All of Phase 2A, 2B, and 2C (alpha/beta/gamma) have shipped.**
 
@@ -78,6 +81,7 @@ Then read this file fully before doing anything else in this session.
 - Focused ozone+ tests now cover core, engine, persistence, TUI, and app-level draft restore; the older root `ozone` app still has intentionally light test coverage outside profiling helpers
 - Manual swipe seeding in `ozone-plus` is still a temporary CLI helper for transcript experiments; automatic alternate-generation/swipe creation is not yet wired into the runtime
 - Several `~/models/*.gguf` symlinks still point at missing Ollama blob files (`Qwen2.5-0.5B.gguf`, `Qwen2.5-Coder-7B-Q5_K_M.gguf`, and others), so the launcher's profile/catalog paths can only treat them as broken-model issue reports until the model files are repaired or removed
+- The new layer-aware split currently applies to the profiling workflow only; the normal fast-launch planner still uses the older coarse heuristic until that path is deliberately upgraded
 - The Phase 1E live smoke verified inline context preview with a mock backend, but the `Ctrl+D` path itself was verified through cargo tests because this PTY automation channel cannot reliably send every control chord
 - The Phase 2A live smoke verified `:memories` and `/search ...` in the TUI, but `Ctrl+K` itself was validated through tests because this PTY automation channel cannot reliably send every control chord
 - The Phase 2B live smoke verified CLI fallback -> `index rebuild` -> hybrid search with the mock embedding provider; the full-screen TUI hybrid-recall path is still better covered by cargo tests than PTY-driven visual automation

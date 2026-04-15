@@ -10,9 +10,11 @@ pub struct SweepConfig {
     pub model_path: PathBuf,
     pub launcher_path: PathBuf,
     pub model_size_gb: f64,
+    pub total_layers: u32,
     pub context_sizes: Vec<u32>,
     pub quant_kv_levels: Vec<u8>,
     pub gpu_vram_budget_mb: u32,
+    /// Stored for future mixed-memory sweep improvements.
     #[allow(dead_code)]
     pub ram_total_mb: u32,
 }
@@ -40,31 +42,6 @@ pub struct ParetoPoint {
     pub quant_kv: u8,
     pub tokens_per_sec: f64,
     pub vram_peak_mb: u32,
-}
-
-/// Find the maximum gpu_layers that fits within the VRAM budget via binary search.
-fn find_max_layers(
-    context_size: u32,
-    size_gb: f64,
-    quant_kv: u8,
-    total_layers: u32,
-    budget_mb: u32,
-) -> Option<i32> {
-    let mut lo: i32 = 0;
-    let mut hi: i32 = total_layers as i32;
-    let mut best: Option<i32> = None;
-
-    while lo <= hi {
-        let mid = lo + (hi - lo) / 2;
-        let est = planner::estimate_vram_mb(context_size, mid, size_gb, quant_kv, total_layers);
-        if est <= budget_mb {
-            best = Some(mid);
-            lo = mid + 1;
-        } else {
-            hi = mid - 1;
-        }
-    }
-    best
 }
 
 /// Check if a candidate point is dominated by any existing Pareto point.
@@ -102,7 +79,7 @@ pub async fn run_sweep_with_progress<F>(
 where
     F: FnMut(SweepProgress),
 {
-    let total_layers = planner::estimate_total_layers(config.model_size_gb);
+    let total_layers = config.total_layers;
     let total_combos = config.context_sizes.len() * config.quant_kv_levels.len();
 
     on_progress(SweepProgress {
@@ -138,7 +115,7 @@ where
             step += 1;
 
             // Binary search for max layers that fit VRAM budget
-            let max_layers = find_max_layers(
+            let max_layers = planner::fit_gpu_layers_to_budget(
                 ctx,
                 config.model_size_gb,
                 qkv,

@@ -4,7 +4,7 @@ Ozone is no longer being defined as one monolithic product.
 
 It is now a **family of local-first tools** with three distinct builds:
 - **ozonelite** for lean backend control
-- **ozone** for backend tuning, profiling, and custom profile creation
+- **ozone** for backend tuning, autoprofiling, and custom profile creation
 - **ozone+** for the full local-LLM workflow, including a polished terminal frontend
 
 This file is the onboarding entrypoint for that family. It explains the intent, the problem being addressed, the scope of each build, and which build is for you.
@@ -69,7 +69,7 @@ The key decision is that these should not be treated as the same product with op
 | Build | Primary role | Best for | Includes | Explicitly does not try to be |
 |------|---------------|----------|----------|-------------------------------|
 | **ozonelite** | Ultra-lean backend manager | Constrained systems, SSH boxes, power users who want maximum control | Basic backend launch/control/inspection, minimal overhead, essential operational tooling | A profiling suite, custom profile authoring system, or full frontend |
-| **ozone** | Backend tuning and management layer | Users who want repeatable performance tuning and better operator workflows | Everything in ozonelite, plus profiling, benchmarking, custom profile creation, and saved profile workflows | A full local-LLM conversation frontend |
+| **ozone** | Backend tuning and management layer | Users who want repeatable performance tuning and better operator workflows | Everything in ozonelite, plus autoprofiling, benchmarking, custom profile creation, and saved profile workflows | A full local-LLM conversation frontend |
 | **ozone+** | Full local-LLM pipeline | Users who want one cohesive workflow from backend control to polished terminal UX | Backend management, profiling foundations, and a frontend/TUI built for local LLM workflows | A generic cloud chat app or browser-first product |
 
 ---
@@ -84,6 +84,7 @@ Choose **ozonelite** if:
 
 Choose **ozone** if:
 - you want to benchmark and compare backend configurations
+- you want autoprofiling to hand you a strong starting point before manual layer tweaking
 - you want reusable profiles instead of hand-tuning every launch
 - you want profile creation to be a first-class workflow
 - you want stronger management features without committing to a full frontend
@@ -158,15 +159,53 @@ For project questions, collaboration, or direct contact:
 
 ---
 
-## 10. Current Intent
+## 10. Current Status
 
-The immediate goal is still **documentation clarity before implementation**.
+**ozone+ is fully implemented through Phase 3 and ships as `v0.4.0-alpha`.**
 
-This documentation pass now establishes the missing family scaffolding:
-- what belongs in ozonelite
-- what belongs in ozone
-- what belongs only in ozone+
-- how `ozone_v0.4_design.md` should be used in the ozone+ doc stack
-- how portability should work across the family
+What is available today:
 
-That clarity is the foundation for the next ozone+ workflow docs and for the eventual implementation plan.
+| Feature | Status |
+|---------|--------|
+| Session create / list / open | ✅ |
+| TUI chat with streaming tokens | ✅ |
+| KoboldCpp and Ollama backends | ✅ |
+| Character card import (SillyTavern V2) | ✅ |
+| Pinned memories (persist across sessions) | ✅ |
+| Note memories and keyword tagging | ✅ |
+| Session and global full-text search | ✅ |
+| Hybrid vector + BM25 recall (optional) | ✅ |
+| Session summary generation | ✅ |
+| Branches and swipe variants | ✅ |
+| Session export (JSON, Markdown) | ✅ |
+| Tier B assistive features (importance scoring, keyword extraction) | ✅ |
+| Thinking block rendering | ✅ |
+| Shell hooks (pre/post generation) | ✅ |
+| Context inspector (Ctrl+D dry run) | ✅ |
+
+**Deferred to future releases:**
+
+- Group chat / multi-character scenes → v0.5
+- Mention-based speaker auto-detection → v0.5
+- WASM plugin system → later
+- macOS / Windows support → not yet planned
+
+The "documentation clarity before implementation" framing in earlier versions of this section no longer applies. Implementation is complete for the MVP scope. The family scaffolding established in this document continues to define where features belong across the three tiers.
+
+## 11. ozone+ Slash Command Quick Reference
+
+| Command | Effect |
+|---------|--------|
+| `/memory pin <text>` | Pin a fact to persistent memory |
+| `/memory note <text>` | Create a keyword note |
+| `/memory list` | List active pinned memories |
+| `/memory unpin <id>` | Remove a pin |
+| `/search session <query>` | Search this session's transcript |
+| `/search global <query>` | Search across all sessions |
+| `/summarize session` | Generate session synopsis |
+| `/summarize chunk` | Summarize current context window |
+| `/thinking immersive\|assisted\|debug` | Set thinking block display mode |
+| `/tierb on\|off\|status` | Toggle Tier B assistive features |
+| `/safemode on\|off\|status` | Toggle all assistive features |
+| `/hooks status` | Show loaded shell hooks |
+| `/session export` | Export session to JSON |

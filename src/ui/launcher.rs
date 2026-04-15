@@ -270,7 +270,7 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
 
     if filtered.is_empty() {
         let msg = if app.model_filter.is_empty() {
-            "  No models found in ~/models/"
+            &format!("  No models found in {}", ozone_core::paths::models_dir().display())
         } else {
             "  No models match filter"
         };
@@ -613,25 +613,47 @@ pub fn render_profile_advisory(f: &mut Frame, app: &App) {
     );
 
     let mut snapshot_lines = Vec::new();
-    if let Some(vram) = advisory.estimated_vram_mb {
-        if let Some(budget) = advisory.gpu_budget_mb {
-            snapshot_lines.push(Line::from(vec![
-                Span::styled("  Est. VRAM: ", style_gray()),
-                Span::styled(format!("{vram} MiB"), style_cyan()),
-                Span::styled("   Safe budget: ", style_gray()),
-                Span::styled(format!("{budget} MiB"), style_cyan()),
-            ]));
-        }
-    }
     if let Some(plan) = &advisory.launch_plan {
+        snapshot_lines.push(Line::from(vec![
+            Span::styled("  Layers: ", style_gray()),
+            Span::styled(
+                format!(
+                    "GPU {}/{}   CPU {}",
+                    plan.gpu_layers_display(),
+                    plan.total_layers,
+                    plan.cpu_layers
+                ),
+                style_cyan(),
+            ),
+            Span::styled("   Source: ", style_gray()),
+            Span::styled(&plan.layer_source_label, style_cyan()),
+        ]));
+        if let Some(vram) = advisory.estimated_vram_mb {
+            if let Some(budget) = advisory.gpu_budget_mb {
+                snapshot_lines.push(Line::from(vec![
+                    Span::styled("  Est. VRAM: ", style_gray()),
+                    Span::styled(format!("{vram} MiB"), style_cyan()),
+                    Span::styled("   Safe budget: ", style_gray()),
+                    Span::styled(format!("{budget} MiB"), style_cyan()),
+                    Span::styled("   Est. RAM: ", style_gray()),
+                    Span::styled(format!("{} MiB", plan.estimated_ram_mb), style_cyan()),
+                ]));
+            } else {
+                snapshot_lines.push(Line::from(vec![
+                    Span::styled("  Est. RAM: ", style_gray()),
+                    Span::styled(format!("{} MiB", plan.estimated_ram_mb), style_cyan()),
+                ]));
+            }
+        }
         snapshot_lines.push(Line::from(vec![
             Span::styled("  Launch plan: ", style_gray()),
             Span::styled(
                 format!(
-                    "{} · ctx {} · layers {} · qkv {}",
+                    "{} · ctx {} · gpu {} · cpu {} · qkv {}",
                     plan.mode.label(),
                     plan.context_size,
-                    plan.gpu_layers,
+                    plan.gpu_layers_display(),
+                    plan.cpu_layers,
                     plan.quant_kv
                 ),
                 style_cyan(),
@@ -749,6 +771,23 @@ pub fn render_profile_confirm(f: &mut Frame, app: &App) {
         )));
     }
     if let Some(advisory) = &app.profiling_advisory {
+        if let Some(plan) = &advisory.launch_plan {
+            lines.push(Line::from(vec![
+                Span::styled("  Start point: ", style_gray()),
+                Span::styled(
+                    format!(
+                        "{} · GPU {}/{} · CPU {} · ctx {} · qkv {}",
+                        plan.mode.label(),
+                        plan.gpu_layers_display(),
+                        plan.total_layers,
+                        plan.cpu_layers,
+                        plan.context_size,
+                        plan.quant_kv
+                    ),
+                    style_cyan(),
+                ),
+            ]));
+        }
         if let Some(warning) = advisory
             .warnings
             .iter()

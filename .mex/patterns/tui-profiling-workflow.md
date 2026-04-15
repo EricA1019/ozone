@@ -12,7 +12,7 @@ edges:
     condition: when you need to understand how the TUI, profiling layer, and CLI helpers connect
   - target: "context/conventions.md"
     condition: before editing Rust modules so new process calls and UI code stay in the right files
-last_updated: 2026-04-12
+last_updated: 2026-04-15
 ---
 
 # TUI Profiling Workflow
@@ -48,6 +48,7 @@ The profiling path is intentionally separate from the fast launch path.
 
 - `bench` and `sweep` clear GPU backends before they run; the TUI must warn before destructive profiling steps.
 - Broken `.gguf` symlinks may still appear in the catalog. Validate selected models before starting work and route bad selections into the failure-report screen.
+- The profiling heuristic can now be more detailed than the normal launch heuristic; keep profiling-only topology logic in the profiling path until the fast-launch planner is intentionally upgraded too.
 - Do not let the TUI parse printed CLI text. Add structured return/progress types instead.
 - Keep the UX review-first: success screens may offer generate/export/launch, but they should not apply those automatically.
 - `tokio::sync::mpsc::UnboundedReceiver` lives in `App`, so event draining must happen before drawing/handling keypresses each loop.
@@ -59,6 +60,7 @@ The profiling path is intentionally separate from the fast launch path.
 - [ ] `cargo build --release`
 - [ ] Run a smoke pass through `./target/release/ozone`
 - [ ] Exercise at least one TUI profiling action that reaches a success or failure report screen
+- [ ] If advisory math changed, confirm the live snapshot shows the expected GPU/CPU split and that a real benchmark row is persisted
 - [ ] Confirm follow-up actions still require explicit confirmation/review
 
 ## Debug

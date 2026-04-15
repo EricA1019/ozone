@@ -85,16 +85,23 @@ The intended execution shape remains:
 
 ---
 
-## 6. What Still Needs Expansion Later
+## 6. What Still Needs Expansion
 
-This documentation pass establishes the routing layer, but ozone+ can still be expanded later with:
+The ozone+ MVP (Phases 1–3, v0.4.0-alpha) is fully implemented. Items previously listed as "still needing expansion" in this section are now complete:
 
-- dedicated product-requirements and user-workflow docs
-- screen-by-screen TUI interaction notes
-- import/export compatibility notes specific to ozone+
-- implementation breakdowns mapped from roadmap phases into actual crates/modules
+- ✅ Screen-by-screen TUI interaction notes — implemented in `crates/ozone-tui/`
+- ✅ Import/export compatibility — character card import and session export implemented
+- ✅ Implementation breakdowns mapped from roadmap phases — all phases 1–3 executed
 
-Those deeper docs should be written as ozone+ docs, not mixed back into the family overview.
+**What genuinely still needs expansion:**
+
+- **Group chat / multi-character scenes (Phase 4)** — scene state model, multi-actor card storage, `/as` speaker routing, narrator system, and context assembly for scenes are not yet implemented. Deferred to v0.5.
+- **Mention-based speaker auto-detection (Phase 5)** — assistive speaker suggestions based on message content are not yet implemented.
+- **Release packaging** — the binary ships from source build only; no prebuilt GitHub release artifact or installer yet.
+- **macOS/Windows support** — not yet tested or supported.
+- **Embedding model assets** — the optional vector/embedding recall path works but requires downloading `fastembed` model assets at runtime; first-run experience for this path is not yet documented.
+
+Any new ozone+ documents should still be written as ozone+ docs, not mixed back into the family overview. The boundary reminder in Section 7 still applies.
 
 ---
 

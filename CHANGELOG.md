@@ -8,6 +8,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [Unreleased]
 
+### Added
+
+- **Autoprofiling** in base Ozone's `Profile` workflow: GGUF-aware GPU/CPU layer recommendations, RAM estimates, and benchmark/sweep seeding now provide a practical starting point for manual layer tweaking — `README.md`, `src/gguf.rs`, `src/planner.rs`, `src/profiling.rs`
+
 ---
 
 ## [0.4.0-alpha] — 2025-07-16  *(MVP — ozone+ memory shell)*
