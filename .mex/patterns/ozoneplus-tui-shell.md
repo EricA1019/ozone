@@ -54,6 +54,8 @@ last_updated: 2026-04-12
 - Terminal input over automation channels may not distinguish `Ctrl+I` from plain
   Tab; keep layout and render tests honest so the shell behavior is still proven
   even when live PTY tooling cannot express every chord cleanly.
+- `?` should now toggle Help only in normal mode; if it stops inserting in
+  insert/command mode again, start in `crates/ozone-tui/src/input.rs`.
 - If a live TUI process is killed instead of exiting cleanly, advisory session
   locks can remain until the stale-lock timeout. That is expected lock behavior,
   not a shell rendering bug.

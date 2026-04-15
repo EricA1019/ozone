@@ -25,6 +25,7 @@ Lookup table for all pattern files in this directory. Check here before starting
 |---------|----------|
 | [copilot-skill-customization.md](copilot-skill-customization.md) | Creating or updating reusable local Copilot skills in the user-level Copilot skill library |
 | [github-actions-release.md](github-actions-release.md) | Debugging or updating this repo's GitHub Actions CI or release automation |
+| [koboldcpp-launch-diagnostics.md](koboldcpp-launch-diagnostics.md) | Diagnosing or hardening the KoboldCpp launcher path, startup failures, or override-wrapper behavior in base Ozone |
 | [mex-scaffold-sync.md](mex-scaffold-sync.md) | Detecting or fixing drift in the .mex scaffold, paths, or helper scripts |
 | [ozoneplus-conversation-engine.md](ozoneplus-conversation-engine.md) | Building or extending the Phase 1B ozone+ engine, engine-backed CLI, branches, or swipe flows |
 | [ozoneplus-context-inspector.md](ozoneplus-context-inspector.md) | Building or extending the Phase 1E context assembler surface, inspector preview, or dry-run trigger |
@@ -38,4 +39,5 @@ Lookup table for all pattern files in this directory. Check here before starting
 | [ozoneplus-tui-shell.md](ozoneplus-tui-shell.md) | Building or extending the Phase 1C ozone+ TUI shell, `open` integration, draft persistence, or mock-runtime chat flow |
 | [ozoneplus-workspace-bootstrap.md](ozoneplus-workspace-bootstrap.md) | Implementing or extending the Phase 0 workspace split, shared ozone-core crate, or ozone-plus bootstrap app |
 | [product-family-docs.md](product-family-docs.md) | Updating or extending the Ozone family documentation split, scope docs, or compatibility notes |
+| [tui-launcher-smoke-test.md](tui-launcher-smoke-test.md) | Running a live smoke test of the base Ozone launcher, monitor, profiling, and clear-GPU flows |
 | [tui-profiling-workflow.md](tui-profiling-workflow.md) | Adding, reviewing, or debugging the Ozone TUI profiling/advisory/report flow |

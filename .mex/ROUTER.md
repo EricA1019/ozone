@@ -51,6 +51,9 @@ Then read this file fully before doing anything else in this session.
 - Phase 5.5 is now implemented: ozone now has `model list|add|remove|info`, ozone+ copy and metadata reflect the shipped MVP state, timestamps are human-readable, and release docs/changelog now cover `v0.4.0-alpha`
 - MVP launcher polish landed after live install testing: saved frontend preference is now honored when launching, and the selected `ozone+` row in the tier picker uses a higher-contrast accent so it remains readable on the dark theme
 - Launcher smoke-fix pass landed after live testing: the splash version label no longer duplicates `alpha`, `Launch` with saved `Ollama + ozone+` now hands off into `ozone-plus`, and the TUI now clears the frame before redraws to reduce stale-screen overlap during launcher, monitor, and profiling transitions
+- Base launcher live smoke re-validated on the installed binary: `Launch` with `--no-browser --frontend sillyTavern` and Ollama reaches the Monitor screen, the profiling advisor correctly routes broken `.gguf` symlinks into a reviewable failure path, and the destructive `Clear GPU` action is best verified separately because external Ollama management may keep `:11434` listening after the UI reports success
+- ozone+ MVP smoke surfaces were validated on a fresh imported character session: `open` loaded the real TUI shell, a generated assistant turn persisted, `memory pin`, `memory note`, `memory list`, and `search session` worked, and pinned/note memories reached generation context in the live shell
+- Post-smoke hardening landed for the remaining ozone+ blockers: `start_kobold()` now fails fast with classified launcher/install diagnostics and supports `OZONE_KOBOLDCPP_LAUNCHER` for repaired wrapper overrides, ozone+ insert/command modes now treat `?` as literal text instead of hijacking Help, and FTS-only search now includes note-memory hits in both session and global recall flows
 
 **Phase 2 is COMPLETE. All of Phase 2A, 2B, and 2C (alpha/beta/gamma) have shipped.**
 
@@ -79,6 +82,8 @@ Then read this file fully before doing anything else in this session.
 - The Phase 2B live smoke verified CLI fallback -> `index rebuild` -> hybrid search with the mock embedding provider; the full-screen TUI hybrid-recall path is still better covered by cargo tests than PTY-driven visual automation
 - `cargo build --release` at the repo root is not sufficient when you want a fresh `target/release/ozone-plus` artifact; explicitly building `-p ozone-plus` avoids stale smoke-test binaries
 - PTY/script transcript captures can still show raw ANSI/control-sequence noise even after the redraw hardening pass; treat that as a capture limitation unless it is also reproducible in a normal interactive terminal
+- `Clear GPU` can report success while `:11434` is still listening if Ollama is supervised outside ozone or auto-restarts; validate the port/process state instead of assuming the listener is gone
+- The current local `~/koboldcpp/koboldcpp` install is still environment-broken: PyInstaller extraction fails for `koboldcpp_cublas.so`, the extracted CUDA path segfaults, and the extracted CPU path is incomplete (`koboldcpp_default.so` missing). ozone now classifies that failure immediately and supports `OZONE_KOBOLDCPP_LAUNCHER`, but a true real-model smoke still requires a repaired launcher/install.
 
 ## Routing Table
 
