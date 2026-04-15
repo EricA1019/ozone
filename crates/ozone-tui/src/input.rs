@@ -76,7 +76,6 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
             KeyCode::Right => KeyAction::MoveCursorRight,
             KeyCode::Home => KeyAction::MoveCursorHome,
             KeyCode::End => KeyAction::MoveCursorEnd,
-            KeyCode::Char('?') => KeyAction::ToggleHelp,
             KeyCode::Char(ch) if allows_text_insertion(key.modifiers) => {
                 KeyAction::DraftInsertChar(ch)
             }
@@ -85,7 +84,9 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
         InputMode::Command => match key.code {
             KeyCode::Esc => KeyAction::LeaveInputMode,
             KeyCode::Enter => KeyAction::SubmitDraft,
-            KeyCode::Char('?') => KeyAction::ToggleHelp,
+            KeyCode::Char(ch) if allows_text_insertion(key.modifiers) => {
+                KeyAction::DraftInsertChar(ch)
+            }
             _ => KeyAction::Noop,
         },
     }
@@ -210,6 +211,24 @@ mod tests {
                 KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)
             ),
             KeyAction::HistoryPrevious
+        );
+        assert_eq!(
+            dispatch_key(
+                InputMode::Insert,
+                KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT)
+            ),
+            KeyAction::DraftInsertChar('?')
+        );
+    }
+
+    #[test]
+    fn command_mode_treats_question_mark_as_text() {
+        assert_eq!(
+            dispatch_key(
+                InputMode::Command,
+                KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT)
+            ),
+            KeyAction::DraftInsertChar('?')
         );
     }
 }
