@@ -92,6 +92,7 @@ pub struct App {
     pub tokens_per_sec: Option<f64>,
     pub launch_start: Option<Instant>,
     // UI state
+    /// Stored at construction; event loop uses a local `Instant` instead.
     #[allow(dead_code)]
     pub last_refresh: Instant,
     pub ticker: u64,
@@ -358,9 +359,8 @@ pub async fn run_launcher(
     });
 
     // Spawn catalog loading
-    let home = std::env::var("HOME").unwrap_or_default();
-    let model_dir = std::path::PathBuf::from(&home).join("models");
-    let preset_file = model_dir.join("koboldcpp-presets.conf");
+    let model_dir = ozone_core::paths::models_dir();
+    let preset_file = ozone_core::paths::presets_path();
     let bench_file = model_dir.join("bench-results.txt");
     let (cat_tx, mut cat_rx) = tokio::sync::oneshot::channel::<Vec<CatalogRecord>>();
     tokio::spawn(async move {

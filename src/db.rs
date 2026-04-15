@@ -5,6 +5,7 @@ use rusqlite::Connection;
 /// Benchmark result row — one run of a specific configuration.
 #[derive(Debug, Clone)]
 pub struct BenchmarkRow {
+    /// Auto-increment ID from SQLite; unused in app logic.
     #[allow(dead_code)]
     pub id: Option<i64>,
     pub model_name: String,
@@ -30,6 +31,7 @@ pub struct BenchmarkRow {
 /// Auto-generated preset from benchmark data.
 #[derive(Debug, Clone)]
 pub struct ProfileRow {
+    /// Auto-increment ID from SQLite; unused in app logic.
     #[allow(dead_code)]
     pub id: Option<i64>,
     pub model_name: String,

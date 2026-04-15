@@ -195,7 +195,7 @@ async fn run_generation() -> Result<GenerationResult> {
 
     let start = Instant::now();
     let resp = client
-        .post("http://127.0.0.1:5001/api/v1/generate")
+        .post(ozone_core::paths::koboldcpp_generate_url())
         .json(&payload)
         .send()
         .await

@@ -91,7 +91,7 @@ impl BackendDescriptor {
         Self {
             id: BackendId::koboldcpp(),
             display_name: "KoboldCpp".into(),
-            default_url: "http://localhost:5001".into(),
+            default_url: ozone_core::paths::koboldcpp_base_url(),
             streaming_format: StreamingFormat::ServerSentEvents,
             supports_streaming: true,
             health_endpoint: "/api/v1/model".into(),
@@ -115,6 +115,31 @@ impl BackendDescriptor {
     pub fn all() -> Vec<Self> {
         vec![Self::koboldcpp()]
     }
+}
+
+// ---------------------------------------------------------------------------
+// Backend trait
+// ---------------------------------------------------------------------------
+
+/// Common interface for inference backends.
+///
+/// Implement this trait to add a new backend (e.g. Ollama, llama-server).
+/// The gateway dispatches through this trait, so swapping backends requires
+/// no changes to the gateway itself.
+pub trait Backend: Send + Sync {
+    /// Static capability descriptor (no network required).
+    fn descriptor(&self) -> &BackendDescriptor;
+
+    /// Check whether the backend is reachable.
+    fn is_healthy(&self) -> impl std::future::Future<Output = bool> + Send;
+
+    /// Query the currently loaded model name and context length.
+    fn probe_model_info(
+        &self,
+    ) -> impl std::future::Future<Output = anyhow::Result<BackendModelInfo>> + Send;
+
+    /// Build the URL used for streaming generation requests.
+    fn streaming_url(&self) -> String;
 }
 
 // ---------------------------------------------------------------------------
@@ -149,5 +174,18 @@ mod tests {
     #[test]
     fn backend_id_display() {
         assert_eq!(BackendId::koboldcpp().to_string(), "koboldcpp");
+    }
+
+    #[test]
+    fn koboldcpp_client_implements_backend_trait() {
+        use crate::backend::koboldcpp::KoboldCppClient;
+        let client = KoboldCppClient::new("http://localhost:5001").unwrap();
+        // Access through the trait to verify the impl compiles and works.
+        fn assert_backend<T: Backend>(b: &T) -> (&BackendDescriptor, String) {
+            (b.descriptor(), b.streaming_url())
+        }
+        let (desc, url) = assert_backend(&client);
+        assert_eq!(desc.id.as_str(), "koboldcpp");
+        assert_eq!(url, "http://localhost:5001/api/extra/generate/stream");
     }
 }

@@ -59,8 +59,7 @@ pub async fn run(command: ModelCommand) -> Result<()> {
 // ---------------------------------------------------------------------------
 
 fn models_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| "/root".into());
-    PathBuf::from(home).join("models")
+    ozone_core::paths::models_dir()
 }
 
 fn human_size(bytes: u64) -> String {
@@ -529,7 +528,7 @@ async fn check_koboldcpp_model(model_name: &str) -> Option<bool> {
         .build()
         .ok()?;
     let resp = client
-        .get("http://localhost:5001/api/v1/model")
+        .get(ozone_core::paths::koboldcpp_ready_url())
         .send()
         .await
         .ok()?;

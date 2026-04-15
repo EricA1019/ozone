@@ -43,8 +43,10 @@ pub struct BenchmarkRun {
     pub gpu_layers: i32,
     pub quant_kv: u8,
     pub vram_mb: u32,
+    /// Loaded from DB; reserved for model info display.
     #[allow(dead_code)]
     pub timestamp_ms: i64,
+    /// Loaded from DB; reserved for model info display.
     #[allow(dead_code)]
     pub model_size_gb: f64,
 }
@@ -52,11 +54,13 @@ pub struct BenchmarkRun {
 #[derive(Debug, Clone)]
 pub struct CatalogRecord {
     pub model_name: String,
+    /// Populated during catalog scan; reserved for model management surfaces.
     #[allow(dead_code)]
     pub model_path: PathBuf,
     pub model_size_gb: f64,
     pub recommendation: Recommendation,
     pub benchmark: Option<BenchmarkRun>,
+    /// Populated during catalog scan; reserved for model management surfaces.
     #[allow(dead_code)]
     pub benchmark_count: usize,
     pub source_priority: u8,

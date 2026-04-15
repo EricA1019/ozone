@@ -1,3 +1,9 @@
+//! `ozone-engine` — conversation engine for ozone+.
+//!
+//! Implements the single-writer conversation engine: command processing,
+//! event broadcast, branch/swipe coordination, context assembly, and
+//! the in-memory store used by engine tests.
+
 use std::{collections::BTreeMap, error::Error, fmt};
 
 use ozone_core::{

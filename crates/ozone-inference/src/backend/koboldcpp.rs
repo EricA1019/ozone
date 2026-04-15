@@ -64,6 +64,7 @@ struct KoboldModelResponse {
 struct KoboldPerfResponse {
     last_process_time_ms: Option<f64>,
     last_token_count: Option<f64>,
+    /// Deserialized from KoboldCpp perf response; unused in current UI.
     #[allow(dead_code)]
     total_gens: Option<u64>,
 }
@@ -244,6 +245,24 @@ impl KoboldCppClient {
     /// Build the streaming URL for `/api/extra/generate/stream`.
     pub fn streaming_url(&self) -> String {
         format!("{}/api/extra/generate/stream", self.base_url)
+    }
+}
+
+impl super::Backend for KoboldCppClient {
+    fn descriptor(&self) -> &BackendDescriptor {
+        &self.descriptor
+    }
+
+    async fn is_healthy(&self) -> bool {
+        self.is_healthy().await
+    }
+
+    async fn probe_model_info(&self) -> anyhow::Result<BackendModelInfo> {
+        self.probe_model_info().await
+    }
+
+    fn streaming_url(&self) -> String {
+        self.streaming_url()
     }
 }
 

@@ -1,3 +1,9 @@
+//! `ozone-memory` — memory system for ozone+.
+//!
+//! Provides pinned/note memories, embedding providers (fastembed),
+//! vector index management (usearch), hybrid BM25+vector retrieval,
+//! lifecycle tiering, garbage collection, and disk monitoring.
+
 pub mod assistive;
 pub mod disk_monitor;
 mod index;

@@ -5,8 +5,6 @@ use std::process::Stdio;
 use std::time::Duration;
 use tokio::time::sleep;
 
-pub const KOBOLDCPP_LAUNCHER_ENV: &str = "OZONE_KOBOLDCPP_LAUNCHER";
-const KOBOLD_READY_URL: &str = "http://127.0.0.1:5001/api/v1/model";
 const KOBOLD_START_TIMEOUT_SECS: u64 = 120;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -39,7 +37,7 @@ pub async fn get_kobold_model() -> Option<String> {
         .timeout(Duration::from_secs(2))
         .build()
         .ok()?;
-    let resp = client.get(KOBOLD_READY_URL).send().await.ok()?;
+    let resp = client.get(paths::koboldcpp_ready_url()).send().await.ok()?;
     let data: serde_json::Value = resp.json().await.ok()?;
     data["result"].as_str().map(|s| s.to_string())
 }
@@ -50,7 +48,7 @@ pub async fn get_kobold_perf() -> Option<f64> {
         .build()
         .ok()?;
     let resp = client
-        .get("http://127.0.0.1:5001/api/extra/perf")
+        .get(paths::koboldcpp_perf_url())
         .send()
         .await
         .ok()?;
@@ -72,8 +70,9 @@ pub struct ServiceStatus {
 }
 
 pub async fn get_service_status() -> ServiceStatus {
+    let kobold_url = paths::koboldcpp_ready_url();
     let (kobold_ready, st_ready) = tokio::join!(
-        is_url_ready(KOBOLD_READY_URL),
+        is_url_ready(&kobold_url),
         is_url_ready("http://127.0.0.1:8000"),
     );
     let kobold_model = if kobold_ready {
@@ -122,33 +121,18 @@ fn nix_kill(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
-pub fn default_kobold_launcher_path() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(home).join("models/launch-koboldcpp.sh")
-}
-
 pub fn resolved_kobold_launcher_path() -> PathBuf {
-    std::env::var_os(KOBOLDCPP_LAUNCHER_ENV)
-        .and_then(|value| {
-            let trimmed = value.to_string_lossy().trim().to_owned();
-            if trimmed.is_empty() {
-                None
-            } else {
-                Some(PathBuf::from(trimmed))
-            }
-        })
-        .unwrap_or_else(default_kobold_launcher_path)
+    paths::launcher_path()
 }
 
 pub async fn start_kobold(launcher_path: &Path, model_name: &str, args: &[String]) -> Result<()> {
     if !launcher_path.exists() {
         return Err(anyhow!(
-            "KoboldCpp launcher not found: {}\nSet {}=/path/to/launch-koboldcpp.sh to use a repaired launcher.",
+            "KoboldCpp launcher not found: {}\nSet OZONE_KOBOLDCPP_LAUNCHER=/path/to/launch-koboldcpp.sh to use a repaired launcher.",
             launcher_path.display(),
-            KOBOLDCPP_LAUNCHER_ENV
         ));
     }
-    if is_url_ready(KOBOLD_READY_URL).await {
+    if is_url_ready(&paths::koboldcpp_ready_url()).await {
         return Ok(()); // already running
     }
 
@@ -186,7 +170,7 @@ pub async fn start_kobold(launcher_path: &Path, model_name: &str, args: &[String
     let mut child = cmd.spawn()?;
     let deadline = std::time::Instant::now() + Duration::from_secs(KOBOLD_START_TIMEOUT_SECS);
     loop {
-        if is_url_ready(KOBOLD_READY_URL).await {
+        if is_url_ready(&paths::koboldcpp_ready_url()).await {
             return Ok(());
         }
 
@@ -296,7 +280,7 @@ fn remediation_steps(kind: KoboldStartupFailureKind, launcher_path: &Path) -> Ve
             "The installed packaged KoboldCpp binary looks corrupt or incomplete; replace it or point ozone at a repaired launcher.".to_owned(),
             format!(
                 "If you have a working wrapper elsewhere, set {}=/path/to/launch-koboldcpp.sh before launching ozone.",
-                KOBOLDCPP_LAUNCHER_ENV
+                "OZONE_KOBOLDCPP_LAUNCHER"
             ),
         ],
         KoboldStartupFailureKind::MissingSharedLibrary => vec![
@@ -304,14 +288,14 @@ fn remediation_steps(kind: KoboldStartupFailureKind, launcher_path: &Path) -> Ve
             format!(
                 "Repair the install behind {} or override it with {}.",
                 launcher_path.display(),
-                KOBOLDCPP_LAUNCHER_ENV
+                "OZONE_KOBOLDCPP_LAUNCHER"
             ),
         ],
         KoboldStartupFailureKind::RuntimeCrash => vec![
             "Retry with a repaired launcher or a CPU-safe fallback wrapper before profiling or handing off into ozone+.".to_owned(),
             format!(
                 "You can override the launcher path temporarily with {}.",
-                KOBOLDCPP_LAUNCHER_ENV
+                "OZONE_KOBOLDCPP_LAUNCHER"
             ),
         ],
         KoboldStartupFailureKind::Timeout => vec![
@@ -324,7 +308,7 @@ fn remediation_steps(kind: KoboldStartupFailureKind, launcher_path: &Path) -> Ve
                 .to_owned(),
             format!(
                 "If the configured launcher is bad, set {} to a repaired wrapper and retry.",
-                KOBOLDCPP_LAUNCHER_ENV
+                "OZONE_KOBOLDCPP_LAUNCHER"
             ),
         ],
     };
@@ -393,7 +377,7 @@ mod tests {
 
     use super::{
         classify_startup_failure, describe_exit_status, resolved_kobold_launcher_path,
-        KoboldStartupFailureKind, KOBOLDCPP_LAUNCHER_ENV,
+        KoboldStartupFailureKind,
     };
 
     fn env_lock() -> &'static Mutex<()> {
@@ -404,9 +388,9 @@ mod tests {
     #[test]
     fn launcher_override_env_wins_when_present() {
         let _guard = env_lock().lock().unwrap();
-        std::env::set_var(KOBOLDCPP_LAUNCHER_ENV, "/tmp/custom-kobold-launcher.sh");
+        std::env::set_var("OZONE_KOBOLDCPP_LAUNCHER", "/tmp/custom-kobold-launcher.sh");
         let path = resolved_kobold_launcher_path();
-        std::env::remove_var(KOBOLDCPP_LAUNCHER_ENV);
+        std::env::remove_var("OZONE_KOBOLDCPP_LAUNCHER");
         assert_eq!(path, PathBuf::from("/tmp/custom-kobold-launcher.sh"));
     }
 

@@ -1,3 +1,9 @@
+//! `ozone-core` — shared foundations for the Ozone product family.
+//!
+//! Provides product metadata, data/config path helpers (with env var overrides),
+//! session identifiers, and engine domain types reused by all Ozone crates.
+
+pub mod cli;
 pub mod engine;
 pub mod session;
 
@@ -49,12 +55,61 @@ pub mod paths {
     const SESSION_CONFIG_FILE_NAME: &str = "config.toml";
     const SESSION_DRAFT_FILE_NAME: &str = "draft.txt";
 
+    const ENV_MODELS_DIR: &str = "OZONE_MODELS_DIR";
+    const ENV_KOBOLDCPP_LAUNCHER: &str = "OZONE_KOBOLDCPP_LAUNCHER";
+    const DEFAULT_KOBOLDCPP_PORT: u16 = 5001;
+
     fn project_dirs() -> Option<ProjectDirs> {
         ProjectDirs::from("", "", "ozone")
     }
 
     pub fn data_dir() -> Option<PathBuf> {
         project_dirs().map(|dirs| dirs.data_dir().to_path_buf())
+    }
+
+    /// Returns the model directory. Respects `OZONE_MODELS_DIR` env var,
+    /// falls back to `~/models/`.
+    pub fn models_dir() -> PathBuf {
+        if let Ok(val) = std::env::var(ENV_MODELS_DIR) {
+            return PathBuf::from(val);
+        }
+        dirs::home_dir()
+            .map(|h| h.join("models"))
+            .unwrap_or_else(|| PathBuf::from("models"))
+    }
+
+    /// Returns the preset file path inside the models directory.
+    pub fn presets_path() -> PathBuf {
+        models_dir().join("koboldcpp-presets.conf")
+    }
+
+    /// Returns the launch wrapper path. Respects `OZONE_KOBOLDCPP_LAUNCHER`,
+    /// falls back to `~/models/launch-koboldcpp.sh`.
+    pub fn launcher_path() -> PathBuf {
+        if let Ok(val) = std::env::var(ENV_KOBOLDCPP_LAUNCHER) {
+            return PathBuf::from(val);
+        }
+        models_dir().join("launch-koboldcpp.sh")
+    }
+
+    /// The default KoboldCpp API base URL.
+    pub fn koboldcpp_base_url() -> String {
+        format!("http://127.0.0.1:{DEFAULT_KOBOLDCPP_PORT}")
+    }
+
+    /// The default KoboldCpp ready-check endpoint.
+    pub fn koboldcpp_ready_url() -> String {
+        format!("http://127.0.0.1:{DEFAULT_KOBOLDCPP_PORT}/api/v1/model")
+    }
+
+    /// The default KoboldCpp perf endpoint.
+    pub fn koboldcpp_perf_url() -> String {
+        format!("http://127.0.0.1:{DEFAULT_KOBOLDCPP_PORT}/api/extra/perf")
+    }
+
+    /// The default KoboldCpp generate endpoint.
+    pub fn koboldcpp_generate_url() -> String {
+        format!("http://127.0.0.1:{DEFAULT_KOBOLDCPP_PORT}/api/v1/generate")
     }
 
     pub fn preferences_path() -> Option<PathBuf> {

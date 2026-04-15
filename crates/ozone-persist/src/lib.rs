@@ -1,3 +1,9 @@
+//! `ozone-persist` — SQLite persistence layer for ozone+.
+//!
+//! Manages global and per-session databases: sessions, messages, branches,
+//! swipes, bookmarks, summaries, memory artifacts, FTS5 search, migrations,
+//! import/export, and the repository API surface.
+
 mod error;
 mod import_export;
 mod migration;

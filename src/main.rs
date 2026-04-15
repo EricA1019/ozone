@@ -2,6 +2,7 @@ mod analyze;
 mod bench;
 mod catalog;
 mod db;
+mod gguf;
 mod hardware;
 mod model;
 mod planner;
@@ -152,9 +153,8 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Monitor) => ui::run_monitor().await,
         Some(Commands::List { json }) => {
-            let home = std::env::var("HOME").unwrap_or_default();
-            let model_dir = std::path::PathBuf::from(&home).join("models");
-            let preset_file = model_dir.join("koboldcpp-presets.conf");
+            let model_dir = ozone_core::paths::models_dir();
+            let preset_file = ozone_core::paths::presets_path();
             let bench_file = model_dir.join("bench-results.txt");
             let records = catalog::load_catalog(&model_dir, &preset_file, &bench_file)
                 .await
@@ -190,13 +190,12 @@ async fn main() -> Result<()> {
             quant_kv,
             threads,
         }) => {
-            let home = std::env::var("HOME").unwrap_or_default();
-            let model_dir = std::path::PathBuf::from(&home).join("models");
+            let model_dir = ozone_core::paths::models_dir();
             let model_path = model_dir.join(&model);
             let launcher_path = processes::resolved_kobold_launcher_path();
 
             if !model_path.exists() {
-                eprintln!("Model not found: {}", model_path.display());
+                ozone_core::cli::error(&format!("Model not found: {}", model_path.display()));
                 std::process::exit(1);
             }
 
@@ -205,17 +204,15 @@ async fn main() -> Result<()> {
                 .map(|m| m.len() as f64 / 1_073_741_824.0)
                 .unwrap_or(0.0);
 
-            println!();
-            println!("  ⬡ Ozone Bench");
-            println!("  ─────────────────────────────────────────────────");
-            println!("  Model:       {model}");
-            println!("  GPU Layers:  {gpu_layers}");
-            println!("  Context:     {context}");
-            println!("  Quant KV:    {quant_kv}");
+            ozone_core::cli::header("Ozone Bench");
+            ozone_core::cli::field("Model:", &model);
+            ozone_core::cli::field("GPU Layers:", &gpu_layers);
+            ozone_core::cli::field("Context:", &context);
+            ozone_core::cli::field("Quant KV:", &quant_kv);
             if let Some(t) = threads {
-                println!("  Threads:     {t}");
+                ozone_core::cli::field("Threads:", &t);
             }
-            println!();
+            ozone_core::cli::spacer();
 
             let result = bench::run_benchmark(
                 &model,
@@ -241,8 +238,8 @@ async fn main() -> Result<()> {
                 thread_count,
                 &result,
             ) {
-                Ok(id) => eprintln!("  Stored as benchmark #{id}"),
-                Err(e) => eprintln!("  Warning: failed to store result: {e}"),
+                Ok(id) => ozone_core::cli::success(&format!("Stored as benchmark #{id}")),
+                Err(e) => ozone_core::cli::warn(&format!("Failed to store result: {e}")),
             }
             Ok(())
         }
@@ -251,13 +248,12 @@ async fn main() -> Result<()> {
             max_context,
             quick,
         }) => {
-            let home = std::env::var("HOME").unwrap_or_default();
-            let model_dir = std::path::PathBuf::from(&home).join("models");
+            let model_dir = ozone_core::paths::models_dir();
             let model_path = model_dir.join(&model);
             let launcher_path = processes::resolved_kobold_launcher_path();
 
             if !model_path.exists() {
-                eprintln!("Model not found: {}", model_path.display());
+                ozone_core::cli::error(&format!("Model not found: {}", model_path.display()));
                 std::process::exit(1);
             }
 
@@ -285,9 +281,14 @@ async fn main() -> Result<()> {
 
             let sweep_config = sweep::SweepConfig {
                 model_name: model,
-                model_path,
+                model_path: model_path.clone(),
                 launcher_path,
                 model_size_gb,
+                total_layers: gguf::inspect_model_topology(
+                    &model_path,
+                    planner::estimate_total_layers(model_size_gb),
+                )
+                .total_layers,
                 context_sizes,
                 quant_kv_levels,
                 gpu_vram_budget_mb,
@@ -305,9 +306,7 @@ async fn main() -> Result<()> {
             export,
         }) => {
             if export {
-                let home = std::env::var("HOME").unwrap_or_default();
-                let conf_path =
-                    std::path::PathBuf::from(&home).join("models/koboldcpp-presets.conf");
+                let conf_path = ozone_core::paths::presets_path();
                 analyze::export_presets_conf(&conf_path, model.as_deref())?;
             } else if profiles {
                 analyze::show_profiles(model.as_deref())?;
@@ -318,7 +317,7 @@ async fn main() -> Result<()> {
                         analyze::show_profiles(Some(m))?;
                     }
                     None => {
-                        eprintln!("  --generate requires a model name.");
+                        ozone_core::cli::error("--generate requires a model name.");
                         std::process::exit(1);
                     }
                 }

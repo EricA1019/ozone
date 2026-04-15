@@ -580,21 +580,25 @@ impl Phase1dRuntime {
         )
     }
 
+    /// Reserved for context inspection integration.
     #[allow(dead_code)]
     pub fn latest_context_plan_preview(&self) -> Option<&ContextPlanPreview> {
         self.context_bridge.latest_plan_preview()
     }
 
+    /// Reserved for context inspection integration.
     #[allow(dead_code)]
     pub fn latest_context_dry_run(&self) -> Option<&DryRunContextBuild> {
         self.context_bridge.latest_dry_run()
     }
 
+    /// Reserved for context inspection integration.
     #[allow(dead_code)]
     pub fn status_line_context_preview_text(&self) -> String {
         self.context_bridge.status_line_preview_text()
     }
 
+    /// Reserved for context inspection integration.
     #[allow(dead_code)]
     pub fn dry_run_context_build(
         &mut self,

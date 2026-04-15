@@ -1,3 +1,9 @@
+//! `ozone-tui` — chat-first TUI shell for ozone+.
+//!
+//! Provides the ratatui/crossterm terminal interface: session list, conversation
+//! pane, input composer, status area, context inspector, and the runtime
+//! integration seam for streaming generation.
+
 pub mod app;
 pub mod input;
 pub mod layout;

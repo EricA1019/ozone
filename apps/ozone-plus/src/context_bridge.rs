@@ -9,6 +9,7 @@ use ozone_persist::{AuthorId, PinnedMemoryView};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ContextPlanSource {
+    /// Reserved for engine-plan integration path.
     #[allow(dead_code)]
     EnginePlan,
     TranscriptFallback,
@@ -60,6 +61,7 @@ pub struct DryRunContextBuild {
     pub result: ContextBuildResult,
 }
 
+/// Reserved for engine-plan integration path.
 #[allow(dead_code)]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EngineContextPlanOutput {
@@ -75,16 +77,19 @@ pub struct EngineContextPlanOutput {
 #[derive(Debug, Default)]
 pub struct AppContextBridge {
     latest_plan_preview: Option<ContextPlanPreview>,
+    /// Reserved for engine-plan integration path.
     #[allow(dead_code)]
     latest_dry_run: Option<DryRunContextBuild>,
 }
 
 impl AppContextBridge {
+    /// Reserved for engine-plan integration path.
     #[allow(dead_code)]
     pub fn latest_plan_preview(&self) -> Option<&ContextPlanPreview> {
         self.latest_plan_preview.as_ref()
     }
 
+    /// Reserved for engine-plan integration path.
     #[allow(dead_code)]
     pub fn latest_dry_run(&self) -> Option<&DryRunContextBuild> {
         self.latest_dry_run.as_ref()
@@ -97,6 +102,7 @@ impl AppContextBridge {
             .unwrap_or_else(|| "context plan pending".to_string())
     }
 
+    /// Reserved for engine-plan integration path.
     #[allow(dead_code)]
     pub fn apply_engine_plan_output(
         &mut self,
@@ -143,6 +149,7 @@ impl AppContextBridge {
         )
     }
 
+    /// Reserved for engine-plan integration path.
     #[allow(dead_code)]
     pub fn dry_run_from_transcript(
         &mut self,
