@@ -54,9 +54,9 @@ HAS_LAYERS=false
 HAS_QUANTKV=false
 for arg in "$@"; do
     case "$arg" in
-        --contextsize|--ctx-size|-c) HAS_CTX=true ;;
-        --gpulayers|--gpu-layers|--n-gpu-layers|-ngl) HAS_LAYERS=true ;;
-        --quantkv) HAS_QUANTKV=true ;;
+        --contextsize=*|--contextsize|--ctx-size|-c) HAS_CTX=true ;;
+        --gpulayers=*|--gpulayers|--gpu-layers|--n-gpu-layers|-ngl) HAS_LAYERS=true ;;
+        --quantkv=*|--quantkv) HAS_QUANTKV=true ;;
     esac
 done
 

@@ -91,13 +91,18 @@ where
         message: "Launching KoboldCpp…".into(),
     });
     let mut args: Vec<String> = vec![
-        format!("--gpulayers={gpu_layers}"),
-        format!("--contextsize={context_size}"),
-        format!("--quantkv={quant_kv}"),
+        "--gpulayers".into(),
+        gpu_layers.to_string(),
+        "--contextsize".into(),
+        context_size.to_string(),
+        "--quantkv".into(),
+        quant_kv.to_string(),
     ];
     if let Some(t) = threads {
-        args.push(format!("--threads={t}"));
-        args.push(format!("--blasthreads={t}"));
+        args.push("--threads".into());
+        args.push(t.to_string());
+        args.push("--blasthreads".into());
+        args.push(t.to_string());
     }
     processes::start_kobold(launcher_path, model_name, &args)
         .await

@@ -143,16 +143,20 @@ async fn main() -> Result<()> {
         Some(Commands::Clear) => {
             let killed = processes::clear_gpu_backends().await?;
             if killed.is_empty() {
-                println!("No GPU backends running.");
+                ozone_core::cli::info("No GPU backends running.");
             } else {
                 for k in &killed {
-                    println!("  Stopped: {k}");
+                    ozone_core::cli::success(&format!("Stopped: {k}"));
                 }
             }
             Ok(())
         }
         Some(Commands::Monitor) => ui::run_monitor().await,
         Some(Commands::List { json }) => {
+            if !json {
+                eprintln!("  hint: `ozone list` is deprecated — use `ozone model list` instead.");
+                eprintln!();
+            }
             let model_dir = ozone_core::paths::models_dir();
             let preset_file = ozone_core::paths::presets_path();
             let bench_file = model_dir.join("bench-results.txt");
@@ -172,11 +176,17 @@ async fn main() -> Result<()> {
                 }
                 println!("]");
             } else {
+                println!("  {:<6}  {:>8}  MODEL", "SOURCE", "SIZE");
                 for r in &records {
+                    let size = if r.model_size_gb <= 0.0 {
+                        "⚠ broken".to_string()
+                    } else {
+                        format!("{:.1} GB", r.model_size_gb)
+                    };
                     println!(
-                        "  [{:5}]  {:.1} GB  {}",
+                        "  [{:5}]  {:>8}  {}",
                         r.recommendation.source.label(),
-                        r.model_size_gb,
+                        size,
                         r.model_name
                     );
                 }
@@ -322,14 +332,22 @@ async fn main() -> Result<()> {
                     }
                 }
             } else if let Some(ref m) = model {
-                analyze::show_benchmarks(Some(m))?;
-                analyze::show_pareto(m)?;
+                let count = analyze::show_benchmarks(Some(m))?;
+                if count > 0 {
+                    analyze::show_pareto(m)?;
+                }
             } else {
                 let _ = all;
                 analyze::show_benchmarks(None)?;
             }
             Ok(())
         }
-        Some(Commands::Model { command }) => model::run(command).await,
+        Some(Commands::Model { command }) => match model::run(command).await {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                ozone_core::cli::error(&format!("{e}"));
+                std::process::exit(1);
+            }
+        },
     }
 }

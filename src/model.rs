@@ -8,7 +8,10 @@ use std::path::{Path, PathBuf};
 #[derive(Subcommand)]
 pub enum ModelCommand {
     /// List all local model files
-    List,
+    List {
+        #[arg(long, help = "Output as JSON")]
+        json: bool,
+    },
     /// Add a model from HuggingFace, Ollama, or a local path
     Add {
         /// Download from HuggingFace Hub (repo id, e.g. TheBloke/model-GGUF)
@@ -42,16 +45,34 @@ pub enum ModelCommand {
 /// Execute the model subcommand.
 pub async fn run(command: ModelCommand) -> Result<()> {
     match command {
-        ModelCommand::List => cmd_list().await,
+        ModelCommand::List { json } => cmd_list(json).await,
         ModelCommand::Add {
             hf,
             ollama,
             link,
             filename,
         } => cmd_add(hf, ollama, link, filename).await,
-        ModelCommand::Remove { name } => cmd_remove(&name),
-        ModelCommand::Info { name } => cmd_info(&name).await,
+        ModelCommand::Remove { name } => {
+            validate_model_name(&name)?;
+            cmd_remove(&name)
+        }
+        ModelCommand::Info { name } => {
+            validate_model_name(&name)?;
+            cmd_info(&name).await
+        }
     }
+}
+
+/// Reject empty, path-traversal, or absolute model names.
+fn validate_model_name(name: &str) -> Result<()> {
+    let trimmed = name.trim();
+    if trimmed.is_empty() {
+        bail!("Model name cannot be empty.");
+    }
+    if trimmed.contains('/') || trimmed.contains('\\') || trimmed.contains("..") {
+        bail!("Model name must be a plain filename (no paths).");
+    }
+    Ok(())
 }
 
 // ---------------------------------------------------------------------------
@@ -176,6 +197,7 @@ struct ModelEntry {
     name: String,
     size: u64,
     is_symlink: bool,
+    is_broken: bool,
     link_target: Option<PathBuf>,
     quant: Option<String>,
 }
@@ -199,9 +221,9 @@ async fn scan_models(dir: &Path) -> Result<Vec<ModelEntry>> {
             None
         };
         // Follow symlinks for real size
-        let size = match tokio::fs::metadata(&path).await {
-            Ok(m) => m.len(),
-            Err(_) => 0, // broken symlink
+        let (size, is_broken) = match tokio::fs::metadata(&path).await {
+            Ok(m) => (m.len(), false),
+            Err(_) => (0, is_symlink), // broken symlink
         };
         let stem = name.trim_end_matches(".gguf");
         let quant = parse_quant(stem);
@@ -209,6 +231,7 @@ async fn scan_models(dir: &Path) -> Result<Vec<ModelEntry>> {
             name,
             size,
             is_symlink,
+            is_broken,
             link_target,
             quant,
         });
@@ -217,12 +240,37 @@ async fn scan_models(dir: &Path) -> Result<Vec<ModelEntry>> {
     Ok(entries)
 }
 
-async fn cmd_list() -> Result<()> {
+async fn cmd_list(json: bool) -> Result<()> {
     let dir = models_dir();
     let entries = scan_models(&dir).await?;
 
     if entries.is_empty() {
-        println!("No .gguf models found in {}", dir.display());
+        if json {
+            println!("[]");
+        } else {
+            println!("No .gguf models found in {}", dir.display());
+        }
+        return Ok(());
+    }
+
+    if json {
+        println!("[");
+        for (i, e) in entries.iter().enumerate() {
+            let comma = if i + 1 < entries.len() { "," } else { "" };
+            let quant = e.quant.as_deref().unwrap_or("");
+            let kind = if e.is_broken {
+                "broken"
+            } else if e.is_symlink {
+                "symlink"
+            } else {
+                "file"
+            };
+            println!(
+                "  {{\"model\": \"{}\", \"size_bytes\": {}, \"quant\": \"{}\", \"type\": \"{}\", \"broken\": {}}}{}",
+                e.name, e.size, quant, kind, e.is_broken, comma
+            );
+        }
+        println!("]");
         return Ok(());
     }
 
@@ -235,9 +283,19 @@ async fn cmd_list() -> Result<()> {
         "NAME", "SIZE", "QUANT"
     );
     for e in &entries {
-        let size = human_size(e.size);
+        let size = if e.is_broken {
+            "⚠ broken".to_string()
+        } else {
+            human_size(e.size)
+        };
         let quant = e.quant.as_deref().unwrap_or("—");
-        let kind = if e.is_symlink {
+        let kind = if e.is_broken {
+            if let Some(ref target) = e.link_target {
+                format!("symlink → {} (missing)", target.display())
+            } else {
+                "symlink (broken)".into()
+            }
+        } else if e.is_symlink {
             if let Some(ref target) = e.link_target {
                 format!("symlink → {}", target.display())
             } else {
@@ -566,5 +624,17 @@ mod tests {
         assert_eq!(human_size(1_073_741_824), "1.0 GB");
         assert_eq!(human_size(7_843_348_480), "7.3 GB");
         assert_eq!(human_size(536_870_912), "512.0 MB");
+    }
+
+    #[test]
+    fn model_name_validation() {
+        assert!(validate_model_name("").is_err());
+        assert!(validate_model_name("   ").is_err());
+        assert!(validate_model_name("../../etc/passwd").is_err());
+        assert!(validate_model_name("foo/bar.gguf").is_err());
+        assert!(validate_model_name("foo\\bar.gguf").is_err());
+        assert!(validate_model_name("model..gguf").is_err());
+        assert!(validate_model_name("good-model-Q4_K_M.gguf").is_ok());
+        assert!(validate_model_name("mn-12b-mag-mell-r1.gguf").is_ok());
     }
 }

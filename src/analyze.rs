@@ -6,7 +6,8 @@ use std::path::Path;
 use crate::db::{self, BenchmarkRow, ProfileRow};
 
 /// Show benchmark results for one model or all models.
-pub fn show_benchmarks(model: Option<&str>) -> Result<()> {
+/// Returns the number of benchmark rows found (0 if none).
+pub fn show_benchmarks(model: Option<&str>) -> Result<usize> {
     let conn = db::open()?;
 
     match model {
@@ -17,9 +18,11 @@ pub fn show_benchmarks(model: Option<&str>) -> Result<()> {
                 println!("  No benchmarks found for '{name}'.");
                 println!("  Run `ozone bench {name}` or `ozone sweep` first.");
                 println!();
-                return Ok(());
+                return Ok(0);
             }
+            let count = rows.len();
             print_benchmark_table(name, &rows);
+            Ok(count)
         }
         None => {
             let rows = db::get_all_benchmarks(&conn)?;
@@ -28,8 +31,9 @@ pub fn show_benchmarks(model: Option<&str>) -> Result<()> {
                 println!("  No benchmarks found.");
                 println!("  Run `ozone bench <model>` or `ozone sweep` first.");
                 println!();
-                return Ok(());
+                return Ok(0);
             }
+            let count = rows.len();
             // Group by model name
             let mut by_model: BTreeMap<String, Vec<&BenchmarkRow>> = BTreeMap::new();
             for r in &rows {
@@ -69,9 +73,9 @@ pub fn show_benchmarks(model: Option<&str>) -> Result<()> {
                 rows.len()
             );
             println!();
+            Ok(count)
         }
     }
-    Ok(())
 }
 
 fn print_benchmark_table(model_name: &str, rows: &[BenchmarkRow]) {
