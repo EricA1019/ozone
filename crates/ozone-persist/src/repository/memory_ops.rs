@@ -1,11 +1,8 @@
-use ozone_core::{
-    engine::MessageId,
-    session::SessionId,
-};
+use ozone_core::{engine::MessageId, session::SessionId};
 use ozone_memory::{
     CreateNoteMemoryRequest, CrossSessionSearchHit, MemoryArtifactId, MemoryContent,
-    PinMessageMemoryRequest, PinnedMemoryContent, PinnedMemoryRecord, PinnedMemoryView,
-    Provenance, SearchSessionMetadata,
+    PinMessageMemoryRequest, PinnedMemoryContent, PinnedMemoryRecord, PinnedMemoryView, Provenance,
+    SearchSessionMetadata,
 };
 use rusqlite::{params, Row, Transaction};
 

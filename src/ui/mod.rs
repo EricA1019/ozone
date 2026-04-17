@@ -32,6 +32,7 @@ pub enum Screen {
     Splash,
     TierPicker,
     Launcher,
+    ExitConfirm,
     ModelPicker,
     Confirm,
     FrontendChoice,
@@ -106,6 +107,7 @@ pub struct App {
     pub frontend_choice_index: usize,
     pub ozone_plus_handoff: bool,
     pub pending_launch_choice: Option<usize>,
+    pub exit_confirm_index: usize,
     // Settings screen state
     pub settings_section: usize,        // 0=backend, 1=frontend
     pub settings_backend_index: usize,  // 0=KoboldCpp, 1=Ollama
@@ -141,6 +143,7 @@ impl App {
             services: ServiceStatus {
                 kobold_running: false,
                 kobold_model: None,
+                ollama_running: false,
                 st_running: false,
             },
             splash_pulse: false,
@@ -164,6 +167,7 @@ impl App {
             frontend_choice_index: 0,
             ozone_plus_handoff: false,
             pending_launch_choice: None,
+            exit_confirm_index: 1,
             settings_section: 0,
             settings_backend_index: 0,
             settings_frontend_index: 0,
@@ -293,6 +297,57 @@ fn build_kc_args(plan: &LaunchPlan) -> Vec<String> {
     args
 }
 
+fn next_screen_after_splash(app: &App) -> Screen {
+    if app.prefs.preferred_tier.is_none() {
+        Screen::TierPicker
+    } else {
+        Screen::Launcher
+    }
+}
+
+fn selected_catalog_name(app: &App) -> Option<String> {
+    app.filtered_catalog_get(app.selected_model)
+        .map(|record| record.model_name)
+}
+
+fn select_catalog_index(app: &App, preferred_name: Option<&str>) -> usize {
+    preferred_name
+        .and_then(|name| {
+            app.filtered_catalog()
+                .iter()
+                .position(|record| record.model_name == name)
+        })
+        .unwrap_or(0)
+}
+
+fn apply_catalog_refresh(app: &mut App, catalog: Vec<CatalogRecord>) {
+    let preferred_name = selected_catalog_name(app)
+        .or_else(|| {
+            app.current_plan
+                .as_ref()
+                .map(|plan| plan.model_name.clone())
+        })
+        .or_else(|| {
+            (!app.prefs.last_model_name.is_empty()).then(|| app.prefs.last_model_name.clone())
+        });
+
+    app.catalog = catalog;
+    app.selected_model = select_catalog_index(app, preferred_name.as_deref());
+
+    let plan_missing = app.current_plan.as_ref().is_some_and(|plan| {
+        !app.catalog
+            .iter()
+            .any(|record| record.model_name == plan.model_name)
+    });
+    if plan_missing {
+        app.current_plan = None;
+        if matches!(app.screen, Screen::Confirm | Screen::FrontendChoice) {
+            app.screen = Screen::ModelPicker;
+            app.set_error("Selected model is no longer available.".into());
+        }
+    }
+}
+
 fn queue_frontend_launch(app: &mut App) {
     match app.preferred_frontend {
         Some(FrontendMode::SillyTavern) => {
@@ -308,6 +363,40 @@ fn queue_frontend_launch(app: &mut App) {
             };
             app.screen = Screen::FrontendChoice;
         }
+    }
+}
+
+fn sync_settings_from_prefs(app: &mut App) {
+    app.settings_section = 0;
+    app.settings_backend_index = match app.prefs.preferred_backend {
+        Some(BackendMode::Ollama) => 1,
+        _ => 0,
+    };
+    app.settings_frontend_index = match app.prefs.preferred_frontend {
+        Some(FrontendMode::OzonePlus) => 1,
+        _ => 0,
+    };
+}
+
+fn open_settings(app: &mut App) {
+    sync_settings_from_prefs(app);
+    app.screen = Screen::Settings;
+}
+
+fn open_exit_confirm(app: &mut App) {
+    app.exit_confirm_index = 1;
+    app.screen = Screen::ExitConfirm;
+}
+
+fn back_from_confirm(app: &App) -> Screen {
+    if app.profiling_success.is_some() {
+        Screen::ProfileSuccess
+    } else if app.profiling_failure.is_some() {
+        Screen::ProfileFailure
+    } else if app.profiling_advisory.is_some() {
+        Screen::ProfileAdvisory
+    } else {
+        Screen::ModelPicker
     }
 }
 
@@ -334,14 +423,7 @@ pub async fn run_launcher(
     }
 
     // Sync settings indices from persisted prefs
-    app.settings_backend_index = match app.prefs.preferred_backend {
-        Some(BackendMode::Ollama) => 1,
-        _ => 0,
-    };
-    app.settings_frontend_index = match app.prefs.preferred_frontend {
-        Some(FrontendMode::OzonePlus) => 1,
-        _ => 0,
-    };
+    sync_settings_from_prefs(&mut app);
 
     enable_raw_mode()?;
     let mut stdout = io::stdout();
@@ -362,16 +444,31 @@ pub async fn run_launcher(
     let model_dir = ozone_core::paths::models_dir();
     let preset_file = ozone_core::paths::presets_path();
     let bench_file = model_dir.join("bench-results.txt");
-    let (cat_tx, mut cat_rx) = tokio::sync::oneshot::channel::<Vec<CatalogRecord>>();
+    let catalog_model_dir = model_dir.clone();
+    let catalog_preset_file = preset_file.clone();
+    let catalog_bench_file = bench_file.clone();
+    let (cat_tx, mut cat_rx) = tokio::sync::oneshot::channel::<(u64, Vec<CatalogRecord>)>();
     tokio::spawn(async move {
-        let records = crate::catalog::load_catalog(&model_dir, &preset_file, &bench_file)
-            .await
-            .unwrap_or_default();
-        let _ = cat_tx.send(records);
+        let signature = crate::catalog::catalog_signature(
+            &catalog_model_dir,
+            &catalog_preset_file,
+            &catalog_bench_file,
+        )
+        .await
+        .unwrap_or_default();
+        let records = crate::catalog::load_catalog(
+            &catalog_model_dir,
+            &catalog_preset_file,
+            &catalog_bench_file,
+        )
+        .await
+        .unwrap_or_default();
+        let _ = cat_tx.send((signature, records));
     });
 
     let mut last_tick = Instant::now();
     let mut last_refresh = Instant::now();
+    let mut last_catalog_signature: Option<u64> = None;
 
     let result = loop {
         // Check incoming async data
@@ -381,13 +478,9 @@ pub async fn run_launcher(
                 app.splash_ready = true;
             }
         }
-        if let Ok(catalog) = cat_rx.try_recv() {
-            let last = app.prefs.last_model_name.clone();
-            app.selected_model = catalog
-                .iter()
-                .position(|r| r.model_name == last)
-                .unwrap_or(0);
-            app.catalog = catalog;
+        if let Ok((signature, catalog)) = cat_rx.try_recv() {
+            last_catalog_signature = Some(signature);
+            apply_catalog_refresh(&mut app, catalog);
             if app.hardware.is_some() {
                 app.splash_ready = true;
             }
@@ -508,8 +601,10 @@ pub async fn run_launcher(
                         }
                         app.screen = Screen::Monitor;
                     } else {
-                        app.ozone_plus_handoff = true;
-                        break Ok(());
+                        app.set_error(
+                            "ozone+ handoff currently requires KoboldCpp. Use SillyTavern for Ollama-backed launches.".into(),
+                        );
+                        app.screen = Screen::Launcher;
                     }
                 }
                 None => {
@@ -528,6 +623,7 @@ pub async fn run_launcher(
                     tier_picker::render_tier_picker(f, f.area(), &app.tier_picker)
                 }
                 Screen::Launcher => launcher::render(f, &app),
+                Screen::ExitConfirm => launcher::render_exit_confirm(f, &app),
                 Screen::ModelPicker => launcher::render_model_picker(f, &app),
                 Screen::Confirm => launcher::render_confirm(f, &app),
                 Screen::FrontendChoice => launcher::render_frontend_choice(f, &app),
@@ -551,12 +647,7 @@ pub async fn run_launcher(
                 match app.screen {
                     Screen::Splash => {
                         if app.splash_ready {
-                            // Go to tier picker if no saved preference, otherwise to launcher
-                            if app.prefs.preferred_tier.is_none() {
-                                app.screen = Screen::TierPicker;
-                            } else {
-                                app.screen = Screen::Launcher;
-                            }
+                            app.screen = next_screen_after_splash(&app);
                         }
                     }
                     Screen::TierPicker => match key.code {
@@ -576,7 +667,8 @@ pub async fn run_launcher(
                         _ => {}
                     },
                     Screen::Launcher => match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
+                        KeyCode::Char('q') => break Ok(()),
+                        KeyCode::Esc => open_exit_confirm(&mut app),
                         KeyCode::Up => {
                             if app.selected_action > 0 {
                                 app.selected_action -= 1;
@@ -630,14 +722,12 @@ pub async fn run_launcher(
                             }
                             3 => {
                                 // Settings
-                                app.screen = Screen::Settings;
+                                open_settings(&mut app);
                             }
                             4 => {
                                 // Clear GPU backends
                                 let _ = crate::processes::clear_gpu_backends().await;
-                                app.services.kobold_running = false;
-                                app.services.kobold_model = None;
-                                app.services.st_running = false;
+                                app.services = crate::processes::get_service_status().await;
                                 last_refresh = Instant::now();
                                 app.set_status("GPU backends cleared.".into());
                             }
@@ -646,13 +736,36 @@ pub async fn run_launcher(
                                 app.screen = Screen::Monitor;
                                 app.launch_start = Some(Instant::now());
                             }
-                            6 => break Ok(()),
+                            6 => open_exit_confirm(&mut app),
                             _ => {}
                         },
                         _ => {}
                     },
+                    Screen::ExitConfirm => match key.code {
+                        KeyCode::Esc | KeyCode::Char('n') => app.screen = Screen::Launcher,
+                        KeyCode::Left | KeyCode::Up => {
+                            if app.exit_confirm_index > 0 {
+                                app.exit_confirm_index -= 1;
+                            }
+                        }
+                        KeyCode::Right | KeyCode::Down => {
+                            if app.exit_confirm_index < 1 {
+                                app.exit_confirm_index += 1;
+                            }
+                        }
+                        KeyCode::Enter | KeyCode::Char('y') => {
+                            if app.exit_confirm_index == 0 {
+                                break Ok(());
+                            }
+                            app.screen = Screen::Launcher;
+                        }
+                        _ => {}
+                    },
                     Screen::Settings => match key.code {
-                        KeyCode::Tab => {
+                        KeyCode::Tab | KeyCode::Right => {
+                            app.settings_section = (app.settings_section + 1) % 2;
+                        }
+                        KeyCode::BackTab | KeyCode::Left => {
                             app.settings_section = (app.settings_section + 1) % 2;
                         }
                         KeyCode::Up => match app.settings_section {
@@ -679,7 +792,7 @@ pub async fn run_launcher(
                                 }
                             }
                         },
-                        KeyCode::Enter | KeyCode::Esc => {
+                        KeyCode::Enter => {
                             app.prefs.preferred_backend = match app.settings_backend_index {
                                 0 => Some(BackendMode::KoboldCpp),
                                 1 => Some(BackendMode::Ollama),
@@ -694,6 +807,10 @@ pub async fn run_launcher(
                             app.preferred_frontend =
                                 preferred_frontend.or(app.prefs.preferred_frontend);
                             app.set_status("Settings saved.".into());
+                            app.screen = Screen::Launcher;
+                        }
+                        KeyCode::Esc => {
+                            sync_settings_from_prefs(&mut app);
                             app.screen = Screen::Launcher;
                         }
                         _ => {}
@@ -766,7 +883,7 @@ pub async fn run_launcher(
                         _ => {}
                     },
                     Screen::Confirm => match key.code {
-                        KeyCode::Esc | KeyCode::Char('n') => app.screen = Screen::Launcher,
+                        KeyCode::Esc | KeyCode::Char('n') => app.screen = back_from_confirm(&app),
                         KeyCode::Enter | KeyCode::Char('y') => {
                             if app.current_plan.is_some() {
                                 queue_frontend_launch(&mut app);
@@ -1039,12 +1156,13 @@ pub async fn run_launcher(
                         _ => {}
                     },
                     Screen::Monitor => match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
+                        KeyCode::Char('q') => break Ok(()),
+                        KeyCode::Esc => {
+                            app.screen = Screen::Launcher;
+                        }
                         KeyCode::Char('s') => {
                             let _ = crate::processes::clear_gpu_backends().await;
-                            app.services.kobold_running = false;
-                            app.services.kobold_model = None;
-                            app.services.st_running = false;
+                            app.services = crate::processes::get_service_status().await;
                             app.set_status("GPU backends cleared.".into());
                             app.screen = Screen::Launcher;
                         }
@@ -1065,12 +1183,10 @@ pub async fn run_launcher(
         }
 
         // 2s refresh for service status and monitor data
-        if last_refresh.elapsed() >= Duration::from_secs(2)
-            && matches!(app.screen, Screen::Monitor | Screen::Launcher)
-        {
+        if last_refresh.elapsed() >= Duration::from_secs(2) {
             last_refresh = Instant::now();
-            app.services = crate::processes::get_service_status().await;
             if matches!(app.screen, Screen::Monitor) {
+                app.services = crate::processes::get_service_status().await;
                 app.update_disk();
                 app.tokens_per_sec = crate::processes::get_kobold_perf().await;
                 if let Some(ref mut hw) = app.hardware {
@@ -1078,12 +1194,41 @@ pub async fn run_launcher(
                         .await
                         .unwrap_or_default();
                 }
+            } else if matches!(app.screen, Screen::Launcher) {
+                app.services = crate::processes::get_service_status().await;
+            }
+
+            if matches!(
+                app.screen,
+                Screen::Launcher
+                    | Screen::ModelPicker
+                    | Screen::Confirm
+                    | Screen::FrontendChoice
+                    | Screen::Settings
+                    | Screen::ExitConfirm
+                    | Screen::ProfileAdvisory
+                    | Screen::ProfileConfirm
+                    | Screen::ProfileSuccess
+                    | Screen::ProfileFailure
+            ) {
+                let signature =
+                    crate::catalog::catalog_signature(&model_dir, &preset_file, &bench_file)
+                        .await
+                        .unwrap_or_default();
+                if last_catalog_signature != Some(signature) {
+                    let catalog =
+                        crate::catalog::load_catalog(&model_dir, &preset_file, &bench_file)
+                            .await
+                            .unwrap_or_default();
+                    last_catalog_signature = Some(signature);
+                    apply_catalog_refresh(&mut app, catalog);
+                }
             }
         }
 
         // Auto-advance from splash after data is ready
         if app.screen == Screen::Splash && app.splash_ready && app.ticker > 25 {
-            app.screen = Screen::Launcher;
+            app.screen = next_screen_after_splash(&app);
         }
     };
 
@@ -1097,9 +1242,16 @@ pub async fn run_launcher(
             .filter(|p| p.exists())
             .unwrap_or_else(|| std::path::PathBuf::from("ozone-plus"));
         use std::os::unix::process::CommandExt;
-        let err = std::process::Command::new(ozone_plus_bin)
-            .arg("list")
-            .exec();
+        let mut command = std::process::Command::new(ozone_plus_bin);
+        command.arg("handoff").arg("--launcher-session");
+        if matches!(app.prefs.preferred_backend, Some(BackendMode::KoboldCpp)) {
+            command.env("OZONE__BACKEND__TYPE", "koboldcpp");
+            command.env(
+                "OZONE__BACKEND__URL",
+                ozone_core::paths::koboldcpp_base_url(),
+            );
+        }
+        let err = command.exec();
         return Err(anyhow::anyhow!("Failed to exec ozone-plus: {err}"));
     }
     result
@@ -1141,9 +1293,7 @@ pub async fn run_monitor() -> Result<()> {
                     KeyCode::Char('q') | KeyCode::Esc => break,
                     KeyCode::Char('s') => {
                         let _ = crate::processes::clear_gpu_backends().await;
-                        app.services.kobold_running = false;
-                        app.services.kobold_model = None;
-                        app.services.st_running = false;
+                        app.services = crate::processes::get_service_status().await;
                         terminal.draw(|f| monitor::render(f, &app))?;
                         break;
                     }
@@ -1174,4 +1324,149 @@ pub async fn run_monitor() -> Result<()> {
     execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
     terminal.show_cursor()?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn settings_screen_syncs_from_saved_preferences() {
+        let mut app = App::new(Preferences {
+            preferred_backend: Some(BackendMode::Ollama),
+            preferred_frontend: Some(FrontendMode::OzonePlus),
+            ..Preferences::default()
+        });
+        app.settings_section = 1;
+        app.settings_backend_index = 0;
+        app.settings_frontend_index = 0;
+
+        sync_settings_from_prefs(&mut app);
+
+        assert_eq!(app.settings_section, 0);
+        assert_eq!(app.settings_backend_index, 1);
+        assert_eq!(app.settings_frontend_index, 1);
+    }
+
+    #[test]
+    fn confirm_back_returns_to_last_relevant_screen() {
+        let mut app = App::new(Preferences::default());
+        assert_eq!(back_from_confirm(&app), Screen::ModelPicker);
+
+        app.profiling_advisory = Some(ProfilingAdvisory {
+            model_name: "test.gguf".into(),
+            source_label: "heuristic".into(),
+            benchmark_count: 0,
+            ok_benchmark_count: 0,
+            profile_count: 0,
+            rationale: "review".into(),
+            recommended_action: ProfilingAction::SingleBenchmark,
+            estimated_vram_mb: None,
+            gpu_budget_mb: None,
+            recommended_profile: None,
+            warnings: Vec::new(),
+            available_actions: Vec::new(),
+            launch_plan: None,
+        });
+        assert_eq!(back_from_confirm(&app), Screen::ProfileAdvisory);
+
+        app.profiling_success = Some(ProfilingSuccessReport {
+            model_name: "test.gguf".into(),
+            action: ProfilingAction::QuickSweep,
+            summary: "done".into(),
+            benchmark_count: 0,
+            ok_benchmark_count: 0,
+            profile_count: 0,
+            best_tokens_per_sec: None,
+            recommended_profile: None,
+            suggestions: Vec::new(),
+            export_detail: None,
+        });
+        assert_eq!(back_from_confirm(&app), Screen::ProfileSuccess);
+    }
+
+    fn test_record(name: &str) -> CatalogRecord {
+        CatalogRecord {
+            model_name: name.into(),
+            model_path: std::path::PathBuf::from(format!("/tmp/{name}")),
+            model_size_gb: 7.0,
+            recommendation: crate::catalog::Recommendation {
+                context_size: 4096,
+                gpu_layers: -1,
+                quant_kv: 1,
+                note: "test".into(),
+                source: crate::catalog::RecSource::Heuristic,
+            },
+            benchmark: None,
+            benchmark_count: 0,
+            source_priority: 2,
+        }
+    }
+
+    #[test]
+    fn splash_routes_to_tier_picker_when_preference_missing() {
+        let app = App::new(Preferences::default());
+        assert_eq!(next_screen_after_splash(&app), Screen::TierPicker);
+    }
+
+    #[test]
+    fn splash_routes_to_launcher_when_preference_exists() {
+        let app = App::new(Preferences {
+            preferred_tier: Some(crate::prefs::Tier::Base),
+            ..Preferences::default()
+        });
+        assert_eq!(next_screen_after_splash(&app), Screen::Launcher);
+    }
+
+    #[test]
+    fn catalog_refresh_preserves_selected_model_name() {
+        let mut app = App::new(Preferences::default());
+        app.catalog = vec![test_record("alpha.gguf"), test_record("beta.gguf")];
+        app.selected_model = 1;
+
+        apply_catalog_refresh(
+            &mut app,
+            vec![
+                test_record("gamma.gguf"),
+                test_record("beta.gguf"),
+                test_record("delta.gguf"),
+            ],
+        );
+
+        assert_eq!(selected_catalog_name(&app).as_deref(), Some("beta.gguf"));
+    }
+
+    #[test]
+    fn catalog_refresh_clears_removed_launch_plan() {
+        let mut app = App::new(Preferences::default());
+        app.catalog = vec![test_record("alpha.gguf")];
+        app.current_plan = Some(LaunchPlan {
+            model_name: "alpha.gguf".into(),
+            context_size: 4096,
+            gpu_layers: -1,
+            total_layers: 32,
+            cpu_layers: 0,
+            quant_kv: 1,
+            threads: None,
+            blas_threads: None,
+            mode: crate::planner::RecommendationMode::VramFirst,
+            rationale: "test".into(),
+            estimated: false,
+            estimated_vram_mb: 0,
+            estimated_ram_mb: 0,
+            source: "test".into(),
+            layer_source_label: "heuristic".into(),
+            layer_source_note: None,
+        });
+        app.screen = Screen::Confirm;
+
+        apply_catalog_refresh(&mut app, vec![test_record("beta.gguf")]);
+
+        assert!(app.current_plan.is_none());
+        assert_eq!(app.screen, Screen::ModelPicker);
+        assert_eq!(
+            app.error_msg.as_deref(),
+            Some("Selected model is no longer available.")
+        );
+    }
 }

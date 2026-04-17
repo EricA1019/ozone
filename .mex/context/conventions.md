@@ -11,7 +11,7 @@ triggers:
 edges:
   - target: context/architecture.md
     condition: when a convention depends on understanding the system structure
-last_updated: 2026-04-12
+last_updated: 2026-04-16
 ---
 
 # Conventions
@@ -32,7 +32,7 @@ last_updated: 2026-04-12
   - app targets beyond the root package live under `apps/`
 - UI rendering is separated: `src/ui/launcher.rs` (render functions), `src/ui/mod.rs` (App state + event loop)
 - Data logic is in dedicated modules: `catalog.rs` (file parsing), `planner.rs` (computation), `prefs.rs` (persistence)
-- External process management: `processes.rs` — all `Command::new()` calls live here
+- External process management for the root `ozone` app lives in `processes.rs`
 - Theme/style: `theme.rs` — all Color/Style constants and helpers, never inline `Color::Rgb()` elsewhere
 - Database: `db.rs` — all SQLite queries, never use `Connection` directly outside this module
 - Shared product metadata and ozone filesystem path helpers belong in `crates/ozone-core`, not scattered across app modules
@@ -41,6 +41,9 @@ last_updated: 2026-04-12
 - `apps/ozone-plus` should talk to ozone+ persistence through an engine-facing facade or local store adapter; raw `SqliteRepository` mutations should stay inside that adapter layer
 - `crates/ozone-tui` should stay backend-agnostic: it owns shell state, key handling, layout, render, and the terminal loop, while app-specific `SessionRuntime` adapters live in `apps/ozone-plus`
 - If the ozone+ shell needs real persistence or engine work, keep it behind the `SessionRuntime` boundary or a local adapter in `apps/ozone-plus` rather than coupling `ozone-tui` directly to `ozone-persist`
+- `crates/ozone-mcp` is the developer/testing automation boundary: prefer direct crate APIs for repo/session/memory/branch/swipe/export work, and reserve subprocess wrappers for seams still owned by end-user CLIs (`send`, `search`, `index rebuild`, launcher PTY smoke)
+- `mock_user_tool` is the front-door exception inside `crates/ozone-mcp`: after sandbox/backend setup, it should interact only through real terminal binaries plus PTY key/text input, and should judge success from recent-screen markers instead of direct repo inspection
+- Sandbox-aware MCP subprocesses must preserve the temp HOME/XDG environment while also keeping `CARGO_HOME` and `RUSTUP_HOME` pointed at the real toolchain so cargo-backed helpers still work inside temp-XDG sandboxes
 
 ## Patterns
 
@@ -73,7 +76,9 @@ TUI state lives in `App` struct (`src/ui/mod.rs`) — render functions take `&Ap
 Before presenting any code:
 - [ ] No `.unwrap()` in library code — use `?` or `.unwrap_or_default()`
 - [ ] Colors use theme.rs constants, not inline `Color::Rgb()`
-- [ ] Process management goes through processes.rs, not direct `Command::new()` elsewhere
+- [ ] New subprocess management follows the owning boundary: root ozone launcher/process work stays in `processes.rs`, while ozone-mcp subprocess wrappers stay inside `crates/ozone-mcp`
+- [ ] Front-door mock-user journeys avoid repo/API back doors once the PTY session starts
+- [ ] Sandbox-aware helpers preserve HOME/XDG isolation without breaking cargo/rustup (`CARGO_HOME`, `RUSTUP_HOME`)
 - [ ] New CLI subcommands registered in main.rs `Commands` enum
 - [ ] External paths use `directories` crate or `$HOME`, never hardcoded absolute paths
 - [ ] Render functions take `&App`, never `&mut App`

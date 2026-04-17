@@ -30,9 +30,11 @@ use ozone_persist::{
     CreateSessionRequest, GarbageCollectionOutcome, GarbageCollectionPlan, GarbageCollectionPolicy,
     GarbageCollectionReason, ImportCharacterCardRequest, MemoryArtifactId, PersistError,
     PersistencePaths, PinMessageMemoryRequest, PinnedMemoryView, Provenance, SessionId,
-    SessionSummary, SqliteRepository, TranscriptExport,
+    SessionSummary, SqliteRepository, TranscriptExport, UpdateSessionRequest,
 };
-use ozone_tui::{run_terminal_session, SessionContext as TuiSessionContext};
+use ozone_tui::{
+    run_terminal_session, GenerationPoll, SessionContext as TuiSessionContext, SessionRuntime,
+};
 use runtime::Phase1dRuntime;
 use std::{
     fmt::Write as _,
@@ -45,14 +47,15 @@ use std::{
 };
 
 static ID_COUNTER: AtomicU64 = AtomicU64::new(1);
+const LAUNCHER_SESSION_NAME: &str = "Launcher Session";
 
 #[derive(Parser)]
 #[command(
     name = "ozone-plus",
     version,
     about = "⬡ ozone+ — local-LLM chat shell with persistent memory and sessions",
-    long_about = "⬡ ozone+ — a chat-first terminal shell for local LLM conversations with persistent memory across sessions.\n\nFeatures: session management, pinned memories, freeform notes, session and global FTS search, branching and swipes, character card import, transcript and session export, hybrid vector/keyword recall, and streaming inference via KoboldCpp or Ollama.",
-    after_help = "Examples:\n  ozone-plus create \"First Session\"\n  ozone-plus open <session-id>\n  ozone-plus send <session-id> \"Hello there\"\n  ozone-plus transcript <session-id>\n  ozone-plus memory pin <session-id> <message-id>\n  ozone-plus memory note <session-id> \"Remember the observatory key\"\n  ozone-plus search session <session-id> nebula\n  ozone-plus search global nebula\n  ozone-plus index rebuild\n  ozone-plus branch create <session-id> fork --activate\n  ozone-plus swipe add <session-id> <parent-message-id> \"Alternate reply\"\n  ozone-plus swipe activate <session-id> <swipe-group-id> 1\n  ozone-plus import card ./aster.json\n  ozone-plus export transcript <session-id> --output ./transcript.txt\n  ozone-plus export session <session-id> --output ./session.json"
+    long_about = "⬡ ozone+ — a chat-first terminal shell for local LLM conversations with persistent memory across sessions.\n\nFeatures: session management, pinned memories, freeform notes, session and global FTS search, branching and swipes, character card import, transcript and session export, hybrid vector/keyword recall, and streaming inference via the current KoboldCpp-backed runtime path.",
+    after_help = "Examples:\n  ozone-plus create \"First Session\"\n  ozone-plus open <session-id>\n  ozone-plus send <session-id> \"Hello there\"\n  ozone-plus transcript <session-id>\n  ozone-plus memory pin <session-id> <message-id>\n  ozone-plus memory note <session-id> \"Remember the observatory key\"\n  ozone-plus search session <session-id> nebula\n  ozone-plus search global nebula\n  ozone-plus index rebuild\n  ozone-plus branch create <session-id> fork --activate\n  ozone-plus swipe add <session-id> <parent-message-id> \"Alternate reply\"\n  ozone-plus swipe list <session-id>\n  ozone-plus swipe activate <session-id> <swipe-group-id> <ordinal>\n  ozone-plus import card ./aster.json\n  ozone-plus export transcript <session-id> --output ./transcript.txt\n  ozone-plus export session <session-id> --output ./session.json"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -71,6 +74,9 @@ enum Command {
     Create(CreateArgs),
     /// List persisted ozone+ sessions
     List,
+    /// Internal launcher handoff entrypoint; opens a predictable session shell
+    #[command(hide = true)]
+    Handoff(HandoffArgs),
     /// Resolve and open a persisted session record
     #[command(visible_alias = "show")]
     Open(OpenArgs),
@@ -124,6 +130,13 @@ struct OpenArgs {
     /// Print session metadata instead of launching the TUI shell
     #[arg(long)]
     metadata: bool,
+}
+
+#[derive(Args, Debug, Clone, Copy, Default)]
+struct HandoffArgs {
+    /// Prefer a dedicated launcher-managed session instead of the freshest session
+    #[arg(long, hide = true)]
+    launcher_session: bool,
 }
 
 #[derive(Args)]
@@ -550,6 +563,7 @@ fn run_cli(cli: Cli) -> Result<(), String> {
         }
         Some(Command::Create(args)) => create_session(args),
         Some(Command::List) => list_sessions(),
+        Some(Command::Handoff(args)) => handoff_session(args),
         Some(Command::Open(args)) => open_session(args),
         Some(Command::Send(args)) => send_message(args),
         Some(Command::Transcript(args)) => show_transcript(args),
@@ -797,12 +811,14 @@ impl ConversationStore for RepoConversationStore {
             })?;
 
         if let Some(active_branch) = self.repo.get_active_branch(&command.session_id)? {
-            let transcript = self
+            let candidate_message_ids = self
                 .repo
-                .list_branch_messages(&command.session_id, &active_branch.branch.branch_id)?;
-            if transcript
-                .iter()
-                .any(|message| message.message_id == group.parent_message_id)
+                .list_swipe_candidates(&command.session_id, &group.swipe_group_id)?
+                .into_iter()
+                .map(|candidate| candidate.message_id)
+                .collect::<Vec<_>>();
+            if active_branch.branch.tip_message_id == group.parent_message_id
+                || candidate_message_ids.contains(&active_branch.branch.tip_message_id)
             {
                 let _ = self.repo.set_branch_tip(
                     &command.session_id,
@@ -1239,6 +1255,33 @@ fn list_sessions() -> Result<(), String> {
     Ok(())
 }
 
+fn handoff_session(args: HandoffArgs) -> Result<(), String> {
+    let repo = open_repository()?;
+    let candidates = handoff_candidates(&repo, args)?;
+    let mut last_lock_error = None;
+
+    for session in candidates {
+        match open_session_record(repo.clone(), session) {
+            Ok(()) => return Ok(()),
+            Err(error) if is_session_locked_error(&error) => {
+                last_lock_error = Some(error);
+            }
+            Err(error) => return Err(error),
+        }
+    }
+
+    let fallback = create_handoff_session(&repo)?;
+    match open_session_record(repo, fallback) {
+        Ok(()) => Ok(()),
+        Err(error) => match last_lock_error {
+            Some(lock_error) if is_session_locked_error(&error) => Err(format!(
+                "{lock_error}; also could not open a fresh launcher session: {error}"
+            )),
+            _ => Err(error),
+        },
+    }
+}
+
 fn open_session(args: OpenArgs) -> Result<(), String> {
     let repo = open_repository()?;
     let session_id = parse_session_id(&args.session_id)?;
@@ -1251,8 +1294,62 @@ fn open_session(args: OpenArgs) -> Result<(), String> {
         return open_session_metadata(repo, &session, &session_id);
     }
 
-    let context = TuiSessionContext::new(session_id.clone(), session.name.clone());
-    let mut runtime = Phase1dRuntime::open(repo, session_id)?;
+    open_session_record(repo, session)
+}
+
+fn handoff_candidates(
+    repo: &SqliteRepository,
+    args: HandoffArgs,
+) -> Result<Vec<SessionSummary>, String> {
+    if args.launcher_session {
+        if let Some(session) = repo
+            .list_sessions()
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|session| session.name == LAUNCHER_SESSION_NAME)
+        {
+            return Ok(vec![session]);
+        }
+        return Ok(vec![create_handoff_session(repo)?]);
+    }
+
+    let sessions = repo.list_sessions().map_err(|error| error.to_string())?;
+    if !sessions.is_empty() {
+        return Ok(sessions);
+    }
+
+    Ok(vec![create_handoff_session(repo)?])
+}
+
+fn create_handoff_session(repo: &SqliteRepository) -> Result<SessionSummary, String> {
+    repo.create_session(CreateSessionRequest::new(LAUNCHER_SESSION_NAME))
+        .map_err(|error| error.to_string())
+}
+
+fn open_session_record(repo: SqliteRepository, session: SessionSummary) -> Result<(), String> {
+    run_session_shell(repo, session.session_id, session.name)
+}
+
+fn run_session_shell(
+    repo: SqliteRepository,
+    session_id: SessionId,
+    session_name: String,
+) -> Result<(), String> {
+    let mut runtime = Phase1dRuntime::open(repo.clone(), session_id.clone())?;
+    if let Err(error) = repo
+        .update_session_metadata(&session_id, UpdateSessionRequest::default())
+        .map_err(|error| error.to_string())
+    {
+        let release_result = runtime.release_lock();
+        return match release_result {
+            Ok(()) => Err(error),
+            Err(release_error) => Err(format!(
+                "{error}; also failed to release session lock cleanly: {release_error}"
+            )),
+        };
+    }
+
+    let context = TuiSessionContext::new(session_id.clone(), session_name);
     let session_result =
         run_terminal_session(context, &mut runtime).map_err(|error| error.to_string());
     let release_result = runtime.release_lock();
@@ -1265,6 +1362,10 @@ fn open_session(args: OpenArgs) -> Result<(), String> {
             "{session_error}; also failed to release session lock cleanly: {release_error}"
         )),
     }
+}
+
+fn is_session_locked_error(error: &str) -> bool {
+    error.contains("is locked by instance")
 }
 
 fn open_session_metadata(
@@ -1332,10 +1433,61 @@ fn open_session_metadata(
 }
 
 fn send_message(args: SendArgs) -> Result<(), String> {
+    if !args.author_kind.eq_ignore_ascii_case("user") || args.author_name.is_some() {
+        return send_message_legacy(args);
+    }
+
+    let repo = open_repository()?;
+    let session_id = parse_session_id(&args.session_id)?;
+    let session = repo
+        .get_session(&session_id)
+        .map_err(|error| error.to_string())?
+        .ok_or_else(|| format!("session {session_id} was not found"))?;
+    let mut runtime = Phase1dRuntime::open(repo.clone(), session_id.clone())?;
+    let context = TuiSessionContext::new(session_id.clone(), session.name);
+
+    let send_result = (|| -> Result<(), String> {
+        runtime
+            .send_draft(&context, &args.content)?
+            .ok_or_else(|| "message content must not be empty".to_string())?;
+
+        loop {
+            match runtime.poll_generation(&context)? {
+                Some(GenerationPoll::Completed(_)) => {
+                    let transcript = repo
+                        .get_active_branch_transcript(&session_id)
+                        .map_err(|error| error.to_string())?;
+                    println!("Completed runtime-backed turn.");
+                    let start = transcript.len().saturating_sub(2);
+                    print_transcript(&transcript[start..]);
+                    return Ok(());
+                }
+                Some(GenerationPoll::Failed(failure)) => {
+                    return Err(failure.message);
+                }
+                Some(GenerationPoll::Pending { .. }) | None => {
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+            }
+        }
+    })();
+
+    let release_result = runtime.release_lock();
+    match (send_result, release_result) {
+        (Ok(()), Ok(())) => Ok(()),
+        (Err(error), Ok(())) => Err(error),
+        (Ok(()), Err(error)) => Err(error),
+        (Err(send_error), Err(release_error)) => Err(format!(
+            "{send_error}; also failed to release session lock cleanly: {release_error}"
+        )),
+    }
+}
+
+fn send_message_legacy(args: SendArgs) -> Result<(), String> {
     let mut engine = Phase1bCliEngine::open()?;
     let (message, bootstrapped) = engine.send(args)?;
 
-    println!("Committed engine-backed message.");
+    println!("Committed engine-backed message without generation.");
     print_message(&message);
     if bootstrapped {
         println!();
@@ -3096,6 +3248,163 @@ mod tests {
     }
 
     #[test]
+    fn handoff_candidates_create_launcher_session_when_empty() {
+        let sandbox = TestSandbox::new("handoff-empty");
+        let repo = sandbox.repo();
+
+        let candidates = handoff_candidates(&repo, HandoffArgs::default()).unwrap();
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].name, "Launcher Session");
+        let sessions = repo.list_sessions().unwrap();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].name, "Launcher Session");
+    }
+
+    #[test]
+    fn handoff_candidates_reuse_existing_sessions() {
+        let sandbox = TestSandbox::new("handoff-existing");
+        let repo = sandbox.repo();
+        let existing = repo
+            .create_session(CreateSessionRequest::new("Existing Session"))
+            .unwrap();
+
+        let candidates = handoff_candidates(&repo, HandoffArgs::default()).unwrap();
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].session_id, existing.session_id);
+        assert_eq!(candidates[0].name, "Existing Session");
+    }
+
+    #[test]
+    fn swipe_activation_does_not_retip_unrelated_active_branch() {
+        let sandbox = TestSandbox::new("swipe-branch-activation");
+        let repo = sandbox.repo();
+        let session = repo
+            .create_session(CreateSessionRequest::new("Swipe Branch Session"))
+            .unwrap();
+
+        let user_record = repo
+            .insert_message(
+                &session.session_id,
+                CreateMessageRequest::user("hello from user".to_owned()),
+            )
+            .unwrap();
+        let user_message_id = MessageId::parse(user_record.message_id.clone()).unwrap();
+
+        let main_branch_id = generate_branch_id().unwrap();
+        let mut main_branch = ConversationBranch::new(
+            main_branch_id.clone(),
+            session.session_id.clone(),
+            "main",
+            user_message_id.clone(),
+            user_record.created_at,
+        );
+        main_branch.state = BranchState::Active;
+        repo.create_branch(CreateBranchCommand {
+            branch: main_branch,
+            forked_from: user_message_id.clone(),
+        })
+        .unwrap();
+
+        let mut assistant_message = ConversationMessage::new(
+            session.session_id.clone(),
+            generate_message_id().unwrap(),
+            "assistant",
+            "assistant reply".to_owned(),
+            now_timestamp_ms(),
+        );
+        assistant_message.parent_id = Some(user_message_id.clone());
+        let assistant_message = repo
+            .commit_message(CommitMessageCommand {
+                branch_id: main_branch_id.clone(),
+                message: assistant_message,
+            })
+            .unwrap();
+
+        let fork_branch_id = generate_branch_id().unwrap();
+        let mut fork_branch = ConversationBranch::new(
+            fork_branch_id.clone(),
+            session.session_id.clone(),
+            "deep-fork",
+            assistant_message.message_id.clone(),
+            now_timestamp_ms(),
+        );
+        fork_branch.state = BranchState::Active;
+        repo.create_branch(CreateBranchCommand {
+            branch: fork_branch,
+            forked_from: assistant_message.message_id.clone(),
+        })
+        .unwrap();
+
+        let mut store = RepoConversationStore::new(repo.clone());
+        let (group, candidate) = store
+            .create_swipe_candidate(ManualSwipeCandidateRequest {
+                session_id: session.session_id.clone(),
+                parent_message_id: user_message_id.clone(),
+                parent_context_message_id: None,
+                swipe_group_id: Some(generate_swipe_group_id().unwrap()),
+                ordinal: Some(0),
+                author_kind: "assistant".to_owned(),
+                author_name: None,
+                content: "alternate reply".to_owned(),
+                state: SwipeCandidateState::Active,
+            })
+            .unwrap();
+
+        let activated = store
+            .activate_swipe_candidate(ActivateSwipeRequest {
+                session_id: session.session_id.clone(),
+                command: ActivateSwipeCommand {
+                    swipe_group_id: group.swipe_group_id.clone(),
+                    ordinal: candidate.ordinal,
+                },
+            })
+            .unwrap();
+
+        assert_eq!(activated.active_ordinal, candidate.ordinal);
+
+        let active_branch = repo
+            .get_active_branch(&session.session_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(active_branch.branch.branch_id, fork_branch_id);
+        assert_eq!(
+            active_branch.branch.tip_message_id,
+            assistant_message.message_id
+        );
+    }
+
+    #[test]
+    fn handoff_candidates_create_or_reuse_launcher_session_when_requested() {
+        let sandbox = TestSandbox::new("handoff-launcher-session");
+        let repo = sandbox.repo();
+        repo.create_session(CreateSessionRequest::new("Existing Session"))
+            .unwrap();
+
+        let candidates = handoff_candidates(
+            &repo,
+            HandoffArgs {
+                launcher_session: true,
+            },
+        )
+        .unwrap();
+
+        assert_eq!(candidates.len(), 1);
+        assert_eq!(candidates[0].name, LAUNCHER_SESSION_NAME);
+
+        let second = handoff_candidates(
+            &repo,
+            HandoffArgs {
+                launcher_session: true,
+            },
+        )
+        .unwrap();
+        assert_eq!(second.len(), 1);
+        assert_eq!(second[0].session_id, candidates[0].session_id);
+    }
+
+    #[test]
     fn memory_and_search_commands_parse() {
         let cli = Cli::try_parse_from([
             "ozone-plus",
@@ -3141,6 +3450,14 @@ mod tests {
             cli.command,
             Some(Command::Index(IndexArgs {
                 command: IndexCommand::Rebuild
+            }))
+        ));
+
+        let cli = Cli::try_parse_from(["ozone-plus", "handoff", "--launcher-session"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Some(Command::Handoff(HandoffArgs {
+                launcher_session: true
             }))
         ));
     }

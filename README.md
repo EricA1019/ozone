@@ -8,7 +8,7 @@
 
 **⬡ Use AI smarter. Not bigger.**
 
-![Version](https://img.shields.io/badge/v0.4.0--alpha-a8e600?style=for-the-badge)
+![Version](https://img.shields.io/badge/v0.4.1--alpha-76b7b2?style=for-the-badge)
 ![License](https://img.shields.io/badge/MIT-7c3aed?style=for-the-badge)
 ![Local-first](https://img.shields.io/badge/local--first-06b6d4?style=for-the-badge)
 
@@ -46,7 +46,7 @@ ozone --mode=plus   # ozone+ — full chat TUI
 ozone --pick        # force tier picker
 ```
 
-Binary name detection: symlinking to `ozone-lite` or `ozone+` auto-selects the tier.
+Binary name detection: symlinking to `ozone-lite`, `ozone+`, or `oz+` auto-selects the tier.
 
 **Choose ozonelite if** you want the smallest possible footprint, you already know your backend settings, or you're running on a constrained or remote system.
 
@@ -125,7 +125,7 @@ ollama show --modelfile <model-name> | grep FROM
 ln -s /path/to/ollama/blob ~/models/<model-name>.gguf
 ```
 
-> Note: Broken symlinks appear in the model picker as "issue report" entries — this is expected behavior, not a crash. Ozone reports the broken path so you can fix it.
+> Note: Broken symlinks appear in the model picker as "issue report" entries and in `ozone model list` as `⚠ broken` rows. This is expected behavior, not a crash. Ozone reports the broken path so you can fix it.
 
 ### 4. Build and Install Ozone
 
@@ -136,6 +136,7 @@ cargo build --workspace --release
 
 cp target/release/ozone ~/.local/bin/
 cp target/release/ozone-plus ~/.local/bin/
+cp target/release/ozone-mcp ~/.local/bin/   # optional developer automation binary
 ```
 
 ### 5. First Run
@@ -147,6 +148,42 @@ ozone
 On first launch, the **tier picker** appears. Use `↑↓` to move between the three tiers and `Enter` to select. Your choice is saved. You can always change it via `ozone --pick` or the Settings screen inside the launcher.
 
 After selecting a tier, the **splash screen** loads your hardware stats (VRAM, RAM). Press `Enter` to continue to the main launcher.
+
+### 6. Manage Models
+
+The base `ozone` binary now includes first-class local model management:
+
+```bash
+ozone model list
+ozone model list --json
+ozone model info <model>.gguf
+ozone model add --hf <repo> <filename>.gguf
+ozone model add --ollama <model-name>
+ozone model add --link /path/to/model.gguf
+ozone model remove <model>.gguf
+```
+
+`ozone model list` is now the canonical model-inventory command. The older `ozone list` view still works as a lightweight catalog output, but it is deprecated in favor of `ozone model list`.
+
+### 7. Developer automation with `ozone-mcp` (optional)
+
+`ozone-mcp` is a developer-facing stdio MCP server for repo-aware automation and ozone+/launcher smoke tests. It is not part of the end-user launcher flow.
+
+```bash
+ozone-mcp
+# or, from the workspace:
+cargo run -p ozone-mcp-app --bin ozone-mcp
+```
+
+First-cut tools include:
+
+- workspace/repo ops: `workspace_status`, `cargo_tool`, `catalog_list`, `preferences_get`
+- ozone+ app-aware ops: `session_tool`, `message_tool`, `memory_tool`, `search_tool`, `branch_tool`, `swipe_tool`, `export_tool`, `import_card`
+- smoke/helpers: `sandbox_tool`, `mock_backend_tool`, `launcher_smoke`, `mock_user_tool`
+
+The server prefers direct crate APIs for persistence-heavy session work and uses explicit subprocess wrappers only for seams that still live in the end-user CLIs, such as runtime-backed `send`, `search`, and launcher PTY smoke flows.
+
+`mock_user_tool` is the front-door layer: it launches the real terminal binaries in a PTY and plays named scripted journeys like a user would, using only keys/text plus visible terminal markers instead of repo/API back doors.
 
 ---
 
@@ -193,6 +230,7 @@ ozone bench <model>     # benchmark a specific model/settings combination
 ozone sweep <model>     # explore context/quantization space
 ozone analyze           # review benchmark history and surface good configs
 ozone analyze --export  # write top configs to koboldcpp-presets.conf
+ozone clear             # stop GPU backends / runner processes
 ```
 
 ### Presets (optional)
@@ -220,6 +258,8 @@ ozone-plus open <session-id>       # open a session in the TUI
 ```
 
 Or use the ozone launcher: from the main menu choose **Open ozone+** to jump directly into the chat shell.
+
+If you prefer a short shell symlink, pointing `oz+` at the `ozone` binary also selects the ozone+ tier automatically.
 
 ### TUI Keyboard Reference
 
@@ -309,7 +349,7 @@ ozone-plus export <session-id> --format markdown   # Markdown transcript
 
 **"Model not found" or broken model picker entries**
 
-Your `~/models/` directory probably contains symlinks pointing to files that no longer exist (common with Ollama after a model is removed). Ozone reports these as "issue" entries in the picker rather than silently failing. Check the symlink targets:
+Your `~/models/` directory probably contains symlinks pointing to files that no longer exist (common with Ollama after a model is removed). Ozone reports these as `⚠ broken` rows in `ozone model list` and as "issue" entries in the picker rather than silently failing. Check the symlink targets:
 
 ```bash
 ls -la ~/models/
@@ -327,9 +367,9 @@ Check the path: ozone expects `~/koboldcpp/koboldcpp` by default. If your instal
 
 This is expected for large models — it means the recommended GPU layer count exhausts free VRAM. Ozone shows it so you can lower `gpu_layers` manually. Start the benchmark anyway; KoboldCpp will report the actual VRAM used and you can compare.
 
-**Ollama backend shows "stopped" after "Clear GPU"**
+**Ollama backend still looks active after `ozone clear`**
 
-Clear GPU stops KoboldCpp only. Ollama manages its own lifecycle and is not controlled by ozone's clear action. Restart Ollama separately if needed.
+`ozone clear` stops KoboldCpp and any directly managed Ollama runner subprocesses, but a supervised `ollama serve` daemon may still be listening afterward. Validate the actual process or port state instead of assuming the listener is gone.
 
 **ozone+ chat is slow or tokens appear one at a time with a long gap**
 

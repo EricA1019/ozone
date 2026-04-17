@@ -47,11 +47,7 @@ pub async fn get_kobold_perf() -> Option<f64> {
         .timeout(Duration::from_millis(800))
         .build()
         .ok()?;
-    let resp = client
-        .get(paths::koboldcpp_perf_url())
-        .send()
-        .await
-        .ok()?;
+    let resp = client.get(paths::koboldcpp_perf_url()).send().await.ok()?;
     let data: serde_json::Value = resp.json().await.ok()?;
     let last_ms = data["last_process_time_ms"].as_f64().unwrap_or(0.0);
     let last_tok = data["last_token_count"].as_f64().unwrap_or(0.0);
@@ -66,13 +62,15 @@ pub async fn get_kobold_perf() -> Option<f64> {
 pub struct ServiceStatus {
     pub kobold_running: bool,
     pub kobold_model: Option<String>,
+    pub ollama_running: bool,
     pub st_running: bool,
 }
 
 pub async fn get_service_status() -> ServiceStatus {
     let kobold_url = paths::koboldcpp_ready_url();
-    let (kobold_ready, st_ready) = tokio::join!(
+    let (kobold_ready, ollama_ready, st_ready) = tokio::join!(
         is_url_ready(&kobold_url),
+        is_url_ready("http://127.0.0.1:11434/api/tags"),
         is_url_ready("http://127.0.0.1:8000"),
     );
     let kobold_model = if kobold_ready {
@@ -83,6 +81,7 @@ pub async fn get_service_status() -> ServiceStatus {
     ServiceStatus {
         kobold_running: kobold_ready,
         kobold_model,
+        ollama_running: ollama_ready,
         st_running: st_ready,
     }
 }

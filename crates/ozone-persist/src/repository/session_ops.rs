@@ -1,11 +1,7 @@
 use ozone_core::{
-    engine::{
-        BranchId, BranchState, ConversationBranch, CreateBranchCommand,
-        MessageId,
-    },
+    engine::{BranchId, BranchState, ConversationBranch, CreateBranchCommand, MessageId},
     session::{
-        CreateSessionRequest, SessionId, SessionRecord, SessionSummary,
-        UpdateSessionRequest,
+        CreateSessionRequest, SessionId, SessionRecord, SessionSummary, UpdateSessionRequest,
     },
 };
 use rusqlite::{params, Connection, OptionalExtension, Row};

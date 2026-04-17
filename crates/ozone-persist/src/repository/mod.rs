@@ -11,14 +11,9 @@ use std::{
 };
 
 use ozone_core::{
-    engine::{
-        BranchId, BranchState, ConversationBranch,
-        ConversationMessage, MessageId,
-    },
+    engine::{BranchId, BranchState, ConversationBranch, ConversationMessage, MessageId},
     paths as core_paths,
-    session::{
-        SessionId, UnixTimestamp,
-    },
+    session::{SessionId, UnixTimestamp},
 };
 use ozone_memory::{
     assess_artifact_staleness, storage_tier_for_age, ArtifactStaleness, MemoryArtifactId,
@@ -408,7 +403,6 @@ impl SqliteRepository {
         &self.paths
     }
 
-
     fn touch_session_summary(
         &self,
         session_id: &SessionId,
@@ -553,7 +547,6 @@ fn parse_tags_json(tags_json: Option<String>) -> Result<Vec<String>> {
         None => Ok(Vec::new()),
     }
 }
-
 
 fn insert_conversation_message_in_tx(
     tx: &Transaction<'_>,
@@ -755,7 +748,6 @@ fn activate_branch_in_tx(
     Ok(())
 }
 
-
 fn read_conversation_message(row: &Row<'_>) -> rusqlite::Result<ConversationMessage> {
     let message_id = parse_sqlite_text::<MessageId>(row.get(0)?, 0)?;
     let session_id = SessionId::parse(row.get::<_, String>(1)?)
@@ -777,8 +769,6 @@ fn read_conversation_message(row: &Row<'_>) -> rusqlite::Result<ConversationMess
         is_hidden: row.get::<_, i64>(8)? != 0,
     })
 }
-
-
 
 fn read_branch_record(row: &Row<'_>) -> rusqlite::Result<BranchRecord> {
     let branch_id = parse_sqlite_text::<BranchId>(row.get(0)?, 0)?;
@@ -812,7 +802,6 @@ fn read_branch_record(row: &Row<'_>) -> rusqlite::Result<BranchRecord> {
         forked_from,
     })
 }
-
 
 fn parse_sqlite_text<T>(value: String, column_index: usize) -> rusqlite::Result<T>
 where

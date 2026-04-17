@@ -1,6 +1,6 @@
 [package]
 name = "ozone"
-version = "0.4.0-alpha"
+version = "0.4.1-alpha"
 edition = "2021"
 description = "⬡ Ozone — local AI stack operator for benchmarks, sweeps, profiles, and launch workflows"
 license = "MIT"
@@ -11,10 +11,12 @@ categories = ["command-line-utilities"]
 
 [workspace]
 members = [
+    "apps/ozone-mcp",
     "apps/ozone-plus",
     "crates/ozone-core",
     "crates/ozone-engine",
     "crates/ozone-inference",
+    "crates/ozone-mcp",
     "crates/ozone-memory",
     "crates/ozone-persist",
     "crates/ozone-tui",

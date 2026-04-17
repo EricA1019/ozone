@@ -93,7 +93,7 @@ pub fn render(f: &mut Frame, app: &App) {
     // Hex divider
     render_hex_divider(f, sections[6]);
 
-    // Version line: v0.4.0-alpha · MIT · local-first AI tooling
+    // Version line: v0.4.1-alpha · MIT · local-first AI tooling
     let version_line = Paragraph::new(Line::from(vec![
         Span::styled(format!("v{VERSION}"), style_gray()),
         Span::styled("  ·  ", style_gray()),

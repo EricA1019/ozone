@@ -12,6 +12,21 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 - **Autoprofiling** in base Ozone's `Profile` workflow: GGUF-aware GPU/CPU layer recommendations, RAM estimates, and benchmark/sweep seeding now provide a practical starting point for manual layer tweaking — `README.md`, `src/gguf.rs`, `src/planner.rs`, `src/profiling.rs`
 
+### Changed
+
+- **Model inventory UX**: `ozone model list` is now the canonical model-management view, supports `--json`, and clearly surfaces broken symlinks; the older `ozone list` view now shows headers and a deprecation hint — `README.md`, `src/main.rs`, `src/model.rs`
+- **Release artifacts**: release builds now strip symbols and use thin LTO by default to keep the shipped binary smaller — `Cargo.toml`
+- **Base ozone theme**: the launcher, splash, monitor, and shared secondary copy now use a teal-family palette so text remains readable against the dark background — `src/theme.rs`, `README.md`
+- **Version metadata**: the workspace, internal crates, ozone+ app, product-tier labels, and current docs now target `v0.4.1-alpha` as the active development version — `Cargo.toml`, `crates/*/Cargo.toml`, `apps/ozone-plus/Cargo.toml`, `crates/ozone-core/src/lib.rs`, `README.md`, `ozone+/README.md`
+
+### Fixed
+
+- **CLI consistency**: base ozone subcommands now route errors through the shared `✗` formatter, and `ozone analyze <model>` no longer prints duplicate "no benchmarks" blocks — `src/main.rs`, `src/analyze.rs`
+- **Model-path validation**: `ozone model info` / `remove` now reject empty or path-like names instead of resolving directories or traversal-like inputs — `src/model.rs`
+- **KoboldCpp launch args**: benchmark launches no longer duplicate `--gpulayers` / `--contextsize` / `--quantkv` flags when the wrapper script also injects defaults — `src/bench.rs`, `contrib/launch-koboldcpp.sh`
+- **Plus-tier short name**: invoking the base binary through an `oz+` symlink now selects the ozone+ tier like `ozone+` does — `src/main.rs`
+- **ozone -> ozone+ handoff**: launcher handoff now opens an actual ozone+ shell session instead of execing the non-interactive `ozone-plus list` command, and it can create a fallback launcher session when none exist yet — `src/ui/mod.rs`, `apps/ozone-plus/src/main.rs`
+
 ---
 
 ## [0.4.0-alpha] — 2025-07-16  *(MVP — ozone+ memory shell)*

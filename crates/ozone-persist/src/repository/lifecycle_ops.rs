@@ -1,13 +1,9 @@
 use std::collections::{BTreeMap, BTreeSet};
 
-use ozone_core::{
-    engine::MessageId,
-    session::SessionId,
-};
+use ozone_core::{engine::MessageId, session::SessionId};
 use ozone_memory::{
-    EmbeddingRecord,
-    EmbeddingRecordMetadata, MemoryArtifactId, MemoryContent, Provenance, StorageTier,
-    StorageTierPolicy,
+    EmbeddingRecord, EmbeddingRecordMetadata, MemoryArtifactId, MemoryContent, Provenance,
+    StorageTier, StorageTierPolicy,
 };
 use rusqlite::{params, Connection, OptionalExtension, Row, Transaction};
 

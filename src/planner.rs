@@ -1,5 +1,5 @@
-use crate::gguf;
 use crate::catalog::CatalogRecord;
+use crate::gguf;
 use crate::hardware::HardwareProfile;
 
 const MIB_PER_GIB: f64 = 1024.0;
@@ -147,7 +147,8 @@ pub fn estimate_ram_mb(
     let gpu_fraction = gpu_layer_fraction(clamp_layers, total_layers);
     let cpu_fraction = 1.0 - gpu_fraction;
     let base_mb = safe_size * MIB_PER_GIB * (0.18 + cpu_fraction * 1.02);
-    let kv_mb = (safe_size * 24.0).max(128.0) * ctx_mult * quant_factor * (0.45 + cpu_fraction * 0.55);
+    let kv_mb =
+        (safe_size * 24.0).max(128.0) * ctx_mult * quant_factor * (0.45 + cpu_fraction * 0.55);
     let overhead_mb = 384.0 + safe_size * 14.0 + ctx_mult * 48.0;
     (base_mb + kv_mb + overhead_mb).round() as u32
 }
@@ -210,7 +211,14 @@ pub fn plan_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
         "Fast launch still uses the size-based layer estimate; the enhanced layer-aware heuristic is currently scoped to profiling."
             .to_string(),
     );
-    plan_launch_with_layers(record, hw, total_layers, layer_source_label, layer_source_note, false)
+    plan_launch_with_layers(
+        record,
+        hw,
+        total_layers,
+        layer_source_label,
+        layer_source_note,
+        false,
+    )
 }
 
 pub fn plan_profiling_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
@@ -278,8 +286,13 @@ fn plan_launch_with_layers(
         match hw.gpu.as_ref() {
             Some(gpu) => {
                 let gpu_budget = (gpu.free_mb as f64 * VRAM_HEADROOM_RATIO) as u32;
-                let preferred_vram =
-                    estimate_vram_mb(context_size, preferred_layers, size_gb, quant_kv, total_layers);
+                let preferred_vram = estimate_vram_mb(
+                    context_size,
+                    preferred_layers,
+                    size_gb,
+                    quant_kv,
+                    total_layers,
+                );
                 if preferred_vram > gpu_budget {
                     let selected_layers = fit_gpu_layers_to_budget(
                         context_size,

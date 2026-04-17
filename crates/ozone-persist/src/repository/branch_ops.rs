@@ -1,8 +1,5 @@
 use ozone_core::{
-    engine::{
-        BranchId, BranchState, ConversationMessage, CreateBranchCommand,
-        MessageId,
-    },
+    engine::{BranchId, BranchState, ConversationMessage, CreateBranchCommand, MessageId},
     session::SessionId,
 };
 use rusqlite::{params, OptionalExtension};

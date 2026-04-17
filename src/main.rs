@@ -34,6 +34,20 @@ impl From<TierArg> for prefs::Tier {
     }
 }
 
+fn detect_tier_from_binary_name(name: &str) -> Option<prefs::Tier> {
+    if name.contains("lite") || name.contains("ozone-lite") || name.contains("ozonelite") {
+        Some(prefs::Tier::Lite)
+    } else if name == "oz+"
+        || name.contains("ozone+")
+        || name.contains("ozoneplus")
+        || name.contains("plus")
+    {
+        Some(prefs::Tier::Plus)
+    } else {
+        None
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "ozone", about = "⬡ Ozone — local AI stack operator", version)]
 struct Cli {
@@ -127,14 +141,7 @@ async fn main() -> Result<()> {
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("");
-            if name.contains("lite") || name.contains("ozone-lite") || name.contains("ozonelite") {
-                Some(prefs::Tier::Lite)
-            } else if name.contains("ozone+") || name.contains("ozoneplus") || name.contains("plus")
-            {
-                Some(prefs::Tier::Plus)
-            } else {
-                None // regular "ozone" → use saved pref or picker
-            }
+            detect_tier_from_binary_name(name)
         })
     });
 
@@ -349,5 +356,32 @@ async fn main() -> Result<()> {
                 std::process::exit(1);
             }
         },
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn detects_tier_from_binary_name() {
+        assert_eq!(
+            detect_tier_from_binary_name("ozone-lite"),
+            Some(prefs::Tier::Lite)
+        );
+        assert_eq!(
+            detect_tier_from_binary_name("ozonelite"),
+            Some(prefs::Tier::Lite)
+        );
+        assert_eq!(
+            detect_tier_from_binary_name("ozone+"),
+            Some(prefs::Tier::Plus)
+        );
+        assert_eq!(
+            detect_tier_from_binary_name("ozoneplus"),
+            Some(prefs::Tier::Plus)
+        );
+        assert_eq!(detect_tier_from_binary_name("oz+"), Some(prefs::Tier::Plus));
+        assert_eq!(detect_tier_from_binary_name("ozone"), None);
     }
 }

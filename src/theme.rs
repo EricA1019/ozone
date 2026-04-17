@@ -2,14 +2,14 @@ use ratatui::style::{Color, Modifier, Style};
 
 // ── Palette ────────────────────────────────────────────────────────────────
 
-pub const LIME: Color = Color::Rgb(168, 230, 0); // #a8e600 — primary accent
+pub const LIME: Color = Color::Rgb(118, 183, 178); // #76b7b2 — primary teal accent
 pub const VIOLET: Color = Color::Rgb(124, 58, 237); // #7c3aed — ozone+ accent
 pub const VIOLET_BRIGHT: Color = Color::Rgb(196, 181, 253); // lighter ozone+ accent for selected/high-contrast states
-pub const CYAN: Color = Color::Rgb(6, 182, 212);
+pub const CYAN: Color = Color::Rgb(141, 214, 209); // lighter teal highlight
 pub const GREEN: Color = Color::Rgb(34, 197, 94);
 pub const AMBER: Color = Color::Rgb(245, 158, 11);
 pub const RED: Color = Color::Rgb(239, 68, 68);
-pub const GRAY: Color = Color::DarkGray;
+pub const GRAY: Color = Color::Rgb(141, 214, 209); // readable teal for secondary copy
 
 pub fn style_lime() -> Style {
     Style::default().fg(LIME)

@@ -1,6 +1,6 @@
 [package]
 name = "ozone-inference"
-version = "0.4.0"
+version = "0.4.1-alpha"
 edition = "2021"
 publish = false
 description = "Inference gateway, streaming decode, config, and prompt templates for ozone+"

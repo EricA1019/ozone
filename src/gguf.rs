@@ -86,9 +86,16 @@ fn read_topology_from_metadata(path: &Path) -> anyhow::Result<ModelTopology> {
                 let value = read_string(&mut reader)?;
                 if key == "general.architecture" {
                     architecture = Some(value);
-                    if let (Some(arch), Some(count)) = (architecture.as_deref(), fallback_block_count)
+                    if let (Some(arch), Some(count)) =
+                        (architecture.as_deref(), fallback_block_count)
                     {
-                        if key_matches_block_count(&format!("{arch}.block_count"), &format!("{arch}.n_layer"), arch, count, &mut block_count) {
+                        if key_matches_block_count(
+                            &format!("{arch}.block_count"),
+                            &format!("{arch}.n_layer"),
+                            arch,
+                            count,
+                            &mut block_count,
+                        ) {
                             // no-op; helper updates block_count
                         }
                     }
@@ -99,7 +106,9 @@ fn read_topology_from_metadata(path: &Path) -> anyhow::Result<ModelTopology> {
                 if key.ends_with(".block_count") || key.ends_with(".n_layer") {
                     if let Ok(count) = u32::try_from(value) {
                         if let Some(arch) = architecture.as_deref() {
-                            if key == format!("{arch}.block_count") || key == format!("{arch}.n_layer") {
+                            if key == format!("{arch}.block_count")
+                                || key == format!("{arch}.n_layer")
+                            {
                                 block_count = Some(count);
                             } else if fallback_block_count.is_none() {
                                 fallback_block_count = Some(count);
@@ -301,7 +310,11 @@ mod tests {
     #[test]
     fn falls_back_when_metadata_is_missing() {
         let path = temp_gguf_path("fallback");
-        write_test_gguf(&path, |buf| write_kv_string(buf, "general.name", "sample"), 1);
+        write_test_gguf(
+            &path,
+            |buf| write_kv_string(buf, "general.name", "sample"),
+            1,
+        );
 
         let topology = inspect_model_topology(&path, 48);
         assert_eq!(topology.total_layers, 48);

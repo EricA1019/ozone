@@ -1130,14 +1130,14 @@ mod tests {
             &ServiceStatus {
                 kobold_running: false,
                 kobold_model: None,
+                ollama_running: false,
                 st_running: false,
             },
         )
         .expect("advisory should build");
 
-        assert!(advisory
-            .warnings
-            .iter()
-            .any(|warning| warning.message.contains("fell back to file-size estimation")));
+        assert!(advisory.warnings.iter().any(|warning| warning
+            .message
+            .contains("fell back to file-size estimation")));
     }
 }

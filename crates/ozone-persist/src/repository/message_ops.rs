@@ -33,8 +33,8 @@ impl SqliteRepository {
                     branch_id, branch.branch.state
                 )));
             }
-            ozone_core::engine::BranchState::Active
-            | ozone_core::engine::BranchState::Inactive => {}
+            ozone_core::engine::BranchState::Active | ozone_core::engine::BranchState::Inactive => {
+            }
         }
 
         if message.parent_id.as_ref() != Some(&branch.branch.tip_message_id) {

@@ -87,7 +87,7 @@ The intended execution shape remains:
 
 ## 6. What Still Needs Expansion
 
-The ozone+ MVP (Phases 1–3, v0.4.0-alpha) is fully implemented. Items previously listed as "still needing expansion" in this section are now complete:
+The ozone+ MVP (Phases 1–3, v0.4.1-alpha) is fully implemented. Items previously listed as "still needing expansion" in this section are now complete:
 
 - ✅ Screen-by-screen TUI interaction notes — implemented in `crates/ozone-tui/`
 - ✅ Import/export compatibility — character card import and session export implemented

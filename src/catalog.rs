@@ -1,5 +1,8 @@
 use anyhow::Result;
+use std::collections::hash_map::DefaultHasher;
 use std::collections::HashMap;
+use std::hash::{Hash, Hasher};
+use std::io::ErrorKind;
 use std::path::{Path, PathBuf};
 use tokio::fs;
 
@@ -350,4 +353,102 @@ pub async fn load_catalog(
     let presets = parse_preset_text(&preset_text);
     let benchmarks = parse_benchmark_text(&bench_text);
     Ok(build_catalog(models, presets, benchmarks))
+}
+
+pub async fn catalog_signature(
+    model_dir: &Path,
+    preset_file: &Path,
+    benchmark_file: &Path,
+) -> Result<u64> {
+    let mut hasher = DefaultHasher::new();
+
+    hash_optional_path_state(&mut hasher, preset_file).await?;
+    hash_optional_path_state(&mut hasher, benchmark_file).await?;
+
+    match fs::symlink_metadata(model_dir).await {
+        Ok(metadata) => {
+            model_dir.hash(&mut hasher);
+            metadata.is_dir().hash(&mut hasher);
+            metadata.len().hash(&mut hasher);
+            metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_millis())
+                .hash(&mut hasher);
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            "missing-model-dir".hash(&mut hasher);
+            model_dir.hash(&mut hasher);
+            return Ok(hasher.finish());
+        }
+        Err(error) => return Err(error.into()),
+    }
+
+    let mut entries = match fs::read_dir(model_dir).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == ErrorKind::NotFound => return Ok(hasher.finish()),
+        Err(error) => return Err(error.into()),
+    };
+
+    let mut model_entries = Vec::new();
+    while let Some(entry) = entries.next_entry().await? {
+        let name = entry.file_name().to_string_lossy().into_owned();
+        if !name.ends_with(".gguf") {
+            continue;
+        }
+
+        let path = entry.path();
+        let symlink_meta = fs::symlink_metadata(&path).await.ok();
+        let resolved_meta = fs::metadata(&path).await.ok();
+        model_entries.push((
+            name,
+            symlink_meta
+                .as_ref()
+                .map(|meta| meta.len())
+                .unwrap_or_default(),
+            symlink_meta
+                .as_ref()
+                .and_then(|meta| meta.modified().ok())
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_millis())
+                .unwrap_or_default(),
+            resolved_meta.is_some(),
+            resolved_meta
+                .as_ref()
+                .map(|meta| meta.len())
+                .unwrap_or_default(),
+            resolved_meta
+                .as_ref()
+                .and_then(|meta| meta.modified().ok())
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_millis())
+                .unwrap_or_default(),
+        ));
+    }
+
+    model_entries.sort_unstable_by(|a, b| a.0.cmp(&b.0));
+    model_entries.hash(&mut hasher);
+    Ok(hasher.finish())
+}
+
+async fn hash_optional_path_state(hasher: &mut DefaultHasher, path: &Path) -> Result<()> {
+    path.hash(hasher);
+    match fs::symlink_metadata(path).await {
+        Ok(metadata) => {
+            true.hash(hasher);
+            metadata.len().hash(hasher);
+            metadata
+                .modified()
+                .ok()
+                .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
+                .map(|duration| duration.as_millis())
+                .hash(hasher);
+        }
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            false.hash(hasher);
+        }
+        Err(error) => return Err(error.into()),
+    }
+    Ok(())
 }

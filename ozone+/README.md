@@ -161,7 +161,7 @@ For project questions, collaboration, or direct contact:
 
 ## 10. Current Status
 
-**ozone+ is fully implemented through Phase 3 and ships as `v0.4.0-alpha`.**
+**ozone+ is fully implemented through Phase 3 and ships as `v0.4.1-alpha`.**
 
 What is available today:
 
@@ -169,7 +169,7 @@ What is available today:
 |---------|--------|
 | Session create / list / open | ✅ |
 | TUI chat with streaming tokens | ✅ |
-| KoboldCpp and Ollama backends | ✅ |
+| KoboldCpp-backed ozone+ runtime path | ✅ |
 | Character card import (SillyTavern V2) | ✅ |
 | Pinned memories (persist across sessions) | ✅ |
 | Note memories and keyword tagging | ✅ |

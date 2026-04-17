@@ -174,6 +174,11 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
     } else {
         ("○", style_gray())
     };
+    let (ollama_icon, ollama_style) = if app.services.ollama_running {
+        ("●", style_green())
+    } else {
+        ("○", style_gray())
+    };
 
     let model_str = app.services.kobold_model.as_deref().unwrap_or("—");
     let tps_str = app
@@ -188,6 +193,10 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(tps_str, style_green()),
         ]),
         Line::from(vec![
+            Span::styled(format!("  {ollama_icon} Ollama     "), ollama_style),
+            Span::styled(":11434", style_gray()),
+        ]),
+        Line::from(vec![
             Span::styled(format!("  {st_icon} SillyTavern  "), st_style),
             Span::styled(":8000", style_gray()),
         ]),
@@ -197,12 +206,12 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_hints(f: &mut Frame, area: Rect) {
     let hints = Paragraph::new(Line::from(vec![
-        Span::styled("  q", style_cyan()),
-        Span::styled(" exit  ", style_gray()),
+        Span::styled("  Esc/r", style_cyan()),
+        Span::styled(" back  ", style_gray()),
         Span::styled("s", style_cyan()),
         Span::styled(" stop all  ", style_gray()),
-        Span::styled("r", style_cyan()),
-        Span::styled(" back to launcher", style_gray()),
+        Span::styled("q", style_cyan()),
+        Span::styled(" exit", style_gray()),
     ]));
     f.render_widget(hints, area);
 }

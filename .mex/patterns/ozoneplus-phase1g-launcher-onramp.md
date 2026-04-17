@@ -14,7 +14,7 @@ A **frontend-choice step** inserted between `Screen::Confirm` and the backend la
 
 ```
 Splash → Launcher → ModelPicker → Confirm → [FrontendChoice] → Launching / Monitor
-                                                              ↘ exec → ozone-plus list
+                                                              ↘ exec → ozone-plus handoff --launcher-session
 ```
 
 `Screen::FrontendChoice` only appears when no `--frontend` flag was passed. When a flag is given, the code jumps directly to the appropriate path from `Screen::Confirm`.
@@ -35,7 +35,7 @@ Splash → Launcher → ModelPicker → Confirm → [FrontendChoice] → Launchi
 
 ```
 ozone --frontend sillyTavern   # bypass choice, go straight to ST path
-ozone --frontend ozonePlus     # bypass choice, exec ozone-plus list
+ozone --frontend ozonePlus     # bypass choice, exec ozone-plus handoff --launcher-session
 ```
 
 `FrontendMode` derives `clap::ValueEnum` with kebab-case values.
@@ -53,12 +53,21 @@ if app.ozone_plus_handoff {
         .filter(|p| p.exists())
         .unwrap_or_else(|| std::path::PathBuf::from("ozone-plus"));
     use std::os::unix::process::CommandExt;
-    let err = std::process::Command::new(ozone_plus_bin).arg("list").exec();
+    let mut command = std::process::Command::new(ozone_plus_bin);
+    command.arg("handoff").arg("--launcher-session");
+    command.env("OZONE__BACKEND__TYPE", "koboldcpp");
+    command.env("OZONE__BACKEND__URL", ozone_core::paths::koboldcpp_base_url());
+    let err = command.exec();
     return Err(anyhow::anyhow!("Failed to exec ozone-plus: {err}"));
 }
 ```
 
 The `exec()` call **replaces the current process** — terminal state is clean because `disable_raw_mode` + `LeaveAlternateScreen` run just before. No subprocess overhead.
+
+The newer handoff path makes two policy choices explicit instead of implicit:
+
+1. The launcher asks ozone+ for a dedicated `Launcher Session` via `--launcher-session`.
+2. The launcher only exports backend env overrides for the KoboldCpp-backed path it actually starts itself.
 
 ## Backend is always started first
 
@@ -72,6 +81,10 @@ When the user picks ozone+, the KoboldCpp backend is **still started** (same as 
 | Browser open | yes (unless `--no-browser`) | **no** |
 | Monitor screen | yes | **no** (exec to ozone-plus) |
 | Return to ozone | yes (Esc in monitor) | **no** (exec replaces process) |
+
+## Current guardrail
+
+The current ozone+ runtime path is still **KoboldCpp-backed**. If the base launcher is in `Ollama + ozone+` mode, reject that combo clearly instead of silently pretending the guided launch path is wired end-to-end.
 
 ## Adding a new frontend option
 

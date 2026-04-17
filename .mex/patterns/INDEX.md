@@ -27,6 +27,7 @@ Lookup table for all pattern files in this directory. Check here before starting
 | [github-actions-release.md](github-actions-release.md) | Debugging or updating this repo's GitHub Actions CI or release automation |
 | [koboldcpp-launch-diagnostics.md](koboldcpp-launch-diagnostics.md) | Diagnosing or hardening the KoboldCpp launcher path, startup failures, or override-wrapper behavior in base Ozone |
 | [mex-scaffold-sync.md](mex-scaffold-sync.md) | Detecting or fixing drift in the .mex scaffold, paths, or helper scripts |
+| [ozone-mcp-automation.md](ozone-mcp-automation.md) | Building or extending the developer-facing ozone MCP server, its stdio tool contract, sandbox helpers, or launcher smoke orchestration |
 | [ozoneplus-conversation-engine.md](ozoneplus-conversation-engine.md) | Building or extending the Phase 1B ozone+ engine, engine-backed CLI, branches, or swipe flows |
 | [ozoneplus-context-inspector.md](ozoneplus-context-inspector.md) | Building or extending the Phase 1E context assembler surface, inspector preview, or dry-run trigger |
 | [ozoneplus-phase1f-import-export.md](ozoneplus-phase1f-import-export.md) | Building or extending Phase 1F import/export (character cards, session/transcript export), bookmarks, slash commands, or stats |

@@ -1874,7 +1874,7 @@ dependencies = [
 
 [[package]]
 name = "ozone"
-version = "0.4.0-alpha"
+version = "0.4.1-alpha"
 dependencies = [
  "anyhow",
  "chrono",
@@ -1895,7 +1895,7 @@ dependencies = [
 
 [[package]]
 name = "ozone-core"
-version = "0.4.0"
+version = "0.4.1-alpha"
 dependencies = [
  "directories",
  "dirs 5.0.1",
@@ -1904,7 +1904,7 @@ dependencies = [
 
 [[package]]
 name = "ozone-engine"
-version = "0.4.0"
+version = "0.4.1-alpha"
 dependencies = [
  "bytes",
  "ozone-core",
@@ -1914,7 +1914,7 @@ dependencies = [
 
 [[package]]
 name = "ozone-inference"
-version = "0.4.0"
+version = "0.4.1-alpha"
 dependencies = [
  "anyhow",
  "bytes",
@@ -1934,8 +1934,28 @@ dependencies = [
 ]
 
 [[package]]
+name = "ozone-mcp"
+version = "0.4.1-alpha"
+dependencies = [
+ "anyhow",
+ "ozone-core",
+ "ozone-persist",
+ "serde",
+ "serde_json",
+ "uuid",
+]
+
+[[package]]
+name = "ozone-mcp-app"
+version = "0.4.1-alpha"
+dependencies = [
+ "anyhow",
+ "ozone-mcp",
+]
+
+[[package]]
 name = "ozone-memory"
-version = "0.4.0"
+version = "0.4.1-alpha"
 dependencies = [
  "fastembed",
  "libc",
@@ -1948,7 +1968,7 @@ dependencies = [
 
 [[package]]
 name = "ozone-persist"
-version = "0.4.0"
+version = "0.4.1-alpha"
 dependencies = [
  "ozone-core",
  "ozone-memory",
@@ -1960,7 +1980,7 @@ dependencies = [
 
 [[package]]
 name = "ozone-plus"
-version = "0.4.0-alpha"
+version = "0.4.1-alpha"
 dependencies = [
  "chrono",
  "clap",
@@ -1978,7 +1998,7 @@ dependencies = [
 
 [[package]]
 name = "ozone-tui"
-version = "0.4.0"
+version = "0.4.1-alpha"
 dependencies = [
  "crossterm",
  "ozone-core",
@@ -3274,6 +3294,17 @@ name = "utf8parse"
 version = "0.2.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "06abde3611657adf66d383f00b093d7faecc7fa57071cce2578660c9f1010821"
+
+[[package]]
+name = "uuid"
+version = "1.23.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "ddd74a9687298c6858e9b88ec8935ec45d22e8fd5e6394fa1bd4e99a87789c76"
+dependencies = [
+ "getrandom 0.4.2",
+ "js-sys",
+ "wasm-bindgen",
+]
 
 [[package]]
 name = "vcpkg"

@@ -17,7 +17,7 @@ pub fn render(f: &mut Frame, app: &App) {
         .constraints([
             Constraint::Length(4), // header (increased for badge line)
             Constraint::Length(4), // resources
-            Constraint::Length(4), // services
+            Constraint::Length(5), // services
             Constraint::Fill(1),   // actions
             Constraint::Length(2), // status bar
         ])
@@ -143,6 +143,11 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
     } else {
         ("○", style_gray())
     };
+    let (ollama_icon, ollama_style) = if app.services.ollama_running {
+        ("●", style_green())
+    } else {
+        ("○", style_gray())
+    };
 
     let model_label = app.services.kobold_model.as_deref().unwrap_or("—");
     let lines = vec![
@@ -150,6 +155,10 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(format!("  {kc_icon} KoboldCpp  "), kc_style),
             Span::styled(model_label, style_cyan()),
             Span::styled("  :5001", style_gray()),
+        ]),
+        Line::from(vec![
+            Span::styled(format!("  {ollama_icon} Ollama     "), ollama_style),
+            Span::styled(":11434", style_gray()),
         ]),
         Line::from(vec![
             Span::styled(format!("  {st_icon} SillyTavern  "), st_style),
@@ -270,7 +279,10 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
 
     if filtered.is_empty() {
         let msg = if app.model_filter.is_empty() {
-            &format!("  No models found in {}", ozone_core::paths::models_dir().display())
+            &format!(
+                "  No models found in {}",
+                ozone_core::paths::models_dir().display()
+            )
         } else {
             "  No models match filter"
         };
@@ -526,6 +538,76 @@ pub fn render_frontend_choice(f: &mut Frame, app: &App) {
     let mut list_state = ListState::default();
     list_state.select(Some(app.frontend_choice_index));
     f.render_stateful_widget(List::new(items), inner, &mut list_state);
+}
+
+pub fn render_exit_confirm(f: &mut Frame, app: &App) {
+    let area = f.area();
+    let center = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Length(9),
+            Constraint::Fill(1),
+        ])
+        .split(area)[1];
+    let center_h = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Max(54),
+            Constraint::Fill(1),
+        ])
+        .split(center)[1];
+
+    let yes_style = if app.exit_confirm_index == 0 {
+        style_bold_lime()
+    } else {
+        style_gray()
+    };
+    let no_style = if app.exit_confirm_index == 1 {
+        style_bold_cyan()
+    } else {
+        style_gray()
+    };
+    let yes_marker = if app.exit_confirm_index == 0 {
+        format!("{} Quit", HEX_CURSOR)
+    } else {
+        "  Quit".to_string()
+    };
+    let no_marker = if app.exit_confirm_index == 1 {
+        format!("{} Stay", HEX_CURSOR)
+    } else {
+        "  Stay".to_string()
+    };
+
+    let lines = vec![
+        Line::from(Span::styled("  Leave Ozone?", style_bold_lime())),
+        Line::from(Span::raw("")),
+        Line::from(Span::styled(
+            "  Esc from the launcher now asks before quitting.",
+            style_gray(),
+        )),
+        Line::from(Span::raw("")),
+        Line::from(vec![
+            Span::styled("  ", style_gray()),
+            Span::styled(yes_marker, yes_style),
+            Span::styled("     ", style_gray()),
+            Span::styled(no_marker, no_style),
+        ]),
+    ];
+
+    let block = Block::default()
+        .title(Span::styled(
+            format!(" {} Confirm Exit ", HEX_CURSOR),
+            style_bold_lime(),
+        ))
+        .title_bottom(Line::from(Span::styled(
+            "  ←→ choose · Enter confirm · Esc back",
+            style_gray(),
+        )))
+        .borders(Borders::ALL)
+        .border_style(style_lime());
+    f.render_widget(Paragraph::new(lines).block(block), center_h);
 }
 
 fn warning_style(severity: &WarningSeverity) -> Style {
@@ -1146,12 +1228,17 @@ pub fn render_settings(f: &mut Frame, app: &App) {
 
     // Backend block
     let backend_border = if app.settings_section == 0 {
-        style_cyan()
+        style_lime()
     } else {
         style_gray()
     };
+    let backend_title = if app.settings_section == 0 {
+        style_bold_lime()
+    } else {
+        style_bold_cyan()
+    };
     let backend_block = Block::default()
-        .title(Span::styled("  Backend ", style_bold_cyan()))
+        .title(Span::styled("  Backend ", backend_title))
         .borders(Borders::ALL)
         .border_style(backend_border);
     let backend_inner = backend_block.inner(chunks[1]);
@@ -1163,8 +1250,21 @@ pub fn render_settings(f: &mut Frame, app: &App) {
         .enumerate()
         .map(|(i, label)| {
             let selected = i == app.settings_backend_index;
-            let marker = if selected { "●" } else { "○" };
-            let style = if selected { style_cyan() } else { style_gray() };
+            let focused = app.settings_section == 0;
+            let marker = if selected && focused {
+                HEX_CURSOR
+            } else if selected {
+                "●"
+            } else {
+                "○"
+            };
+            let style = if selected && focused {
+                style_bold_lime()
+            } else if selected {
+                style_bold_cyan()
+            } else {
+                style_gray()
+            };
             ListItem::new(Line::from(vec![
                 Span::styled(format!("  {marker} "), style),
                 Span::styled(*label, style),
@@ -1175,12 +1275,17 @@ pub fn render_settings(f: &mut Frame, app: &App) {
 
     // Frontend block
     let frontend_border = if app.settings_section == 1 {
-        style_cyan()
+        style_lime()
     } else {
         style_gray()
     };
+    let frontend_title = if app.settings_section == 1 {
+        style_bold_lime()
+    } else {
+        style_bold_cyan()
+    };
     let frontend_block = Block::default()
-        .title(Span::styled("  Frontend ", style_bold_cyan()))
+        .title(Span::styled("  Frontend ", frontend_title))
         .borders(Borders::ALL)
         .border_style(frontend_border);
     let frontend_inner = frontend_block.inner(chunks[2]);
@@ -1192,12 +1297,20 @@ pub fn render_settings(f: &mut Frame, app: &App) {
         .enumerate()
         .map(|(i, label)| {
             let selected = i == app.settings_frontend_index;
-            let marker = if selected { "●" } else { "○" };
+            let focused = app.settings_section == 1;
+            let marker = if selected && focused {
+                HEX_CURSOR
+            } else if selected {
+                "●"
+            } else {
+                "○"
+            };
             let style = if selected {
-                if *label == "ozone+" {
-                    style_violet()
-                } else {
-                    style_cyan()
+                match (*label, focused) {
+                    ("ozone+", true) => style_bold_bright_violet(),
+                    ("ozone+", false) => style_violet(),
+                    (_, true) => style_bold_lime(),
+                    _ => style_bold_cyan(),
                 }
             } else {
                 style_gray()
@@ -1212,7 +1325,7 @@ pub fn render_settings(f: &mut Frame, app: &App) {
 
     // Hint
     let hint = Paragraph::new(Line::from(Span::styled(
-        "  Tab=switch section · ↑↓=select · Enter=save · Esc=cancel",
+        "  Tab/←→ switch · ↑↓ select · Enter save · Esc back",
         style_gray(),
     )))
     .block(

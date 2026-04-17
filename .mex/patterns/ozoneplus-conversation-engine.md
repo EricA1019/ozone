@@ -15,7 +15,7 @@ edges:
     condition: when mapping engine, branch, or swipe behavior to the baseline design
   - target: "context/conventions.md"
     condition: before adding engine code, repository mutations, or ozone-plus CLI commands
-last_updated: 2026-04-12
+last_updated: 2026-04-16
 ---
 
 # Ozone+ Conversation Engine
@@ -51,8 +51,10 @@ last_updated: 2026-04-12
 
 - The first transcript message needs bootstrap handling; keep that special case
   inside the engine-facing adapter, not in random CLI commands.
-- Swipe activation must change the visible branch tip or transcript path, not
-  just update the swipe-group metadata.
+- Swipe activation should only retip the active branch when that branch is
+  already on the swipe lineage (its current tip is the swipe parent or one of
+  the group's existing candidates); do not retip unrelated branched transcripts
+  just because the swipe parent appears earlier in their history.
 - Do not couple `ozone-engine` directly to `ozone-persist`; use a local adapter
   or newtype in the app layer when both crates need to meet.
 - Keep manual swipe seeding clearly temporary until Phase 1D adds real backend
@@ -71,8 +73,8 @@ last_updated: 2026-04-12
 
 - If the first `send` fails, inspect the bootstrap path that creates the initial
   branch and root message before touching later branch logic.
-- If swipe activation appears to do nothing, verify the active branch tip is
-  updated after the selected candidate is activated.
+- If swipe activation appears to do nothing, verify whether the active branch is
+  actually anchored on that swipe group's lineage before forcing a tip update.
 - If branch transcripts look wrong, inspect the closure-table ancestry rows and
   the branch `tip_message_id` before changing CLI rendering.
 
