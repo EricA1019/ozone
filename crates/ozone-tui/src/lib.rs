@@ -9,6 +9,7 @@ pub mod input;
 pub mod layout;
 pub mod mock;
 pub mod render;
+pub mod theme;
 
 use std::{error::Error, fmt, io};
 
@@ -310,7 +311,7 @@ mod tests {
 
         assert_eq!(outcome.app.session.context, context);
         assert_eq!(outcome.app.session.transcript.len(), 1);
-        assert_eq!(outcome.render.title, "ozone+ — Phase 1C");
+        assert_eq!(outcome.render.title, "⬡ ozone+ — Phase 1C");
         assert_eq!(
             runtime.bootstrapped_sessions,
             vec!["123e4567-e89b-12d3-a456-426614174000".to_string()]

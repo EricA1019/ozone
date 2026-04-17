@@ -1,5 +1,5 @@
 use ratatui::{
-    style::{Color, Modifier, Style},
+    style::Modifier,
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
@@ -9,6 +9,7 @@ use crate::{
     app::{ContextPreview, FocusTarget, InspectorFocus, RuntimePhase, ScreenState, ShellState},
     input::InputMode,
     layout::{LayoutMode, LayoutModel, PaneId, PaneLayout},
+    theme,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -89,7 +90,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         branch: branch_label(state),
     };
 
-    let title = format!("ozone+ — {}", state.session.context.title);
+    let title = format!("{} ozone+ — {}", theme::HEX, state.session.context.title);
     let shell_label = match layout.mode {
         LayoutMode::Compact => "compact shell",
         LayoutMode::Wide => "wide shell",
@@ -126,9 +127,9 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
             }
             entries
         },
-        empty_state: "Transcript will appear here once ozone+ opens a live session.".into(),
+        empty_state: "⬡ Start a conversation — press i to enter insert mode".into(),
         hint:
-            "j/k move · b bookmark · Ctrl+K pin · Tab composer · i insert · Ctrl+D dry run · Ctrl+I inspector · ? help"
+            "j/k navigate · b bookmark · Ctrl+K pin · Tab focus · i insert · ? help"
                 .into(),
     };
 
@@ -174,7 +175,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
             .clone()
             .unwrap_or_else(|| runtime_label(&state.session.runtime)),
         notifications,
-        hint: "? help · q quit".into(),
+        hint: "⬡ ? help · q quit".into(),
     };
 
     let inspector = layout.inspector.map(|_| InspectorPaneModel {
@@ -225,13 +226,16 @@ pub fn render_shell(frame: &mut Frame, layout: &LayoutModel, model: &RenderModel
 
 fn render_conversation(frame: &mut Frame, pane: &PaneLayout, model: &RenderModel, focused: bool) {
     let mut lines = vec![
-        Line::from(Span::styled(
-            model.title.clone(),
-            Style::default().add_modifier(Modifier::BOLD),
-        )),
+        Line::from(vec![
+            Span::styled(format!("{} ", theme::HEX), theme::brand_hex_style()),
+            Span::styled(
+                model.title.clone(),
+                theme::text_style().add_modifier(Modifier::BOLD),
+            ),
+        ]),
         Line::from(Span::styled(
             format!("{} · {}", model.subtitle, model.conversation.subtitle),
-            muted_style(),
+            theme::dim_style(),
         )),
         Line::default(),
     ];
@@ -239,36 +243,39 @@ fn render_conversation(frame: &mut Frame, pane: &PaneLayout, model: &RenderModel
     if model.conversation.entries.is_empty() {
         lines.push(Line::from(Span::styled(
             model.conversation.empty_state.clone(),
-            muted_style(),
+            theme::dim_style(),
         )));
     } else {
         for entry in &model.conversation.entries {
-            let marker = if entry.selected { "> " } else { "  " };
-            let marker_style = if entry.selected {
-                highlight_style()
+            let marker = if entry.selected {
+                format!("{} ", theme::HEX_FILLED)
             } else {
-                muted_style()
+                "  ".into()
+            };
+            let marker_style = if entry.selected {
+                theme::highlight_style()
+            } else {
+                theme::muted_style()
             };
             let author_style = if entry.selected {
-                Style::default().fg(Color::Cyan)
+                theme::author_selected_style()
+            } else if entry.author == "user" {
+                theme::author_user_style()
             } else {
-                Style::default().fg(Color::Gray)
+                theme::author_style()
             };
-            let bookmark_style = if entry.is_bookmarked {
-                Style::default().fg(Color::Yellow)
+            let bookmark_indicator = if entry.is_bookmarked {
+                Span::styled("★ ", theme::bookmark_style())
             } else {
-                muted_style()
+                Span::styled("  ", theme::muted_style())
             };
 
             lines.push(Line::from(vec![
                 Span::styled(marker, marker_style),
-                Span::styled(
-                    if entry.is_bookmarked { "★ " } else { "  " },
-                    bookmark_style,
-                ),
+                bookmark_indicator,
                 Span::styled(format!("{:<10}", entry.author), author_style),
                 Span::raw(" "),
-                Span::raw(entry.content.clone()),
+                Span::styled(entry.content.clone(), theme::text_style()),
             ]));
         }
     }
@@ -276,7 +283,7 @@ fn render_conversation(frame: &mut Frame, pane: &PaneLayout, model: &RenderModel
     lines.push(Line::default());
     lines.push(Line::from(Span::styled(
         model.conversation.hint.clone(),
-        muted_style(),
+        theme::dim_style(),
     )));
 
     frame.render_widget(
@@ -291,27 +298,32 @@ fn render_composer(frame: &mut Frame, pane: &PaneLayout, model: &ComposerPaneMod
     let mut lines: Vec<Line> = if model.lines.is_empty() {
         vec![Line::from(Span::styled(
             model.placeholder.clone(),
-            muted_style(),
+            theme::dim_style(),
         ))]
     } else {
-        model.lines.iter().cloned().map(Line::from).collect()
+        model
+            .lines
+            .iter()
+            .cloned()
+            .map(|text| Line::from(Span::styled(text, theme::text_style())))
+            .collect()
     };
 
     let draft_state = if model.dirty {
-        "draft dirty"
+        "dirty"
     } else {
-        "draft clean"
+        "clean"
     };
     lines.push(Line::default());
     lines.push(Line::from(vec![
-        Span::styled("mode ", muted_style()),
-        Span::styled(model.mode.clone(), warning_style()),
+        Span::styled("mode ", theme::dim_style()),
+        Span::styled(model.mode.clone(), theme::mode_badge_style()),
         Span::styled(
             format!(" · cursor {} · {}", model.cursor, draft_state),
-            muted_style(),
+            theme::dim_style(),
         ),
     ]));
-    lines.push(Line::from(Span::styled(model.hint.clone(), muted_style())));
+    lines.push(Line::from(Span::styled(model.hint.clone(), theme::dim_style())));
 
     frame.render_widget(
         Paragraph::new(lines)
@@ -324,16 +336,16 @@ fn render_composer(frame: &mut Frame, pane: &PaneLayout, model: &ComposerPaneMod
 fn render_status(frame: &mut Frame, pane: &PaneLayout, model: &StatusPaneModel, focused: bool) {
     let mut lines = vec![Line::from(Span::styled(
         model.summary.clone(),
-        Style::default().add_modifier(Modifier::BOLD),
+        theme::text_style().add_modifier(Modifier::BOLD),
     ))];
     lines.extend(
         model
             .notifications
             .iter()
             .cloned()
-            .map(|line| Line::from(Span::styled(line, muted_style()))),
+            .map(|line| Line::from(Span::styled(line, theme::dim_style()))),
     );
-    lines.push(Line::from(Span::styled(model.hint.clone(), muted_style())));
+    lines.push(Line::from(Span::styled(model.hint.clone(), theme::dim_style())));
 
     frame.render_widget(
         Paragraph::new(lines)
@@ -353,7 +365,7 @@ fn render_inspector(
         .lines
         .iter()
         .cloned()
-        .map(|line| Line::from(Span::styled(line, muted_style())))
+        .map(|line| Line::from(Span::styled(line, theme::dim_style())))
         .collect();
 
     frame.render_widget(
@@ -365,7 +377,12 @@ fn render_inspector(
 }
 
 fn render_overlay(frame: &mut Frame, pane: &PaneLayout, model: &OverlayRenderModel) {
-    let lines: Vec<Line> = model.lines.iter().cloned().map(Line::from).collect();
+    let lines: Vec<Line> = model
+        .lines
+        .iter()
+        .cloned()
+        .map(|text| Line::from(Span::styled(text, theme::text_style())))
+        .collect();
 
     frame.render_widget(Clear, pane.area);
     frame.render_widget(
@@ -377,45 +394,29 @@ fn render_overlay(frame: &mut Frame, pane: &PaneLayout, model: &OverlayRenderMod
 }
 
 fn pane_block(title: &str, focused: bool) -> Block<'static> {
+    let (title_style, border) = if focused {
+        (theme::title_focused_style(), theme::focus_border_style())
+    } else {
+        (theme::title_style(), theme::border_style())
+    };
+
     Block::default()
         .title(Span::styled(
-            format!(" {} ", title),
-            if focused {
-                highlight_style()
-            } else {
-                Style::default().fg(Color::Gray)
-            },
+            format!(" {} {} ", theme::HEX, title),
+            title_style,
         ))
         .borders(Borders::ALL)
-        .border_style(if focused {
-            highlight_style()
-        } else {
-            Style::default().fg(Color::DarkGray)
-        })
+        .border_style(border)
 }
 
 fn overlay_block(title: &str) -> Block<'static> {
     Block::default()
         .title(Span::styled(
-            format!(" {} ", title),
-            warning_style().add_modifier(Modifier::BOLD),
+            format!(" {} {} ", theme::HEX_FILLED, title),
+            theme::warning_style().add_modifier(Modifier::BOLD),
         ))
         .borders(Borders::ALL)
-        .border_style(warning_style())
-}
-
-fn muted_style() -> Style {
-    Style::default().fg(Color::DarkGray)
-}
-
-fn highlight_style() -> Style {
-    Style::default()
-        .fg(Color::Cyan)
-        .add_modifier(Modifier::BOLD)
-}
-
-fn warning_style() -> Style {
-    Style::default().fg(Color::Yellow)
+        .border_style(theme::warning_style())
 }
 
 fn input_mode_label(input_mode: InputMode) -> &'static str {
@@ -616,12 +617,12 @@ fn inspector_focus_label(focus: InspectorFocus) -> &'static str {
 fn composer_hint(input_mode: InputMode) -> &'static str {
     match input_mode {
         InputMode::Normal => {
-            "i insert · b bookmark · Ctrl+K pin · Tab conversation · Ctrl+D dry run · Ctrl+I inspector · ? help"
+            "i insert · b bookmark · Ctrl+K pin · Tab conversation · Ctrl+D dry-run · ? help"
         }
         InputMode::Insert => {
-            "Enter send · Ctrl+C cancel · Ctrl+D dry run · Ctrl+I inspector · Ctrl+K pin"
+            "Enter send · Esc normal · Ctrl+C cancel · Ctrl+D dry-run · Ctrl+I inspector"
         }
-        InputMode::Command => "Enter send · Ctrl+C cancel · Ctrl+D dry run · Esc normal · Ctrl+K pin",
+        InputMode::Command => "Enter send · Esc normal · Ctrl+C cancel · Ctrl+D dry-run",
     }
 }
 
@@ -631,33 +632,43 @@ fn overlay_model(screen: ScreenState, input_mode: InputMode) -> Option<OverlayRe
         ScreenState::Help => Some(OverlayRenderModel {
             title: "Help".into(),
             lines: vec![
-                format!("current mode: {}", input_mode_label(input_mode)),
-                "j / k move selection".into(),
-                "Tab switch conversation and composer focus".into(),
-                "i enter insert mode".into(),
-                "b toggle bookmark on the selected persisted message".into(),
-                "Ctrl+K pins or unpins the selected persisted message to hard context".into(),
-                "Enter sends the current draft".into(),
-                "Ctrl+C cancels generation".into(),
-                "Ctrl+D builds a context dry run preview".into(),
-                "Ctrl+I toggles the inspector".into(),
-                "/session show prints current session metadata".into(),
-                "/memory list, /memory note TEXT, and /memory unpin ID manage pinned memories"
-                    .into(),
-                "/search session QUERY and /search global QUERY browse recall hits".into(),
-                ":memories opens the recall browser shortcut".into(),
-                "/session rename NAME updates the session title".into(),
-                "/session character NAME|clear updates the character field".into(),
-                "/session tags a,b|clear replaces the session tags".into(),
-                "q requests quit".into(),
+                format!("⬡ ozone+ TUI — current mode: {}", input_mode_label(input_mode)),
+                String::new(),
+                "Navigation".into(),
+                "  j / k          move selection up/down".into(),
+                "  Tab            switch conversation ↔ composer focus".into(),
+                "  i              enter insert mode".into(),
+                "  Esc            return to normal mode".into(),
+                String::new(),
+                "Actions".into(),
+                "  b              toggle bookmark on selected message".into(),
+                "  Ctrl+K         pin/unpin selected message to hard context".into(),
+                "  Enter          send current draft".into(),
+                "  Ctrl+C         cancel active generation".into(),
+                "  Ctrl+D         build a context dry-run preview".into(),
+                "  Ctrl+I         toggle the inspector pane".into(),
+                "  q              quit".into(),
+                String::new(),
+                "Slash Commands".into(),
+                "  /session show              session metadata".into(),
+                "  /session rename NAME       rename session".into(),
+                "  /session character NAME     set character".into(),
+                "  /session tags a,b          set tags".into(),
+                "  /memory list               list pinned memories".into(),
+                "  /memory note TEXT          create a note memory".into(),
+                "  /memory unpin ID           unpin a memory".into(),
+                "  /search session QUERY      search this session".into(),
+                "  /search global QUERY       search all sessions".into(),
+                "  :memories                  open recall browser".into(),
             ],
         }),
         ScreenState::Quit => Some(OverlayRenderModel {
             title: "Quit".into(),
             lines: vec![
-                "quit requested".into(),
-                "the integration layer can now tear down the shell".into(),
-                "pending runtime work stays outside this render slice".into(),
+                "⬡ Exiting ozone+".into(),
+                String::new(),
+                "Session state and draft have been saved.".into(),
+                "Press any key or wait for cleanup to finish.".into(),
             ],
         }),
     }
