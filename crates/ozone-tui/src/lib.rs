@@ -99,10 +99,6 @@ pub fn run_terminal_session<R>(
 where
     R: SessionRuntime,
 {
-    use std::time::Duration;
-
-    const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(50);
-
     let bootstrap = runtime
         .bootstrap(&context)
         .map_err(RunSessionError::Bootstrap)?;
@@ -111,6 +107,38 @@ where
 
     let mut terminal = TerminalGuard::enter().map_err(RunSessionError::Io)?;
 
+    // Install a panic hook that restores the terminal before printing the panic.
+    // Without this, a panic leaves the terminal in raw mode + alternate screen,
+    // making it appear to "crash" with garbled output.
+    let original_hook = std::panic::take_hook();
+    std::panic::set_hook(Box::new(move |info| {
+        let _ = disable_raw_mode();
+        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        original_hook(info);
+    }));
+
+    let result = run_event_loop(&mut app, &mut terminal, runtime);
+
+    // Restore the default panic hook now that the event loop is done.
+    let _ = std::panic::take_hook();
+
+    // Drop the terminal guard (restores terminal) before returning.
+    drop(terminal);
+
+    result
+}
+
+fn run_event_loop<R>(
+    app: &mut ShellState,
+    terminal: &mut TerminalGuard,
+    runtime: &mut R,
+) -> Result<RunSessionOutcome, RunSessionError<R::Error>>
+where
+    R: SessionRuntime,
+{
+    use std::time::Duration;
+    const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(50);
+
     loop {
         let (layout, render) = {
             let mut drawn_layout = None;
@@ -118,8 +146,8 @@ where
             terminal
                 .terminal
                 .draw(|frame| {
-                    let layout = build_layout_for_area(&app, frame.area());
-                    let render = build_render_model(&app, &layout);
+                    let layout = build_layout_for_area(app, frame.area());
+                    let render = build_render_model(app, &layout);
                     render_shell(frame, &layout, &render);
                     drawn_layout = Some(layout);
                     drawn_render = Some(render);
@@ -133,9 +161,9 @@ where
         };
 
         if app.should_quit {
-            sync_draft(runtime, &app)?;
+            sync_draft(runtime, app)?;
             return Ok(RunSessionOutcome {
-                app,
+                app: app.clone(),
                 layout,
                 render,
             });
@@ -178,7 +206,7 @@ where
                         runtime
                             .dispatch(&app.session.context, action)
                             .map_err(RunSessionError::Runtime)?;
-                        sync_draft(runtime, &app)?;
+                        sync_draft(runtime, app)?;
 
                         for command in app.take_runtime_commands() {
                             match command {
@@ -231,7 +259,7 @@ where
                                     }
                                 }
                             }
-                            sync_draft(runtime, &app)?;
+                            sync_draft(runtime, app)?;
                         }
                     }
                 }
@@ -248,11 +276,11 @@ where
             {
                 Some(GenerationPoll::Completed(completion)) => {
                     app.apply_runtime_completion(completion);
-                    sync_draft(runtime, &app)?;
+                    sync_draft(runtime, app)?;
                 }
                 Some(GenerationPoll::Failed(failure)) => {
                     app.apply_runtime_failure(failure);
-                    sync_draft(runtime, &app)?;
+                    sync_draft(runtime, app)?;
                 }
                 Some(GenerationPoll::Pending {
                     partial: Some(progress),
