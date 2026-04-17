@@ -130,6 +130,9 @@ struct OpenArgs {
     /// Print session metadata instead of launching the TUI shell
     #[arg(long)]
     metadata: bool,
+    /// Force open even if session is locked (clears stale locks)
+    #[arg(long)]
+    force: bool,
 }
 
 #[derive(Args, Debug, Clone, Copy, Default)]
@@ -1285,6 +1288,13 @@ fn handoff_session(args: HandoffArgs) -> Result<(), String> {
 fn open_session(args: OpenArgs) -> Result<(), String> {
     let repo = open_repository()?;
     let session_id = parse_session_id(&args.session_id)?;
+
+    if args.force {
+        eprintln!("Clearing existing locks for session {session_id}");
+        repo.force_clear_session_lock(&session_id)
+            .map_err(|error| error.to_string())?;
+    }
+
     let session = repo
         .get_session(&session_id)
         .map_err(|error| error.to_string())?

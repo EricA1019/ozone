@@ -233,6 +233,14 @@ impl SqliteRepository {
 
         Ok(rows != 0)
     }
+
+    /// Unconditionally clear any session lock regardless of instance_id.
+    /// Used by `--force` to override stale locks.
+    pub fn force_clear_session_lock(&self, session_id: &SessionId) -> Result<bool> {
+        let conn = self.open_session_connection(session_id)?;
+        let rows = conn.execute("DELETE FROM session_lock WHERE id = 1", [])?;
+        Ok(rows != 0)
+    }
 }
 
 fn merge_tags(primary: &[String], secondary: &[String]) -> Vec<String> {
