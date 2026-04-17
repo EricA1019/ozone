@@ -114,6 +114,17 @@ pub trait SessionRuntime {
     fn list_sessions(&mut self) -> Result<Vec<SessionListEntry>, Self::Error> {
         Ok(Vec::new())
     }
+
+    /// List imported character cards for the character manager.
+    /// Returns an empty list by default.
+    fn list_characters(&mut self) -> Result<Vec<crate::app::CharacterEntry>, Self::Error> {
+        Ok(Vec::new())
+    }
+
+    /// Return current configuration entries for the settings screen.
+    fn get_settings(&mut self) -> Result<Vec<crate::app::SettingsEntry>, Self::Error> {
+        Ok(Vec::new())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -135,6 +146,7 @@ pub struct MockRuntime {
     pub persisted_drafts: BTreeMap<String, String>,
     pub toggled_pinned_messages: Vec<String>,
     pub available_sessions: Vec<SessionListEntry>,
+    pub available_characters: Vec<crate::app::CharacterEntry>,
     pub active_generation: Option<MockGeneration>,
     next_request_number: u64,
 }
@@ -152,6 +164,7 @@ impl Default for MockRuntime {
             persisted_drafts: BTreeMap::new(),
             toggled_pinned_messages: Vec::new(),
             available_sessions: Vec::new(),
+            available_characters: Vec::new(),
             active_generation: None,
             next_request_number: 1,
         }
@@ -337,6 +350,10 @@ impl SessionRuntime for MockRuntime {
 
     fn list_sessions(&mut self) -> Result<Vec<SessionListEntry>, Self::Error> {
         Ok(self.available_sessions.clone())
+    }
+
+    fn list_characters(&mut self) -> Result<Vec<crate::app::CharacterEntry>, Self::Error> {
+        Ok(self.available_characters.clone())
     }
 }
 

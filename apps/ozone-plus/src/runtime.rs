@@ -224,6 +224,14 @@ impl Phase1dRuntime {
         })
     }
 
+    /// Pre-flight health check — verifies the inference backend is reachable
+    /// before committing a user message and spawning a generation task.
+    pub(crate) fn check_backend_health(&self) -> Result<(), String> {
+        self.inference
+            .check_backend_health()
+            .map_err(|e| e.to_string())
+    }
+
     pub(crate) fn release_lock(&mut self) -> Result<(), String> {
         if !self
             .repo
@@ -1510,6 +1518,51 @@ impl SessionRuntime for Phase1dRuntime {
                 last_active: Some(crate::format_timestamp(s.last_opened_at)),
             })
             .collect())
+    }
+
+    fn get_settings(&mut self) -> Result<Vec<ozone_tui::SettingsEntry>, Self::Error> {
+        let config = self.inference.config();
+        let mut entries = Vec::new();
+
+        entries.push(ozone_tui::SettingsEntry {
+            category: "Session".into(),
+            key: "Session ID".into(),
+            value: self.session_id.to_string(),
+        });
+        entries.push(ozone_tui::SettingsEntry {
+            category: "Session".into(),
+            key: "Lock instance".into(),
+            value: self.lock_instance_id.clone(),
+        });
+
+        entries.push(ozone_tui::SettingsEntry {
+            category: "Backend".into(),
+            key: "Type".into(),
+            value: config.backend.r#type.clone(),
+        });
+        entries.push(ozone_tui::SettingsEntry {
+            category: "Backend".into(),
+            key: "URL".into(),
+            value: config.backend.url.clone(),
+        });
+        entries.push(ozone_tui::SettingsEntry {
+            category: "Backend".into(),
+            key: "Prompt template".into(),
+            value: self.inference.selected_template().to_string(),
+        });
+
+        entries.push(ozone_tui::SettingsEntry {
+            category: "Context".into(),
+            key: "Max tokens".into(),
+            value: config.context.max_tokens.to_string(),
+        });
+        entries.push(ozone_tui::SettingsEntry {
+            category: "Context".into(),
+            key: "Safety margin".into(),
+            value: format!("{}%", config.context.safety_margin_pct),
+        });
+
+        Ok(entries)
     }
 }
 

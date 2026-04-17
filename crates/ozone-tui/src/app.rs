@@ -14,6 +14,18 @@ pub enum ScreenState {
     Quit,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SettingsState {
+    pub entries: Vec<SettingsEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsEntry {
+    pub category: String,
+    pub key: String,
+    pub value: String,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum FocusTarget {
     Transcript,
@@ -183,6 +195,38 @@ impl SessionListState {
     pub fn selected_entry(&self) -> Option<&SessionListEntry> {
         let visible = self.visible_entries();
         visible.get(self.selected).copied()
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CharacterEntry {
+    pub card_id: String,
+    pub name: String,
+    pub description: String,
+    pub session_count: usize,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CharacterListState {
+    pub entries: Vec<CharacterEntry>,
+    pub selected: usize,
+}
+
+impl CharacterListState {
+    pub fn selected_entry(&self) -> Option<&CharacterEntry> {
+        self.entries.get(self.selected)
+    }
+
+    pub fn move_up(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+        }
+    }
+
+    pub fn move_down(&mut self) {
+        if self.selected + 1 < self.entries.len() {
+            self.selected += 1;
+        }
     }
 }
 
@@ -714,6 +758,8 @@ pub struct ShellState {
     pub inspector: InspectorState,
     pub menu: MenuState,
     pub session_list: SessionListState,
+    pub character_list: CharacterListState,
+    pub settings: SettingsState,
     pub session: SessionState,
     pub draft: DraftState,
     pub history: InputHistoryState,
@@ -738,6 +784,8 @@ impl ShellState {
             inspector: InspectorState::default(),
             menu: MenuState::default(),
             session_list: SessionListState::default(),
+            character_list: CharacterListState::default(),
+            settings: SettingsState::default(),
             session: SessionState::new(context),
             draft: DraftState::default(),
             history: InputHistoryState::default(),
@@ -953,6 +1001,7 @@ impl ShellState {
                 match self.screen {
                     ScreenState::MainMenu => self.menu.move_up(),
                     ScreenState::SessionList => self.session_list.move_up(),
+                    ScreenState::CharacterManager => self.character_list.move_up(),
                     _ => {}
                 }
             }
@@ -960,6 +1009,7 @@ impl ShellState {
                 match self.screen {
                     ScreenState::MainMenu => self.menu.move_down(),
                     ScreenState::SessionList => self.session_list.move_down(),
+                    ScreenState::CharacterManager => self.character_list.move_down(),
                     _ => {}
                 }
             }
@@ -1343,11 +1393,11 @@ mod tests {
     use ozone_core::session::SessionId;
 
     use super::{
-        AppBootstrap, BranchItem, ContextDryRunPreview, ContextPreview, DraftCheckpoint,
-        DraftState, FocusTarget, GenerationPoll, InspectorFocus, RecallBrowser,
-        RuntimeCancellation, RuntimeCommand, RuntimeContextRefresh, RuntimeFailure, RuntimePhase,
-        RuntimeProgress, RuntimeSendReceipt, ScreenState, SessionContext, SessionListEntry,
-        SessionMetadata, SessionStats, ShellState, TranscriptItem,
+        AppBootstrap, BranchItem, CharacterEntry, CharacterListState, ContextDryRunPreview,
+        ContextPreview, DraftCheckpoint, DraftState, FocusTarget, GenerationPoll, InspectorFocus,
+        RecallBrowser, RuntimeCancellation, RuntimeCommand, RuntimeContextRefresh, RuntimeFailure,
+        RuntimePhase, RuntimeProgress, RuntimeSendReceipt, ScreenState, SessionContext,
+        SessionListEntry, SessionMetadata, SessionStats, ShellState, TranscriptItem,
     };
     use crate::input::{InputMode, KeyAction};
 
@@ -2180,5 +2230,151 @@ mod tests {
         state.apply_action(KeyAction::CommandPaletteSelect);
         assert!(!state.should_quit);
         assert_eq!(state.screen, ScreenState::MainMenu);
+    }
+
+    // ── CharacterListState tests ──────────────────────────────────────
+
+    fn sample_characters() -> Vec<CharacterEntry> {
+        vec![
+            CharacterEntry {
+                card_id: "c1".into(),
+                name: "Alice".into(),
+                description: "First".into(),
+                session_count: 3,
+            },
+            CharacterEntry {
+                card_id: "c2".into(),
+                name: "Bob".into(),
+                description: "Second".into(),
+                session_count: 1,
+            },
+            CharacterEntry {
+                card_id: "c3".into(),
+                name: "Carol".into(),
+                description: "Third".into(),
+                session_count: 0,
+            },
+        ]
+    }
+
+    #[test]
+    fn test_character_list_move_down() {
+        let mut list = CharacterListState {
+            entries: sample_characters(),
+            selected: 0,
+        };
+
+        list.move_down();
+        assert_eq!(list.selected, 1);
+
+        list.move_down();
+        assert_eq!(list.selected, 2);
+
+        // At last entry, move_down clamps
+        list.move_down();
+        assert_eq!(list.selected, 2);
+    }
+
+    #[test]
+    fn test_character_list_move_up() {
+        let mut list = CharacterListState {
+            entries: sample_characters(),
+            selected: 2,
+        };
+
+        list.move_up();
+        assert_eq!(list.selected, 1);
+
+        list.move_up();
+        assert_eq!(list.selected, 0);
+
+        // At first entry, move_up clamps
+        list.move_up();
+        assert_eq!(list.selected, 0);
+    }
+
+    #[test]
+    fn test_character_list_selected_entry() {
+        let list = CharacterListState {
+            entries: sample_characters(),
+            selected: 1,
+        };
+
+        let entry = list.selected_entry().unwrap();
+        assert_eq!(entry.name, "Bob");
+        assert_eq!(entry.card_id, "c2");
+
+        // Empty list returns None
+        let empty = CharacterListState::default();
+        assert!(empty.selected_entry().is_none());
+    }
+
+    #[test]
+    fn test_characters_screen_nav() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::CharacterManager;
+        state.character_list.entries = sample_characters();
+        state.character_list.selected = 0;
+
+        state.apply_action(KeyAction::MenuDown);
+        assert_eq!(state.character_list.selected, 1);
+
+        state.apply_action(KeyAction::MenuDown);
+        assert_eq!(state.character_list.selected, 2);
+
+        state.apply_action(KeyAction::MenuUp);
+        assert_eq!(state.character_list.selected, 1);
+    }
+
+    // ── Settings screen tests ─────────────────────────────────────────
+
+    #[test]
+    fn test_settings_screen_routing() {
+        let mut state = ShellState::new(session_context());
+        assert_eq!(state.screen, ScreenState::MainMenu);
+
+        // Shortcut '4' navigates to Settings
+        state.apply_action(KeyAction::MenuShortcut('4'));
+        assert_eq!(state.screen, ScreenState::Settings);
+    }
+
+    #[test]
+    fn test_settings_screen_escape_returns() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::Settings;
+
+        state.apply_action(KeyAction::MenuBack);
+        assert_eq!(state.screen, ScreenState::MainMenu);
+    }
+
+    // ── All menu screens reachable ────────────────────────────────────
+
+    #[test]
+    fn test_all_menu_screens_reachable() {
+        // Shortcut '1' → Conversation (New Chat)
+        let mut s1 = ShellState::new(session_context());
+        s1.apply_action(KeyAction::MenuShortcut('1'));
+        assert_eq!(s1.screen, ScreenState::Conversation);
+
+        // Shortcut '2' → SessionList
+        let mut s2 = ShellState::new(session_context());
+        s2.apply_action(KeyAction::MenuShortcut('2'));
+        assert_eq!(s2.screen, ScreenState::SessionList);
+
+        // Shortcut '3' → CharacterManager
+        let mut s3 = ShellState::new(session_context());
+        s3.apply_action(KeyAction::MenuShortcut('3'));
+        assert_eq!(s3.screen, ScreenState::CharacterManager);
+
+        // Shortcut '4' → Settings
+        let mut s4 = ShellState::new(session_context());
+        s4.apply_action(KeyAction::MenuShortcut('4'));
+        assert_eq!(s4.screen, ScreenState::Settings);
+
+        // Shortcut 'q' → Quit
+        let mut sq = ShellState::new(session_context());
+        sq.apply_action(KeyAction::MenuShortcut('q'));
+        assert!(sq.should_quit);
+        assert_eq!(sq.screen, ScreenState::Quit);
     }
 }

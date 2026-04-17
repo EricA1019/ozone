@@ -127,6 +127,40 @@ pub struct SessionListEntryRenderModel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CharacterListRenderModel {
+    pub entries: Vec<CharacterListEntryRenderModel>,
+    pub selected_detail: Option<CharacterDetailRenderModel>,
+    pub total_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CharacterListEntryRenderModel {
+    pub name: String,
+    pub description: String,
+    pub session_count: String,
+    pub selected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CharacterDetailRenderModel {
+    pub name: String,
+    pub description: String,
+    pub session_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsRenderModel {
+    pub entries: Vec<SettingsRenderEntry>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsRenderEntry {
+    pub category: String,
+    pub key: String,
+    pub value: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderModel {
     pub title: String,
     pub subtitle: String,
@@ -138,6 +172,8 @@ pub struct RenderModel {
     pub overlay: Option<OverlayRenderModel>,
     pub main_menu: Option<MainMenuRenderModel>,
     pub session_list: Option<SessionListRenderModel>,
+    pub character_list: Option<CharacterListRenderModel>,
+    pub settings: Option<SettingsRenderModel>,
     pub hints: Vec<HintItem>,
     pub breadcrumb: String,
     pub command_palette: Option<CommandPaletteRenderModel>,
@@ -303,6 +339,54 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         None
     };
 
+    let character_list = if state.screen == ScreenState::CharacterManager {
+        let entries = state
+            .character_list
+            .entries
+            .iter()
+            .enumerate()
+            .map(|(i, e)| CharacterListEntryRenderModel {
+                name: e.name.clone(),
+                description: if e.description.chars().count() > 60 {
+                    let truncated: String = e.description.chars().take(59).collect();
+                    format!("{truncated}\u{2026}")
+                } else {
+                    e.description.clone()
+                },
+                session_count: format!("{} sessions", e.session_count),
+                selected: i == state.character_list.selected,
+            })
+            .collect();
+        let selected_detail = state.character_list.selected_entry().map(|e| {
+            CharacterDetailRenderModel {
+                name: e.name.clone(),
+                description: e.description.clone(),
+                session_count: e.session_count,
+            }
+        });
+        Some(CharacterListRenderModel {
+            total_count: state.character_list.entries.len(),
+            entries,
+            selected_detail,
+        })
+    } else {
+        None
+    };
+
+    let settings = if state.screen == ScreenState::Settings {
+        Some(SettingsRenderModel {
+            entries: state.settings.entries.iter().map(|e| {
+                SettingsRenderEntry {
+                    category: e.category.clone(),
+                    key: e.key.clone(),
+                    value: e.value.clone(),
+                }
+            }).collect(),
+        })
+    } else {
+        None
+    };
+
     RenderModel {
         title,
         subtitle,
@@ -314,6 +398,8 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         overlay: overlay_model(state.screen, state.input_mode),
         main_menu,
         session_list,
+        character_list,
+        settings,
         hints: build_hints(state),
         breadcrumb: build_breadcrumb(state),
         command_palette: if state.command_palette.open {
@@ -400,6 +486,10 @@ pub fn render_shell(frame: &mut Frame, layout: &LayoutModel, model: &RenderModel
             render_main_menu(frame, menu_pane, menu_model);
         } else if let Some(session_model) = model.session_list.as_ref() {
             render_session_list(frame, menu_pane, session_model);
+        } else if let Some(char_model) = model.character_list.as_ref() {
+            render_character_list(frame, menu_pane, char_model);
+        } else if let Some(settings_model) = model.settings.as_ref() {
+            render_settings(frame, menu_pane, settings_model);
         } else {
             render_menu_placeholder(frame, menu_pane, &model.title);
         }
@@ -975,6 +1065,187 @@ fn render_session_list(frame: &mut Frame, pane: &PaneLayout, model: &SessionList
         Paragraph::new(lines)
             .block(block)
             .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn render_character_list(frame: &mut Frame, pane: &PaneLayout, model: &CharacterListRenderModel) {
+    let area = pane.area;
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Header
+    lines.push(Line::from(vec![
+        Span::styled(format!("  {} ", theme::HEX), theme::brand_hex_style()),
+        Span::styled(
+            "Characters",
+            theme::title_focused_style().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!("  ({} total)", model.total_count),
+            theme::dim_style(),
+        ),
+    ]));
+
+    lines.push(Line::from(Span::styled(
+        "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+        theme::muted_style(),
+    )));
+
+    if model.entries.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  No character cards imported yet.",
+            theme::dim_style(),
+        )));
+        lines.push(Line::from(Span::styled(
+            "  Use `ozone-plus import card <file.json>` to add one.",
+            theme::dim_style(),
+        )));
+    } else {
+        // Column headers
+        lines.push(Line::from(vec![
+            Span::styled("      Name                          ", theme::dim_style()),
+            Span::styled("Sessions  ", theme::dim_style()),
+            Span::styled("Description", theme::dim_style()),
+        ]));
+        lines.push(Line::from(Span::styled(
+            "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+            theme::muted_style(),
+        )));
+
+        for entry in &model.entries {
+            let marker = if entry.selected {
+                format!("  {} ", theme::HEX_FILLED)
+            } else {
+                format!("  {} ", theme::HEX)
+            };
+            let style = if entry.selected {
+                theme::highlight_style()
+            } else {
+                theme::text_style()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(marker, style),
+                Span::styled(format!("{:<30}", truncate_str(&entry.name, 30)), style),
+                Span::styled(format!("{:<10}", entry.session_count), theme::dim_style()),
+                Span::styled(truncate_str(&entry.description, 40), theme::dim_style()),
+            ]));
+        }
+    }
+
+    // Selected detail panel
+    if let Some(detail) = &model.selected_detail {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+            theme::muted_style(),
+        )));
+        lines.push(Line::from(vec![
+            Span::styled("  ", Style::default()),
+            Span::styled(
+                &detail.name,
+                theme::title_focused_style().add_modifier(Modifier::BOLD),
+            ),
+        ]));
+        for chunk in detail.description.as_bytes().chunks(70) {
+            if let Ok(s) = std::str::from_utf8(chunk) {
+                lines.push(Line::from(Span::styled(
+                    format!("  {s}"),
+                    theme::text_style(),
+                )));
+            }
+        }
+        lines.push(Line::from(Span::styled(
+            format!("  {} session(s)", detail.session_count),
+            theme::dim_style(),
+        )));
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::focus_border_style())
+        .title(Span::styled(
+            format!(" {} Characters ", theme::HEX),
+            theme::accent_style(),
+        ));
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn render_settings(frame: &mut Frame, pane: &PaneLayout, model: &SettingsRenderModel) {
+    let area = pane.area;
+    let mut lines = vec![];
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("  {} Settings", theme::HEX),
+            theme::title_focused_style().add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(Line::from(Span::styled(
+        "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+        theme::muted_style(),
+    )));
+
+    if model.entries.is_empty() {
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  No configuration loaded.",
+            theme::dim_style(),
+        )));
+        lines.push(Line::from(Span::styled(
+            "  Session settings are stored in config.toml.",
+            theme::dim_style(),
+        )));
+    } else {
+        let mut current_category = String::new();
+        for entry in &model.entries {
+            if entry.category != current_category {
+                lines.push(Line::from(""));
+                lines.push(Line::from(vec![
+                    Span::styled(
+                        format!("  {} {}", theme::HEX_FILLED, entry.category),
+                        theme::title_focused_style(),
+                    ),
+                ]));
+                lines.push(Line::from(Span::styled(
+                    "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+                    theme::muted_style(),
+                )));
+                current_category = entry.category.clone();
+            }
+            lines.push(Line::from(vec![
+                Span::styled(format!("    {:<24}", entry.key), theme::text_style()),
+                Span::styled(&entry.value, theme::highlight_style()),
+            ]));
+        }
+    }
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+        theme::muted_style(),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  Edit config.toml directly to change settings.",
+        theme::dim_style(),
+    )));
+    lines.push(Line::from(Span::styled(
+        "  Changes take effect on next session open.",
+        theme::dim_style(),
+    )));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::focus_border_style())
+        .title(Span::styled(
+            format!(" {} Settings ", theme::HEX),
+            theme::accent_style(),
+        ));
+
+    frame.render_widget(
+        Paragraph::new(lines).block(block),
         area,
     );
 }

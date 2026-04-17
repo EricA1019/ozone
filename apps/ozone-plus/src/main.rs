@@ -1447,6 +1447,8 @@ fn send_message(args: SendArgs) -> Result<(), String> {
     let context = TuiSessionContext::new(session_id.clone(), session.name);
 
     let send_result = (|| -> Result<(), String> {
+        runtime.check_backend_health()?;
+
         runtime
             .send_draft(&context, &args.content)?
             .ok_or_else(|| "message content must not be empty".to_string())?;

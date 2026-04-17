@@ -161,6 +161,52 @@ impl InferenceAdapter {
     pub fn build_request(&self, prompt: impl Into<String>) -> InferenceRequest {
         InferenceRequest::new(prompt, self.config.context.max_tokens)
     }
+
+    /// Fast pre-flight check that the inference backend is reachable.
+    ///
+    /// Creates a short-lived tokio runtime to run the async health probe with
+    /// a 5-second timeout. Call this from synchronous code before dispatching
+    /// an inference request so the user gets an immediate, actionable error
+    /// instead of an indefinite hang.
+    pub fn check_backend_health(&self) -> Result<(), InferenceAdapterError> {
+        use ozone_inference::BackendHealth;
+
+        let gateway = self.gateway.clone();
+        let health = std::thread::scope(|s| {
+            s.spawn(move || {
+                let rt = tokio::runtime::Builder::new_current_thread()
+                    .enable_all()
+                    .build()
+                    .map_err(|e| {
+                        InferenceAdapterError::Gateway(format!(
+                            "failed to build health-check runtime: {e}"
+                        ))
+                    })?;
+                Ok::<_, InferenceAdapterError>(rt.block_on(gateway.check_health()))
+            })
+            .join()
+            .unwrap_or_else(|_| {
+                Err(InferenceAdapterError::Gateway(
+                    "health-check thread panicked".to_string(),
+                ))
+            })
+        })?;
+
+        match health {
+            BackendHealth::Healthy => Ok(()),
+            BackendHealth::Slow { latency_ms } => {
+                eprintln!(
+                    "⚠ backend at {} responded slowly ({latency_ms} ms)",
+                    self.config.backend.url
+                );
+                Ok(())
+            }
+            BackendHealth::Unreachable => Err(InferenceAdapterError::Gateway(format!(
+                "no LLM backend found at {}. Start KoboldCpp with `ozone` or check session config.",
+                self.config.backend.url
+            ))),
+        }
+    }
 }
 
 fn select_template(

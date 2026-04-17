@@ -211,6 +211,7 @@ impl InferenceGateway {
 
         // Build a streaming HTTP request using reqwest.
         let http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(300))
             .build()
             .context("failed to build streaming HTTP client")?;

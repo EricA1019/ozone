@@ -21,11 +21,12 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 pub use app::{
-    AppBootstrap, BranchItem, CommandEntry, CommandPaletteState, ContextDryRunPreview,
-    ContextPreview, ContextTokenBudget, DraftState, FocusTarget, GenerationPoll, MenuItem,
-    MenuState, RecallBrowser, RuntimeCancellation, RuntimeCompletion, RuntimeContextRefresh,
-    RuntimeFailure, RuntimePhase, RuntimeProgress, RuntimeSendReceipt, ScreenState, SessionContext,
-    SessionListEntry, SessionListState, SessionMetadata, SessionState, SessionStats, ShellState,
+    AppBootstrap, BranchItem, CharacterEntry, CharacterListState, CommandEntry,
+    CommandPaletteState, ContextDryRunPreview, ContextPreview, ContextTokenBudget, DraftState,
+    FocusTarget, GenerationPoll, MenuItem, MenuState, RecallBrowser, RuntimeCancellation,
+    RuntimeCompletion, RuntimeContextRefresh, RuntimeFailure, RuntimePhase, RuntimeProgress,
+    RuntimeSendReceipt, ScreenState, SessionContext, SessionListEntry, SessionListState,
+    SessionMetadata, SessionState, SessionStats, SettingsEntry, SettingsState, ShellState,
     TranscriptItem,
 };
 pub use input::{dispatch_command_palette_key, dispatch_key, dispatch_menu_key, InputMode, KeyAction};
@@ -152,6 +153,24 @@ where
                         if let Ok(entries) = runtime.list_sessions() {
                             app.session_list.entries = entries;
                             app.session_list.selected = 0;
+                        }
+                    }
+
+                    // Populate character list when entering the CharacterManager screen
+                    if app.screen == ScreenState::CharacterManager
+                        && app.character_list.entries.is_empty()
+                    {
+                        if let Ok(entries) = runtime.list_characters() {
+                            app.character_list.entries = entries;
+                        }
+                    }
+
+                    // Populate settings when entering the Settings screen
+                    if app.screen == ScreenState::Settings
+                        && app.settings.entries.is_empty()
+                    {
+                        if let Ok(entries) = runtime.get_settings() {
+                            app.settings = crate::app::SettingsState { entries };
                         }
                     }
 

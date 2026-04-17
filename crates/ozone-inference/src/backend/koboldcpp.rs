@@ -94,6 +94,7 @@ impl KoboldCppClient {
     /// Create a new client pointing at `base_url` (e.g. `"http://localhost:5001"`).
     pub fn new(base_url: impl Into<String>) -> anyhow::Result<Self> {
         let http = reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(10))
             .timeout(Duration::from_secs(30))
             .build()
             .context("failed to build reqwest client")?;
