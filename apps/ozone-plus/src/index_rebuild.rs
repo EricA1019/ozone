@@ -257,7 +257,7 @@ fn derive_embedding_records(
 
         for (source, embedding) in source_batch
             .iter()
-            .zip(generated_batch.embeddings.into_iter())
+            .zip(generated_batch.embeddings)
         {
             records.push(EmbeddingRecord {
                 artifact_id: source.artifact_id.clone(),
