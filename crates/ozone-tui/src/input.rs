@@ -33,6 +33,18 @@ pub enum KeyAction {
     MoveCursorEnd,
     ToggleHelp,
     ConfirmQuit,
+    MenuUp,
+    MenuDown,
+    MenuSelect,
+    MenuBack,
+    MenuShortcut(char),
+    OpenCommandPalette,
+    CommandPaletteInput(char),
+    CommandPaletteBackspace,
+    CommandPaletteSelect,
+    CommandPaletteUp,
+    CommandPaletteDown,
+    CommandPaletteClose,
 }
 
 pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
@@ -61,6 +73,7 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
             KeyCode::Char('t') => KeyAction::FocusTranscript,
             KeyCode::Char('b') => KeyAction::ToggleBookmark,
             KeyCode::Char('?') => KeyAction::ToggleHelp,
+            KeyCode::Char('/') | KeyCode::Char(':') => KeyAction::OpenCommandPalette,
             KeyCode::Esc | KeyCode::Char('q') => KeyAction::ConfirmQuit,
             _ => KeyAction::Noop,
         },
@@ -89,6 +102,41 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
             }
             _ => KeyAction::Noop,
         },
+    }
+}
+
+/// Dispatch keys when the TUI is on a menu screen (MainMenu, SessionList, etc.).
+/// Returns a KeyAction for menu navigation.
+pub fn dispatch_menu_key(key: KeyEvent) -> KeyAction {
+    if is_ctrl_c(key) {
+        return KeyAction::ConfirmQuit;
+    }
+
+    match key.code {
+        KeyCode::Up | KeyCode::Char('k') => KeyAction::MenuUp,
+        KeyCode::Down | KeyCode::Char('j') => KeyAction::MenuDown,
+        KeyCode::Enter => KeyAction::MenuSelect,
+        KeyCode::Esc | KeyCode::Backspace => KeyAction::MenuBack,
+        KeyCode::Char('q') => KeyAction::ConfirmQuit,
+        KeyCode::Char('?') => KeyAction::ToggleHelp,
+        KeyCode::Char('/') | KeyCode::Char(':') => KeyAction::OpenCommandPalette,
+        KeyCode::Char(ch) if ch.is_ascii_digit() => {
+            KeyAction::MenuShortcut(ch)
+        }
+        _ => KeyAction::Noop,
+    }
+}
+
+/// Dispatch keys when the command palette overlay is open.
+pub fn dispatch_command_palette_key(key: KeyEvent) -> Option<KeyAction> {
+    match key.code {
+        KeyCode::Esc => Some(KeyAction::CommandPaletteClose),
+        KeyCode::Enter => Some(KeyAction::CommandPaletteSelect),
+        KeyCode::Backspace => Some(KeyAction::CommandPaletteBackspace),
+        KeyCode::Up => Some(KeyAction::CommandPaletteUp),
+        KeyCode::Down => Some(KeyAction::CommandPaletteDown),
+        KeyCode::Char(c) => Some(KeyAction::CommandPaletteInput(c)),
+        _ => None,
     }
 }
 
@@ -123,7 +171,7 @@ fn is_ctrl_k(key: KeyEvent) -> bool {
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use super::{dispatch_key, InputMode, KeyAction};
+    use super::{dispatch_key, dispatch_menu_key, InputMode, KeyAction};
 
     #[test]
     fn normal_mode_maps_navigation_and_insert_keys() {
@@ -229,6 +277,42 @@ mod tests {
                 KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT)
             ),
             KeyAction::DraftInsertChar('?')
+        );
+    }
+
+    #[test]
+    fn menu_dispatch_maps_navigation_and_selection() {
+        assert_eq!(
+            dispatch_menu_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+            KeyAction::MenuUp
+        );
+        assert_eq!(
+            dispatch_menu_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+            KeyAction::MenuDown
+        );
+        assert_eq!(
+            dispatch_menu_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            KeyAction::MenuSelect
+        );
+        assert_eq!(
+            dispatch_menu_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            KeyAction::MenuBack
+        );
+        assert_eq!(
+            dispatch_menu_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)),
+            KeyAction::MenuDown
+        );
+        assert_eq!(
+            dispatch_menu_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE)),
+            KeyAction::MenuUp
+        );
+        assert_eq!(
+            dispatch_menu_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE)),
+            KeyAction::MenuShortcut('1')
+        );
+        assert_eq!(
+            dispatch_menu_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+            KeyAction::ConfirmQuit
         );
     }
 }

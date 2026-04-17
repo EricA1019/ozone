@@ -140,6 +140,13 @@ pub fn mode_badge_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+/// Accent style for hint keys and breadcrumb text.
+pub fn accent_style() -> Style {
+    Style::default()
+        .fg(TEAL)
+        .add_modifier(Modifier::BOLD)
+}
+
 /// Streaming cursor / generation-in-progress indicator.
 pub fn streaming_style() -> Style {
     Style::default()

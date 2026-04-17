@@ -21,13 +21,14 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 pub use app::{
-    AppBootstrap, BranchItem, ContextDryRunPreview, ContextPreview, ContextTokenBudget, DraftState,
-    FocusTarget, GenerationPoll, RecallBrowser, RuntimeCancellation, RuntimeCompletion,
-    RuntimeContextRefresh, RuntimeFailure, RuntimePhase, RuntimeProgress, RuntimeSendReceipt,
-    ScreenState, SessionContext, SessionMetadata, SessionState, SessionStats, ShellState,
+    AppBootstrap, BranchItem, CommandEntry, CommandPaletteState, ContextDryRunPreview,
+    ContextPreview, ContextTokenBudget, DraftState, FocusTarget, GenerationPoll, MenuItem,
+    MenuState, RecallBrowser, RuntimeCancellation, RuntimeCompletion, RuntimeContextRefresh,
+    RuntimeFailure, RuntimePhase, RuntimeProgress, RuntimeSendReceipt, ScreenState, SessionContext,
+    SessionListEntry, SessionListState, SessionMetadata, SessionState, SessionStats, ShellState,
     TranscriptItem,
 };
-pub use input::{dispatch_key, InputMode, KeyAction};
+pub use input::{dispatch_command_palette_key, dispatch_key, dispatch_menu_key, InputMode, KeyAction};
 pub use layout::{
     build_layout, build_layout_for_area, LayoutMode, LayoutModel, PaneId, PaneLayout,
 };
@@ -143,6 +144,17 @@ where
             match event::read().map_err(RunSessionError::Io)? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
                     let action = app.handle_key_event(key);
+
+                    // Populate session list when entering the SessionList screen
+                    if app.screen == ScreenState::SessionList
+                        && app.session_list.entries.is_empty()
+                    {
+                        if let Ok(entries) = runtime.list_sessions() {
+                            app.session_list.entries = entries;
+                            app.session_list.selected = 0;
+                        }
+                    }
+
                     if action != KeyAction::Noop {
                         runtime
                             .dispatch(&app.session.context, action)

@@ -6,7 +6,7 @@ use crate::{
     app::{
         AppBootstrap, BranchItem, DraftCheckpoint, DraftState, GenerationPoll, RuntimeCancellation,
         RuntimeCompletion, RuntimeContextRefresh, RuntimeSendReceipt, SessionContext,
-        TranscriptItem,
+        SessionListEntry, TranscriptItem,
     },
     input::KeyAction,
 };
@@ -107,6 +107,13 @@ pub trait SessionRuntime {
     ) -> Result<(), Self::Error> {
         Ok(())
     }
+
+    /// List available sessions for the session browser.
+    /// Returns an empty list by default (runtimes that don't support session
+    /// listing can use the default).
+    fn list_sessions(&mut self) -> Result<Vec<SessionListEntry>, Self::Error> {
+        Ok(Vec::new())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -127,6 +134,7 @@ pub struct MockRuntime {
     pub polled_requests: Vec<String>,
     pub persisted_drafts: BTreeMap<String, String>,
     pub toggled_pinned_messages: Vec<String>,
+    pub available_sessions: Vec<SessionListEntry>,
     pub active_generation: Option<MockGeneration>,
     next_request_number: u64,
 }
@@ -143,6 +151,7 @@ impl Default for MockRuntime {
             polled_requests: Vec::new(),
             persisted_drafts: BTreeMap::new(),
             toggled_pinned_messages: Vec::new(),
+            available_sessions: Vec::new(),
             active_generation: None,
             next_request_number: 1,
         }
@@ -324,6 +333,10 @@ impl SessionRuntime for MockRuntime {
     ) -> Result<Option<RuntimeContextRefresh>, Self::Error> {
         self.toggled_pinned_messages.push(message_id.to_owned());
         Ok(None)
+    }
+
+    fn list_sessions(&mut self) -> Result<Vec<SessionListEntry>, Self::Error> {
+        Ok(self.available_sessions.clone())
     }
 }
 

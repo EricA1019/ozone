@@ -1,0 +1,13 @@
+{
+  "version": 1,
+  "last_model_name": "Qwen2.5-0.5B.gguf",
+  "last_context_size": 16384,
+  "last_gpu_layers": -1,
+  "last_quant_kv": 1,
+  "last_threads": null,
+  "last_blas_threads": null,
+  "no_browser": false,
+  "preferred_backend": "KoboldCpp",
+  "preferred_frontend": "OzonePlus",
+  "preferred_tier": null
+}

@@ -1497,6 +1497,20 @@ impl SessionRuntime for Phase1dRuntime {
     ) -> Result<(), Self::Error> {
         self.save_persisted_draft(&context.session_id, draft)
     }
+
+    fn list_sessions(&mut self) -> Result<Vec<ozone_tui::SessionListEntry>, Self::Error> {
+        let sessions = self.repo.list_sessions().map_err(|e| e.to_string())?;
+        Ok(sessions
+            .into_iter()
+            .map(|s| ozone_tui::SessionListEntry {
+                session_id: s.session_id.to_string(),
+                name: s.name.clone(),
+                character_name: s.character_name.clone(),
+                message_count: s.message_count as usize,
+                last_active: Some(crate::format_timestamp(s.last_opened_at)),
+            })
+            .collect())
+    }
 }
 
 fn tui_branch_from_record(record: ConversationBranchRecord) -> TuiBranchItem {

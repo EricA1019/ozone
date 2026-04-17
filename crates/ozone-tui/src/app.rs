@@ -1,10 +1,14 @@
 use crossterm::event::KeyEvent;
 use ozone_core::{engine::CancelReason, session::SessionId};
 
-use crate::input::{dispatch_key, InputMode, KeyAction};
+use crate::input::{dispatch_command_palette_key, dispatch_key, dispatch_menu_key, InputMode, KeyAction};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenState {
+    MainMenu,
+    SessionList,
+    CharacterManager,
+    Settings,
     Conversation,
     Help,
     Quit,
@@ -37,6 +41,148 @@ impl Default for InspectorState {
             visible: false,
             focus: InspectorFocus::Summary,
         }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MenuItem {
+    pub id: &'static str,
+    pub label: &'static str,
+    pub description: &'static str,
+    pub shortcut: Option<char>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MenuState {
+    pub items: Vec<MenuItem>,
+    pub selected: usize,
+}
+
+impl Default for MenuState {
+    fn default() -> Self {
+        Self {
+            items: vec![
+                MenuItem {
+                    id: "new-chat",
+                    label: "New Chat",
+                    description: "Start a fresh conversation session",
+                    shortcut: Some('1'),
+                },
+                MenuItem {
+                    id: "sessions",
+                    label: "Sessions",
+                    description: "Browse and resume existing conversations",
+                    shortcut: Some('2'),
+                },
+                MenuItem {
+                    id: "characters",
+                    label: "Characters",
+                    description: "Manage character cards and personas",
+                    shortcut: Some('3'),
+                },
+                MenuItem {
+                    id: "settings",
+                    label: "Settings",
+                    description: "Configure backend, model, and preferences",
+                    shortcut: Some('4'),
+                },
+                MenuItem {
+                    id: "quit",
+                    label: "Quit",
+                    description: "Exit ozone+",
+                    shortcut: Some('q'),
+                },
+            ],
+            selected: 0,
+        }
+    }
+}
+
+impl MenuState {
+    pub fn move_up(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+        }
+    }
+
+    pub fn move_down(&mut self) {
+        if self.selected + 1 < self.items.len() {
+            self.selected += 1;
+        }
+    }
+
+    pub fn selected_item(&self) -> Option<&MenuItem> {
+        self.items.get(self.selected)
+    }
+
+    pub fn select_by_shortcut(&mut self, ch: char) -> bool {
+        if let Some(index) = self.items.iter().position(|item| item.shortcut == Some(ch)) {
+            self.selected = index;
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionListEntry {
+    pub session_id: String,
+    pub name: String,
+    pub character_name: Option<String>,
+    pub message_count: usize,
+    pub last_active: Option<String>,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct SessionListState {
+    pub entries: Vec<SessionListEntry>,
+    pub selected: usize,
+    pub filter: String,
+    pub loading: bool,
+}
+
+impl SessionListState {
+    pub fn move_up(&mut self) {
+        if self.selected > 0 {
+            self.selected -= 1;
+        }
+    }
+
+    pub fn move_down(&mut self) {
+        let count = self.visible_count();
+        if count > 0 && self.selected + 1 < count {
+            self.selected += 1;
+        }
+    }
+
+    pub fn visible_count(&self) -> usize {
+        if self.filter.is_empty() {
+            self.entries.len()
+        } else {
+            let lower = self.filter.to_lowercase();
+            self.entries.iter().filter(|e| {
+                e.name.to_lowercase().contains(&lower)
+                    || e.character_name.as_deref().unwrap_or("").to_lowercase().contains(&lower)
+            }).count()
+        }
+    }
+
+    pub fn visible_entries(&self) -> Vec<&SessionListEntry> {
+        if self.filter.is_empty() {
+            self.entries.iter().collect()
+        } else {
+            let lower = self.filter.to_lowercase();
+            self.entries.iter().filter(|e| {
+                e.name.to_lowercase().contains(&lower)
+                    || e.character_name.as_deref().unwrap_or("").to_lowercase().contains(&lower)
+            }).collect()
+        }
+    }
+
+    pub fn selected_entry(&self) -> Option<&SessionListEntry> {
+        let visible = self.visible_entries();
+        visible.get(self.selected).copied()
     }
 }
 
@@ -499,12 +645,75 @@ pub struct AppBootstrap {
     pub recall_browser: Option<RecallBrowser>,
 }
 
+// ── Command palette ──────────────────────────────────────────────────────
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandEntry {
+    pub name: String,
+    pub alias: Vec<String>,
+    pub description: String,
+}
+
+impl CommandEntry {
+    pub fn all() -> Vec<CommandEntry> {
+        vec![
+            CommandEntry { name: "new".into(), alias: vec!["n".into()], description: "Start new chat".into() },
+            CommandEntry { name: "sessions".into(), alias: vec!["s".into()], description: "Browse sessions".into() },
+            CommandEntry { name: "characters".into(), alias: vec!["c".into()], description: "Manage characters".into() },
+            CommandEntry { name: "settings".into(), alias: vec![], description: "Open settings".into() },
+            CommandEntry { name: "help".into(), alias: vec!["h".into(), "?".into()], description: "Show help".into() },
+            CommandEntry { name: "quit".into(), alias: vec!["q".into()], description: "Quit / back to menu".into() },
+            CommandEntry { name: "menu".into(), alias: vec!["m".into()], description: "Return to main menu".into() },
+        ]
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CommandPaletteState {
+    pub open: bool,
+    pub input: String,
+    pub selected: usize,
+}
+
+impl CommandPaletteState {
+    pub fn open(&mut self) {
+        self.open = true;
+        self.input.clear();
+        self.selected = 0;
+    }
+
+    pub fn close(&mut self) {
+        self.open = false;
+        self.input.clear();
+        self.selected = 0;
+    }
+
+    /// Return commands matching the current input prefix (case-insensitive).
+    pub fn filtered_commands(&self) -> Vec<CommandEntry> {
+        let all = CommandEntry::all();
+        if self.input.is_empty() {
+            return all;
+        }
+        let query = self.input.to_lowercase();
+        all.into_iter()
+            .filter(|c| c.name.to_lowercase().contains(&query) || c.alias.iter().any(|a| a.contains(&query)))
+            .collect()
+    }
+
+    pub fn selected_command(&self) -> Option<CommandEntry> {
+        let cmds = self.filtered_commands();
+        cmds.into_iter().nth(self.selected)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ShellState {
     pub screen: ScreenState,
     pub input_mode: InputMode,
     pub focus: FocusTarget,
     pub inspector: InspectorState,
+    pub menu: MenuState,
+    pub session_list: SessionListState,
     pub session: SessionState,
     pub draft: DraftState,
     pub history: InputHistoryState,
@@ -517,15 +726,18 @@ pub struct ShellState {
     pub pending_actions: Vec<KeyAction>,
     pub runtime_commands: Vec<RuntimeCommand>,
     pub should_quit: bool,
+    pub command_palette: CommandPaletteState,
 }
 
 impl ShellState {
     pub fn new(context: SessionContext) -> Self {
         Self {
-            screen: ScreenState::Conversation,
+            screen: ScreenState::MainMenu,
             input_mode: InputMode::Normal,
             focus: FocusTarget::Transcript,
             inspector: InspectorState::default(),
+            menu: MenuState::default(),
+            session_list: SessionListState::default(),
             session: SessionState::new(context),
             draft: DraftState::default(),
             history: InputHistoryState::default(),
@@ -538,6 +750,7 @@ impl ShellState {
             pending_actions: Vec::new(),
             runtime_commands: Vec::new(),
             should_quit: false,
+            command_palette: CommandPaletteState::default(),
         }
     }
 
@@ -577,8 +790,39 @@ impl ShellState {
         self.recall_browser = bootstrap.recall_browser;
     }
 
+    /// Transition from a menu screen into the conversation view for the current session.
+    pub fn enter_conversation(&mut self) {
+        self.screen = ScreenState::Conversation;
+        self.focus = FocusTarget::Transcript;
+        self.input_mode = InputMode::Normal;
+    }
+
+    /// Return to the main menu from any screen.
+    pub fn return_to_menu(&mut self) {
+        self.screen = ScreenState::MainMenu;
+        self.input_mode = InputMode::Normal;
+        self.focus = FocusTarget::Transcript;
+    }
+
     pub fn handle_key_event(&mut self, key: KeyEvent) -> KeyAction {
-        let action = dispatch_key(self.input_mode, key);
+        // Command palette takes priority when open
+        if self.command_palette.open {
+            if let Some(action) = dispatch_command_palette_key(key) {
+                self.apply_action(action);
+                return action;
+            }
+            return KeyAction::Noop;
+        }
+
+        let action = match self.screen {
+            ScreenState::MainMenu
+            | ScreenState::SessionList
+            | ScreenState::CharacterManager
+            | ScreenState::Settings => dispatch_menu_key(key),
+            ScreenState::Conversation | ScreenState::Help | ScreenState::Quit => {
+                dispatch_key(self.input_mode, key)
+            }
+        };
         if action != KeyAction::Noop {
             self.apply_action(action);
         }
@@ -685,12 +929,169 @@ impl ShellState {
             KeyAction::ToggleHelp => {
                 self.screen = match self.screen {
                     ScreenState::Help => ScreenState::Conversation,
-                    _ => ScreenState::Help,
+                    ScreenState::Conversation => ScreenState::Help,
+                    other => other,
                 };
             }
             KeyAction::ConfirmQuit => {
-                self.screen = ScreenState::Quit;
-                self.should_quit = true;
+                match self.screen {
+                    ScreenState::MainMenu => {
+                        self.screen = ScreenState::Quit;
+                        self.should_quit = true;
+                    }
+                    ScreenState::Conversation | ScreenState::Help => {
+                        self.return_to_menu();
+                        self.status_line = Some("Returned to main menu".into());
+                    }
+                    _ => {
+                        self.screen = ScreenState::Quit;
+                        self.should_quit = true;
+                    }
+                }
+            }
+            KeyAction::MenuUp => {
+                match self.screen {
+                    ScreenState::MainMenu => self.menu.move_up(),
+                    ScreenState::SessionList => self.session_list.move_up(),
+                    _ => {}
+                }
+            }
+            KeyAction::MenuDown => {
+                match self.screen {
+                    ScreenState::MainMenu => self.menu.move_down(),
+                    ScreenState::SessionList => self.session_list.move_down(),
+                    _ => {}
+                }
+            }
+            KeyAction::MenuSelect => {
+                match self.screen {
+                    ScreenState::MainMenu => {
+                        if let Some(item) = self.menu.selected_item() {
+                            match item.id {
+                                "new-chat" => {
+                                    self.enter_conversation();
+                                    self.status_line = Some("New conversation started".into());
+                                }
+                                "sessions" => {
+                                    self.screen = ScreenState::SessionList;
+                                    self.status_line =
+                                        Some("Loading sessions…".into());
+                                }
+                                "characters" => {
+                                    self.screen = ScreenState::CharacterManager;
+                                    self.status_line =
+                                        Some("Character manager (coming soon)".into());
+                                }
+                                "settings" => {
+                                    self.screen = ScreenState::Settings;
+                                    self.status_line =
+                                        Some("Settings (coming soon)".into());
+                                }
+                                "quit" => {
+                                    self.screen = ScreenState::Quit;
+                                    self.should_quit = true;
+                                }
+                                _ => {}
+                            }
+                        }
+                    }
+                    ScreenState::SessionList => {
+                        if let Some(entry) = self.session_list.selected_entry() {
+                            self.status_line = Some(format!("Opening: {}", entry.name));
+                            self.enter_conversation();
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            KeyAction::MenuBack => {
+                match self.screen {
+                    ScreenState::SessionList
+                    | ScreenState::CharacterManager
+                    | ScreenState::Settings
+                    | ScreenState::Conversation => {
+                        self.screen = ScreenState::MainMenu;
+                        self.status_line = Some("Returned to main menu".into());
+                    }
+                    ScreenState::MainMenu => {
+                        // Already at top level — do nothing
+                    }
+                    _ => {}
+                }
+            }
+            KeyAction::MenuShortcut(ch) => {
+                if self.screen == ScreenState::MainMenu
+                    && self.menu.select_by_shortcut(ch)
+                {
+                    self.apply_action(KeyAction::MenuSelect);
+                }
+            }
+            KeyAction::OpenCommandPalette => {
+                self.command_palette.open();
+            }
+            KeyAction::CommandPaletteClose => {
+                self.command_palette.close();
+            }
+            KeyAction::CommandPaletteInput(c) => {
+                self.command_palette.input.push(c);
+                self.command_palette.selected = 0;
+            }
+            KeyAction::CommandPaletteBackspace => {
+                self.command_palette.input.pop();
+                self.command_palette.selected = 0;
+            }
+            KeyAction::CommandPaletteUp => {
+                if self.command_palette.selected > 0 {
+                    self.command_palette.selected -= 1;
+                }
+            }
+            KeyAction::CommandPaletteDown => {
+                let count = self.command_palette.filtered_commands().len();
+                if self.command_palette.selected + 1 < count {
+                    self.command_palette.selected += 1;
+                }
+            }
+            KeyAction::CommandPaletteSelect => {
+                if let Some(cmd) = self.command_palette.selected_command() {
+                    self.command_palette.close();
+                    self.execute_command(&cmd.name);
+                }
+            }
+        }
+    }
+
+    fn execute_command(&mut self, name: &str) {
+        match name {
+            "new" => {
+                self.enter_conversation();
+                self.status_line = Some("New conversation".into());
+            }
+            "sessions" => {
+                self.screen = ScreenState::SessionList;
+            }
+            "characters" => {
+                self.screen = ScreenState::CharacterManager;
+            }
+            "settings" => {
+                self.screen = ScreenState::Settings;
+            }
+            "help" => {
+                self.screen = ScreenState::Help;
+            }
+            "quit" => {
+                match self.screen {
+                    ScreenState::MainMenu => {
+                        self.screen = ScreenState::Quit;
+                        self.should_quit = true;
+                    }
+                    _ => self.return_to_menu(),
+                }
+            }
+            "menu" => {
+                self.return_to_menu();
+            }
+            _ => {
+                self.status_line = Some(format!("Unknown command: {}", name));
             }
         }
     }
@@ -945,8 +1346,8 @@ mod tests {
         AppBootstrap, BranchItem, ContextDryRunPreview, ContextPreview, DraftCheckpoint,
         DraftState, FocusTarget, GenerationPoll, InspectorFocus, RecallBrowser,
         RuntimeCancellation, RuntimeCommand, RuntimeContextRefresh, RuntimeFailure, RuntimePhase,
-        RuntimeProgress, RuntimeSendReceipt, ScreenState, SessionContext, SessionMetadata,
-        SessionStats, ShellState, TranscriptItem,
+        RuntimeProgress, RuntimeSendReceipt, ScreenState, SessionContext, SessionListEntry,
+        SessionMetadata, SessionStats, ShellState, TranscriptItem,
     };
     use crate::input::{InputMode, KeyAction};
 
@@ -988,6 +1389,7 @@ mod tests {
     #[test]
     fn input_mode_transitions_follow_focus_changes() {
         let mut app = ShellState::new(session_context());
+        app.enter_conversation();
 
         assert_eq!(app.input_mode, InputMode::Normal);
         assert_eq!(app.focus, FocusTarget::Transcript);
@@ -1024,6 +1426,7 @@ mod tests {
     #[test]
     fn submitting_draft_queues_send_and_history_restores_working_copy() {
         let mut app = ShellState::new(session_context());
+        app.enter_conversation();
 
         app.apply_action(KeyAction::EnterInsert);
         for ch in ['h', 'i'] {
@@ -1056,6 +1459,7 @@ mod tests {
     #[test]
     fn shell_commands_route_to_runtime_without_queuing_generation() {
         let mut app = ShellState::new(session_context());
+        app.enter_conversation();
 
         app.apply_action(KeyAction::EnterInsert);
         for ch in "/session show".chars() {
@@ -1090,6 +1494,7 @@ mod tests {
     #[test]
     fn ctrl_c_queues_cancel_for_active_generation() {
         let mut app = ShellState::new(session_context());
+        app.enter_conversation();
 
         app.apply_action(KeyAction::EnterInsert);
         for ch in ['h', 'e', 'l', 'l', 'o'] {
@@ -1125,6 +1530,7 @@ mod tests {
     #[test]
     fn ctrl_i_toggles_inspector_and_runtime_updates_focus() {
         let mut app = ShellState::new(session_context());
+        app.enter_conversation();
 
         assert!(!app.inspector.visible);
         assert_eq!(app.inspector.focus, InspectorFocus::Summary);
@@ -1157,6 +1563,7 @@ mod tests {
     #[test]
     fn ctrl_d_queues_context_dry_run_command() {
         let mut app = ShellState::new(session_context());
+        app.enter_conversation();
 
         assert_eq!(
             app.handle_key_event(KeyEvent::new(KeyCode::Char('d'), KeyModifiers::CONTROL)),
@@ -1175,6 +1582,7 @@ mod tests {
     #[test]
     fn ctrl_k_queues_pinned_memory_toggle_for_selected_persisted_message() {
         let mut app = ShellState::new(session_context());
+        app.enter_conversation();
         app.hydrate(AppBootstrap {
             transcript: vec![TranscriptItem::persisted(
                 "msg-1",
@@ -1210,6 +1618,7 @@ mod tests {
     #[test]
     fn bookmark_action_queues_toggle_for_selected_persisted_message() {
         let mut app = ShellState::new(session_context());
+        app.enter_conversation();
         app.hydrate(AppBootstrap {
             transcript: vec![TranscriptItem::persisted(
                 "msg-1",
@@ -1244,16 +1653,28 @@ mod tests {
     #[test]
     fn help_and_quit_actions_update_shell_state() {
         let mut app = ShellState::new(session_context());
+        app.enter_conversation();
 
+        // Toggle help from conversation
         app.apply_action(KeyAction::ToggleHelp);
         assert_eq!(app.screen, ScreenState::Help);
 
+        // ConfirmQuit from Help returns to main menu instead of quitting
+        app.apply_action(KeyAction::ConfirmQuit);
+        assert_eq!(app.screen, ScreenState::MainMenu);
+        assert!(!app.should_quit);
+
+        // ConfirmQuit from MainMenu actually quits
         app.apply_action(KeyAction::ConfirmQuit);
         assert_eq!(app.screen, ScreenState::Quit);
         assert!(app.should_quit);
         assert_eq!(
             app.take_pending_actions(),
-            vec![KeyAction::ToggleHelp, KeyAction::ConfirmQuit]
+            vec![
+                KeyAction::ToggleHelp,
+                KeyAction::ConfirmQuit,
+                KeyAction::ConfirmQuit,
+            ]
         );
     }
 
@@ -1428,5 +1849,336 @@ mod tests {
                 })
             }
         );
+    }
+
+    #[test]
+    fn session_list_navigation() {
+        let mut state = ShellState::new(session_context());
+        assert_eq!(state.screen, ScreenState::MainMenu);
+
+        // Navigate to sessions (item index 1)
+        state.menu.selected = 1; // "Sessions"
+        state.apply_action(KeyAction::MenuSelect);
+        assert_eq!(state.screen, ScreenState::SessionList);
+
+        // Add an entry and select it
+        state.session_list.entries = vec![SessionListEntry {
+            session_id: "test-1".into(),
+            name: "Test Session".into(),
+            character_name: None,
+            message_count: 5,
+            last_active: None,
+        }];
+        state.session_list.selected = 0;
+
+        // Press enter to open
+        state.apply_action(KeyAction::MenuSelect);
+        assert_eq!(state.screen, ScreenState::Conversation);
+
+        // Esc returns to menu
+        state.apply_action(KeyAction::MenuBack);
+        assert_eq!(state.screen, ScreenState::MainMenu);
+    }
+
+    // ── Menu navigation tests ──────────────────────────────────────────
+
+    #[test]
+    fn menu_navigation_up_down() {
+        let mut state = ShellState::new(session_context());
+        assert_eq!(state.menu.selected, 0);
+
+        state.apply_action(KeyAction::MenuDown);
+        assert_eq!(state.menu.selected, 1);
+
+        state.apply_action(KeyAction::MenuDown);
+        assert_eq!(state.menu.selected, 2);
+
+        state.apply_action(KeyAction::MenuUp);
+        assert_eq!(state.menu.selected, 1);
+
+        // Up from 0 should stay at 0
+        state.menu.selected = 0;
+        state.apply_action(KeyAction::MenuUp);
+        assert_eq!(state.menu.selected, 0);
+    }
+
+    #[test]
+    fn menu_navigation_clamps_at_bounds() {
+        let mut state = ShellState::new(session_context());
+        let max = state.menu.items.len() - 1;
+
+        for _ in 0..20 {
+            state.apply_action(KeyAction::MenuDown);
+        }
+        assert_eq!(state.menu.selected, max);
+
+        state.apply_action(KeyAction::MenuDown);
+        assert_eq!(state.menu.selected, max);
+    }
+
+    #[test]
+    fn menu_shortcut_selects_correct_item() {
+        let mut state = ShellState::new(session_context());
+
+        // Shortcut '2' selects "Sessions" and triggers MenuSelect → SessionList
+        state.apply_action(KeyAction::MenuShortcut('2'));
+        assert_eq!(state.screen, ScreenState::SessionList);
+    }
+
+    // ── Screen transition tests ────────────────────────────────────────
+
+    #[test]
+    fn new_chat_enters_conversation() {
+        let mut state = ShellState::new(session_context());
+        assert_eq!(state.screen, ScreenState::MainMenu);
+
+        // "New Chat" is at index 0 (default selected)
+        state.apply_action(KeyAction::MenuSelect);
+        assert_eq!(state.screen, ScreenState::Conversation);
+    }
+
+    #[test]
+    fn sessions_menu_enters_session_list() {
+        let mut state = ShellState::new(session_context());
+        state.menu.selected = 1; // "Sessions"
+        state.apply_action(KeyAction::MenuSelect);
+        assert_eq!(state.screen, ScreenState::SessionList);
+    }
+
+    #[test]
+    fn back_from_session_list_returns_to_menu() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::SessionList;
+        state.apply_action(KeyAction::MenuBack);
+        assert_eq!(state.screen, ScreenState::MainMenu);
+    }
+
+    #[test]
+    fn back_from_conversation_returns_to_menu() {
+        let mut state = ShellState::new(session_context());
+        state.enter_conversation();
+        assert_eq!(state.screen, ScreenState::Conversation);
+
+        state.apply_action(KeyAction::ConfirmQuit);
+        assert_eq!(state.screen, ScreenState::MainMenu);
+        assert!(!state.should_quit);
+    }
+
+    // ── Quit behavior tests ───────────────────────────────────────────
+
+    #[test]
+    fn quit_from_menu_exits_app() {
+        let mut state = ShellState::new(session_context());
+        assert_eq!(state.screen, ScreenState::MainMenu);
+
+        state.menu.selected = 4; // "Quit"
+        state.apply_action(KeyAction::MenuSelect);
+        assert!(state.should_quit);
+    }
+
+    #[test]
+    fn quit_shortcut_from_menu_exits() {
+        let mut state = ShellState::new(session_context());
+        state.apply_action(KeyAction::MenuShortcut('q'));
+        assert!(state.should_quit);
+    }
+
+    #[test]
+    fn confirm_quit_from_conversation_returns_to_menu() {
+        let mut state = ShellState::new(session_context());
+        state.enter_conversation();
+        state.apply_action(KeyAction::ConfirmQuit);
+        assert_eq!(state.screen, ScreenState::MainMenu);
+        assert!(!state.should_quit);
+    }
+
+    // ── SessionListState tests ────────────────────────────────────────
+
+    #[test]
+    fn session_list_filter_narrows_entries() {
+        let mut state = ShellState::new(session_context());
+        state.session_list.entries = vec![
+            SessionListEntry {
+                session_id: "1".into(),
+                name: "Alpha Chat".into(),
+                character_name: Some("Bot".into()),
+                message_count: 10,
+                last_active: None,
+            },
+            SessionListEntry {
+                session_id: "2".into(),
+                name: "Beta Chat".into(),
+                character_name: None,
+                message_count: 5,
+                last_active: None,
+            },
+        ];
+
+        state.session_list.filter = "alpha".into();
+        let visible = state.session_list.visible_entries();
+        assert_eq!(visible.len(), 1);
+        assert_eq!(visible[0].name, "Alpha Chat");
+    }
+
+    #[test]
+    fn session_list_selected_entry_returns_correct() {
+        let mut state = ShellState::new(session_context());
+        state.session_list.entries = vec![
+            SessionListEntry {
+                session_id: "1".into(),
+                name: "First".into(),
+                character_name: None,
+                message_count: 0,
+                last_active: None,
+            },
+            SessionListEntry {
+                session_id: "2".into(),
+                name: "Second".into(),
+                character_name: None,
+                message_count: 0,
+                last_active: None,
+            },
+        ];
+        state.session_list.selected = 1;
+        let entry = state.session_list.selected_entry();
+        assert!(entry.is_some());
+        assert_eq!(entry.unwrap().name, "Second");
+    }
+
+    // ── Command palette tests ─────────────────────────────────────────
+
+    #[test]
+    fn command_palette_opens_and_closes() {
+        let mut state = ShellState::new(session_context());
+        assert!(!state.command_palette.open);
+
+        state.apply_action(KeyAction::OpenCommandPalette);
+        assert!(state.command_palette.open);
+
+        state.apply_action(KeyAction::CommandPaletteClose);
+        assert!(!state.command_palette.open);
+    }
+
+    #[test]
+    fn command_palette_filters_commands() {
+        let mut state = ShellState::new(session_context());
+        state.command_palette.open();
+        state.command_palette.input = "ses".into();
+        let filtered = state.command_palette.filtered_commands();
+        assert_eq!(filtered.len(), 1);
+        assert_eq!(filtered[0].name, "sessions");
+    }
+
+    #[test]
+    fn command_palette_executes_command() {
+        let mut state = ShellState::new(session_context());
+        state.apply_action(KeyAction::OpenCommandPalette);
+        state.apply_action(KeyAction::CommandPaletteInput('n'));
+        state.apply_action(KeyAction::CommandPaletteInput('e'));
+        state.apply_action(KeyAction::CommandPaletteInput('w'));
+        state.apply_action(KeyAction::CommandPaletteSelect);
+        assert!(!state.command_palette.open);
+        assert_eq!(state.screen, ScreenState::Conversation);
+    }
+
+    #[test]
+    fn command_palette_navigation() {
+        let mut state = ShellState::new(session_context());
+        state.apply_action(KeyAction::OpenCommandPalette);
+        assert_eq!(state.command_palette.selected, 0);
+
+        state.apply_action(KeyAction::CommandPaletteDown);
+        assert_eq!(state.command_palette.selected, 1);
+
+        state.apply_action(KeyAction::CommandPaletteUp);
+        assert_eq!(state.command_palette.selected, 0);
+
+        // Up at 0 stays at 0
+        state.apply_action(KeyAction::CommandPaletteUp);
+        assert_eq!(state.command_palette.selected, 0);
+    }
+
+    #[test]
+    fn command_palette_backspace_resets_selection() {
+        let mut state = ShellState::new(session_context());
+        state.apply_action(KeyAction::OpenCommandPalette);
+        state.apply_action(KeyAction::CommandPaletteInput('s'));
+        state.apply_action(KeyAction::CommandPaletteDown);
+        assert!(state.command_palette.selected > 0 || state.command_palette.filtered_commands().len() <= 1);
+
+        state.apply_action(KeyAction::CommandPaletteBackspace);
+        assert_eq!(state.command_palette.selected, 0);
+        assert!(state.command_palette.input.is_empty());
+    }
+
+    #[test]
+    fn command_palette_intercepts_keys_in_handle_key_event() {
+        let mut state = ShellState::new(session_context());
+        state.apply_action(KeyAction::OpenCommandPalette);
+        assert!(state.command_palette.open);
+
+        // Typing should go to palette, not menu
+        let action = state.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
+        assert_eq!(action, KeyAction::CommandPaletteInput('h'));
+        assert_eq!(state.command_palette.input, "h");
+
+        // Esc should close palette, not quit
+        let action = state.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
+        assert_eq!(action, KeyAction::CommandPaletteClose);
+        assert!(!state.command_palette.open);
+    }
+
+    #[test]
+    fn slash_opens_command_palette_from_menu() {
+        let mut state = ShellState::new(session_context());
+        assert_eq!(state.screen, ScreenState::MainMenu);
+
+        let action = state.handle_key_event(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        assert_eq!(action, KeyAction::OpenCommandPalette);
+        assert!(state.command_palette.open);
+    }
+
+    #[test]
+    fn slash_opens_command_palette_from_conversation_normal_mode() {
+        let mut state = ShellState::new(session_context());
+        state.enter_conversation();
+        assert_eq!(state.input_mode, InputMode::Normal);
+
+        let action = state.handle_key_event(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        assert_eq!(action, KeyAction::OpenCommandPalette);
+        assert!(state.command_palette.open);
+    }
+
+    #[test]
+    fn slash_does_not_open_palette_in_insert_mode() {
+        let mut state = ShellState::new(session_context());
+        state.enter_conversation();
+        state.apply_action(KeyAction::EnterInsert);
+        assert_eq!(state.input_mode, InputMode::Insert);
+
+        let action = state.handle_key_event(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
+        assert_eq!(action, KeyAction::DraftInsertChar('/'));
+        assert!(!state.command_palette.open);
+    }
+
+    #[test]
+    fn command_palette_quit_from_menu_quits() {
+        let mut state = ShellState::new(session_context());
+        assert_eq!(state.screen, ScreenState::MainMenu);
+        state.apply_action(KeyAction::OpenCommandPalette);
+        state.command_palette.input = "quit".into();
+        state.apply_action(KeyAction::CommandPaletteSelect);
+        assert!(state.should_quit);
+    }
+
+    #[test]
+    fn command_palette_quit_from_conversation_returns_to_menu() {
+        let mut state = ShellState::new(session_context());
+        state.enter_conversation();
+        state.apply_action(KeyAction::OpenCommandPalette);
+        state.command_palette.input = "quit".into();
+        state.apply_action(KeyAction::CommandPaletteSelect);
+        assert!(!state.should_quit);
+        assert_eq!(state.screen, ScreenState::MainMenu);
     }
 }

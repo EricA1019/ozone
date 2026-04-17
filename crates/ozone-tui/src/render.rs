@@ -1,5 +1,6 @@
 use ratatui::{
-    style::Modifier,
+    layout::{Alignment, Rect},
+    style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
     Frame,
@@ -70,6 +71,62 @@ pub struct OverlayRenderModel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct HintItem {
+    pub key: String,
+    pub action: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandPaletteRenderModel {
+    pub input: String,
+    pub entries: Vec<CommandPaletteEntry>,
+    pub selected: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CommandPaletteEntry {
+    pub name: String,
+    pub description: String,
+    pub selected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MainMenuRenderModel {
+    pub header_lines: Vec<String>,
+    pub items: Vec<MenuItemRenderModel>,
+    pub hint: String,
+    pub session_count: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MenuItemRenderModel {
+    pub label: String,
+    pub description: String,
+    pub shortcut: String,
+    pub selected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionListRenderModel {
+    pub entries: Vec<SessionListEntryRenderModel>,
+    pub selected: usize,
+    pub filter: String,
+    pub total_count: usize,
+    pub visible_count: usize,
+    pub hint: String,
+    pub loading: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SessionListEntryRenderModel {
+    pub name: String,
+    pub character: String,
+    pub message_count: String,
+    pub last_active: String,
+    pub selected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RenderModel {
     pub title: String,
     pub subtitle: String,
@@ -79,6 +136,11 @@ pub struct RenderModel {
     pub inspector: Option<InspectorPaneModel>,
     pub indicators: ShellIndicators,
     pub overlay: Option<OverlayRenderModel>,
+    pub main_menu: Option<MainMenuRenderModel>,
+    pub session_list: Option<SessionListRenderModel>,
+    pub hints: Vec<HintItem>,
+    pub breadcrumb: String,
+    pub command_palette: Option<CommandPaletteRenderModel>,
 }
 
 pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderModel {
@@ -183,6 +245,64 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         lines: inspector_lines(state, &indicators),
     });
 
+    let main_menu = if state.screen == ScreenState::MainMenu {
+        Some(MainMenuRenderModel {
+            header_lines: vec![
+                format!("{}  {}  {}", theme::HEX, theme::HEX_FILLED, theme::HEX),
+                "ozone+".into(),
+                "local-LLM chat shell".into(),
+            ],
+            items: state
+                .menu
+                .items
+                .iter()
+                .enumerate()
+                .map(|(i, item)| MenuItemRenderModel {
+                    label: item.label.to_string(),
+                    description: item.description.to_string(),
+                    shortcut: item.shortcut.map(|c| c.to_string()).unwrap_or_default(),
+                    selected: i == state.menu.selected,
+                })
+                .collect(),
+            hint: "j/k navigate · Enter select · 1-4 quick-jump · q quit · ? help".into(),
+            session_count: state.session_list.entries.len(),
+        })
+    } else {
+        None
+    };
+
+    let session_list = if state.screen == ScreenState::SessionList {
+        let visible = state.session_list.visible_entries();
+        Some(SessionListRenderModel {
+            entries: visible
+                .iter()
+                .enumerate()
+                .map(|(i, entry)| SessionListEntryRenderModel {
+                    name: entry.name.clone(),
+                    character: entry
+                        .character_name
+                        .clone()
+                        .unwrap_or_else(|| "\u{2014}".into()),
+                    message_count: format!("{} msgs", entry.message_count),
+                    last_active: entry
+                        .last_active
+                        .clone()
+                        .unwrap_or_else(|| "\u{2014}".into()),
+                    selected: i == state.session_list.selected,
+                })
+                .collect(),
+            selected: state.session_list.selected,
+            filter: state.session_list.filter.clone(),
+            total_count: state.session_list.entries.len(),
+            visible_count: state.session_list.visible_count(),
+            hint: "j/k navigate \u{00b7} Enter open \u{00b7} n new session \u{00b7} / filter \u{00b7} Esc back"
+                .into(),
+            loading: state.session_list.loading,
+        })
+    } else {
+        None
+    };
+
     RenderModel {
         title,
         subtitle,
@@ -192,10 +312,113 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         inspector,
         indicators,
         overlay: overlay_model(state.screen, state.input_mode),
+        main_menu,
+        session_list,
+        hints: build_hints(state),
+        breadcrumb: build_breadcrumb(state),
+        command_palette: if state.command_palette.open {
+            let filtered = state.command_palette.filtered_commands();
+            Some(CommandPaletteRenderModel {
+                input: state.command_palette.input.clone(),
+                entries: filtered.iter().enumerate().map(|(i, cmd)| CommandPaletteEntry {
+                    name: format!("/{}", cmd.name),
+                    description: cmd.description.clone(),
+                    selected: i == state.command_palette.selected,
+                }).collect(),
+                selected: state.command_palette.selected,
+            })
+        } else {
+            None
+        },
+    }
+}
+
+fn build_hints(state: &ShellState) -> Vec<HintItem> {
+    match state.screen {
+        ScreenState::MainMenu => vec![
+            HintItem { key: "↑↓".into(), action: "Navigate".into() },
+            HintItem { key: "Enter".into(), action: "Select".into() },
+            HintItem { key: "1-4".into(), action: "Quick select".into() },
+            HintItem { key: "q".into(), action: "Quit".into() },
+            HintItem { key: "/".into(), action: "Commands".into() },
+        ],
+        ScreenState::SessionList => vec![
+            HintItem { key: "↑↓".into(), action: "Navigate".into() },
+            HintItem { key: "Enter".into(), action: "Open".into() },
+            HintItem { key: "/".into(), action: "Commands".into() },
+            HintItem { key: "Esc".into(), action: "Back".into() },
+        ],
+        ScreenState::Conversation => vec![
+            HintItem { key: "i".into(), action: "Insert mode".into() },
+            HintItem { key: "Enter".into(), action: "Send".into() },
+            HintItem { key: "?".into(), action: "Help".into() },
+            HintItem { key: "Esc".into(), action: "Menu".into() },
+            HintItem { key: "/".into(), action: "Commands".into() },
+        ],
+        ScreenState::Help => vec![
+            HintItem { key: "Esc".into(), action: "Back".into() },
+            HintItem { key: "q".into(), action: "Quit".into() },
+        ],
+        _ => vec![
+            HintItem { key: "Esc".into(), action: "Back".into() },
+        ],
+    }
+}
+
+fn build_breadcrumb(state: &ShellState) -> String {
+    match state.screen {
+        ScreenState::MainMenu => "⬡ Ozone+".into(),
+        ScreenState::SessionList => "⬡ Ozone+ › Sessions".into(),
+        ScreenState::CharacterManager => "⬡ Ozone+ › Characters".into(),
+        ScreenState::Settings => "⬡ Ozone+ › Settings".into(),
+        ScreenState::Conversation => format!("⬡ Ozone+ › {}", state.session.context.title),
+        ScreenState::Help => "⬡ Ozone+ › Help".into(),
+        ScreenState::Quit => "⬡ Ozone+".into(),
     }
 }
 
 pub fn render_shell(frame: &mut Frame, layout: &LayoutModel, model: &RenderModel) {
+    let full_area = frame.area();
+
+    // Reserve bottom row for hints
+    let hint_area = if full_area.height > 3 && !model.hints.is_empty() {
+        Rect::new(full_area.x, full_area.y + full_area.height - 1, full_area.width, 1)
+    } else {
+        Rect::default()
+    };
+
+    // Reserve top row for breadcrumb
+    let breadcrumb_area = if full_area.height > 5 {
+        Rect::new(full_area.x + 1, full_area.y, full_area.width.saturating_sub(2), 1)
+    } else {
+        Rect::default()
+    };
+
+    // Full-screen menu screens
+    if let Some(menu_pane) = layout.menu_area.as_ref() {
+        if let Some(menu_model) = model.main_menu.as_ref() {
+            render_main_menu(frame, menu_pane, menu_model);
+        } else if let Some(session_model) = model.session_list.as_ref() {
+            render_session_list(frame, menu_pane, session_model);
+        } else {
+            render_menu_placeholder(frame, menu_pane, &model.title);
+        }
+
+        // Render overlays on top of menu screens
+        if breadcrumb_area.height > 0 {
+            render_breadcrumb(frame, breadcrumb_area, &model.breadcrumb);
+        }
+        if hint_area.height > 0 {
+            render_hints(frame, hint_area, &model.hints);
+        }
+
+        // Command palette overlay (on top of everything)
+        if let Some(palette) = model.command_palette.as_ref() {
+            render_command_palette(frame, palette);
+        }
+        return;
+    }
+
     render_conversation(
         frame,
         &layout.conversation,
@@ -222,6 +445,103 @@ pub fn render_shell(frame: &mut Frame, layout: &LayoutModel, model: &RenderModel
     if let (Some(pane), Some(model)) = (layout.overlay.as_ref(), model.overlay.as_ref()) {
         render_overlay(frame, pane, model);
     }
+
+    // Render hints and breadcrumb last (on top)
+    if breadcrumb_area.height > 0 {
+        render_breadcrumb(frame, breadcrumb_area, &model.breadcrumb);
+    }
+    if hint_area.height > 0 {
+        render_hints(frame, hint_area, &model.hints);
+    }
+
+    // Command palette overlay (on top of everything)
+    if let Some(palette) = model.command_palette.as_ref() {
+        render_command_palette(frame, palette);
+    }
+}
+
+fn render_hints(frame: &mut Frame, area: Rect, hints: &[HintItem]) {
+    if hints.is_empty() || area.height == 0 {
+        return;
+    }
+    let spans: Vec<Span> = hints
+        .iter()
+        .enumerate()
+        .flat_map(|(i, h)| {
+            let mut s = vec![
+                Span::styled(format!(" {} ", h.key), theme::accent_style()),
+                Span::styled(h.action.clone(), theme::dim_style()),
+            ];
+            if i < hints.len() - 1 {
+                s.push(Span::styled("  │  ", theme::dim_style()));
+            }
+            s
+        })
+        .collect();
+    frame.render_widget(
+        Paragraph::new(Line::from(spans)).alignment(Alignment::Center),
+        area,
+    );
+}
+
+fn render_command_palette(frame: &mut Frame, model: &CommandPaletteRenderModel) {
+    let area = frame.area();
+    let width = 60u16.min(area.width.saturating_sub(4));
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let max_entries = 8usize.min(model.entries.len());
+    let height = (max_entries as u16) + 3; // input + separator + entries + border
+    let palette_area = Rect::new(x, area.y + 2, width, height);
+
+    frame.render_widget(Clear, palette_area);
+
+    let mut lines = vec![];
+
+    let input_line = Line::from(vec![
+        Span::styled(" / ", theme::accent_style()),
+        Span::styled(&model.input, theme::text_style()),
+        Span::styled("▌", theme::dim_style()),
+    ]);
+    lines.push(input_line);
+
+    lines.push(Line::from(Span::styled(
+        "─".repeat(width.saturating_sub(2) as usize),
+        theme::dim_style(),
+    )));
+
+    for entry in model.entries.iter().take(max_entries) {
+        let style = if entry.selected {
+            theme::highlight_style()
+        } else {
+            theme::text_style()
+        };
+        let marker = if entry.selected { "▸ " } else { "  " };
+        lines.push(Line::from(vec![
+            Span::styled(marker, style),
+            Span::styled(&entry.name, style),
+            Span::styled("  ", Style::default()),
+            Span::styled(&entry.description, theme::dim_style()),
+        ]));
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::focus_border_style())
+        .title(Span::styled(" Command Palette ", theme::accent_style()));
+
+    frame.render_widget(
+        Paragraph::new(lines).block(block),
+        palette_area,
+    );
+}
+
+fn render_breadcrumb(frame: &mut Frame, area: Rect, breadcrumb: &str) {
+    if area.height == 0 {
+        return;
+    }
+    let line = Line::from(vec![
+        Span::styled(breadcrumb, theme::accent_style()),
+    ]);
+    frame.render_widget(Paragraph::new(line), area);
 }
 
 fn render_conversation(frame: &mut Frame, pane: &PaneLayout, model: &RenderModel, focused: bool) {
@@ -393,6 +713,281 @@ fn render_overlay(frame: &mut Frame, pane: &PaneLayout, model: &OverlayRenderMod
     );
 }
 
+fn render_main_menu(frame: &mut Frame, pane: &PaneLayout, model: &MainMenuRenderModel) {
+    let area = pane.area;
+
+    // ── Branded header ──
+    let mut lines: Vec<Line> = vec![
+        Line::default(),
+        Line::default(),
+        Line::from(vec![Span::styled(
+            "    ⬡  ⬢  ⬡  ⬢  ⬡",
+            theme::brand_hex_style(),
+        )]),
+        Line::default(),
+        Line::from(vec![
+            Span::styled("    ", theme::text_style()),
+            Span::styled(
+                "ozone+",
+                theme::title_focused_style().add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled("    ", theme::dim_style()),
+            Span::styled(
+                "local-LLM chat shell with persistent memory",
+                theme::dim_style(),
+            ),
+        ]),
+        Line::default(),
+        Line::from(Span::styled(
+            "    ─────────────────────────────────────────",
+            theme::muted_style(),
+        )),
+        Line::default(),
+    ];
+
+    // ── Menu items ──
+    for item in &model.items {
+        let (marker, label_style, desc_style) = if item.selected {
+            (
+                format!("  {} ", theme::HEX_FILLED),
+                theme::highlight_style(),
+                theme::text_style(),
+            )
+        } else {
+            (
+                format!("  {} ", theme::HEX),
+                theme::text_style(),
+                theme::dim_style(),
+            )
+        };
+
+        let shortcut_span = if !item.shortcut.is_empty() {
+            Span::styled(format!("[{}] ", item.shortcut), theme::mode_badge_style())
+        } else {
+            Span::raw("")
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled(
+                marker,
+                if item.selected {
+                    theme::highlight_style()
+                } else {
+                    theme::muted_style()
+                },
+            ),
+            shortcut_span,
+            Span::styled(format!("{:<16}", item.label), label_style),
+            Span::styled(item.description.clone(), desc_style),
+        ]));
+
+        lines.push(Line::default());
+    }
+
+    // ── Session count line ──
+    if model.session_count > 0 {
+        lines.push(Line::from(Span::styled(
+            format!(
+                "    {} session{} available",
+                model.session_count,
+                if model.session_count == 1 { "" } else { "s" }
+            ),
+            theme::dim_style(),
+        )));
+    }
+
+    // ── Hint bar ──
+    lines.push(Line::default());
+    lines.push(Line::from(Span::styled(
+        format!("    {}", model.hint),
+        theme::dim_style(),
+    )));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::border_style())
+        .title(Span::styled(
+            format!(" {} ozone+ ", theme::HEX),
+            theme::title_focused_style(),
+        ));
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn render_menu_placeholder(frame: &mut Frame, pane: &PaneLayout, title: &str) {
+    let lines = vec![
+        Line::default(),
+        Line::from(Span::styled(
+            format!("  {} {}", theme::HEX, title),
+            theme::highlight_style(),
+        )),
+        Line::default(),
+        Line::from(Span::styled(
+            "  Coming soon — press Esc to return to main menu",
+            theme::dim_style(),
+        )),
+    ];
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::border_style())
+        .title(Span::styled(
+            format!(" {} ozone+ ", theme::HEX),
+            theme::title_focused_style(),
+        ));
+
+    frame.render_widget(
+        Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+        pane.area,
+    );
+}
+
+fn render_session_list(frame: &mut Frame, pane: &PaneLayout, model: &SessionListRenderModel) {
+    let area = pane.area;
+    let mut lines: Vec<Line> = Vec::new();
+
+    // Header
+    lines.push(Line::from(vec![
+        Span::styled(format!("  {} ", theme::HEX), theme::brand_hex_style()),
+        Span::styled(
+            "Sessions",
+            theme::title_focused_style().add_modifier(Modifier::BOLD),
+        ),
+        Span::styled(
+            format!(
+                "  ({} total{})",
+                model.total_count,
+                if model.visible_count != model.total_count {
+                    format!(", {} matching", model.visible_count)
+                } else {
+                    String::new()
+                }
+            ),
+            theme::dim_style(),
+        ),
+    ]));
+
+    // Filter bar (if active)
+    if !model.filter.is_empty() {
+        lines.push(Line::from(vec![
+            Span::styled("  filter: ", theme::dim_style()),
+            Span::styled(model.filter.clone(), theme::mode_badge_style()),
+        ]));
+    }
+
+    lines.push(Line::from(Span::styled(
+        "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+        theme::muted_style(),
+    )));
+
+    // Column headers
+    lines.push(Line::from(vec![
+        Span::styled("      ", theme::dim_style()),
+        Span::styled(format!("{:<30}", "Name"), theme::dim_style()),
+        Span::styled(format!("{:<16}", "Character"), theme::dim_style()),
+        Span::styled(format!("{:<10}", "Messages"), theme::dim_style()),
+        Span::styled("Last Active", theme::dim_style()),
+    ]));
+
+    lines.push(Line::from(Span::styled(
+        "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+        theme::muted_style(),
+    )));
+
+    if model.loading {
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            "  Loading sessions\u{2026}",
+            theme::dim_style(),
+        )));
+    } else if model.entries.is_empty() {
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            if model.filter.is_empty() {
+                "  No sessions yet \u{2014} press n to create one"
+            } else {
+                "  No sessions match the current filter"
+            },
+            theme::dim_style(),
+        )));
+    } else {
+        for entry in &model.entries {
+            let (marker, name_style, detail_style) = if entry.selected {
+                (
+                    format!("  {} ", theme::HEX_FILLED),
+                    theme::highlight_style(),
+                    theme::text_style(),
+                )
+            } else {
+                (
+                    format!("  {} ", theme::HEX),
+                    theme::text_style(),
+                    theme::dim_style(),
+                )
+            };
+
+            lines.push(Line::from(vec![
+                Span::styled(
+                    marker,
+                    if entry.selected {
+                        theme::highlight_style()
+                    } else {
+                        theme::muted_style()
+                    },
+                ),
+                Span::styled(
+                    format!("{:<30}", truncate_str(&entry.name, 28)),
+                    name_style,
+                ),
+                Span::styled(
+                    format!("{:<16}", truncate_str(&entry.character, 14)),
+                    detail_style,
+                ),
+                Span::styled(format!("{:<10}", entry.message_count), detail_style),
+                Span::styled(entry.last_active.clone(), detail_style),
+            ]));
+        }
+    }
+
+    // Hint bar at bottom
+    lines.push(Line::default());
+    lines.push(Line::from(Span::styled(
+        format!("  {}", model.hint),
+        theme::dim_style(),
+    )));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::border_style())
+        .title(Span::styled(
+            format!(" {} Sessions ", theme::HEX),
+            theme::title_focused_style(),
+        ));
+
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn truncate_str(s: &str, max_len: usize) -> String {
+    if s.chars().count() <= max_len {
+        s.to_string()
+    } else {
+        let truncated: String = s.chars().take(max_len.saturating_sub(1)).collect();
+        format!("{truncated}\u{2026}")
+    }
+}
+
 fn pane_block(title: &str, focused: bool) -> Block<'static> {
     let (title_style, border) = if focused {
         (theme::title_focused_style(), theme::focus_border_style())
@@ -429,6 +1024,10 @@ fn input_mode_label(input_mode: InputMode) -> &'static str {
 
 fn screen_label(screen: ScreenState) -> &'static str {
     match screen {
+        ScreenState::MainMenu => "main menu",
+        ScreenState::SessionList => "sessions",
+        ScreenState::CharacterManager => "characters",
+        ScreenState::Settings => "settings",
         ScreenState::Conversation => "conversation",
         ScreenState::Help => "help",
         ScreenState::Quit => "quit",
@@ -628,7 +1227,11 @@ fn composer_hint(input_mode: InputMode) -> &'static str {
 
 fn overlay_model(screen: ScreenState, input_mode: InputMode) -> Option<OverlayRenderModel> {
     match screen {
-        ScreenState::Conversation => None,
+        ScreenState::MainMenu
+        | ScreenState::SessionList
+        | ScreenState::CharacterManager
+        | ScreenState::Settings
+        | ScreenState::Conversation => None,
         ScreenState::Help => Some(OverlayRenderModel {
             title: "Help".into(),
             lines: vec![
@@ -708,7 +1311,10 @@ mod tests {
 
     use super::{build_render_model, render_shell};
     use crate::{
-        app::{AppBootstrap, BranchItem, DraftState, SessionContext, ShellState, TranscriptItem},
+        app::{
+            AppBootstrap, BranchItem, DraftState, ScreenState, SessionContext, ShellState,
+            TranscriptItem,
+        },
         input::InputMode,
         layout::build_layout_for_area,
     };
@@ -717,6 +1323,7 @@ mod tests {
         let session_id = SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap();
         let context = SessionContext::new(session_id, "Phase 1C");
         let mut state = ShellState::new(context);
+        state.enter_conversation();
         state.hydrate(AppBootstrap {
             transcript: vec![
                 TranscriptItem::persisted("msg-1", "user", "hello skeleton", false),
@@ -784,7 +1391,7 @@ mod tests {
 
         let rendered = render_to_string(80, 24, &layout, &model);
 
-        assert!(rendered.contains("Conversation"));
+        assert!(rendered.contains("Ozone+"), "breadcrumb should be visible on top row");
         assert!(rendered.contains("Composer"));
         assert!(rendered.contains("Status"));
         assert!(rendered.contains("mock runtime ready"));
@@ -932,5 +1539,130 @@ mod tests {
                 "
 ",
             )
+    }
+
+    #[test]
+    fn main_menu_screen_produces_menu_render_model() {
+        let mut state = seeded_state();
+        state.screen = ScreenState::MainMenu;
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 120, 40));
+        let model = build_render_model(&state, &layout);
+
+        assert!(model.main_menu.is_some());
+        assert!(model.session_list.is_none());
+
+        let menu = model.main_menu.unwrap();
+        assert_eq!(menu.items.len(), 5);
+        assert!(menu.items[0].selected); // first item selected by default
+        assert!(!menu.items[1].selected);
+        assert_eq!(menu.items[0].label, "New Chat");
+        assert_eq!(menu.items[1].label, "Sessions");
+        assert_eq!(menu.items[4].label, "Quit");
+    }
+
+    #[test]
+    fn session_list_screen_produces_session_list_render_model() {
+        let mut state = seeded_state();
+        state.screen = ScreenState::SessionList;
+        state.session_list.entries = vec![
+            crate::app::SessionListEntry {
+                session_id: "test-1".into(),
+                name: "My First Chat".into(),
+                character_name: Some("Aster".into()),
+                message_count: 42,
+                last_active: Some("2 hours ago".into()),
+            },
+            crate::app::SessionListEntry {
+                session_id: "test-2".into(),
+                name: "World Building".into(),
+                character_name: None,
+                message_count: 7,
+                last_active: Some("yesterday".into()),
+            },
+        ];
+
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 120, 40));
+        let model = build_render_model(&state, &layout);
+
+        assert!(model.session_list.is_some());
+        assert!(model.main_menu.is_none());
+
+        let list = model.session_list.unwrap();
+        assert_eq!(list.entries.len(), 2);
+        assert!(list.entries[0].selected);
+        assert!(!list.entries[1].selected);
+        assert_eq!(list.entries[0].name, "My First Chat");
+        assert_eq!(list.entries[0].character, "Aster");
+        assert_eq!(list.entries[1].character, "—");
+        assert_eq!(list.total_count, 2);
+        assert_eq!(list.visible_count, 2);
+    }
+
+    #[test]
+    fn conversation_screen_has_no_menu_models() {
+        let mut state = seeded_state();
+        state.screen = ScreenState::Conversation;
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 120, 40));
+        let model = build_render_model(&state, &layout);
+
+        assert!(model.main_menu.is_none());
+        assert!(model.session_list.is_none());
+    }
+
+    #[test]
+    fn main_menu_renders_without_panic() {
+        let mut state = seeded_state();
+        state.screen = ScreenState::MainMenu;
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
+        let model = build_render_model(&state, &layout);
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render_shell(frame, &layout, &model);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn session_list_renders_without_panic() {
+        let mut state = seeded_state();
+        state.screen = ScreenState::SessionList;
+        state.session_list.entries = vec![crate::app::SessionListEntry {
+            session_id: "test-1".into(),
+            name: "Test Session".into(),
+            character_name: None,
+            message_count: 10,
+            last_active: None,
+        }];
+
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
+        let model = build_render_model(&state, &layout);
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render_shell(frame, &layout, &model);
+            })
+            .unwrap();
+    }
+
+    #[test]
+    fn empty_session_list_renders_without_panic() {
+        let mut state = seeded_state();
+        state.screen = ScreenState::SessionList;
+
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
+        let model = build_render_model(&state, &layout);
+
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal
+            .draw(|frame| {
+                render_shell(frame, &layout, &model);
+            })
+            .unwrap();
     }
 }
