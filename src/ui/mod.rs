@@ -645,10 +645,8 @@ pub async fn run_launcher(
                     continue;
                 }
                 match app.screen {
-                    Screen::Splash => {
-                        if app.splash_ready {
-                            app.screen = next_screen_after_splash(&app);
-                        }
+                    Screen::Splash if app.splash_ready => {
+                        app.screen = next_screen_after_splash(&app);
                     }
                     Screen::TierPicker => match key.code {
                         KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
@@ -669,15 +667,11 @@ pub async fn run_launcher(
                     Screen::Launcher => match key.code {
                         KeyCode::Char('q') => break Ok(()),
                         KeyCode::Esc => open_exit_confirm(&mut app),
-                        KeyCode::Up => {
-                            if app.selected_action > 0 {
-                                app.selected_action -= 1;
-                            }
+                        KeyCode::Up if app.selected_action > 0 => {
+                            app.selected_action -= 1;
                         }
-                        KeyCode::Down => {
-                            if app.selected_action < 6 {
-                                app.selected_action += 1;
-                            }
+                        KeyCode::Down if app.selected_action < 6 => {
+                            app.selected_action += 1;
                         }
                         KeyCode::Enter => match app.selected_action {
                             0 => {
@@ -707,14 +701,13 @@ pub async fn run_launcher(
                                     }
                                 }
                             }
-                            1 => {
+                            1
                                 // Profile / recommend model
-                                if !app.catalog.is_empty() {
+                                if !app.catalog.is_empty() => {
                                     app.reset_profile_flow();
                                     app.model_picker_mode = ModelPickerMode::Profile;
                                     app.screen = Screen::ModelPicker;
                                 }
-                            }
                             2 => {
                                 // Open ozone+ shell (direct handoff)
                                 app.ozone_plus_handoff = true;
@@ -743,15 +736,11 @@ pub async fn run_launcher(
                     },
                     Screen::ExitConfirm => match key.code {
                         KeyCode::Esc | KeyCode::Char('n') => app.screen = Screen::Launcher,
-                        KeyCode::Left | KeyCode::Up => {
-                            if app.exit_confirm_index > 0 {
-                                app.exit_confirm_index -= 1;
-                            }
+                        KeyCode::Left | KeyCode::Up if app.exit_confirm_index > 0 => {
+                            app.exit_confirm_index -= 1;
                         }
-                        KeyCode::Right | KeyCode::Down => {
-                            if app.exit_confirm_index < 1 {
-                                app.exit_confirm_index += 1;
-                            }
+                        KeyCode::Right | KeyCode::Down if app.exit_confirm_index < 1 => {
+                            app.exit_confirm_index += 1;
                         }
                         KeyCode::Enter | KeyCode::Char('y') => {
                             if app.exit_confirm_index == 0 {
@@ -884,38 +873,28 @@ pub async fn run_launcher(
                     },
                     Screen::Confirm => match key.code {
                         KeyCode::Esc | KeyCode::Char('n') => app.screen = back_from_confirm(&app),
-                        KeyCode::Enter | KeyCode::Char('y') => {
-                            if app.current_plan.is_some() {
-                                queue_frontend_launch(&mut app);
-                            }
+                        KeyCode::Enter | KeyCode::Char('y') if app.current_plan.is_some() => {
+                            queue_frontend_launch(&mut app);
                         }
                         _ => {}
                     },
                     Screen::FrontendChoice => match key.code {
                         KeyCode::Esc => app.screen = Screen::Confirm,
-                        KeyCode::Up => {
-                            if app.frontend_choice_index > 0 {
-                                app.frontend_choice_index -= 1;
-                            }
+                        KeyCode::Up if app.frontend_choice_index > 0 => {
+                            app.frontend_choice_index -= 1;
                         }
-                        KeyCode::Down => {
-                            if app.frontend_choice_index < 1 {
-                                app.frontend_choice_index += 1;
-                            }
+                        KeyCode::Down if app.frontend_choice_index < 1 => {
+                            app.frontend_choice_index += 1;
                         }
-                        KeyCode::Enter => {
-                            if app.current_plan.is_some() {
-                                app.pending_launch_choice = Some(app.frontend_choice_index);
-                            }
+                        KeyCode::Enter if app.current_plan.is_some() => {
+                            app.pending_launch_choice = Some(app.frontend_choice_index);
                         }
                         _ => {}
                     },
                     Screen::ProfileAdvisory => match key.code {
                         KeyCode::Esc => app.screen = Screen::ModelPicker,
-                        KeyCode::Up => {
-                            if app.profiling_choice_index > 0 {
-                                app.profiling_choice_index -= 1;
-                            }
+                        KeyCode::Up if app.profiling_choice_index > 0 => {
+                            app.profiling_choice_index -= 1;
                         }
                         KeyCode::Down => {
                             let count = app
@@ -1044,10 +1023,8 @@ pub async fn run_launcher(
                             app.reset_profile_flow();
                             app.screen = Screen::Launcher;
                         }
-                        KeyCode::Up => {
-                            if app.profiling_choice_index > 0 {
-                                app.profiling_choice_index -= 1;
-                            }
+                        KeyCode::Up if app.profiling_choice_index > 0 => {
+                            app.profiling_choice_index -= 1;
                         }
                         KeyCode::Down => {
                             let count = app
@@ -1127,10 +1104,8 @@ pub async fn run_launcher(
                             app.reset_profile_flow();
                             app.screen = Screen::Launcher;
                         }
-                        KeyCode::Up => {
-                            if app.profiling_choice_index > 0 {
-                                app.profiling_choice_index -= 1;
-                            }
+                        KeyCode::Up if app.profiling_choice_index > 0 => {
+                            app.profiling_choice_index -= 1;
                         }
                         KeyCode::Down => {
                             let count = app

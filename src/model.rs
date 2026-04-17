@@ -236,7 +236,7 @@ async fn scan_models(dir: &Path) -> Result<Vec<ModelEntry>> {
             quant,
         });
     }
-    entries.sort_by(|a, b| a.name.to_lowercase().cmp(&b.name.to_lowercase()));
+    entries.sort_by_key(|a| a.name.to_lowercase());
     Ok(entries)
 }
 
