@@ -441,7 +441,7 @@ impl ContextAssembler {
             .copied()
             .filter(|layer| !layer.is_hard_context)
             .collect::<Vec<_>>();
-        soft_layers.sort_by(|left, right| left.priority.cmp(&right.priority));
+        soft_layers.sort_by_key(|left| left.priority);
 
         for layer in soft_layers {
             let estimated_items = estimated_inputs.remove(&layer.kind).unwrap_or_default();
@@ -809,10 +809,10 @@ fn order_for_strategy(items: &[EstimatedItem], strategy: CollapseStrategy) -> Ve
     let mut ordered = items.to_vec();
     match strategy {
         CollapseStrategy::OmitOldest | CollapseStrategy::TruncateHead => {
-            ordered.sort_by(|left, right| right.sequence.cmp(&left.sequence));
+            ordered.sort_by_key(|right| std::cmp::Reverse(right.sequence));
         }
         _ => {
-            ordered.sort_by(|left, right| left.sequence.cmp(&right.sequence));
+            ordered.sort_by_key(|left| left.sequence);
         }
     }
     ordered

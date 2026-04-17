@@ -2052,7 +2052,7 @@ fn lifecycle_inspect(session_id_raw: Option<String>) -> Result<(), String> {
             session_id.as_ref(),
             &policy,
             config.lifecycle.stale_artifacts.max_age_messages,
-            config.lifecycle.stale_artifacts.max_age_hours as u64,
+            config.lifecycle.stale_artifacts.max_age_hours,
         )
         .map_err(|error| error.to_string())?;
 
@@ -2164,7 +2164,7 @@ fn gc_plan(
             session_id.as_ref(),
             &storage_policy,
             config.lifecycle.stale_artifacts.max_age_messages,
-            config.lifecycle.stale_artifacts.max_age_hours as u64,
+            config.lifecycle.stale_artifacts.max_age_hours,
             &policy,
         )
         .map_err(|error| error.to_string())?;
@@ -2191,7 +2191,7 @@ fn gc_run(
             session_id.as_ref(),
             &storage_policy,
             config.lifecycle.stale_artifacts.max_age_messages,
-            config.lifecycle.stale_artifacts.max_age_hours as u64,
+            config.lifecycle.stale_artifacts.max_age_hours,
             &policy,
         )
         .map_err(|error| error.to_string())?;
