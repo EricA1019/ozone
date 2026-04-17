@@ -110,6 +110,11 @@ impl KoboldCppClient {
         &self.descriptor
     }
 
+    /// Borrow the shared HTTP client for connection-pooled requests.
+    pub fn http(&self) -> &reqwest::Client {
+        &self.http
+    }
+
     // -----------------------------------------------------------------------
     // Health / model probing
     // -----------------------------------------------------------------------

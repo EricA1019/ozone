@@ -42,6 +42,21 @@ pub enum StreamChunk {
 // Internal SSE line deserialization helpers
 // ---------------------------------------------------------------------------
 
+/// Common LLM stop/control tokens that backends sometimes leak before
+/// sending a `finish_reason` event.  Filter these from user-visible output.
+const STOP_TOKENS: &[&str] = &[
+    "<|im_end|>",
+    "<|im_start|>",
+    "<|end_of_turn|>",
+    "<|eot_id|>",
+    "</s>",
+    "<|endoftext|>",
+];
+
+fn is_stop_token(text: &str) -> bool {
+    STOP_TOKENS.contains(&text)
+}
+
 // ---------------------------------------------------------------------------
 // StreamDecoder
 // ---------------------------------------------------------------------------
@@ -87,7 +102,7 @@ impl StreamDecoder {
             if let Some(reason) = finish {
                 return Some(StreamChunk::FinishReason(reason.to_string()));
             }
-            if !text.is_empty() {
+            if !text.is_empty() && !is_stop_token(text) {
                 return Some(StreamChunk::Token(text.to_string()));
             }
             return None;

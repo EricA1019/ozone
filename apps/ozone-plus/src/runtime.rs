@@ -840,6 +840,14 @@ impl Phase1dRuntime {
     }
 }
 
+impl Drop for Phase1dRuntime {
+    fn drop(&mut self) {
+        let _ = self
+            .repo
+            .release_session_lock(&self.session_id, &self.lock_instance_id);
+    }
+}
+
 impl SessionRuntime for Phase1dRuntime {
     type Error = String;
 

@@ -209,15 +209,12 @@ impl InferenceGateway {
         let kobold_req = build_kobold_request(&req);
         let url = self.client.streaming_url();
 
-        // Build a streaming HTTP request using reqwest.
-        let http = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(300))
-            .build()
-            .context("failed to build streaming HTTP client")?;
+        // Reuse the pooled HTTP client from the backend for connection reuse.
+        let http = self.client.http();
 
         let response = http
             .post(&url)
+            .timeout(Duration::from_secs(300))
             .json(&kobold_req)
             .send()
             .await

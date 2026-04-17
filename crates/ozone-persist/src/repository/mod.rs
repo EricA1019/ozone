@@ -865,6 +865,7 @@ fn open_connection(path: &Path) -> Result<(Connection, bool)> {
         .unwrap_or(false);
     let conn = Connection::open(path)?;
     conn.pragma_update(None, "foreign_keys", 1_i64)?;
+    conn.pragma_update(None, "journal_mode", "WAL")?;
     conn.busy_timeout(Duration::from_secs(5))?;
     secure_path(path, 0o600)?;
     Ok((conn, existed_before_open))
