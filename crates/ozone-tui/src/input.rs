@@ -45,6 +45,16 @@ pub enum KeyAction {
     CommandPaletteUp,
     CommandPaletteDown,
     CommandPaletteClose,
+    // Character form actions
+    CharacterCreate,
+    CharacterImportPrompt,
+    FormInsertChar(char),
+    FormBackspace,
+    FormMoveCursorLeft,
+    FormMoveCursorRight,
+    FormToggleField,
+    FormSubmit,
+    FormCancel,
 }
 
 pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
@@ -144,6 +154,24 @@ pub fn dispatch_command_palette_key(key: KeyEvent) -> Option<KeyAction> {
 
 fn allows_text_insertion(modifiers: KeyModifiers) -> bool {
     modifiers.is_empty() || modifiers == KeyModifiers::SHIFT
+}
+
+/// Dispatch keys for character create/import form screens.
+pub fn dispatch_form_key(key: KeyEvent) -> KeyAction {
+    if is_ctrl_c(key) {
+        return KeyAction::FormCancel;
+    }
+
+    match key.code {
+        KeyCode::Esc => KeyAction::FormCancel,
+        KeyCode::Enter => KeyAction::FormSubmit,
+        KeyCode::Tab | KeyCode::BackTab => KeyAction::FormToggleField,
+        KeyCode::Backspace => KeyAction::FormBackspace,
+        KeyCode::Left => KeyAction::FormMoveCursorLeft,
+        KeyCode::Right => KeyAction::FormMoveCursorRight,
+        KeyCode::Char(ch) if allows_text_insertion(key.modifiers) => KeyAction::FormInsertChar(ch),
+        _ => KeyAction::Noop,
+    }
 }
 
 fn is_ctrl_c(key: KeyEvent) -> bool {

@@ -230,6 +230,8 @@ fn overlay_for_screen(screen: ScreenState, viewport: Rect) -> Option<PaneLayout>
         ScreenState::MainMenu
         | ScreenState::SessionList
         | ScreenState::CharacterManager
+        | ScreenState::CharacterCreate
+        | ScreenState::CharacterImport
         | ScreenState::Settings
         | ScreenState::Conversation => return None,
         ScreenState::Help => PaneId::HelpOverlay,

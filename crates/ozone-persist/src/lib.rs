@@ -39,5 +39,5 @@ pub use repository::{
     GarbageCollectionCandidate, GarbageCollectionOutcome, GarbageCollectionPlan,
     GarbageCollectionPolicy, GarbageCollectionReason, MessageEditRecord, MessageRecord,
     MessageSearchHit, PersistencePaths, PinnedMemorySearchHit, SessionLock, SqliteRepository,
-    SummaryArtifactRecord, STALE_LOCK_TIMEOUT_MS,
+    StoredCharacter, SummaryArtifactRecord, STALE_LOCK_TIMEOUT_MS,
 };

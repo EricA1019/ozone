@@ -1,13 +1,15 @@
 use crossterm::event::KeyEvent;
 use ozone_core::{engine::CancelReason, session::SessionId};
 
-use crate::input::{dispatch_command_palette_key, dispatch_key, dispatch_menu_key, InputMode, KeyAction};
+use crate::input::{dispatch_command_palette_key, dispatch_form_key, dispatch_key, dispatch_menu_key, InputMode, KeyAction};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenState {
     MainMenu,
     SessionList,
     CharacterManager,
+    CharacterCreate,
+    CharacterImport,
     Settings,
     Conversation,
     Help,
@@ -228,6 +230,49 @@ impl CharacterListState {
             self.selected += 1;
         }
     }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum CharacterFormField {
+    #[default]
+    Name,
+    SystemPrompt,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CharacterCreateState {
+    pub name: DraftState,
+    pub system_prompt: DraftState,
+    pub active_field: CharacterFormField,
+}
+
+impl CharacterCreateState {
+    pub fn active_draft(&self) -> &DraftState {
+        match self.active_field {
+            CharacterFormField::Name => &self.name,
+            CharacterFormField::SystemPrompt => &self.system_prompt,
+        }
+    }
+
+    pub fn active_draft_mut(&mut self) -> &mut DraftState {
+        match self.active_field {
+            CharacterFormField::Name => &mut self.name,
+            CharacterFormField::SystemPrompt => &mut self.system_prompt,
+        }
+    }
+
+    pub fn toggle_field(&mut self) {
+        self.active_field = match self.active_field {
+            CharacterFormField::Name => CharacterFormField::SystemPrompt,
+            CharacterFormField::SystemPrompt => CharacterFormField::Name,
+        };
+    }
+}
+
+/// State for the file-path import prompt.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CharacterImportState {
+    pub path: DraftState,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -589,6 +634,8 @@ pub enum RuntimeCommand {
     ToggleBookmark { message_id: String },
     TogglePinnedMemory { message_id: String },
     RunCommand { input: String },
+    CreateCharacter { name: String, system_prompt: String },
+    ImportCharacter { path: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -759,6 +806,8 @@ pub struct ShellState {
     pub menu: MenuState,
     pub session_list: SessionListState,
     pub character_list: CharacterListState,
+    pub character_create: CharacterCreateState,
+    pub character_import: CharacterImportState,
     pub settings: SettingsState,
     pub session: SessionState,
     pub draft: DraftState,
@@ -785,6 +834,8 @@ impl ShellState {
             menu: MenuState::default(),
             session_list: SessionListState::default(),
             character_list: CharacterListState::default(),
+            character_create: CharacterCreateState::default(),
+            character_import: CharacterImportState::default(),
             settings: SettingsState::default(),
             session: SessionState::new(context),
             draft: DraftState::default(),
@@ -863,9 +914,19 @@ impl ShellState {
         }
 
         let action = match self.screen {
+            ScreenState::CharacterManager => {
+                // Intercept n/i for create/import before normal menu dispatch
+                match key.code {
+                    crossterm::event::KeyCode::Char('n') => KeyAction::CharacterCreate,
+                    crossterm::event::KeyCode::Char('i') => KeyAction::CharacterImportPrompt,
+                    _ => dispatch_menu_key(key, false),
+                }
+            }
+            ScreenState::CharacterCreate | ScreenState::CharacterImport => {
+                dispatch_form_key(key)
+            }
             ScreenState::MainMenu
             | ScreenState::SessionList
-            | ScreenState::CharacterManager
             | ScreenState::Settings => {
                 let is_root = self.screen == ScreenState::MainMenu;
                 dispatch_menu_key(key, is_root)
@@ -1110,6 +1171,89 @@ impl ShellState {
                     self.execute_command(&cmd.name);
                 }
             }
+            // Character form actions
+            KeyAction::CharacterCreate => {
+                self.character_create = CharacterCreateState::default();
+                self.screen = ScreenState::CharacterCreate;
+            }
+            KeyAction::CharacterImportPrompt => {
+                self.character_import = CharacterImportState::default();
+                self.screen = ScreenState::CharacterImport;
+            }
+            KeyAction::FormInsertChar(ch) => match self.screen {
+                ScreenState::CharacterCreate => {
+                    self.character_create.active_draft_mut().insert_char(ch);
+                }
+                ScreenState::CharacterImport => {
+                    self.character_import.path.insert_char(ch);
+                }
+                _ => {}
+            },
+            KeyAction::FormBackspace => match self.screen {
+                ScreenState::CharacterCreate => {
+                    self.character_create.active_draft_mut().backspace();
+                }
+                ScreenState::CharacterImport => {
+                    self.character_import.path.backspace();
+                }
+                _ => {}
+            },
+            KeyAction::FormMoveCursorLeft => match self.screen {
+                ScreenState::CharacterCreate => {
+                    self.character_create.active_draft_mut().move_cursor_left();
+                }
+                ScreenState::CharacterImport => {
+                    self.character_import.path.move_cursor_left();
+                }
+                _ => {}
+            },
+            KeyAction::FormMoveCursorRight => match self.screen {
+                ScreenState::CharacterCreate => {
+                    self.character_create.active_draft_mut().move_cursor_right();
+                }
+                ScreenState::CharacterImport => {
+                    self.character_import.path.move_cursor_right();
+                }
+                _ => {}
+            },
+            KeyAction::FormToggleField => {
+                if self.screen == ScreenState::CharacterCreate {
+                    self.character_create.toggle_field();
+                }
+            }
+            KeyAction::FormSubmit => match self.screen {
+                ScreenState::CharacterCreate => {
+                    let name = self.character_create.name.text.trim().to_string();
+                    if name.is_empty() {
+                        self.status_line = Some("Character name cannot be empty".into());
+                    } else {
+                        let system_prompt =
+                            self.character_create.system_prompt.text.trim().to_string();
+                        self.runtime_commands.push(RuntimeCommand::CreateCharacter {
+                            name,
+                            system_prompt,
+                        });
+                        self.screen = ScreenState::CharacterManager;
+                    }
+                }
+                ScreenState::CharacterImport => {
+                    let path = self.character_import.path.text.trim().to_string();
+                    if path.is_empty() {
+                        self.status_line = Some("File path cannot be empty".into());
+                    } else {
+                        self.runtime_commands
+                            .push(RuntimeCommand::ImportCharacter { path });
+                        self.screen = ScreenState::CharacterManager;
+                    }
+                }
+                _ => {}
+            },
+            KeyAction::FormCancel => match self.screen {
+                ScreenState::CharacterCreate | ScreenState::CharacterImport => {
+                    self.screen = ScreenState::CharacterManager;
+                }
+                _ => {}
+            },
         }
     }
 

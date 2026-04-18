@@ -12,7 +12,7 @@ use crate::{
 };
 
 pub trait SessionRuntime {
-    type Error;
+    type Error: std::fmt::Debug;
 
     fn bootstrap(&mut self, context: &SessionContext) -> Result<AppBootstrap, Self::Error>;
 
@@ -125,6 +125,19 @@ pub trait SessionRuntime {
     fn get_settings(&mut self) -> Result<Vec<crate::app::SettingsEntry>, Self::Error> {
         Ok(Vec::new())
     }
+
+    /// Create a new character card in the global library.
+    fn create_character(
+        &mut self,
+        _name: String,
+        _system_prompt: String,
+    ) -> Result<crate::app::CharacterEntry, Self::Error>;
+
+    /// Import a character card from a JSON file path.
+    fn import_character(
+        &mut self,
+        _path: String,
+    ) -> Result<crate::app::CharacterEntry, Self::Error>;
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -354,6 +367,35 @@ impl SessionRuntime for MockRuntime {
 
     fn list_characters(&mut self) -> Result<Vec<crate::app::CharacterEntry>, Self::Error> {
         Ok(self.available_characters.clone())
+    }
+
+    fn create_character(
+        &mut self,
+        name: String,
+        _system_prompt: String,
+    ) -> Result<crate::app::CharacterEntry, Self::Error> {
+        let entry = crate::app::CharacterEntry {
+            card_id: format!("mock-char-{}", self.available_characters.len() + 1),
+            name: name.clone(),
+            description: String::new(),
+            session_count: 0,
+        };
+        self.available_characters.push(entry.clone());
+        Ok(entry)
+    }
+
+    fn import_character(
+        &mut self,
+        _path: String,
+    ) -> Result<crate::app::CharacterEntry, Self::Error> {
+        let entry = crate::app::CharacterEntry {
+            card_id: format!("mock-import-{}", self.available_characters.len() + 1),
+            name: "Imported Character".into(),
+            description: "Imported from file".into(),
+            session_count: 0,
+        };
+        self.available_characters.push(entry.clone());
+        Ok(entry)
     }
 }
 

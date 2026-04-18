@@ -258,6 +258,43 @@ where
                                         app.apply_context_refresh(refresh);
                                     }
                                 }
+                                app::RuntimeCommand::CreateCharacter {
+                                    name,
+                                    system_prompt,
+                                } => {
+                                    match runtime.create_character(name, system_prompt) {
+                                        Ok(entry) => {
+                                            app.status_line = Some(format!(
+                                                "Created character: {}",
+                                                entry.name
+                                            ));
+                                            if let Ok(chars) = runtime.list_characters() {
+                                                app.character_list.entries = chars;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            app.status_line =
+                                                Some(format!("Create failed: {:?}", e));
+                                        }
+                                    }
+                                }
+                                app::RuntimeCommand::ImportCharacter { path } => {
+                                    match runtime.import_character(path) {
+                                        Ok(entry) => {
+                                            app.status_line = Some(format!(
+                                                "Imported character: {}",
+                                                entry.name
+                                            ));
+                                            if let Ok(chars) = runtime.list_characters() {
+                                                app.character_list.entries = chars;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            app.status_line =
+                                                Some(format!("Import failed: {:?}", e));
+                                        }
+                                    }
+                                }
                             }
                             sync_draft(runtime, app)?;
                         }
@@ -440,6 +477,21 @@ mod tests {
                 })))
             }
         }
+
+        fn create_character(
+            &mut self,
+            _name: String,
+            _system_prompt: String,
+        ) -> Result<crate::app::CharacterEntry, Self::Error> {
+            Err("not implemented in stub".into())
+        }
+
+        fn import_character(
+            &mut self,
+            _path: String,
+        ) -> Result<crate::app::CharacterEntry, Self::Error> {
+            Err("not implemented in stub".into())
+        }
     }
 
     /// A runtime stub that always returns `Failed` on the first poll.
@@ -473,6 +525,21 @@ mod tests {
                 request_id: "fail-req-1".into(),
                 message: "backend unavailable".into(),
             })))
+        }
+
+        fn create_character(
+            &mut self,
+            _name: String,
+            _system_prompt: String,
+        ) -> Result<crate::app::CharacterEntry, Self::Error> {
+            Err("not implemented in stub".into())
+        }
+
+        fn import_character(
+            &mut self,
+            _path: String,
+        ) -> Result<crate::app::CharacterEntry, Self::Error> {
+            Err("not implemented in stub".into())
         }
     }
 

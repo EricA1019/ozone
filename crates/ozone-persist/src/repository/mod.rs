@@ -27,7 +27,10 @@ use crate::{
 };
 
 mod branch_ops;
+mod character_ops;
 mod export_ops;
+
+pub use character_ops::StoredCharacter;
 mod lifecycle_ops;
 mod memory_ops;
 mod message_ops;
@@ -906,7 +909,7 @@ fn plain_text_fts_query(query: &str) -> Option<String> {
     (!terms.is_empty()).then(|| terms.join(" "))
 }
 
-fn generate_uuid_like() -> String {
+pub(super) fn generate_uuid_like() -> String {
     let counter = u128::from(ID_COUNTER.fetch_add(1, Ordering::Relaxed));
     let nanos = SystemTime::now()
         .duration_since(UNIX_EPOCH)

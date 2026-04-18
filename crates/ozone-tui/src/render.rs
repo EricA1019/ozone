@@ -163,6 +163,24 @@ pub struct SettingsRenderModel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CharacterFormRenderModel {
+    pub form_type: CharacterFormType,
+    pub name_text: String,
+    pub name_cursor: usize,
+    pub system_prompt_text: String,
+    pub system_prompt_cursor: usize,
+    pub active_field: crate::app::CharacterFormField,
+    pub path_text: String,
+    pub path_cursor: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CharacterFormType {
+    Create,
+    Import,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsRenderEntry {
     pub category: String,
     pub key: String,
@@ -182,6 +200,7 @@ pub struct RenderModel {
     pub main_menu: Option<MainMenuRenderModel>,
     pub session_list: Option<SessionListRenderModel>,
     pub character_list: Option<CharacterListRenderModel>,
+    pub character_form: Option<CharacterFormRenderModel>,
     pub settings: Option<SettingsRenderModel>,
     pub hints: Vec<HintItem>,
     pub breadcrumb: String,
@@ -400,6 +419,30 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         None
     };
 
+    let character_form = match state.screen {
+        ScreenState::CharacterCreate => Some(CharacterFormRenderModel {
+            form_type: CharacterFormType::Create,
+            name_text: state.character_create.name.text.clone(),
+            name_cursor: state.character_create.name.cursor,
+            system_prompt_text: state.character_create.system_prompt.text.clone(),
+            system_prompt_cursor: state.character_create.system_prompt.cursor,
+            active_field: state.character_create.active_field,
+            path_text: String::new(),
+            path_cursor: 0,
+        }),
+        ScreenState::CharacterImport => Some(CharacterFormRenderModel {
+            form_type: CharacterFormType::Import,
+            name_text: String::new(),
+            name_cursor: 0,
+            system_prompt_text: String::new(),
+            system_prompt_cursor: 0,
+            active_field: crate::app::CharacterFormField::Name,
+            path_text: state.character_import.path.text.clone(),
+            path_cursor: state.character_import.path.cursor,
+        }),
+        _ => None,
+    };
+
     RenderModel {
         title,
         subtitle,
@@ -412,6 +455,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         main_menu,
         session_list,
         character_list,
+        character_form,
         settings,
         hints: build_hints(state),
         breadcrumb: build_breadcrumb(state),
@@ -450,9 +494,19 @@ fn build_hints(state: &ShellState) -> Vec<HintItem> {
         ],
         ScreenState::CharacterManager => vec![
             HintItem { key: "↑↓".into(), action: "Navigate".into() },
+            HintItem { key: "n".into(), action: "New character".into() },
+            HintItem { key: "i".into(), action: "Import JSON".into() },
             HintItem { key: "/".into(), action: "Commands".into() },
             HintItem { key: "q".into(), action: "Back".into() },
-            HintItem { key: "Esc".into(), action: "Back".into() },
+        ],
+        ScreenState::CharacterCreate => vec![
+            HintItem { key: "Tab".into(), action: "Switch field".into() },
+            HintItem { key: "Enter".into(), action: "Save".into() },
+            HintItem { key: "Esc".into(), action: "Cancel".into() },
+        ],
+        ScreenState::CharacterImport => vec![
+            HintItem { key: "Enter".into(), action: "Import".into() },
+            HintItem { key: "Esc".into(), action: "Cancel".into() },
         ],
         ScreenState::Settings => vec![
             HintItem { key: "↑↓".into(), action: "Navigate".into() },
@@ -482,6 +536,8 @@ fn build_breadcrumb(state: &ShellState) -> String {
         ScreenState::MainMenu => "⬡ Ozone+".into(),
         ScreenState::SessionList => "⬡ Ozone+ › Sessions".into(),
         ScreenState::CharacterManager => "⬡ Ozone+ › Characters".into(),
+        ScreenState::CharacterCreate => "⬡ Ozone+ › Characters › New".into(),
+        ScreenState::CharacterImport => "⬡ Ozone+ › Characters › Import".into(),
         ScreenState::Settings => "⬡ Ozone+ › Settings".into(),
         ScreenState::Conversation => format!("⬡ Ozone+ › {}", state.session.context.title),
         ScreenState::Help => "⬡ Ozone+ › Help".into(),
@@ -514,6 +570,8 @@ pub fn render_shell(frame: &mut Frame, layout: &LayoutModel, model: &RenderModel
             render_session_list(frame, menu_pane, session_model);
         } else if let Some(char_model) = model.character_list.as_ref() {
             render_character_list(frame, menu_pane, char_model);
+        } else if let Some(form_model) = model.character_form.as_ref() {
+            render_character_form(frame, menu_pane, form_model);
         } else if let Some(settings_model) = model.settings.as_ref() {
             render_settings(frame, menu_pane, settings_model);
         } else {
@@ -568,6 +626,11 @@ pub fn render_shell(frame: &mut Frame, layout: &LayoutModel, model: &RenderModel
     }
     if hint_area.height > 0 {
         render_hints(frame, hint_area, &model.hints);
+    }
+
+    // Slash suggestion popup (floats above composer, below command palette)
+    if model.command_palette.is_none() {
+        render_slash_popup(frame, &layout.composer, &model.composer);
     }
 
     // Command palette overlay (on top of everything)
@@ -647,6 +710,46 @@ fn render_command_palette(frame: &mut Frame, model: &CommandPaletteRenderModel) 
     frame.render_widget(
         Paragraph::new(lines).block(block),
         palette_area,
+    );
+}
+
+/// Floating autocomplete popup rendered ABOVE the composer pane.
+/// Only shown when there are slash suggestions and the command palette is NOT open.
+fn render_slash_popup(frame: &mut Frame, composer_pane: &PaneLayout, model: &ComposerPaneModel) {
+    if model.slash_suggestions.is_empty() {
+        return;
+    }
+
+    let max_items = 5usize.min(model.slash_suggestions.len());
+    let popup_height = (max_items as u16) + 2; // items + top/bottom border
+    let popup_width = composer_pane.area.width;
+    let popup_x = composer_pane.area.x;
+    let popup_y = composer_pane.area.y.saturating_sub(popup_height);
+
+    if popup_height < 3 || popup_width < 10 {
+        return;
+    }
+
+    let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
+
+    let mut lines: Vec<Line> = Vec::with_capacity(max_items);
+    for suggestion in model.slash_suggestions.iter().take(max_items) {
+        lines.push(Line::from(vec![
+            Span::styled(format!("  {}", suggestion.name), theme::accent_style()),
+            Span::styled("  ", Style::default()),
+            Span::styled(&suggestion.description, theme::dim_style()),
+        ]));
+    }
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::focus_border_style())
+        .title(Span::styled(" / Commands ", theme::accent_style()));
+
+    frame.render_widget(Clear, popup_area);
+    frame.render_widget(
+        Paragraph::new(lines).block(block),
+        popup_area,
     );
 }
 
@@ -744,18 +847,6 @@ fn render_composer(frame: &mut Frame, pane: &PaneLayout, model: &ComposerPaneMod
             .map(|text| Line::from(Span::styled(text, theme::text_style())))
             .collect()
     };
-
-    // Inline slash-command suggestions when draft starts with `/`.
-    if !model.slash_suggestions.is_empty() {
-        lines.push(Line::default());
-        for suggestion in model.slash_suggestions.iter().take(5) {
-            lines.push(Line::from(vec![
-                Span::styled(&suggestion.name, theme::accent_style()),
-                Span::styled("  ", Style::default()),
-                Span::styled(&suggestion.description, theme::dim_style()),
-            ]));
-        }
-    }
 
     let draft_state = if model.dirty {
         "dirty"
@@ -955,8 +1046,37 @@ fn render_main_menu(frame: &mut Frame, pane: &PaneLayout, model: &MainMenuRender
         lines.push(Line::default());
     }
 
-    // ── Session count line ──
-    if model.session_count > 0 {
+    // ── Session count / Welcome panel ──
+    if model.session_count == 0 {
+        lines.push(Line::from(Span::styled(
+            "    Getting Started",
+            theme::text_style().add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(Span::styled(
+            "    ───────────────",
+            theme::muted_style(),
+        )));
+        lines.push(Line::from(vec![
+            Span::styled("    ", Style::default()),
+            Span::styled("1", theme::accent_style()),
+            Span::styled(" → Start a new conversation", theme::dim_style()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("    ", Style::default()),
+            Span::styled("3", theme::accent_style()),
+            Span::styled(" → Create your first character", theme::dim_style()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("    ", Style::default()),
+            Span::styled("/", theme::accent_style()),
+            Span::styled(" → Open command palette", theme::dim_style()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("    ", Style::default()),
+            Span::styled("?", theme::accent_style()),
+            Span::styled(" → Help anytime", theme::dim_style()),
+        ]));
+    } else {
         lines.push(Line::from(Span::styled(
             format!(
                 "    {} session{} available",
@@ -1173,11 +1293,21 @@ fn render_character_list(frame: &mut Frame, pane: &PaneLayout, model: &Character
     if model.entries.is_empty() {
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "  No character cards imported yet.",
+            "  No characters yet",
+            theme::text_style().add_modifier(Modifier::BOLD),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Press n to create your first character card,",
             theme::dim_style(),
         )));
         lines.push(Line::from(Span::styled(
-            "  Use `ozone-plus import card <file.json>` to add one.",
+            "  or press i to import a JSON character card.",
+            theme::dim_style(),
+        )));
+        lines.push(Line::from(""));
+        lines.push(Line::from(Span::styled(
+            "  Supports SillyTavern, TavernAI, and ozone-native formats.",
             theme::dim_style(),
         )));
     } else {
@@ -1245,6 +1375,125 @@ fn render_character_list(frame: &mut Frame, pane: &PaneLayout, model: &Character
         .border_style(theme::focus_border_style())
         .title(Span::styled(
             format!(" {} Characters ", theme::HEX),
+            theme::accent_style(),
+        ));
+
+    frame.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn render_character_form(frame: &mut Frame, pane: &PaneLayout, model: &CharacterFormRenderModel) {
+    let area = pane.area;
+    let mut lines = vec![];
+
+    let title = match model.form_type {
+        CharacterFormType::Create => "New Character",
+        CharacterFormType::Import => "Import Character Card",
+    };
+
+    lines.push(Line::from(""));
+    lines.push(Line::from(vec![
+        Span::styled(
+            format!("  {} {title}", theme::HEX),
+            theme::title_focused_style().add_modifier(Modifier::BOLD),
+        ),
+    ]));
+    lines.push(Line::from(Span::styled(
+        "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+        theme::muted_style(),
+    )));
+    lines.push(Line::from(""));
+
+    match model.form_type {
+        CharacterFormType::Create => {
+            // Name field
+            let name_active = model.active_field == crate::app::CharacterFormField::Name;
+            let name_label_style = if name_active {
+                theme::accent_style().add_modifier(Modifier::BOLD)
+            } else {
+                theme::dim_style()
+            };
+            lines.push(Line::from(Span::styled("  Name", name_label_style)));
+            let name_indicator = if name_active { "\u{25b6} " } else { "  " };
+            let name_display = if model.name_text.is_empty() {
+                "(type character name)".to_string()
+            } else {
+                model.name_text.clone()
+            };
+            let name_style = if model.name_text.is_empty() && name_active {
+                theme::dim_style()
+            } else if name_active {
+                theme::text_style().add_modifier(Modifier::UNDERLINED)
+            } else {
+                theme::text_style()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {name_indicator}"), theme::accent_style()),
+                Span::styled(name_display, name_style),
+            ]));
+            lines.push(Line::from(""));
+
+            // System Prompt field
+            let prompt_active = model.active_field == crate::app::CharacterFormField::SystemPrompt;
+            let prompt_label_style = if prompt_active {
+                theme::accent_style().add_modifier(Modifier::BOLD)
+            } else {
+                theme::dim_style()
+            };
+            lines.push(Line::from(Span::styled("  System Prompt", prompt_label_style)));
+            let prompt_indicator = if prompt_active { "\u{25b6} " } else { "  " };
+            let prompt_display = if model.system_prompt_text.is_empty() {
+                "(optional: describe this character's personality)".to_string()
+            } else {
+                model.system_prompt_text.clone()
+            };
+            let prompt_style = if model.system_prompt_text.is_empty() && prompt_active {
+                theme::dim_style()
+            } else if prompt_active {
+                theme::text_style().add_modifier(Modifier::UNDERLINED)
+            } else {
+                theme::text_style()
+            };
+            lines.push(Line::from(vec![
+                Span::styled(format!("  {prompt_indicator}"), theme::accent_style()),
+                Span::styled(prompt_display, prompt_style),
+            ]));
+        }
+        CharacterFormType::Import => {
+            lines.push(Line::from(Span::styled("  File Path", theme::accent_style().add_modifier(Modifier::BOLD))));
+            let path_display = if model.path_text.is_empty() {
+                "(type or paste path to .json character card)".to_string()
+            } else {
+                model.path_text.clone()
+            };
+            let path_style = if model.path_text.is_empty() {
+                theme::dim_style()
+            } else {
+                theme::text_style().add_modifier(Modifier::UNDERLINED)
+            };
+            lines.push(Line::from(vec![
+                Span::styled("  \u{25b6} ", theme::accent_style()),
+                Span::styled(path_display, path_style),
+            ]));
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "  Supports: SillyTavern V1/V2, TavernAI, Ozone native JSON",
+                theme::dim_style(),
+            )));
+        }
+    }
+
+    lines.push(Line::from(""));
+    let hint = match model.form_type {
+        CharacterFormType::Create => "  Tab switch field \u{00b7} Enter save \u{00b7} Esc cancel",
+        CharacterFormType::Import => "  Enter import \u{00b7} Esc cancel",
+    };
+    lines.push(Line::from(Span::styled(hint, theme::muted_style())));
+
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::focus_border_style())
+        .title(Span::styled(
+            format!(" {} {title} ", theme::HEX),
             theme::accent_style(),
         ));
 
@@ -1377,6 +1626,8 @@ fn screen_label(screen: ScreenState) -> &'static str {
         ScreenState::MainMenu => "main menu",
         ScreenState::SessionList => "sessions",
         ScreenState::CharacterManager => "characters",
+        ScreenState::CharacterCreate => "character create",
+        ScreenState::CharacterImport => "character import",
         ScreenState::Settings => "settings",
         ScreenState::Conversation => "conversation",
         ScreenState::Help => "help",
@@ -1611,6 +1862,8 @@ fn overlay_model(screen: ScreenState, input_mode: InputMode) -> Option<OverlayRe
         ScreenState::MainMenu
         | ScreenState::SessionList
         | ScreenState::CharacterManager
+        | ScreenState::CharacterCreate
+        | ScreenState::CharacterImport
         | ScreenState::Settings
         | ScreenState::Conversation => None,
         ScreenState::Help => Some(OverlayRenderModel {

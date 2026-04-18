@@ -1572,6 +1572,58 @@ impl SessionRuntime for Phase1dRuntime {
 
         Ok(entries)
     }
+
+    fn list_characters(&mut self) -> Result<Vec<ozone_tui::CharacterEntry>, Self::Error> {
+        let chars = self.repo.list_characters_global().map_err(|e| e.to_string())?;
+        Ok(chars
+            .into_iter()
+            .map(|c| ozone_tui::CharacterEntry {
+                card_id: c.card_id,
+                name: c.name,
+                description: c.description,
+                session_count: 0,
+            })
+            .collect())
+    }
+
+    fn create_character(
+        &mut self,
+        name: String,
+        system_prompt: String,
+    ) -> Result<ozone_tui::CharacterEntry, Self::Error> {
+        let stored = self.repo.create_character(&name, "", &system_prompt).map_err(|e| e.to_string())?;
+        Ok(ozone_tui::CharacterEntry {
+            card_id: stored.card_id,
+            name: stored.name,
+            description: stored.description,
+            session_count: 0,
+        })
+    }
+
+    fn import_character(
+        &mut self,
+        path: String,
+    ) -> Result<ozone_tui::CharacterEntry, Self::Error> {
+        let contents = fs::read_to_string(&path).map_err(|e| {
+            format!("failed to read {path}: {e}")
+        })?;
+        let card = ozone_persist::CharacterCard::from_json_str(&contents).map_err(|e| e.to_string())?;
+        let stored = self.repo.create_character_full(
+            &card.name,
+            card.description.as_deref().unwrap_or(""),
+            card.system_prompt.as_deref().unwrap_or(""),
+            card.personality.as_deref().unwrap_or(""),
+            card.scenario.as_deref().unwrap_or(""),
+            card.greeting.as_deref().unwrap_or(""),
+            card.example_dialogue.as_deref().unwrap_or(""),
+        ).map_err(|e| e.to_string())?;
+        Ok(ozone_tui::CharacterEntry {
+            card_id: stored.card_id,
+            name: stored.name,
+            description: stored.description,
+            session_count: 0,
+        })
+    }
 }
 
 fn tui_branch_from_record(record: ConversationBranchRecord) -> TuiBranchItem {

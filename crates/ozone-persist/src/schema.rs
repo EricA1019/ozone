@@ -274,6 +274,21 @@ CREATE VIRTUAL TABLE IF NOT EXISTS session_search_fts USING fts5(
     content_rowid=rowid
 );
 
+CREATE TABLE IF NOT EXISTS character_cards (
+    card_id TEXT PRIMARY KEY,
+    name TEXT NOT NULL,
+    description TEXT NOT NULL DEFAULT '',
+    system_prompt TEXT NOT NULL DEFAULT '',
+    personality TEXT NOT NULL DEFAULT '',
+    scenario TEXT NOT NULL DEFAULT '',
+    greeting TEXT NOT NULL DEFAULT '',
+    example_dialogue TEXT NOT NULL DEFAULT '',
+    created_at INTEGER NOT NULL,
+    updated_at INTEGER NOT NULL
+);
+
+CREATE INDEX IF NOT EXISTS idx_character_cards_name ON character_cards(name);
+
 CREATE TRIGGER IF NOT EXISTS session_search_fts_insert AFTER INSERT ON session_search BEGIN
     INSERT INTO session_search_fts(rowid, content) VALUES (NEW.rowid, NEW.content);
 END;
