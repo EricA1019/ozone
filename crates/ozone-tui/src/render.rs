@@ -272,8 +272,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         cursor: state.draft.cursor,
         dirty: state.draft.dirty,
         hint: composer_hint(state.input_mode).into(),
-        show_cursor: state.input_mode == InputMode::Insert
-            && state.focus == FocusTarget::Draft
+        show_cursor: state.focus == FocusTarget::Draft
             && !state.command_palette.open,
         slash_suggestions: build_slash_suggestions(&state.draft.text),
     };

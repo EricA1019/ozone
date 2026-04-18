@@ -288,7 +288,7 @@ mod tests {
         assert_eq!(layout.conversation.area, Rect::new(0, 0, 80, 17));
         assert_eq!(layout.composer.area, Rect::new(0, 17, 80, 4));
         assert_eq!(layout.status.area, Rect::new(0, 21, 80, 3));
-        assert_eq!(layout.focused, PaneId::Conversation);
+        assert_eq!(layout.focused, PaneId::Composer);
     }
 
     #[test]
@@ -356,6 +356,6 @@ mod tests {
         let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
 
         assert!(layout.menu_area.is_none());
-        assert_eq!(layout.focused, PaneId::Conversation);
+        assert_eq!(layout.focused, PaneId::Composer);
     }
 }

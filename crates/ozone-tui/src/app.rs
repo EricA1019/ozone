@@ -899,7 +899,7 @@ impl ShellState {
     /// Transition from a menu screen into the conversation view for the current session.
     pub fn enter_conversation(&mut self) {
         self.screen = ScreenState::Conversation;
-        self.focus = FocusTarget::Transcript;
+        self.focus = FocusTarget::Draft;
         self.input_mode = InputMode::Normal;
     }
 
@@ -1607,8 +1607,9 @@ mod tests {
         app.enter_conversation();
 
         assert_eq!(app.input_mode, InputMode::Normal);
-        assert_eq!(app.focus, FocusTarget::Transcript);
+        assert_eq!(app.focus, FocusTarget::Draft);
 
+        // Tab from Draft (Normal) → enters Insert mode (stays on Draft)
         assert_eq!(
             app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
             KeyAction::FocusDraft
@@ -1616,6 +1617,7 @@ mod tests {
         assert_eq!(app.input_mode, InputMode::Insert);
         assert_eq!(app.focus, FocusTarget::Draft);
 
+        // Tab from Draft (Insert) → focus Transcript
         assert_eq!(
             app.handle_key_event(KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE)),
             KeyAction::FocusTranscript
@@ -2598,7 +2600,7 @@ mod tests {
     }
 
     #[test]
-    fn composer_show_cursor_in_insert_mode() {
+    fn composer_show_cursor_when_draft_focused() {
         use crate::layout::build_layout;
         use crate::render::build_render_model;
 
@@ -2606,14 +2608,20 @@ mod tests {
         state.enter_conversation();
         let layout = build_layout(&state);
 
-        // Normal mode — cursor not shown.
+        // Draft focused in Normal mode — cursor shown.
         let model = build_render_model(&state, &layout);
-        assert!(!model.composer.show_cursor);
+        assert!(model.composer.show_cursor);
 
-        // Insert mode with draft focus — cursor shown.
+        // Insert mode with draft focus — cursor still shown.
         state.apply_action(KeyAction::EnterInsert);
         let model = build_render_model(&state, &layout);
         assert!(model.composer.show_cursor);
+
+        // Focus on Transcript — cursor hidden.
+        state.focus = FocusTarget::Transcript;
+        let layout = build_layout(&state);
+        let model = build_render_model(&state, &layout);
+        assert!(!model.composer.show_cursor);
     }
 
     #[test]
