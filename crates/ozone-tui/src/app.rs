@@ -2641,4 +2641,110 @@ mod tests {
         let model = build_render_model(&state, &layout);
         assert!(model.composer.slash_suggestions.is_empty());
     }
+
+    // ── Character form tests ──────────────────────────────────────
+
+    #[test]
+    fn n_key_opens_character_create_form() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::CharacterManager;
+        state.apply_action(KeyAction::CharacterCreate);
+        assert_eq!(state.screen, ScreenState::CharacterCreate);
+        assert!(state.character_create.name.text.is_empty());
+        assert!(state.character_create.system_prompt.text.is_empty());
+    }
+
+    #[test]
+    fn character_create_form_typing_updates_name() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::CharacterCreate;
+        state.apply_action(KeyAction::FormInsertChar('H'));
+        state.apply_action(KeyAction::FormInsertChar('i'));
+        assert_eq!(state.character_create.name.text, "Hi");
+        assert_eq!(state.character_create.name.cursor, 2);
+    }
+
+    #[test]
+    fn character_create_tab_switches_field() {
+        use super::CharacterFormField;
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::CharacterCreate;
+        assert_eq!(state.character_create.active_field, CharacterFormField::Name);
+        state.apply_action(KeyAction::FormToggleField);
+        assert_eq!(state.character_create.active_field, CharacterFormField::SystemPrompt);
+        state.apply_action(KeyAction::FormToggleField);
+        assert_eq!(state.character_create.active_field, CharacterFormField::Name);
+    }
+
+    #[test]
+    fn character_create_esc_cancels() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::CharacterCreate;
+        state.apply_action(KeyAction::FormCancel);
+        assert_eq!(state.screen, ScreenState::CharacterManager);
+    }
+
+    #[test]
+    fn character_create_enter_submits() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::CharacterCreate;
+        for c in "TestChar".chars() {
+            state.apply_action(KeyAction::FormInsertChar(c));
+        }
+        state.apply_action(KeyAction::FormSubmit);
+        let cmds = state.take_runtime_commands();
+        assert_eq!(cmds.len(), 1);
+        match &cmds[0] {
+            RuntimeCommand::CreateCharacter { name, system_prompt } => {
+                assert_eq!(name, "TestChar");
+                assert!(system_prompt.is_empty());
+            }
+            other => panic!("Expected CreateCharacter, got {:?}", other),
+        }
+        assert_eq!(state.screen, ScreenState::CharacterManager);
+    }
+
+    #[test]
+    fn character_create_empty_name_rejected() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::CharacterCreate;
+        state.apply_action(KeyAction::FormSubmit);
+        assert!(state.take_runtime_commands().is_empty());
+        assert_eq!(state.screen, ScreenState::CharacterCreate);
+        assert!(state.status_line.as_ref().unwrap().contains("empty"));
+    }
+
+    #[test]
+    fn i_key_opens_character_import_form() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::CharacterManager;
+        state.apply_action(KeyAction::CharacterImportPrompt);
+        assert_eq!(state.screen, ScreenState::CharacterImport);
+    }
+
+    #[test]
+    fn character_import_esc_cancels() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::CharacterImport;
+        state.apply_action(KeyAction::FormCancel);
+        assert_eq!(state.screen, ScreenState::CharacterManager);
+    }
+
+    #[test]
+    fn character_import_enter_submits() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::CharacterImport;
+        for c in "/tmp/card.json".chars() {
+            state.apply_action(KeyAction::FormInsertChar(c));
+        }
+        state.apply_action(KeyAction::FormSubmit);
+        let cmds = state.take_runtime_commands();
+        assert_eq!(cmds.len(), 1);
+        match &cmds[0] {
+            RuntimeCommand::ImportCharacter { path } => {
+                assert_eq!(path, "/tmp/card.json");
+            }
+            other => panic!("Expected ImportCharacter, got {:?}", other),
+        }
+    }
 }

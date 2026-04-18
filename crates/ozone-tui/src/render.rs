@@ -56,6 +56,7 @@ pub struct StatusPaneModel {
     pub summary: String,
     pub notifications: Vec<String>,
     pub hint: String,
+    pub mode_badge: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -298,6 +299,12 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         notifications.push(format!("{} · {}", browser.title, browser.summary));
     }
 
+    let mode_badge = if state.screen == ScreenState::Conversation {
+        Some(input_mode_label(state.input_mode).to_uppercase())
+    } else {
+        None
+    };
+
     let status = StatusPaneModel {
         title: "Status".into(),
         summary: state
@@ -306,6 +313,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
             .unwrap_or_else(|| runtime_label(&state.session.runtime)),
         notifications,
         hint: "⬡ ? help · q quit".into(),
+        mode_badge,
     };
 
     let inspector = layout.inspector.map(|_| InspectorPaneModel {
@@ -914,10 +922,26 @@ fn render_composer(frame: &mut Frame, pane: &PaneLayout, model: &ComposerPaneMod
 }
 
 fn render_status(frame: &mut Frame, pane: &PaneLayout, model: &StatusPaneModel, focused: bool) {
-    let mut lines = vec![Line::from(Span::styled(
-        model.summary.clone(),
-        theme::text_style().add_modifier(Modifier::BOLD),
-    ))];
+    let mut lines = Vec::new();
+
+    // Summary line with optional mode badge
+    if let Some(badge) = &model.mode_badge {
+        let badge_style = match badge.as_str() {
+            "INSERT" => theme::accent_style().add_modifier(Modifier::BOLD),
+            "COMMAND" => theme::title_focused_style().add_modifier(Modifier::BOLD),
+            _ => theme::dim_style().add_modifier(Modifier::BOLD),
+        };
+        lines.push(Line::from(vec![
+            Span::styled(format!("[{badge}] "), badge_style),
+            Span::styled(model.summary.clone(), theme::text_style().add_modifier(Modifier::BOLD)),
+        ]));
+    } else {
+        lines.push(Line::from(Span::styled(
+            model.summary.clone(),
+            theme::text_style().add_modifier(Modifier::BOLD),
+        )));
+    }
+
     lines.extend(
         model
             .notifications
@@ -2298,5 +2322,64 @@ mod tests {
                 render_shell(frame, &layout, &model);
             })
             .unwrap();
+    }
+
+    #[test]
+    fn slash_popup_not_shown_when_command_palette_open() {
+        let mut state = seeded_state();
+        state.input_mode = InputMode::Insert;
+        // Put a `/` prefix in the draft so slash suggestions would normally appear.
+        state.draft.text = "/he".into();
+        state.draft.cursor = 3;
+        // Open the command palette — this should suppress the slash popup.
+        state.command_palette.open();
+
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
+        let model = build_render_model(&state, &layout);
+
+        // The composer model still has suggestions (derived from draft text)…
+        assert!(
+            !model.composer.slash_suggestions.is_empty(),
+            "slash_suggestions should be populated from the draft"
+        );
+        // …but the render model's command_palette is Some, so render_shell
+        // skips render_slash_popup (guarded by `model.command_palette.is_none()`).
+        assert!(
+            model.command_palette.is_some(),
+            "command palette should be present when open"
+        );
+    }
+
+    #[test]
+    fn slash_suggestions_clear_on_space_after_slash() {
+        use crate::input::KeyAction;
+
+        let mut state = seeded_state();
+        // Clear the hydrated draft so we start fresh.
+        state.draft.text.clear();
+        state.draft.cursor = 0;
+        state.apply_action(KeyAction::EnterInsert);
+
+        // Type `/he` — suggestions should be populated.
+        state.apply_action(KeyAction::DraftInsertChar('/'));
+        state.apply_action(KeyAction::DraftInsertChar('h'));
+        state.apply_action(KeyAction::DraftInsertChar('e'));
+
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
+        let model = build_render_model(&state, &layout);
+        assert!(
+            !model.composer.slash_suggestions.is_empty(),
+            "suggestions should appear for `/he`"
+        );
+
+        // Insert a space — draft becomes `/he `, suggestions should clear.
+        state.apply_action(KeyAction::DraftInsertChar(' '));
+
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
+        let model = build_render_model(&state, &layout);
+        assert!(
+            model.composer.slash_suggestions.is_empty(),
+            "suggestions should be empty after a space (command name complete)"
+        );
     }
 }
