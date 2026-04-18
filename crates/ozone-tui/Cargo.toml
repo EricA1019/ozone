@@ -1,6 +1,6 @@
 [package]
 name = "ozone-tui"
-version = "0.4.1-alpha"
+version = "0.4.2-alpha"
 edition = "2021"
 publish = false
 description = "Chat-first TUI shell for ozone+ with ratatui and crossterm"

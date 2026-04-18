@@ -8,6 +8,29 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ## [Unreleased]
 
+---
+
+## [0.4.2-alpha] — Quality & Brand Hardening
+
+### Fixed
+
+- **Sub-screen `q` behavior**: pressing `q` on Sessions, Characters, or Settings screens now navigates back to the main menu instead of quitting the application
+- **Stale "coming soon" copy**: removed placeholder "coming soon" text from Characters and Settings status lines; screens are fully implemented
+- **Stop-token leaks**: stream decoder now filters `<|im_end|>`, `</s>`, `<|eot_id|>` and other stop tokens before they reach the UI
+
+### Added
+
+- **WAL journal mode**: SQLite connections now use Write-Ahead Logging for better concurrent read performance
+- **HTTP client pooling**: inference streaming reuses the connection pool instead of creating a new HTTP client per request
+- **Session lock auto-release**: `Phase1dRuntime` Drop impl automatically releases session locks on exit (normal, panic, SIGTERM)
+- **`--force` flag**: `ozone-plus open --force` unconditionally clears stale session locks
+
+### Changed
+
+- **Version**: bumped to `0.4.2-alpha` across all workspace crates
+- **Hint bars**: sub-screen hint bars now show `q back` instead of only `Esc back`, matching actual keybindings
+- **Stale lock timeout**: reduced from 60s to 15s for faster recovery after abnormal exits
+
 ### Added
 
 - **Autoprofiling** in base Ozone's `Profile` workflow: GGUF-aware GPU/CPU layer recommendations, RAM estimates, and benchmark/sweep seeding now provide a practical starting point for manual layer tweaking — `README.md`, `src/gguf.rs`, `src/planner.rs`, `src/profiling.rs`

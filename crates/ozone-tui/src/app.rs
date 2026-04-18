@@ -866,7 +866,10 @@ impl ShellState {
             ScreenState::MainMenu
             | ScreenState::SessionList
             | ScreenState::CharacterManager
-            | ScreenState::Settings => dispatch_menu_key(key),
+            | ScreenState::Settings => {
+                let is_root = self.screen == ScreenState::MainMenu;
+                dispatch_menu_key(key, is_root)
+            }
             ScreenState::Conversation | ScreenState::Help | ScreenState::Quit => {
                 dispatch_key(self.input_mode, key)
             }
@@ -992,8 +995,8 @@ impl ShellState {
                         self.status_line = Some("Returned to main menu".into());
                     }
                     _ => {
-                        self.screen = ScreenState::Quit;
-                        self.should_quit = true;
+                        self.return_to_menu();
+                        self.status_line = Some("Returned to main menu".into());
                     }
                 }
             }
@@ -1030,12 +1033,12 @@ impl ShellState {
                                 "characters" => {
                                     self.screen = ScreenState::CharacterManager;
                                     self.status_line =
-                                        Some("Character manager (coming soon)".into());
+                                        Some("Browsing characters".into());
                                 }
                                 "settings" => {
                                     self.screen = ScreenState::Settings;
                                     self.status_line =
-                                        Some("Settings (coming soon)".into());
+                                        Some("Viewing settings".into());
                                 }
                                 "quit" => {
                                     self.screen = ScreenState::Quit;
@@ -2376,5 +2379,53 @@ mod tests {
         sq.apply_action(KeyAction::MenuShortcut('q'));
         assert!(sq.should_quit);
         assert_eq!(sq.screen, ScreenState::Quit);
+    }
+
+    // ── Sub-screen q-back regression tests ────────────────────────────
+
+    #[test]
+    fn q_from_session_list_goes_back() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::SessionList;
+        state.apply_action(KeyAction::MenuBack); // simulates q on sub-screen
+        assert_eq!(state.screen, ScreenState::MainMenu);
+        assert!(!state.should_quit);
+    }
+
+    #[test]
+    fn q_from_characters_goes_back() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::CharacterManager;
+        state.apply_action(KeyAction::MenuBack);
+        assert_eq!(state.screen, ScreenState::MainMenu);
+        assert!(!state.should_quit);
+    }
+
+    #[test]
+    fn q_from_settings_goes_back() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::Settings;
+        state.apply_action(KeyAction::MenuBack);
+        assert_eq!(state.screen, ScreenState::MainMenu);
+        assert!(!state.should_quit);
+    }
+
+    #[test]
+    fn confirm_quit_from_sub_screen_returns_to_menu() {
+        // Even if ConfirmQuit somehow reaches a sub-screen, it should go back
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::Settings;
+        state.apply_action(KeyAction::ConfirmQuit);
+        assert_eq!(state.screen, ScreenState::MainMenu);
+        assert!(!state.should_quit);
+    }
+
+    #[test]
+    fn q_from_main_menu_still_quits() {
+        let mut state = ShellState::new(session_context());
+        assert_eq!(state.screen, ScreenState::MainMenu);
+        state.apply_action(KeyAction::ConfirmQuit);
+        assert!(state.should_quit);
+        assert_eq!(state.screen, ScreenState::Quit);
     }
 }

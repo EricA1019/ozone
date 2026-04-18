@@ -106,8 +106,9 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
 }
 
 /// Dispatch keys when the TUI is on a menu screen (MainMenu, SessionList, etc.).
-/// Returns a KeyAction for menu navigation.
-pub fn dispatch_menu_key(key: KeyEvent) -> KeyAction {
+/// `is_root_menu` should be true only for the top-level MainMenu; on sub-screens
+/// `q` navigates back instead of quitting the application.
+pub fn dispatch_menu_key(key: KeyEvent, is_root_menu: bool) -> KeyAction {
     if is_ctrl_c(key) {
         return KeyAction::ConfirmQuit;
     }
@@ -117,7 +118,8 @@ pub fn dispatch_menu_key(key: KeyEvent) -> KeyAction {
         KeyCode::Down | KeyCode::Char('j') => KeyAction::MenuDown,
         KeyCode::Enter => KeyAction::MenuSelect,
         KeyCode::Esc | KeyCode::Backspace => KeyAction::MenuBack,
-        KeyCode::Char('q') => KeyAction::ConfirmQuit,
+        KeyCode::Char('q') if is_root_menu => KeyAction::ConfirmQuit,
+        KeyCode::Char('q') => KeyAction::MenuBack,
         KeyCode::Char('?') => KeyAction::ToggleHelp,
         KeyCode::Char('/') | KeyCode::Char(':') => KeyAction::OpenCommandPalette,
         KeyCode::Char(ch) if ch.is_ascii_digit() => {
@@ -283,36 +285,54 @@ mod tests {
     #[test]
     fn menu_dispatch_maps_navigation_and_selection() {
         assert_eq!(
-            dispatch_menu_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE)),
+            dispatch_menu_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), true),
             KeyAction::MenuUp
         );
         assert_eq!(
-            dispatch_menu_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE)),
+            dispatch_menu_key(KeyEvent::new(KeyCode::Down, KeyModifiers::NONE), true),
             KeyAction::MenuDown
         );
         assert_eq!(
-            dispatch_menu_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE)),
+            dispatch_menu_key(KeyEvent::new(KeyCode::Enter, KeyModifiers::NONE), true),
             KeyAction::MenuSelect
         );
         assert_eq!(
-            dispatch_menu_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE)),
+            dispatch_menu_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), true),
             KeyAction::MenuBack
         );
         assert_eq!(
-            dispatch_menu_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE)),
+            dispatch_menu_key(KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE), true),
             KeyAction::MenuDown
         );
         assert_eq!(
-            dispatch_menu_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE)),
+            dispatch_menu_key(KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE), true),
             KeyAction::MenuUp
         );
         assert_eq!(
-            dispatch_menu_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE)),
+            dispatch_menu_key(KeyEvent::new(KeyCode::Char('1'), KeyModifiers::NONE), true),
             KeyAction::MenuShortcut('1')
         );
         assert_eq!(
-            dispatch_menu_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE)),
+            dispatch_menu_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE), true),
             KeyAction::ConfirmQuit
+        );
+    }
+
+    #[test]
+    fn menu_dispatch_q_goes_back_on_sub_screens() {
+        assert_eq!(
+            dispatch_menu_key(KeyEvent::new(KeyCode::Char('q'), KeyModifiers::NONE), false),
+            KeyAction::MenuBack
+        );
+        // Esc still goes back on sub-screens
+        assert_eq!(
+            dispatch_menu_key(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE), false),
+            KeyAction::MenuBack
+        );
+        // Navigation unchanged on sub-screens
+        assert_eq!(
+            dispatch_menu_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), false),
+            KeyAction::MenuUp
         );
     }
 }

@@ -161,7 +161,7 @@ For project questions, collaboration, or direct contact:
 
 ## 10. Current Status
 
-**ozone+ is fully implemented through Phase 3 and ships as `v0.4.1-alpha`.**
+**ozone+ is fully implemented through Phase 3 and ships as `v0.4.2-alpha`.**
 
 What is available today:
 

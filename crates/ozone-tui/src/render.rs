@@ -331,7 +331,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
             filter: state.session_list.filter.clone(),
             total_count: state.session_list.entries.len(),
             visible_count: state.session_list.visible_count(),
-            hint: "j/k navigate \u{00b7} Enter open \u{00b7} n new session \u{00b7} / filter \u{00b7} Esc back"
+            hint: "j/k navigate \u{00b7} Enter open \u{00b7} n new session \u{00b7} / filter \u{00b7} q/Esc back"
                 .into(),
             loading: state.session_list.loading,
         })
@@ -432,6 +432,19 @@ fn build_hints(state: &ShellState) -> Vec<HintItem> {
             HintItem { key: "↑↓".into(), action: "Navigate".into() },
             HintItem { key: "Enter".into(), action: "Open".into() },
             HintItem { key: "/".into(), action: "Commands".into() },
+            HintItem { key: "q".into(), action: "Back".into() },
+            HintItem { key: "Esc".into(), action: "Back".into() },
+        ],
+        ScreenState::CharacterManager => vec![
+            HintItem { key: "↑↓".into(), action: "Navigate".into() },
+            HintItem { key: "/".into(), action: "Commands".into() },
+            HintItem { key: "q".into(), action: "Back".into() },
+            HintItem { key: "Esc".into(), action: "Back".into() },
+        ],
+        ScreenState::Settings => vec![
+            HintItem { key: "↑↓".into(), action: "Navigate".into() },
+            HintItem { key: "/".into(), action: "Commands".into() },
+            HintItem { key: "q".into(), action: "Back".into() },
             HintItem { key: "Esc".into(), action: "Back".into() },
         ],
         ScreenState::Conversation => vec![
@@ -920,7 +933,7 @@ fn render_menu_placeholder(frame: &mut Frame, pane: &PaneLayout, title: &str) {
         )),
         Line::default(),
         Line::from(Span::styled(
-            "  Coming soon — press Esc to return to main menu",
+            "  No content to display — press Esc to return",
             theme::dim_style(),
         )),
     ];
