@@ -1,5 +1,5 @@
 use ratatui::{
-    layout::{Alignment, Rect},
+    layout::{Alignment, Position, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Clear, Paragraph, Wrap},
@@ -7,7 +7,7 @@ use ratatui::{
 };
 
 use crate::{
-    app::{ContextPreview, FocusTarget, InspectorFocus, RuntimePhase, ScreenState, ShellState},
+    app::{CommandEntry, ContextPreview, FocusTarget, InspectorFocus, RuntimePhase, ScreenState, ShellState},
     input::InputMode,
     layout::{LayoutMode, LayoutModel, PaneId, PaneLayout},
     theme,
@@ -39,6 +39,15 @@ pub struct ComposerPaneModel {
     pub cursor: usize,
     pub dirty: bool,
     pub hint: String,
+    pub show_cursor: bool,
+    /// Inline slash-command suggestions shown when draft starts with `/`.
+    pub slash_suggestions: Vec<SlashSuggestion>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SlashSuggestion {
+    pub name: String,
+    pub description: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -239,10 +248,14 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         } else {
             state.draft.text.lines().map(str::to_owned).collect()
         },
-        placeholder: "Write a reply or slash-style command…".into(),
+        placeholder: "Write a reply or type / for commands…".into(),
         cursor: state.draft.cursor,
         dirty: state.draft.dirty,
         hint: composer_hint(state.input_mode).into(),
+        show_cursor: state.input_mode == InputMode::Insert
+            && state.focus == FocusTarget::Draft
+            && !state.command_palette.open,
+        slash_suggestions: build_slash_suggestions(&state.draft.text),
     };
 
     let mut notifications = vec![
@@ -732,6 +745,18 @@ fn render_composer(frame: &mut Frame, pane: &PaneLayout, model: &ComposerPaneMod
             .collect()
     };
 
+    // Inline slash-command suggestions when draft starts with `/`.
+    if !model.slash_suggestions.is_empty() {
+        lines.push(Line::default());
+        for suggestion in model.slash_suggestions.iter().take(5) {
+            lines.push(Line::from(vec![
+                Span::styled(&suggestion.name, theme::accent_style()),
+                Span::styled("  ", Style::default()),
+                Span::styled(&suggestion.description, theme::dim_style()),
+            ]));
+        }
+    }
+
     let draft_state = if model.dirty {
         "dirty"
     } else {
@@ -754,6 +779,47 @@ fn render_composer(frame: &mut Frame, pane: &PaneLayout, model: &ComposerPaneMod
             .wrap(Wrap { trim: false }),
         pane.area,
     );
+
+    // Place the terminal cursor in the composer when in insert mode.
+    // Block border offsets: +1 for left border, +1 for top border.
+    if model.show_cursor && focused {
+        let inner_x = pane.area.x + 1;
+        let inner_y = pane.area.y + 1;
+        let inner_width = pane.area.width.saturating_sub(2) as usize;
+
+        if inner_width > 0 {
+            // Walk through draft text to find cursor row/col with wrapping.
+            let text = model.lines.join("\n");
+            let mut row: u16 = 0;
+            let mut col: u16 = 0;
+
+            for (char_count, ch) in text.chars().enumerate() {
+                if char_count == model.cursor {
+                    break;
+                }
+                if ch == '\n' {
+                    row += 1;
+                    col = 0;
+                } else {
+                    col += 1;
+                    if col as usize >= inner_width {
+                        row += 1;
+                        col = 0;
+                    }
+                }
+            }
+
+            let cursor_x = inner_x + col;
+            let cursor_y = inner_y + row;
+
+            // Only set cursor if it fits within the pane.
+            if cursor_x < pane.area.x + pane.area.width
+                && cursor_y < pane.area.y + pane.area.height
+            {
+                frame.set_cursor_position(Position::new(cursor_x, cursor_y));
+            }
+        }
+    }
 }
 
 fn render_status(frame: &mut Frame, pane: &PaneLayout, model: &StatusPaneModel, focused: bool) {
@@ -1507,6 +1573,37 @@ fn composer_hint(input_mode: InputMode) -> &'static str {
         }
         InputMode::Command => "Enter send · Esc normal · Ctrl+C cancel · Ctrl+D dry-run",
     }
+}
+
+/// Build inline slash-command suggestions when the draft starts with `/`.
+fn build_slash_suggestions(draft_text: &str) -> Vec<SlashSuggestion> {
+    if !draft_text.starts_with('/') {
+        return Vec::new();
+    }
+    // Extract the command prefix after `/` (first word only).
+    let query = draft_text
+        .get(1..)
+        .unwrap_or("")
+        .split_whitespace()
+        .next()
+        .unwrap_or("")
+        .to_lowercase();
+    // Only show suggestions while typing the command name (no space yet).
+    if draft_text.contains(' ') {
+        return Vec::new();
+    }
+    CommandEntry::all()
+        .into_iter()
+        .filter(|cmd| {
+            query.is_empty()
+                || cmd.name.to_lowercase().starts_with(&query)
+                || cmd.alias.iter().any(|a| a.starts_with(&query))
+        })
+        .map(|cmd| SlashSuggestion {
+            name: format!("/{}", cmd.name),
+            description: cmd.description,
+        })
+        .collect()
 }
 
 fn overlay_model(screen: ScreenState, input_mode: InputMode) -> Option<OverlayRenderModel> {

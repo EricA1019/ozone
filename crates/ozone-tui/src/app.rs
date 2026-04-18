@@ -2428,4 +2428,73 @@ mod tests {
         assert!(state.should_quit);
         assert_eq!(state.screen, ScreenState::Quit);
     }
+
+    #[test]
+    fn composer_show_cursor_in_insert_mode() {
+        use crate::layout::build_layout;
+        use crate::render::build_render_model;
+
+        let mut state = ShellState::new(session_context());
+        state.enter_conversation();
+        let layout = build_layout(&state);
+
+        // Normal mode — cursor not shown.
+        let model = build_render_model(&state, &layout);
+        assert!(!model.composer.show_cursor);
+
+        // Insert mode with draft focus — cursor shown.
+        state.apply_action(KeyAction::EnterInsert);
+        let model = build_render_model(&state, &layout);
+        assert!(model.composer.show_cursor);
+    }
+
+    #[test]
+    fn slash_suggestions_appear_when_draft_starts_with_slash() {
+        use crate::layout::build_layout;
+        use crate::render::build_render_model;
+
+        let mut state = ShellState::new(session_context());
+        state.enter_conversation();
+        state.apply_action(KeyAction::EnterInsert);
+        let layout = build_layout(&state);
+
+        // Empty draft — no suggestions.
+        let model = build_render_model(&state, &layout);
+        assert!(model.composer.slash_suggestions.is_empty());
+
+        // Type `/` — suggestions appear.
+        state.apply_action(KeyAction::DraftInsertChar('/'));
+        let model = build_render_model(&state, &layout);
+        assert!(!model.composer.slash_suggestions.is_empty());
+        assert!(model.composer.slash_suggestions.iter().any(|s| s.name == "/help"));
+
+        // Type `/he` — filtered suggestions.
+        state.apply_action(KeyAction::DraftInsertChar('h'));
+        state.apply_action(KeyAction::DraftInsertChar('e'));
+        let model = build_render_model(&state, &layout);
+        assert!(model.composer.slash_suggestions.iter().all(|s| s.name.contains("help")));
+
+        // Type a space — suggestions disappear (command complete).
+        state.apply_action(KeyAction::DraftInsertChar('l'));
+        state.apply_action(KeyAction::DraftInsertChar('p'));
+        state.apply_action(KeyAction::DraftInsertChar(' '));
+        let model = build_render_model(&state, &layout);
+        assert!(model.composer.slash_suggestions.is_empty());
+    }
+
+    #[test]
+    fn normal_text_has_no_slash_suggestions() {
+        use crate::layout::build_layout;
+        use crate::render::build_render_model;
+
+        let mut state = ShellState::new(session_context());
+        state.enter_conversation();
+        state.apply_action(KeyAction::EnterInsert);
+        state.apply_action(KeyAction::DraftInsertChar('h'));
+        state.apply_action(KeyAction::DraftInsertChar('i'));
+
+        let layout = build_layout(&state);
+        let model = build_render_model(&state, &layout);
+        assert!(model.composer.slash_suggestions.is_empty());
+    }
 }
