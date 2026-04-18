@@ -142,6 +142,8 @@ fn is_menu_screen(screen: ScreenState) -> bool {
         ScreenState::MainMenu
             | ScreenState::SessionList
             | ScreenState::CharacterManager
+            | ScreenState::CharacterCreate
+            | ScreenState::CharacterImport
             | ScreenState::Settings
     )
 }

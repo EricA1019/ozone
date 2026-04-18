@@ -752,6 +752,13 @@ impl CommandEntry {
             CommandEntry { name: "sessions".into(), alias: vec!["s".into()], description: "Browse sessions".into() },
             CommandEntry { name: "characters".into(), alias: vec!["c".into()], description: "Manage characters".into() },
             CommandEntry { name: "settings".into(), alias: vec![], description: "Open settings".into() },
+            CommandEntry { name: "session show".into(), alias: vec![], description: "Show session metadata".into() },
+            CommandEntry { name: "session rename".into(), alias: vec![], description: "Rename current session".into() },
+            CommandEntry { name: "session character".into(), alias: vec![], description: "Set session character".into() },
+            CommandEntry { name: "memory list".into(), alias: vec![], description: "List pinned memories".into() },
+            CommandEntry { name: "memory note".into(), alias: vec![], description: "Create a note memory".into() },
+            CommandEntry { name: "search session".into(), alias: vec![], description: "Search this session".into() },
+            CommandEntry { name: "search global".into(), alias: vec![], description: "Search all sessions".into() },
             CommandEntry { name: "help".into(), alias: vec!["h".into(), "?".into()], description: "Show help".into() },
             CommandEntry { name: "quit".into(), alias: vec!["q".into()], description: "Quit / back to menu".into() },
             CommandEntry { name: "menu".into(), alias: vec!["m".into()], description: "Return to main menu".into() },
@@ -1286,6 +1293,17 @@ impl ShellState {
             }
             "menu" => {
                 self.return_to_menu();
+            }
+            // Slash commands: inject into draft and submit
+            cmd if cmd.starts_with("session ")
+                || cmd.starts_with("memory ")
+                || cmd.starts_with("search ") =>
+            {
+                self.enter_conversation();
+                self.draft.text = format!("/{cmd}");
+                self.draft.cursor = self.draft.text.len();
+                self.draft.dirty = true;
+                self.status_line = Some(format!("/{cmd} — press Enter to run or keep typing"));
             }
             _ => {
                 self.status_line = Some(format!("Unknown command: {}", name));
@@ -2262,8 +2280,14 @@ mod tests {
         state.command_palette.open();
         state.command_palette.input = "ses".into();
         let filtered = state.command_palette.filtered_commands();
+        assert!(filtered.len() >= 1);
+        assert!(filtered.iter().any(|c| c.name == "sessions"));
+
+        // More specific filter
+        state.command_palette.input = "settings".into();
+        let filtered = state.command_palette.filtered_commands();
         assert_eq!(filtered.len(), 1);
-        assert_eq!(filtered[0].name, "sessions");
+        assert_eq!(filtered[0].name, "settings");
     }
 
     #[test]
