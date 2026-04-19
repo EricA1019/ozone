@@ -260,6 +260,10 @@ impl Phase1dRuntime {
             .latest_dry_run()
             .map(tui_context_dry_run_from_build);
 
+        let active_launch_plan = std::env::var("OZONE__LAUNCH_PLAN")
+            .ok()
+            .and_then(|json| serde_json::from_str(&json).ok());
+
         let mut bootstrap = TuiBootstrap {
             transcript: snapshot.transcript,
             branches: snapshot.branches,
@@ -277,6 +281,7 @@ impl Phase1dRuntime {
             context_preview: context_preview.clone(),
             context_dry_run: context_dry_run.clone(),
             recall_browser: None,
+            active_launch_plan,
         };
 
         if let Some(status_line) = bootstrap.status_line.as_mut() {

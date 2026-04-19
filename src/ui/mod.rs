@@ -496,6 +496,7 @@ pub async fn run_launcher(
 
     let mut last_tick = Instant::now();
     let mut last_refresh = Instant::now();
+    let mut last_fast_refresh = Instant::now();
     let mut last_catalog_signature: Option<u64> = None;
 
     let result = loop {
@@ -751,7 +752,7 @@ pub async fn run_launcher(
                         KeyCode::Up if app.selected_action > 0 => {
                             app.selected_action -= 1;
                         }
-                        KeyCode::Down if app.selected_action < 6 => {
+                        KeyCode::Down if app.selected_action < 7 => {
                             app.selected_action += 1;
                         }
                         KeyCode::Enter => match app.selected_action {
@@ -797,27 +798,51 @@ pub async fn run_launcher(
                                     app.screen = Screen::ModelPicker;
                                 }
                             2 => {
-                                // Open ozone+ shell (direct handoff)
+                                // Open ozone+ shell (direct handoff — replaces this process)
                                 app.ozone_plus_handoff = true;
                                 break Ok(());
                             }
                             3 => {
+                                // Launch ozone+ side-by-side (spawn new terminal, stay in Monitor)
+                                let ozone_plus_bin = std::env::current_exe()
+                                    .ok()
+                                    .and_then(|p| p.parent().map(|dir| dir.join("ozone-plus")))
+                                    .filter(|p| p.exists())
+                                    .unwrap_or_else(|| std::path::PathBuf::from("ozone-plus"));
+                                match spawn_in_terminal(
+                                    &ozone_plus_bin,
+                                    app.prefs.preferred_backend.as_ref(),
+                                ) {
+                                    Ok(_child) => {
+                                        app.screen = Screen::Monitor;
+                                        app.set_status(
+                                            "ozone+ launched in new terminal window.".into(),
+                                        );
+                                    }
+                                    Err(e) => {
+                                        app.set_error(format!(
+                                            "Side-by-side failed: {e}. Use 'Open ozone+' instead."
+                                        ));
+                                    }
+                                }
+                            }
+                            4 => {
                                 // Settings
                                 open_settings(&mut app);
                             }
-                            4 => {
+                            5 => {
                                 // Clear GPU backends
                                 let _ = crate::processes::clear_gpu_backends().await;
                                 app.services = crate::processes::get_service_status().await;
                                 last_refresh = Instant::now();
                                 app.set_status("GPU backends cleared.".into());
                             }
-                            5 => {
+                            6 => {
                                 // Monitor
                                 app.screen = Screen::Monitor;
                                 app.launch_start = Some(Instant::now());
                             }
-                            6 => open_exit_confirm(&mut app),
+                            7 => open_exit_confirm(&mut app),
                             _ => {}
                         },
                         _ => {}
@@ -1246,12 +1271,11 @@ pub async fn run_launcher(
             app.tick();
         }
 
-        // 2s refresh for service status and monitor data
-        if last_refresh.elapsed() >= Duration::from_secs(2) {
-            last_refresh = Instant::now();
+        // Fast path (500ms): service status, GPU/RAM stats
+        if last_fast_refresh.elapsed() >= Duration::from_millis(500) {
+            last_fast_refresh = Instant::now();
             if matches!(app.screen, Screen::Monitor) {
                 app.services = crate::processes::get_service_status().await;
-                app.update_disk();
                 app.tokens_per_sec = if app.services.kobold_running {
                     crate::processes::get_kobold_perf().await
                 } else {
@@ -1264,6 +1288,14 @@ pub async fn run_launcher(
                 }
             } else if matches!(app.screen, Screen::Launcher) {
                 app.services = crate::processes::get_service_status().await;
+            }
+        }
+
+        // Slow path (2s): disk usage, catalog refresh
+        if last_refresh.elapsed() >= Duration::from_secs(2) {
+            last_refresh = Instant::now();
+            if matches!(app.screen, Screen::Monitor) {
+                app.update_disk();
             }
 
             if matches!(
@@ -1329,10 +1361,91 @@ pub async fn run_launcher(
             }
             Some(BackendMode::Ollama) | None => {}
         }
+        if let Some(plan) = app.current_plan.as_ref() {
+            if let Ok(json) = serde_json::to_string(plan) {
+                command.env("OZONE__LAUNCH_PLAN", json);
+            }
+        }
         let err = command.exec();
         return Err(anyhow::anyhow!("Failed to exec ozone-plus: {err}"));
     }
     result
+}
+
+/// Searches `PATH` for a binary by name.
+fn find_in_path(binary: &str) -> bool {
+    std::env::var("PATH")
+        .map(|p| {
+            p.split(':')
+                .any(|dir| std::path::Path::new(dir).join(binary).exists())
+        })
+        .unwrap_or(false)
+}
+
+/// Spawns `ozone-plus handoff --launcher-session` in a new terminal window.
+///
+/// Env vars for the chosen backend are embedded into the shell command so the
+/// spawned terminal process inherits them correctly.  The caller stays alive
+/// (event-loop continues) — this is the key difference from `exec()`.
+fn spawn_in_terminal(
+    bin: &std::path::Path,
+    backend: Option<&BackendMode>,
+) -> anyhow::Result<std::process::Child> {
+    let program = bin.display().to_string();
+
+    let env_prefix = match backend {
+        Some(BackendMode::KoboldCpp) => format!(
+            "OZONE__BACKEND__TYPE=koboldcpp OZONE__BACKEND__URL='{}' ",
+            ozone_core::paths::koboldcpp_base_url()
+        ),
+        Some(BackendMode::LlamaCpp) => format!(
+            "OZONE__BACKEND__TYPE=llamacpp OZONE__BACKEND__URL='{}' ",
+            ozone_core::paths::llamacpp_base_url()
+        ),
+        _ => String::new(),
+    };
+
+    // Full shell command that runs inside the new terminal window.
+    let shell_cmd = format!("{}{} handoff --launcher-session", env_prefix, program);
+
+    // Respect the user's preferred terminal if set.
+    if let Ok(term) = std::env::var("TERMINAL") {
+        if let Ok(child) = std::process::Command::new(&term)
+            .args(["-e", "sh", "-c", &shell_cmd])
+            .spawn()
+        {
+            return Ok(child);
+        }
+    }
+
+    // (terminal_binary, args_that_precede_the_sh_-c_SHELL_CMD)
+    let candidates: &[(&str, &[&str])] = &[
+        ("alacritty", &["-e", "sh", "-c"]),
+        ("kitty", &["sh", "-c"]),
+        ("wezterm", &["start", "--", "sh", "-c"]),
+        ("x-terminal-emulator", &["-e", "sh", "-c"]),
+        ("gnome-terminal", &["--", "sh", "-c"]),
+        ("xterm", &["-e", "sh", "-c"]),
+        ("konsole", &["-e", "sh", "-c"]),
+    ];
+
+    for (term, pre_args) in candidates {
+        if find_in_path(term) {
+            if let Ok(child) = std::process::Command::new(term)
+                .args(*pre_args)
+                .arg(&shell_cmd)
+                .spawn()
+            {
+                return Ok(child);
+            }
+        }
+    }
+
+    Err(anyhow::anyhow!(
+        "No suitable terminal emulator found. \
+         Set the TERMINAL environment variable to your terminal binary \
+         (e.g. TERMINAL=alacritty)."
+    ))
 }
 
 pub async fn run_monitor() -> Result<()> {
@@ -1355,6 +1468,7 @@ pub async fn run_monitor() -> Result<()> {
 
     let mut last_tick = Instant::now();
     let mut last_refresh = Instant::now();
+    let mut last_fast_refresh = Instant::now();
 
     loop {
         terminal.draw(|f| {
@@ -1385,10 +1499,10 @@ pub async fn run_monitor() -> Result<()> {
             app.tick();
         }
 
-        if last_refresh.elapsed() >= Duration::from_secs(2) {
-            last_refresh = Instant::now();
+        // Fast path (500ms): service status, GPU/RAM stats
+        if last_fast_refresh.elapsed() >= Duration::from_millis(500) {
+            last_fast_refresh = Instant::now();
             app.services = crate::processes::get_service_status().await;
-            app.update_disk();
             app.tokens_per_sec = if app.services.kobold_running {
                 crate::processes::get_kobold_perf().await
             } else {
@@ -1399,6 +1513,12 @@ pub async fn run_monitor() -> Result<()> {
                     .await
                     .unwrap_or_default();
             }
+        }
+
+        // Slow path (2s): disk usage
+        if last_refresh.elapsed() >= Duration::from_secs(2) {
+            last_refresh = Instant::now();
+            app.update_disk();
         }
     }
 

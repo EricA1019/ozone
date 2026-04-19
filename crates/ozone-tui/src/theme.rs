@@ -28,6 +28,17 @@ pub const AMBER: Color = Color::Rgb(245, 158, 11); // #f59e0b
 /// Error / critical states.
 pub const RED: Color = Color::Rgb(239, 68, 68); // #ef4444
 
+// ── Mode badge backgrounds ────────────────────────────────────────────────
+
+/// Background for INSERT mode badge.
+pub const MODE_INSERT_BG: Color = Color::Rgb(44, 18, 93); // dark violet
+
+/// Background for COMMAND mode badge.
+pub const MODE_CMD_BG: Color = Color::Rgb(45, 30, 0); // dark amber
+
+/// Background for NORMAL mode badge.
+pub const MODE_NORMAL_BG: Color = Color::Rgb(20, 20, 20); // near-black
+
 // ── Neutral palette ──────────────────────────────────────────────────────
 
 /// Readable off-white for primary text on dark backgrounds.

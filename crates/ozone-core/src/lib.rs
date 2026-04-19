@@ -6,6 +6,7 @@
 pub mod cli;
 pub mod engine;
 pub mod install;
+pub mod planner;
 pub mod session;
 
 pub mod product {

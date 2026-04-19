@@ -1,8 +1,11 @@
 use ratatui::{
-    layout::{Alignment, Position, Rect},
-    style::{Modifier, Style},
+    layout::{Alignment, Margin, Position, Rect},
+    style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Clear, Paragraph, Wrap},
+    widgets::{
+        Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar,
+        ScrollbarOrientation, ScrollbarState, Wrap,
+    },
     Frame,
 };
 
@@ -22,6 +25,7 @@ pub struct ConversationEntryModel {
     pub content: String,
     pub is_bookmarked: bool,
     pub selected: bool,
+    pub is_streaming: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -31,6 +35,7 @@ pub struct ConversationPaneModel {
     pub entries: Vec<ConversationEntryModel>,
     pub empty_state: String,
     pub hint: String,
+    pub tick_count: u64,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -45,6 +50,8 @@ pub struct ComposerPaneModel {
     pub show_cursor: bool,
     /// Inline slash-command suggestions shown when draft starts with `/`.
     pub slash_suggestions: Vec<SlashSuggestion>,
+    /// Index of the currently highlighted suggestion (None = no selection).
+    pub slash_selected: Option<usize>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -60,12 +67,29 @@ pub struct StatusPaneModel {
     pub notifications: Vec<String>,
     pub hint: String,
     pub mode_badge: Option<String>,
+    pub session_title: String,
+    pub message_count: usize,
+    /// Compact-mode VRAM usage hint shown at right edge of the footer bar.
+    pub vram_hint: Option<String>,
+}
+
+/// Structured model info for the inspector pane's Model Info section.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModelInfoDisplay {
+    pub estimated_vram_mb: u32,
+    pub estimated_ram_mb: u32,
+    pub gpu_layers: u32,
+    pub cpu_layers: u32,
+    pub mode_label: String,
+    pub source_label: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct InspectorPaneModel {
     pub title: String,
     pub lines: Vec<String>,
+    /// Model info section, rendered with brand colors in wide mode.
+    pub model_info: Option<ModelInfoDisplay>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -162,8 +186,27 @@ pub struct CharacterDetailRenderModel {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsCategoryRenderItem {
+    pub label: String,
+    pub selected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SettingsEntryRenderItem {
+    pub label: String,
+    pub value: String,
+    pub selected: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsRenderModel {
-    pub entries: Vec<SettingsRenderEntry>,
+    /// `false` = showing category list; `true` = inside a category.
+    pub drill_down: bool,
+    /// Category label shown in breadcrumb when drilled in (e.g. "Backend").
+    pub breadcrumb_category: Option<String>,
+    pub categories: Vec<SettingsCategoryRenderItem>,
+    /// Entries for the currently selected category (populated regardless of drill_down).
+    pub entries: Vec<SettingsEntryRenderItem>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -185,10 +228,42 @@ pub enum CharacterFormType {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SettingsRenderEntry {
-    pub category: String,
-    pub key: String,
-    pub value: String,
+pub struct ModelIntelligenceRenderModel {
+    pub has_plan: bool,
+    pub model_name: String,
+    pub mode_label: String,
+    pub gpu_layers: u32,
+    pub total_layers: u32,
+    pub context_size: u32,
+    pub estimated_vram_mb: u32,
+    pub estimated_ram_mb: u32,
+    pub source: String,
+    pub rationale: String,
+    pub estimated: bool,
+    pub layer_source_label: String,
+    pub layer_note: Option<String>,
+    pub hint: String,
+}
+
+impl Default for ModelIntelligenceRenderModel {
+    fn default() -> Self {
+        Self {
+            has_plan: false,
+            model_name: String::new(),
+            mode_label: String::new(),
+            gpu_layers: 0,
+            total_layers: 0,
+            context_size: 0,
+            estimated_vram_mb: 0,
+            estimated_ram_mb: 0,
+            source: String::new(),
+            rationale: String::new(),
+            estimated: false,
+            layer_source_label: String::new(),
+            layer_note: None,
+            hint: "Esc → back".into(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -206,6 +281,7 @@ pub struct RenderModel {
     pub character_list: Option<CharacterListRenderModel>,
     pub character_form: Option<CharacterFormRenderModel>,
     pub settings: Option<SettingsRenderModel>,
+    pub model_intelligence: ModelIntelligenceRenderModel,
     pub hints: Vec<HintItem>,
     pub breadcrumb: String,
     pub command_palette: Option<CommandPaletteRenderModel>,
@@ -244,6 +320,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
                     content: item.content.clone(),
                     is_bookmarked: item.is_bookmarked,
                     selected: state.session.selected_message == Some(index),
+                    is_streaming: false,
                 })
                 .collect();
             // Show streamed partial content as a transient entry while generating.
@@ -253,12 +330,14 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
                     content: format!("{partial}▍"),
                     is_bookmarked: false,
                     selected: false,
+                    is_streaming: true,
                 });
             }
             entries
         },
         empty_state: "⬡ Start a conversation — press i to enter insert mode".into(),
         hint: "j/k navigate · b bookmark · Ctrl+K pin · Tab focus · i insert · ? help".into(),
+        tick_count: state.tick_count,
     };
 
     let composer = ComposerPaneModel {
@@ -269,12 +348,17 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         } else {
             state.draft.text.lines().map(str::to_owned).collect()
         },
-        placeholder: "Write a reply or type / for commands…".into(),
+        placeholder: "Type a message · / for commands · Ctrl+P for palette".into(),
         cursor: state.draft.cursor,
         dirty: state.draft.dirty,
         hint: composer_hint(state.input_mode).into(),
         show_cursor: state.focus == FocusTarget::Draft && !state.command_palette.open,
-        slash_suggestions: build_slash_suggestions(&state.draft.text),
+        slash_suggestions: if state.slash_dismissed {
+            Vec::new()
+        } else {
+            build_slash_suggestions(&state.draft.text)
+        },
+        slash_selected: state.slash_selected,
     };
 
     let mut notifications = vec![
@@ -304,6 +388,24 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         None
     };
 
+    let model_info = state.active_launch_plan.as_ref().map(|plan| ModelInfoDisplay {
+        estimated_vram_mb: plan.estimated_vram_mb,
+        estimated_ram_mb: plan.estimated_ram_mb,
+        gpu_layers: plan.gpu_layers_display(),
+        cpu_layers: plan.cpu_layers,
+        mode_label: plan.mode.display_label().to_string(),
+        source_label: plan.layer_source_label.clone(),
+    });
+
+    let vram_hint = if matches!(layout.mode, LayoutMode::Compact) {
+        state.active_launch_plan.as_ref().map(|plan| {
+            let gb = plan.estimated_vram_mb as f64 / 1024.0;
+            format!("{gb:.1}G VRAM")
+        })
+    } else {
+        None
+    };
+
     let status = StatusPaneModel {
         title: "Status".into(),
         summary: state
@@ -313,11 +415,15 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         notifications,
         hint: "⬡ ? help · q quit".into(),
         mode_badge,
+        session_title: state.session.context.title.clone(),
+        message_count: state.session.transcript.len(),
+        vram_hint,
     };
 
     let inspector = layout.inspector.map(|_| InspectorPaneModel {
         title: "Inspector".into(),
         lines: inspector_lines(state, &indicators),
+        model_info: model_info.clone(),
     });
 
     let main_menu = if state.screen == ScreenState::MainMenu {
@@ -339,7 +445,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
                     selected: i == state.menu.selected,
                 })
                 .collect(),
-            hint: "j/k navigate · Enter select · 1-4 quick-jump · q quit · ? help".into(),
+            hint: "j/k navigate · Enter select · 1-4/m quick-jump · q quit · ? help".into(),
             session_count: state.session_list.entries.len(),
         })
     } else {
@@ -415,17 +521,39 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
     };
 
     let settings = if state.screen == ScreenState::Settings {
+        let categories: Vec<SettingsCategoryRenderItem> = state
+            .settings
+            .categories
+            .iter()
+            .enumerate()
+            .map(|(i, cat)| SettingsCategoryRenderItem {
+                label: cat.label().to_string(),
+                selected: i == state.settings.selected_category,
+            })
+            .collect();
+
+        let current_cat = state.settings.current_category().clone();
+        let entries: Vec<SettingsEntryRenderItem> = state
+            .settings
+            .entries_for_category(&current_cat)
+            .into_iter()
+            .enumerate()
+            .map(|(i, (label, value))| SettingsEntryRenderItem {
+                label,
+                value,
+                selected: i == state.settings.selected_entry,
+            })
+            .collect();
+
         Some(SettingsRenderModel {
-            entries: state
-                .settings
-                .entries
-                .iter()
-                .map(|e| SettingsRenderEntry {
-                    category: e.category.clone(),
-                    key: e.key.clone(),
-                    value: e.value.clone(),
-                })
-                .collect(),
+            drill_down: state.settings.drill_down,
+            breadcrumb_category: if state.settings.drill_down {
+                Some(current_cat.label().to_string())
+            } else {
+                None
+            },
+            categories,
+            entries,
         })
     } else {
         None
@@ -455,6 +583,26 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         _ => None,
     };
 
+    let model_intelligence = match &state.active_launch_plan {
+        Some(plan) => ModelIntelligenceRenderModel {
+            has_plan: true,
+            model_name: plan.model_name.clone(),
+            mode_label: plan.mode.display_label().to_string(),
+            gpu_layers: plan.gpu_layers_display(),
+            total_layers: plan.total_layers,
+            context_size: plan.context_size,
+            estimated_vram_mb: plan.estimated_vram_mb,
+            estimated_ram_mb: plan.estimated_ram_mb,
+            source: plan.source.clone(),
+            rationale: plan.rationale.clone(),
+            estimated: plan.estimated,
+            layer_source_label: plan.layer_source_label.clone(),
+            layer_note: plan.layer_source_note.clone(),
+            hint: "Esc → back to menu".into(),
+        },
+        None => ModelIntelligenceRenderModel::default(),
+    };
+
     RenderModel {
         title,
         subtitle,
@@ -469,6 +617,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         character_list,
         character_form,
         settings,
+        model_intelligence,
         hints: build_hints(state),
         breadcrumb: build_breadcrumb(state),
         command_palette: if state.command_palette.open {
@@ -584,24 +733,35 @@ fn build_hints(state: &ShellState) -> Vec<HintItem> {
                 action: "Cancel".into(),
             },
         ],
-        ScreenState::Settings => vec![
-            HintItem {
-                key: "↑↓".into(),
-                action: "Navigate".into(),
-            },
-            HintItem {
-                key: "/".into(),
-                action: "Commands".into(),
-            },
-            HintItem {
-                key: "q".into(),
-                action: "Back".into(),
-            },
-            HintItem {
-                key: "Esc".into(),
-                action: "Back".into(),
-            },
-        ],
+        ScreenState::Settings => {
+            if state.settings.drill_down {
+                vec![
+                    HintItem {
+                        key: "↑↓".into(),
+                        action: "Navigate".into(),
+                    },
+                    HintItem {
+                        key: "Esc".into(),
+                        action: "Categories".into(),
+                    },
+                ]
+            } else {
+                vec![
+                    HintItem {
+                        key: "↑↓".into(),
+                        action: "Navigate".into(),
+                    },
+                    HintItem {
+                        key: "Enter".into(),
+                        action: "Open".into(),
+                    },
+                    HintItem {
+                        key: "q/Esc".into(),
+                        action: "Main menu".into(),
+                    },
+                ]
+            }
+        }
         ScreenState::Conversation => vec![
             HintItem {
                 key: "i".into(),
@@ -634,6 +794,10 @@ fn build_hints(state: &ShellState) -> Vec<HintItem> {
                 action: "Quit".into(),
             },
         ],
+        ScreenState::ModelIntelligence => vec![HintItem {
+            key: "Esc".into(),
+            action: "Main menu".into(),
+        }],
         _ => vec![HintItem {
             key: "Esc".into(),
             action: "Back".into(),
@@ -648,24 +812,34 @@ fn build_breadcrumb(state: &ShellState) -> String {
         ScreenState::CharacterManager => "⬡ Ozone+ › Characters".into(),
         ScreenState::CharacterCreate => "⬡ Ozone+ › Characters › New".into(),
         ScreenState::CharacterImport => "⬡ Ozone+ › Characters › Import".into(),
-        ScreenState::Settings => "⬡ Ozone+ › Settings".into(),
+        ScreenState::Settings => {
+            if state.settings.drill_down {
+                format!(
+                    "⬡ Ozone+ › Settings › {}",
+                    state.settings.current_category().label()
+                )
+            } else {
+                "⬡ Ozone+ › Settings".into()
+            }
+        }
         ScreenState::Conversation => format!("⬡ Ozone+ › {}", state.session.context.title),
         ScreenState::Help => "⬡ Ozone+ › Help".into(),
         ScreenState::Quit => "⬡ Ozone+".into(),
+        ScreenState::ModelIntelligence => "⬡ Ozone+ › Model Intel".into(),
     }
 }
 
 pub fn render_shell(frame: &mut Frame, layout: &LayoutModel, model: &RenderModel) {
     let full_area = frame.area();
 
-    // Reserve bottom row for hints
-    let hint_area = if full_area.height > 3 && !model.hints.is_empty() {
-        Rect::new(
-            full_area.x,
-            full_area.y + full_area.height - 1,
-            full_area.width,
-            1,
-        )
+    // Reserve bottom row for hints — skip when the 1-row status footer occupies that row,
+    // so hints don't overwrite the footer content.
+    let hint_candidate_y = full_area.y + full_area.height.saturating_sub(1);
+    let status_occupies_bottom = layout.status.area.height > 0
+        && layout.status.area.height <= 1
+        && layout.status.area.y == hint_candidate_y;
+    let hint_area = if full_area.height > 3 && !model.hints.is_empty() && !status_occupies_bottom {
+        Rect::new(full_area.x, hint_candidate_y, full_area.width, 1)
     } else {
         Rect::default()
     };
@@ -694,6 +868,8 @@ pub fn render_shell(frame: &mut Frame, layout: &LayoutModel, model: &RenderModel
             render_character_form(frame, menu_pane, form_model);
         } else if let Some(settings_model) = model.settings.as_ref() {
             render_settings(frame, menu_pane, settings_model);
+        } else if model.indicators.screen == "model intelligence" {
+            render_model_intelligence(frame, menu_pane, &model.model_intelligence);
         } else {
             render_menu_placeholder(frame, menu_pane, &model.title);
         }
@@ -850,12 +1026,29 @@ fn render_slash_popup(frame: &mut Frame, composer_pane: &PaneLayout, model: &Com
     let popup_area = Rect::new(popup_x, popup_y, popup_width, popup_height);
 
     let mut lines: Vec<Line> = Vec::with_capacity(max_items);
-    for suggestion in model.slash_suggestions.iter().take(max_items) {
-        lines.push(Line::from(vec![
-            Span::styled(format!("  {}", suggestion.name), theme::accent_style()),
-            Span::styled("  ", Style::default()),
-            Span::styled(&suggestion.description, theme::dim_style()),
-        ]));
+    for (i, suggestion) in model.slash_suggestions.iter().take(max_items).enumerate() {
+        let is_selected = model.slash_selected == Some(i);
+        if is_selected {
+            lines.push(Line::from(vec![
+                Span::styled(
+                    format!("⬢ {}", suggestion.name),
+                    Style::default()
+                        .fg(theme::VIOLET_BRIGHT)
+                        .add_modifier(Modifier::BOLD),
+                ),
+                Span::styled("  ", Style::default()),
+                Span::styled(
+                    &suggestion.description,
+                    Style::default().fg(theme::VIOLET_BRIGHT),
+                ),
+            ]));
+        } else {
+            lines.push(Line::from(vec![
+                Span::styled(format!("⬡ {}", suggestion.name), theme::accent_style()),
+                Span::styled("  ", Style::default()),
+                Span::styled(&suggestion.description, theme::dim_style()),
+            ]));
+        }
     }
 
     let block = Block::default()
@@ -876,6 +1069,8 @@ fn render_breadcrumb(frame: &mut Frame, area: Rect, breadcrumb: &str) {
 }
 
 fn render_conversation(frame: &mut Frame, pane: &PaneLayout, model: &RenderModel, focused: bool) {
+    const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+
     let mut lines = vec![
         Line::from(vec![
             Span::styled(format!("{} ", theme::HEX), theme::brand_hex_style()),
@@ -884,10 +1079,6 @@ fn render_conversation(frame: &mut Frame, pane: &PaneLayout, model: &RenderModel
                 theme::text_style().add_modifier(Modifier::BOLD),
             ),
         ]),
-        Line::from(Span::styled(
-            format!("{} · {}", model.subtitle, model.conversation.subtitle),
-            theme::dim_style(),
-        )),
         Line::default(),
     ];
 
@@ -897,7 +1088,8 @@ fn render_conversation(frame: &mut Frame, pane: &PaneLayout, model: &RenderModel
             theme::dim_style(),
         )));
     } else {
-        for entry in &model.conversation.entries {
+        let entry_count = model.conversation.entries.len();
+        for (i, entry) in model.conversation.entries.iter().enumerate() {
             let marker = if entry.selected {
                 format!("{} ", theme::HEX_FILLED)
             } else {
@@ -921,13 +1113,28 @@ fn render_conversation(frame: &mut Frame, pane: &PaneLayout, model: &RenderModel
                 Span::styled("  ", theme::muted_style())
             };
 
+            let author_display = if entry.is_streaming {
+                let frame_str = SPINNER_FRAMES
+                    [(model.conversation.tick_count / 3) as usize % SPINNER_FRAMES.len()];
+                format!("{} {:<9}", frame_str, &entry.author)
+            } else {
+                format!("{:<10}", entry.author)
+            };
+
             lines.push(Line::from(vec![
                 Span::styled(marker, marker_style),
                 bookmark_indicator,
-                Span::styled(format!("{:<10}", entry.author), author_style),
+                Span::styled(author_display, author_style),
                 Span::raw(" "),
                 Span::styled(entry.content.clone(), theme::text_style()),
             ]));
+
+            if i < entry_count - 1 {
+                lines.push(Line::from(Span::styled(
+                    "  ─────────────────────────────────",
+                    Style::default().fg(Color::Rgb(50, 50, 50)),
+                )));
+            }
         }
     }
 
@@ -961,15 +1168,8 @@ fn render_composer(frame: &mut Frame, pane: &PaneLayout, model: &ComposerPaneMod
     };
 
     let draft_state = if model.dirty { "dirty" } else { "clean" };
+    let _ = draft_state; // retained for potential future use
     lines.push(Line::default());
-    lines.push(Line::from(vec![
-        Span::styled("mode ", theme::dim_style()),
-        Span::styled(model.mode.clone(), theme::mode_badge_style()),
-        Span::styled(
-            format!(" · cursor {} · {}", model.cursor, draft_state),
-            theme::dim_style(),
-        ),
-    ]));
     lines.push(Line::from(Span::styled(
         model.hint.clone(),
         theme::dim_style(),
@@ -1023,41 +1223,130 @@ fn render_composer(frame: &mut Frame, pane: &PaneLayout, model: &ComposerPaneMod
     }
 }
 
-fn render_status(frame: &mut Frame, pane: &PaneLayout, model: &StatusPaneModel, focused: bool) {
-    let mut lines = Vec::new();
-
-    // Summary line with optional mode badge
-    if let Some(badge) = &model.mode_badge {
-        let badge_style = match badge.as_str() {
-            "INSERT" => theme::accent_style().add_modifier(Modifier::BOLD),
-            "COMMAND" => theme::title_focused_style().add_modifier(Modifier::BOLD),
-            _ => theme::dim_style().add_modifier(Modifier::BOLD),
-        };
-        lines.push(Line::from(vec![
-            Span::styled(format!("[{badge}] "), badge_style),
-            Span::styled(
-                model.summary.clone(),
-                theme::text_style().add_modifier(Modifier::BOLD),
-            ),
-        ]));
-    } else {
-        lines.push(Line::from(Span::styled(
-            model.summary.clone(),
-            theme::text_style().add_modifier(Modifier::BOLD),
-        )));
+fn render_status(frame: &mut Frame, pane: &PaneLayout, model: &StatusPaneModel, _focused: bool) {
+    if pane.area.height == 0 {
+        return;
     }
 
-    lines.extend(
-        model
-            .notifications
+    let (short_badge, badge_style) = match model.mode_badge.as_deref() {
+        Some("INSERT") => (
+            "INS",
+            Style::default()
+                .fg(Color::White)
+                .bg(theme::MODE_INSERT_BG)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Some("COMMAND") => (
+            "CMD",
+            Style::default()
+                .fg(Color::White)
+                .bg(theme::MODE_CMD_BG)
+                .add_modifier(Modifier::BOLD),
+        ),
+        _ => (
+            "NOR",
+            Style::default()
+                .fg(theme::TEAL)
+                .add_modifier(Modifier::BOLD),
+        ),
+    };
+
+    let title = truncate_str(&model.session_title, 30);
+    let msgs = format!("{} msgs", model.message_count);
+    let sep = || Span::styled("  │  ", theme::muted_style());
+
+    let mut spans = vec![
+        Span::styled(format!(" {short_badge} "), badge_style),
+        Span::styled(" ", Style::default()),
+        Span::styled(title, theme::text_style()),
+        sep(),
+        Span::styled(msgs, theme::dim_style()),
+    ];
+
+    let runtime_text = status_short_runtime(&model.summary);
+    if !runtime_text.is_empty() {
+        spans.push(sep());
+        spans.push(Span::styled(runtime_text, theme::dim_style()));
+    }
+
+    if let Some(vram) = model.vram_hint.as_deref() {
+        let hint_width = vram.len() as u16 + 5; // "  ···  " (5) + vram text
+        let current_width: u16 = spans
             .iter()
-            .cloned()
-            .map(|line| Line::from(Span::styled(line, theme::dim_style()))),
-    );
-    lines.push(Line::from(Span::styled(
-        model.hint.clone(),
-        theme::dim_style(),
-    )));
+            .map(|s| s.content.chars().count() as u16)
+            .sum();
+        if current_width + hint_width < pane.area.width {
+            spans.push(Span::styled("  ···  ", theme::muted_style()));
+            spans.push(Span::styled(vram.to_string(), theme::highlight_style()));
+        }
+    }
+
+    frame.render_widget(Paragraph::new(Line::from(spans)), pane.area);
+}
+
+fn render_inspector(
+    frame: &mut Frame,
+    pane: &PaneLayout,
+    model: &InspectorPaneModel,
+    focused: bool,
+) {
+    let mut lines: Vec<Line> = model
+        .lines
+        .iter()
+        .cloned()
+        .map(|line| Line::from(Span::styled(line, theme::dim_style())))
+        .collect();
+
+    if let Some(info) = model.model_info.as_ref() {
+        let pane_width = pane.area.width.saturating_sub(4) as usize;
+        let divider = format!("─ Model Info {}", "─".repeat(pane_width.saturating_sub(13)));
+        lines.push(Line::from(Span::styled(divider, theme::muted_style())));
+
+        let vram_pct = if info.estimated_vram_mb > 0 {
+            // Assume 8 GiB GPU as a display reference; show raw MB otherwise
+            let pct = info.estimated_vram_mb as f64 / (8 * 1024) as f64 * 100.0;
+            pct.min(999.0) as u32
+        } else {
+            0
+        };
+        let vram_color = if vram_pct > 95 {
+            theme::RED
+        } else if vram_pct > 80 {
+            theme::AMBER
+        } else {
+            theme::GREEN
+        };
+
+        lines.push(Line::from(vec![
+            Span::styled("  VRAM:  ", Style::default().fg(theme::TEAL)),
+            Span::styled(
+                format!("{} MB", format_mb(info.estimated_vram_mb)),
+                Style::default().fg(vram_color),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  RAM:   ", Style::default().fg(theme::TEAL)),
+            Span::styled(
+                format!("{} MB", format_mb(info.estimated_ram_mb)),
+                theme::text_style(),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Layers:", Style::default().fg(theme::TEAL)),
+            Span::styled(
+                format!(" {} GPU + {} CPU", info.gpu_layers, info.cpu_layers),
+                theme::text_style(),
+            ),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Mode:  ", Style::default().fg(theme::TEAL)),
+            Span::styled(info.mode_label.clone(), theme::text_style()),
+        ]));
+        lines.push(Line::from(vec![
+            Span::styled("  Source:", Style::default().fg(theme::TEAL)),
+            Span::styled(format!(" {}", info.source_label), theme::dim_style()),
+        ]));
+    }
 
     frame.render_widget(
         Paragraph::new(lines)
@@ -1067,25 +1356,12 @@ fn render_status(frame: &mut Frame, pane: &PaneLayout, model: &StatusPaneModel, 
     );
 }
 
-fn render_inspector(
-    frame: &mut Frame,
-    pane: &PaneLayout,
-    model: &InspectorPaneModel,
-    focused: bool,
-) {
-    let lines: Vec<Line> = model
-        .lines
-        .iter()
-        .cloned()
-        .map(|line| Line::from(Span::styled(line, theme::dim_style())))
-        .collect();
-
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(pane_block(&model.title, focused))
-            .wrap(Wrap { trim: false }),
-        pane.area,
-    );
+fn format_mb(mb: u32) -> String {
+    if mb >= 1000 {
+        format!("{},{:03}", mb / 1000, mb % 1000)
+    } else {
+        mb.to_string()
+    }
 }
 
 fn render_overlay(frame: &mut Frame, pane: &PaneLayout, model: &OverlayRenderModel) {
@@ -1274,10 +1550,57 @@ fn render_menu_placeholder(frame: &mut Frame, pane: &PaneLayout, title: &str) {
 
 fn render_session_list(frame: &mut Frame, pane: &PaneLayout, model: &SessionListRenderModel) {
     let area = pane.area;
-    let mut lines: Vec<Line> = Vec::new();
 
-    // Header
-    lines.push(Line::from(vec![
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::border_style())
+        .title(Span::styled(
+            format!(" {} Sessions ", theme::HEX),
+            theme::title_focused_style(),
+        ));
+
+    if model.loading {
+        let mut lines = vec![
+            Line::default(),
+            Line::from(Span::styled("  Loading sessions\u{2026}", theme::dim_style())),
+        ];
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            format!("  {}", model.hint),
+            theme::dim_style(),
+        )));
+        frame.render_widget(
+            Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+            area,
+        );
+        return;
+    }
+
+    if model.entries.is_empty() {
+        let empty_text = if model.filter.is_empty() {
+            "  No sessions yet \u{2014} press n to create one"
+        } else {
+            "  No sessions match the current filter"
+        };
+        let lines = vec![
+            Line::default(),
+            Line::from(Span::styled(empty_text, theme::dim_style())),
+            Line::default(),
+            Line::from(Span::styled(
+                format!("  {}", model.hint),
+                theme::dim_style(),
+            )),
+        ];
+        frame.render_widget(
+            Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+            area,
+        );
+        return;
+    }
+
+    // Build header lines as a prefix paragraph above the list
+    let mut header_lines: Vec<Line> = Vec::new();
+    header_lines.push(Line::from(vec![
         Span::styled(format!("  {} ", theme::HEX), theme::brand_hex_style()),
         Span::styled(
             "Sessions",
@@ -1296,115 +1619,201 @@ fn render_session_list(frame: &mut Frame, pane: &PaneLayout, model: &SessionList
             theme::dim_style(),
         ),
     ]));
-
-    // Filter bar (if active)
     if !model.filter.is_empty() {
-        lines.push(Line::from(vec![
+        header_lines.push(Line::from(vec![
             Span::styled("  filter: ", theme::dim_style()),
             Span::styled(model.filter.clone(), theme::mode_badge_style()),
         ]));
     }
-
-    lines.push(Line::from(Span::styled(
+    header_lines.push(Line::from(Span::styled(
         "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
         theme::muted_style(),
     )));
-
-    // Column headers
-    lines.push(Line::from(vec![
+    header_lines.push(Line::from(vec![
         Span::styled("      ", theme::dim_style()),
         Span::styled(format!("{:<30}", "Name"), theme::dim_style()),
         Span::styled(format!("{:<16}", "Character"), theme::dim_style()),
         Span::styled(format!("{:<10}", "Messages"), theme::dim_style()),
         Span::styled("Last Active", theme::dim_style()),
     ]));
-
-    lines.push(Line::from(Span::styled(
+    header_lines.push(Line::from(Span::styled(
         "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
         theme::muted_style(),
     )));
 
-    if model.loading {
-        lines.push(Line::default());
-        lines.push(Line::from(Span::styled(
-            "  Loading sessions\u{2026}",
-            theme::dim_style(),
-        )));
-    } else if model.entries.is_empty() {
-        lines.push(Line::default());
-        lines.push(Line::from(Span::styled(
-            if model.filter.is_empty() {
-                "  No sessions yet \u{2014} press n to create one"
-            } else {
-                "  No sessions match the current filter"
-            },
-            theme::dim_style(),
-        )));
-    } else {
-        for entry in &model.entries {
-            let (marker, name_style, detail_style) = if entry.selected {
-                (
-                    format!("  {} ", theme::HEX_FILLED),
-                    theme::highlight_style(),
-                    theme::text_style(),
-                )
-            } else {
-                (
-                    format!("  {} ", theme::HEX),
-                    theme::text_style(),
-                    theme::dim_style(),
-                )
-            };
+    // Split area: use full area with block, then split inner area for header + list
+    let inner = block.inner(area);
+    // header rows + hint row at bottom
+    let header_height = header_lines.len() as u16;
+    let hint_height = 2u16;
+    let list_height = inner.height.saturating_sub(header_height + hint_height);
 
-            lines.push(Line::from(vec![
+    let header_area = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: header_height.min(inner.height),
+    };
+    let list_area = Rect {
+        x: inner.x,
+        y: inner.y + header_area.height,
+        width: inner.width,
+        height: list_height,
+    };
+    let hint_area = Rect {
+        x: inner.x,
+        y: inner.y + header_area.height + list_height,
+        width: inner.width,
+        height: hint_height.min(inner.height.saturating_sub(header_area.height + list_height)),
+    };
+
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(header_lines), header_area);
+
+    // Build List items
+    let items: Vec<ListItem> = model
+        .entries
+        .iter()
+        .map(|entry| {
+            let line = Line::from(vec![
                 Span::styled(
-                    marker,
+                    if entry.selected {
+                        format!("{} ", theme::HEX_FILLED)
+                    } else {
+                        format!("{} ", theme::HEX)
+                    },
                     if entry.selected {
                         theme::highlight_style()
                     } else {
                         theme::muted_style()
                     },
                 ),
-                Span::styled(format!("{:<30}", truncate_str(&entry.name, 28)), name_style),
+                Span::styled(
+                    format!("{:<30}", truncate_str(&entry.name, 28)),
+                    if entry.selected {
+                        theme::highlight_style()
+                    } else {
+                        theme::text_style()
+                    },
+                ),
                 Span::styled(
                     format!("{:<16}", truncate_str(&entry.character, 14)),
-                    detail_style,
+                    if entry.selected {
+                        theme::text_style()
+                    } else {
+                        theme::dim_style()
+                    },
                 ),
-                Span::styled(format!("{:<10}", entry.message_count), detail_style),
-                Span::styled(entry.last_active.clone(), detail_style),
-            ]));
-        }
+                Span::styled(
+                    format!("{:<10}", entry.message_count),
+                    if entry.selected {
+                        theme::text_style()
+                    } else {
+                        theme::dim_style()
+                    },
+                ),
+                Span::styled(
+                    entry.last_active.clone(),
+                    if entry.selected {
+                        theme::text_style()
+                    } else {
+                        theme::dim_style()
+                    },
+                ),
+            ]);
+            ListItem::new(line)
+        })
+        .collect();
+
+    let mut list_state = ListState::default();
+    if let Some(sel_idx) = model.entries.iter().position(|e| e.selected) {
+        list_state.select(Some(sel_idx));
     }
 
-    // Hint bar at bottom
-    lines.push(Line::default());
-    lines.push(Line::from(Span::styled(
-        format!("  {}", model.hint),
-        theme::dim_style(),
-    )));
+    let list = List::new(items).highlight_style(theme::highlight_style());
+    frame.render_stateful_widget(list, list_area, &mut list_state);
 
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::border_style())
-        .title(Span::styled(
-            format!(" {} Sessions ", theme::HEX),
-            theme::title_focused_style(),
-        ));
+    // Scrollbar when there are more entries than visible rows
+    let total = model.entries.len();
+    if total > list_area.height as usize {
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("↑"))
+            .end_symbol(Some("↓"));
+        let mut sb_state = ScrollbarState::new(total)
+            .position(list_state.selected().unwrap_or(0));
+        frame.render_stateful_widget(
+            scrollbar,
+            list_area.inner(Margin { vertical: 0, horizontal: 0 }),
+            &mut sb_state,
+        );
+    }
 
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(block)
-            .wrap(Wrap { trim: false }),
-        area,
-    );
+    // Hint bar
+    let hint_lines = vec![
+        Line::default(),
+        Line::from(Span::styled(
+            format!("  {}", model.hint),
+            theme::dim_style(),
+        )),
+    ];
+    frame.render_widget(Paragraph::new(hint_lines), hint_area);
 }
 
 fn render_character_list(frame: &mut Frame, pane: &PaneLayout, model: &CharacterListRenderModel) {
     let area = pane.area;
-    let mut lines: Vec<Line> = Vec::new();
 
-    // Header
-    lines.push(Line::from(vec![
+    let block = Block::default()
+        .borders(Borders::ALL)
+        .border_style(theme::focus_border_style())
+        .title(Span::styled(
+            format!(" {} Characters ", theme::HEX),
+            theme::accent_style(),
+        ));
+
+    if model.entries.is_empty() {
+        let lines = vec![
+            Line::from(vec![
+                Span::styled(format!("  {} ", theme::HEX), theme::brand_hex_style()),
+                Span::styled(
+                    "Characters",
+                    theme::title_focused_style().add_modifier(Modifier::BOLD),
+                ),
+                Span::styled(
+                    format!("  ({} total)", model.total_count),
+                    theme::dim_style(),
+                ),
+            ]),
+            Line::from(Span::styled(
+                "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+                theme::muted_style(),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  No characters yet",
+                theme::text_style().add_modifier(Modifier::BOLD),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Press n to create your first character card,",
+                theme::dim_style(),
+            )),
+            Line::from(Span::styled(
+                "  or press i to import a JSON character card.",
+                theme::dim_style(),
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "  Supports SillyTavern, TavernAI, and ozone-native formats.",
+                theme::dim_style(),
+            )),
+        ];
+        frame.render_widget(Paragraph::new(lines).block(block), area);
+        return;
+    }
+
+    // Build header
+    let mut header_lines: Vec<Line> = Vec::new();
+    header_lines.push(Line::from(vec![
         Span::styled(format!("  {} ", theme::HEX), theme::brand_hex_style()),
         Span::styled(
             "Characters",
@@ -1415,72 +1824,116 @@ fn render_character_list(frame: &mut Frame, pane: &PaneLayout, model: &Character
             theme::dim_style(),
         ),
     ]));
-
-    lines.push(Line::from(Span::styled(
+    header_lines.push(Line::from(Span::styled(
+        "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+        theme::muted_style(),
+    )));
+    header_lines.push(Line::from(vec![
+        Span::styled("      Name                          ", theme::dim_style()),
+        Span::styled("Sessions  ", theme::dim_style()),
+        Span::styled("Description", theme::dim_style()),
+    ]));
+    header_lines.push(Line::from(Span::styled(
         "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
         theme::muted_style(),
     )));
 
-    if model.entries.is_empty() {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  No characters yet",
-            theme::text_style().add_modifier(Modifier::BOLD),
-        )));
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  Press n to create your first character card,",
-            theme::dim_style(),
-        )));
-        lines.push(Line::from(Span::styled(
-            "  or press i to import a JSON character card.",
-            theme::dim_style(),
-        )));
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
-            "  Supports SillyTavern, TavernAI, and ozone-native formats.",
-            theme::dim_style(),
-        )));
-    } else {
-        // Column headers
-        lines.push(Line::from(vec![
-            Span::styled("      Name                          ", theme::dim_style()),
-            Span::styled("Sessions  ", theme::dim_style()),
-            Span::styled("Description", theme::dim_style()),
-        ]));
-        lines.push(Line::from(Span::styled(
-            "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
-            theme::muted_style(),
-        )));
+    let inner = block.inner(area);
+    let header_height = header_lines.len() as u16;
 
-        for entry in &model.entries {
-            let marker = if entry.selected {
-                format!("  {} ", theme::HEX_FILLED)
-            } else {
-                format!("  {} ", theme::HEX)
-            };
+    // Reserve space for optional detail panel (3 lines separator + name + desc chunks + session count)
+    let detail_height = if let Some(detail) = &model.selected_detail {
+        let desc_chunks = (detail.description.len() / 70 + 1) as u16;
+        2u16 + 1 + desc_chunks + 1
+    } else {
+        0
+    };
+
+    let list_height = inner
+        .height
+        .saturating_sub(header_height + detail_height);
+
+    let header_area = Rect {
+        x: inner.x,
+        y: inner.y,
+        width: inner.width,
+        height: header_height.min(inner.height),
+    };
+    let list_area = Rect {
+        x: inner.x,
+        y: inner.y + header_area.height,
+        width: inner.width,
+        height: list_height,
+    };
+    let detail_area = Rect {
+        x: inner.x,
+        y: inner.y + header_area.height + list_height,
+        width: inner.width,
+        height: detail_height.min(inner.height.saturating_sub(header_area.height + list_height)),
+    };
+
+    frame.render_widget(block, area);
+    frame.render_widget(Paragraph::new(header_lines), header_area);
+
+    // Build list items
+    let items: Vec<ListItem> = model
+        .entries
+        .iter()
+        .map(|entry| {
             let style = if entry.selected {
                 theme::highlight_style()
             } else {
                 theme::text_style()
             };
-            lines.push(Line::from(vec![
-                Span::styled(marker, style),
+            let line = Line::from(vec![
+                Span::styled(
+                    if entry.selected {
+                        format!("{} ", theme::HEX_FILLED)
+                    } else {
+                        format!("{} ", theme::HEX)
+                    },
+                    style,
+                ),
                 Span::styled(format!("{:<30}", truncate_str(&entry.name, 30)), style),
                 Span::styled(format!("{:<10}", entry.session_count), theme::dim_style()),
                 Span::styled(truncate_str(&entry.description, 40), theme::dim_style()),
-            ]));
-        }
+            ]);
+            ListItem::new(line)
+        })
+        .collect();
+
+    let mut list_state = ListState::default();
+    if let Some(sel_idx) = model.entries.iter().position(|e| e.selected) {
+        list_state.select(Some(sel_idx));
     }
 
-    // Selected detail panel
+    let list = List::new(items).highlight_style(theme::highlight_style());
+    frame.render_stateful_widget(list, list_area, &mut list_state);
+
+    // Scrollbar when needed
+    let total = model.entries.len();
+    if total > list_area.height as usize {
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("↑"))
+            .end_symbol(Some("↓"));
+        let mut sb_state = ScrollbarState::new(total)
+            .position(list_state.selected().unwrap_or(0));
+        frame.render_stateful_widget(
+            scrollbar,
+            list_area.inner(Margin { vertical: 0, horizontal: 0 }),
+            &mut sb_state,
+        );
+    }
+
+    // Detail panel
     if let Some(detail) = &model.selected_detail {
-        lines.push(Line::from(""));
-        lines.push(Line::from(Span::styled(
+        let mut detail_lines: Vec<Line> = Vec::new();
+        detail_lines.push(Line::from(""));
+        detail_lines.push(Line::from(Span::styled(
             "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
             theme::muted_style(),
         )));
-        lines.push(Line::from(vec![
+        detail_lines.push(Line::from(vec![
             Span::styled("  ", Style::default()),
             Span::styled(
                 &detail.name,
@@ -1489,27 +1942,18 @@ fn render_character_list(frame: &mut Frame, pane: &PaneLayout, model: &Character
         ]));
         for chunk in detail.description.as_bytes().chunks(70) {
             if let Ok(s) = std::str::from_utf8(chunk) {
-                lines.push(Line::from(Span::styled(
+                detail_lines.push(Line::from(Span::styled(
                     format!("  {s}"),
                     theme::text_style(),
                 )));
             }
         }
-        lines.push(Line::from(Span::styled(
+        detail_lines.push(Line::from(Span::styled(
             format!("  {} session(s)", detail.session_count),
             theme::dim_style(),
         )));
+        frame.render_widget(Paragraph::new(detail_lines), detail_area);
     }
-
-    let block = Block::default()
-        .borders(Borders::ALL)
-        .border_style(theme::focus_border_style())
-        .title(Span::styled(
-            format!(" {} Characters ", theme::HEX),
-            theme::accent_style(),
-        ));
-
-    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn render_character_form(frame: &mut Frame, pane: &PaneLayout, model: &CharacterFormRenderModel) {
@@ -1637,73 +2081,254 @@ fn render_character_form(frame: &mut Frame, pane: &PaneLayout, model: &Character
 
 fn render_settings(frame: &mut Frame, pane: &PaneLayout, model: &SettingsRenderModel) {
     let area = pane.area;
-    let mut lines = vec![];
+    let mut lines: Vec<Line> = vec![];
 
-    lines.push(Line::from(""));
-    lines.push(Line::from(vec![Span::styled(
-        format!("  {} Settings", theme::HEX),
-        theme::title_focused_style().add_modifier(Modifier::BOLD),
-    )]));
-    lines.push(Line::from(Span::styled(
-        "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
-        theme::muted_style(),
-    )));
+    if model.drill_down {
+        // ── Entry list view ────────────────────────────────────────────────
+        lines.push(Line::from(""));
 
-    if model.entries.is_empty() {
+        if model.entries.is_empty() {
+            lines.push(Line::from(""));
+            lines.push(Line::from(Span::styled(
+                "  No settings available for this category.",
+                theme::dim_style(),
+            )));
+        } else {
+            for entry in &model.entries {
+                let (label_style, value_style, marker) = if entry.selected {
+                    (
+                        theme::highlight_style(),
+                        theme::text_style(),
+                        format!("  {} ", theme::HEX_FILLED),
+                    )
+                } else {
+                    (
+                        theme::dim_style(),
+                        theme::text_style(),
+                        format!("  {} ", theme::HEX),
+                    )
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(marker, if entry.selected {
+                        theme::highlight_style()
+                    } else {
+                        theme::muted_style()
+                    }),
+                    Span::styled(format!("{:<22}", entry.label), label_style),
+                    Span::styled(entry.value.clone(), value_style),
+                ]));
+            }
+        }
+
         lines.push(Line::from(""));
         lines.push(Line::from(Span::styled(
-            "  No configuration loaded.",
+            "  ─────────────────────────────────────────────",
+            theme::muted_style(),
+        )));
+        lines.push(Line::from(Span::styled(
+            "  [Esc] back to categories · read-only",
+            theme::dim_style(),
+        )));
+
+        // Breadcrumb in block title: " Settings › Backend "
+        let category_label = model
+            .breadcrumb_category
+            .as_deref()
+            .unwrap_or("Settings");
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme::focus_border_style())
+            .title(vec![
+                Span::styled(
+                    format!(" {} Settings ", theme::HEX),
+                    theme::dim_style(),
+                ),
+                Span::styled("\u{203a} ", theme::dim_style()),
+                Span::styled(
+                    format!("{category_label} "),
+                    theme::accent_style(),
+                ),
+            ]);
+
+        frame.render_widget(Paragraph::new(lines).block(block), area);
+    } else {
+        // ── Category list view ─────────────────────────────────────────────
+        lines.push(Line::from(""));
+
+        for cat in &model.categories {
+            let (marker, style) = if cat.selected {
+                (
+                    format!("  {} ", theme::HEX_FILLED),
+                    theme::highlight_style(),
+                )
+            } else {
+                (
+                    format!("  {} ", theme::HEX),
+                    theme::text_style(),
+                )
+            };
+            lines.push(Line::from(vec![
+                Span::styled(marker, if cat.selected {
+                    theme::highlight_style()
+                } else {
+                    theme::muted_style()
+                }),
+                Span::styled(cat.label.clone(), style),
+            ]));
+            lines.push(Line::from(""));
+        }
+
+        lines.push(Line::from(Span::styled(
+            "  ─────────────────────────────────────────────",
+            theme::muted_style(),
+        )));
+        lines.push(Line::from(Span::styled(
+            "  [Enter] open category \u{00b7} [Esc] main menu",
+            theme::dim_style(),
+        )));
+
+        let block = Block::default()
+            .borders(Borders::ALL)
+            .border_style(theme::focus_border_style())
+            .title(Span::styled(
+                format!(" {} Settings ", theme::HEX),
+                theme::accent_style(),
+            ));
+
+        frame.render_widget(Paragraph::new(lines).block(block), area);
+    }
+}
+
+fn render_model_intelligence(
+    frame: &mut Frame,
+    pane: &PaneLayout,
+    model: &ModelIntelligenceRenderModel,
+) {
+    let area = pane.area;
+    let mut lines: Vec<Line> = vec![
+        Line::default(),
+        Line::from(vec![
+            Span::styled(format!("  {} ", theme::HEX), theme::brand_hex_style()),
+            Span::styled(
+                "Model Intelligence",
+                theme::title_focused_style().add_modifier(Modifier::BOLD),
+            ),
+        ]),
+        Line::default(),
+    ];
+
+    if !model.has_plan {
+        lines.push(Line::from(Span::styled(
+            "  No launch plan available.",
             theme::dim_style(),
         )));
         lines.push(Line::from(Span::styled(
-            "  Session settings are stored in config.toml.",
+            "  Launch a model from ozone to see intelligence data.",
             theme::dim_style(),
         )));
     } else {
-        let mut current_category = String::new();
-        for entry in &model.entries {
-            if entry.category != current_category {
-                lines.push(Line::from(""));
-                lines.push(Line::from(vec![Span::styled(
-                    format!("  {} {}", theme::HEX_FILLED, entry.category),
-                    theme::title_focused_style(),
-                )]));
-                lines.push(Line::from(Span::styled(
-                    "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
-                    theme::muted_style(),
-                )));
-                current_category = entry.category.clone();
-            }
-            lines.push(Line::from(vec![
-                Span::styled(format!("    {:<24}", entry.key), theme::text_style()),
-                Span::styled(&entry.value, theme::highlight_style()),
-            ]));
+        let row = |label: &str, value: String| -> Line {
+            Line::from(vec![
+                Span::styled(format!("  {:<16}", label), theme::dim_style()),
+                Span::styled(value, theme::text_style()),
+            ])
+        };
+
+        lines.push(row("Model", model.model_name.clone()));
+        let mode_str = if model.estimated {
+            format!("{} (estimated)", model.mode_label)
+        } else {
+            model.mode_label.clone()
+        };
+        lines.push(row("Mode", mode_str));
+        lines.push(row(
+            "GPU layers",
+            format!("{}/{}", model.gpu_layers, model.total_layers),
+        ));
+        lines.push(row(
+            "CPU layers",
+            format!("{}", model.total_layers.saturating_sub(model.gpu_layers)),
+        ));
+        lines.push(row(
+            "Context",
+            format!("{} tokens", model.context_size),
+        ));
+        lines.push(row(
+            "Est. VRAM",
+            format!("{} MiB", model.estimated_vram_mb),
+        ));
+        lines.push(row(
+            "Est. RAM",
+            format!("{} MiB", model.estimated_ram_mb),
+        ));
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            "  ──────────────────────────────────────────",
+            theme::muted_style(),
+        )));
+        lines.push(Line::default());
+        lines.push(row("Source", model.source.clone()));
+        lines.push(row("Layer source", model.layer_source_label.clone()));
+
+        lines.push(Line::default());
+        lines.push(Line::from(Span::styled(
+            "  Rationale",
+            theme::dim_style().add_modifier(Modifier::BOLD),
+        )));
+        for line in textwrap_simple(&model.rationale, 60) {
+            lines.push(Line::from(Span::styled(
+                format!("    {}", line),
+                theme::text_style(),
+            )));
+        }
+
+        if let Some(note) = &model.layer_note {
+            lines.push(Line::default());
+            lines.push(Line::from(Span::styled(
+                format!("  Note: {}", note),
+                theme::dim_style(),
+            )));
         }
     }
 
-    lines.push(Line::from(""));
+    lines.push(Line::default());
     lines.push(Line::from(Span::styled(
-        "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
-        theme::muted_style(),
-    )));
-    lines.push(Line::from(Span::styled(
-        "  Edit config.toml directly to change settings.",
-        theme::dim_style(),
-    )));
-    lines.push(Line::from(Span::styled(
-        "  Changes take effect on next session open.",
+        format!("  {}", model.hint),
         theme::dim_style(),
     )));
 
     let block = Block::default()
         .borders(Borders::ALL)
-        .border_style(theme::focus_border_style())
+        .border_style(theme::border_style())
         .title(Span::styled(
-            format!(" {} Settings ", theme::HEX),
-            theme::accent_style(),
+            format!(" {} Model Intel ", theme::HEX),
+            theme::title_focused_style(),
         ));
 
-    frame.render_widget(Paragraph::new(lines).block(block), area);
+    frame.render_widget(
+        Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+        area,
+    );
+}
+
+fn textwrap_simple(text: &str, width: usize) -> Vec<String> {
+    let mut lines = Vec::new();
+    let mut current = String::new();
+    for word in text.split_whitespace() {
+        if current.is_empty() {
+            current = word.to_string();
+        } else if current.len() + 1 + word.len() <= width {
+            current.push(' ');
+            current.push_str(word);
+        } else {
+            lines.push(current.clone());
+            current = word.to_string();
+        }
+    }
+    if !current.is_empty() {
+        lines.push(current);
+    }
+    lines
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {
@@ -1760,6 +2385,7 @@ fn screen_label(screen: ScreenState) -> &'static str {
         ScreenState::Conversation => "conversation",
         ScreenState::Help => "help",
         ScreenState::Quit => "quit",
+        ScreenState::ModelIntelligence => "model intelligence",
     }
 }
 
@@ -1832,6 +2458,26 @@ fn context_status_line(state: &ShellState) -> String {
         .as_ref()
         .map(|preview| format!("context {}", preview.inline_status))
         .unwrap_or_else(|| "context preview pending".into())
+}
+
+/// Returns a short human-readable runtime status string for the 1-line footer.
+/// Returns an empty string when the runtime is idle or the summary is generic.
+fn status_short_runtime(summary: &str) -> String {
+    if summary.contains("generating") {
+        "⟳ generating\u{2026}".into()
+    } else if summary.contains("queued") {
+        "⟳ queued".into()
+    } else if summary.contains("cancelling") {
+        "\u{2715} cancelling".into()
+    } else if summary.contains("cancelled") {
+        "\u{2715} cancelled".into()
+    } else if summary.contains("failed") {
+        "\u{26a0} error".into()
+    } else if summary == "runtime idle" {
+        String::new()
+    } else {
+        truncate_str(summary, 36)
+    }
 }
 
 fn inspector_lines(state: &ShellState, indicators: &ShellIndicators) -> Vec<String> {
@@ -1993,6 +2639,7 @@ fn overlay_model(screen: ScreenState, input_mode: InputMode) -> Option<OverlayRe
         | ScreenState::CharacterCreate
         | ScreenState::CharacterImport
         | ScreenState::Settings
+        | ScreenState::ModelIntelligence
         | ScreenState::Conversation => None,
         ScreenState::Help => Some(OverlayRenderModel {
             title: "Help".into(),
@@ -2113,6 +2760,7 @@ mod tests {
             context_preview: None,
             context_dry_run: None,
             recall_browser: None,
+            active_launch_plan: None,
         });
         state.session.selected_message = Some(1);
         state
@@ -2161,7 +2809,7 @@ mod tests {
             "breadcrumb should be visible on top row"
         );
         assert!(rendered.contains("Composer"));
-        assert!(rendered.contains("Status"));
+        assert!(rendered.contains("Phase 1C"), "session title should appear in footer");
         assert!(rendered.contains("mock runtime ready"));
         assert!(!rendered.contains(" Inspector "));
     }
@@ -2178,7 +2826,7 @@ mod tests {
 
         assert!(rendered.contains("Inspector"));
         assert!(rendered.contains("branch main"));
-        assert!(rendered.contains("INSERT"));
+        assert!(rendered.contains(" INS "), "Insert mode badge should appear in footer");
         assert!(rendered.contains("123e4567"));
         assert!(rendered.contains("context preview unavailable"));
     }
@@ -2320,12 +2968,12 @@ mod tests {
         assert!(model.session_list.is_none());
 
         let menu = model.main_menu.unwrap();
-        assert_eq!(menu.items.len(), 5);
+        assert_eq!(menu.items.len(), 6);
         assert!(menu.items[0].selected); // first item selected by default
         assert!(!menu.items[1].selected);
         assert_eq!(menu.items[0].label, "New Chat");
         assert_eq!(menu.items[1].label, "Sessions");
-        assert_eq!(menu.items[4].label, "Quit");
+        assert_eq!(menu.items[5].label, "Quit");
     }
 
     #[test]

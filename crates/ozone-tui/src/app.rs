@@ -1,4 +1,4 @@
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyCode, KeyEvent};
 use ozone_core::{engine::CancelReason, session::SessionId};
 
 use crate::input::{
@@ -14,14 +14,160 @@ pub enum ScreenState {
     CharacterCreate,
     CharacterImport,
     Settings,
+    ModelIntelligence,
     Conversation,
     Help,
     Quit,
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+/// The four top-level categories shown in the Settings menu.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SettingsCategory {
+    Backend,
+    Model,
+    Display,
+    Keybindings,
+}
+
+impl SettingsCategory {
+    pub fn label(&self) -> &'static str {
+        match self {
+            SettingsCategory::Backend => "Backend",
+            SettingsCategory::Model => "Model",
+            SettingsCategory::Display => "Display",
+            SettingsCategory::Keybindings => "Keybindings",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsState {
-    pub entries: Vec<SettingsEntry>,
+    pub categories: Vec<SettingsCategory>,
+    pub selected_category: usize,
+    pub selected_entry: usize,
+    /// `false` = category list visible; `true` = entry list for selected category.
+    pub drill_down: bool,
+    // Entries loaded from runtime (Backend / Model); Display & Keybindings are
+    // provided statically by `entries_for_category`.
+    raw_entries: Vec<SettingsEntry>,
+    loaded: bool,
+}
+
+impl Default for SettingsState {
+    fn default() -> Self {
+        Self {
+            categories: vec![
+                SettingsCategory::Backend,
+                SettingsCategory::Model,
+                SettingsCategory::Display,
+                SettingsCategory::Keybindings,
+            ],
+            selected_category: 0,
+            selected_entry: 0,
+            drill_down: false,
+            raw_entries: Vec::new(),
+            loaded: false,
+        }
+    }
+}
+
+impl SettingsState {
+    /// True once the runtime has provided Backend / Model config entries.
+    pub fn is_loaded(&self) -> bool {
+        self.loaded
+    }
+
+    /// Store runtime-provided entries (replaces any previous Backend/Model data).
+    pub fn load(&mut self, entries: Vec<SettingsEntry>) {
+        self.raw_entries = entries;
+        self.loaded = true;
+    }
+
+    /// Returns `(label, value)` pairs for the given category.
+    /// Display and Keybindings are built-in; Backend and Model come from loaded config.
+    pub fn entries_for_category(&self, cat: &SettingsCategory) -> Vec<(String, String)> {
+        match cat {
+            SettingsCategory::Display => vec![
+                ("Color theme".into(), "ozone-dark".into()),
+                ("Wide mode threshold".into(), "120 cols".into()),
+            ],
+            SettingsCategory::Keybindings => vec![
+                ("Move up".into(), "↑ / k".into()),
+                ("Move down".into(), "↓ / j".into()),
+                ("Select / open".into(), "Enter".into()),
+                ("Back / cancel".into(), "Esc / q".into()),
+                ("Insert mode".into(), "i".into()),
+                ("Send message".into(), "Enter (insert)".into()),
+                ("Command palette".into(), "/ or :".into()),
+                ("Toggle inspector".into(), "Ctrl+I".into()),
+            ],
+            other => {
+                let cat_name = other.label();
+                self.raw_entries
+                    .iter()
+                    .filter(|e| e.category == cat_name)
+                    .map(|e| (e.key.clone(), e.value.clone()))
+                    .collect()
+            }
+        }
+    }
+
+    /// Reference to the currently selected category.
+    pub fn current_category(&self) -> &SettingsCategory {
+        &self.categories[self.selected_category]
+    }
+
+    /// Move selection down (wraps). Operates at the current navigation level.
+    pub fn nav_down(&mut self) {
+        if self.drill_down {
+            let cat = self.categories[self.selected_category].clone();
+            let count = self.entries_for_category(&cat).len();
+            if count > 0 {
+                self.selected_entry = (self.selected_entry + 1) % count;
+            }
+        } else {
+            self.selected_category = (self.selected_category + 1) % self.categories.len();
+        }
+    }
+
+    /// Move selection up (wraps). Operates at the current navigation level.
+    pub fn nav_up(&mut self) {
+        if self.drill_down {
+            let cat = self.categories[self.selected_category].clone();
+            let count = self.entries_for_category(&cat).len();
+            if count > 0 {
+                if self.selected_entry == 0 {
+                    self.selected_entry = count - 1;
+                } else {
+                    self.selected_entry -= 1;
+                }
+            }
+        } else if self.selected_category == 0 {
+            self.selected_category = self.categories.len() - 1;
+        } else {
+            self.selected_category -= 1;
+        }
+    }
+
+    /// Drill into the selected category (Enter).
+    pub fn enter(&mut self) {
+        if !self.drill_down {
+            self.drill_down = true;
+            self.selected_entry = 0;
+        }
+    }
+
+    /// Go back one level.  Returns `true` if handled (was in entry list);
+    /// returns `false` if already at category list (caller navigates to main menu).
+    pub fn back(&mut self) -> bool {
+        if self.drill_down {
+            self.drill_down = false;
+            self.selected_entry = 0;
+            true
+        } else {
+            false
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -104,6 +250,12 @@ impl Default for MenuState {
                     shortcut: Some('4'),
                 },
                 MenuItem {
+                    id: "model-intel",
+                    label: "Model Intel",
+                    description: "Launch advisory & resource plan",
+                    shortcut: Some('m'),
+                },
+                MenuItem {
                     id: "quit",
                     label: "Quit",
                     description: "Exit ozone+",
@@ -170,6 +322,17 @@ impl SessionListState {
         let count = self.visible_count();
         if count > 0 && self.selected + 1 < count {
             self.selected += 1;
+        }
+    }
+
+    pub fn page_up(&mut self) {
+        self.selected = self.selected.saturating_sub(10);
+    }
+
+    pub fn page_down(&mut self) {
+        let count = self.visible_count();
+        if count > 0 {
+            self.selected = (self.selected + 10).min(count - 1);
         }
     }
 
@@ -245,6 +408,17 @@ impl CharacterListState {
     pub fn move_down(&mut self) {
         if self.selected + 1 < self.entries.len() {
             self.selected += 1;
+        }
+    }
+
+    pub fn page_up(&mut self) {
+        self.selected = self.selected.saturating_sub(10);
+    }
+
+    pub fn page_down(&mut self) {
+        let count = self.entries.len();
+        if count > 0 {
+            self.selected = (self.selected + 10).min(count - 1);
         }
     }
 }
@@ -751,6 +925,7 @@ pub struct AppBootstrap {
     pub context_preview: Option<ContextPreview>,
     pub context_dry_run: Option<ContextDryRunPreview>,
     pub recall_browser: Option<RecallBrowser>,
+    pub active_launch_plan: Option<ozone_core::planner::LaunchPlan>,
 }
 
 // ── Command palette ──────────────────────────────────────────────────────
@@ -904,6 +1079,14 @@ pub struct ShellState {
     pub runtime_commands: Vec<RuntimeCommand>,
     pub should_quit: bool,
     pub command_palette: CommandPaletteState,
+    /// Active model's launch plan, populated from `OZONE__LAUNCH_PLAN` env var on handoff.
+    pub active_launch_plan: Option<ozone_core::planner::LaunchPlan>,
+    /// Index of the highlighted slash suggestion (`None` = popup not navigated).
+    pub slash_selected: Option<usize>,
+    /// True when the user explicitly dismissed the slash popup for the current query.
+    pub slash_dismissed: bool,
+    /// Monotonically increasing counter incremented each event-loop tick for animations.
+    pub tick_count: u64,
 }
 
 impl ShellState {
@@ -932,6 +1115,10 @@ impl ShellState {
             runtime_commands: Vec::new(),
             should_quit: false,
             command_palette: CommandPaletteState::default(),
+            active_launch_plan: None,
+            slash_selected: None,
+            slash_dismissed: false,
+            tick_count: 0,
         }
     }
 
@@ -969,6 +1156,9 @@ impl ShellState {
         self.context_preview = bootstrap.context_preview;
         self.context_dry_run = bootstrap.context_dry_run;
         self.recall_browser = bootstrap.recall_browser;
+        if let Some(plan) = bootstrap.active_launch_plan {
+            self.active_launch_plan = Some(plan);
+        }
     }
 
     /// Transition from a menu screen into the conversation view for the current session.
@@ -985,6 +1175,114 @@ impl ShellState {
         self.focus = FocusTarget::Transcript;
     }
 
+    // ── Slash-popup helpers ─────────────────────────────────────────────────
+
+    /// Command names (with leading `/`) that match the current draft query.
+    pub fn slash_completion_names(&self) -> Vec<String> {
+        if !self.draft.text.starts_with('/') || self.draft.text.contains(' ') {
+            return Vec::new();
+        }
+        let query = self
+            .draft
+            .text
+            .get(1..)
+            .unwrap_or("")
+            .split_whitespace()
+            .next()
+            .unwrap_or("")
+            .to_lowercase();
+        CommandEntry::all()
+            .into_iter()
+            .filter(|cmd| {
+                query.is_empty()
+                    || cmd.name.to_lowercase().starts_with(&query)
+                    || cmd.alias.iter().any(|a| a.starts_with(&query))
+            })
+            .map(|cmd| format!("/{}", cmd.name))
+            .collect()
+    }
+
+    /// True when the slash popup should be visible to the user.
+    pub fn slash_popup_active(&self) -> bool {
+        self.input_mode == InputMode::Insert
+            && !self.command_palette.open
+            && !self.slash_dismissed
+            && !self.slash_completion_names().is_empty()
+    }
+
+    /// Move popup highlight up (wraps from top to bottom).
+    pub fn slash_move_up(&mut self) {
+        let len = self.slash_completion_names().len();
+        if len == 0 {
+            return;
+        }
+        self.slash_selected = Some(match self.slash_selected {
+            Some(i) if i > 0 => i - 1,
+            _ => len - 1,
+        });
+    }
+
+    /// Move popup highlight down (wraps from bottom to top).
+    pub fn slash_move_down(&mut self) {
+        let len = self.slash_completion_names().len();
+        if len == 0 {
+            return;
+        }
+        self.slash_selected = Some(match self.slash_selected {
+            Some(i) if i + 1 < len => i + 1,
+            _ => 0,
+        });
+    }
+
+    /// Fill the draft with the currently highlighted suggestion.
+    /// Returns `true` if a suggestion was accepted, `false` if nothing was selected.
+    pub fn slash_accept(&mut self) -> bool {
+        if let Some(idx) = self.slash_selected {
+            let names = self.slash_completion_names();
+            if let Some(name) = names.get(idx) {
+                let filled = name.clone() + " ";
+                let len = filled.len();
+                self.draft.text = filled;
+                self.draft.cursor = len;
+                self.draft.dirty = true;
+                self.slash_selected = None;
+                self.slash_dismissed = false;
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Keep `slash_selected` / `slash_dismissed` consistent with the current draft.
+    /// Called automatically at the end of every `apply_action`.
+    fn sync_slash_state(&mut self) {
+        let names = self.slash_completion_names();
+        let has_suggestions = !names.is_empty() && !self.command_palette.open;
+
+        if !has_suggestions {
+            // No applicable suggestions — reset everything.
+            self.slash_selected = None;
+            self.slash_dismissed = false;
+        } else if self.slash_dismissed {
+            // Popup was dismissed; keep selected = None but don't reopen.
+            self.slash_selected = None;
+        } else {
+            // Suggestions exist and popup is not dismissed.
+            if self.slash_selected.is_none() {
+                // Auto-highlight the first item when popup first appears.
+                self.slash_selected = Some(0);
+            } else {
+                // Clamp in case the list shrank (e.g., user typed more).
+                let len = names.len();
+                if let Some(idx) = self.slash_selected {
+                    if idx >= len {
+                        self.slash_selected = Some(0);
+                    }
+                }
+            }
+        }
+    }
+
     pub fn handle_key_event(&mut self, key: KeyEvent) -> KeyAction {
         // Command palette takes priority when open
         if self.command_palette.open {
@@ -993,6 +1291,42 @@ impl ShellState {
                 return action;
             }
             return KeyAction::Noop;
+        }
+
+        // Slash-popup navigation: intercept arrow/Enter/Esc when popup is visible.
+        if self.slash_selected.is_some()
+            && matches!(
+                self.screen,
+                ScreenState::Conversation | ScreenState::Help | ScreenState::Quit
+            )
+        {
+            let slash_action = match key.code {
+                KeyCode::Up => Some(KeyAction::SlashUp),
+                KeyCode::Down => Some(KeyAction::SlashDown),
+                KeyCode::Enter => Some(KeyAction::SlashAccept),
+                KeyCode::Esc => Some(KeyAction::SlashDismiss),
+                _ => None,
+            };
+            if let Some(action) = slash_action {
+                self.apply_action(action);
+                return action;
+            }
+        }
+
+        // Tab in Insert mode: slash tab-completion when draft starts with '/'.
+        if self.input_mode == InputMode::Insert
+            && !self.command_palette.open
+            && key.code == KeyCode::Tab
+            && key.modifiers.is_empty()
+            && self.draft.text.starts_with('/')
+        {
+            let action = if self.slash_selected.is_some() {
+                KeyAction::SlashAccept
+            } else {
+                KeyAction::SlashTabComplete
+            };
+            self.apply_action(action);
+            return action;
         }
 
         let action = match self.screen {
@@ -1012,6 +1346,7 @@ impl ShellState {
             ScreenState::Conversation | ScreenState::Help | ScreenState::Quit => {
                 dispatch_key(self.input_mode, key)
             }
+            ScreenState::ModelIntelligence => dispatch_menu_key(key, false),
         };
         if action != KeyAction::Noop {
             self.apply_action(action);
@@ -1078,6 +1413,7 @@ impl ShellState {
             KeyAction::TogglePinnedMemory => self.trigger_pinned_memory_toggle(),
             KeyAction::HistoryPrevious => {
                 if let Some(draft) = self.history.previous(&self.draft) {
+                    self.slash_dismissed = false;
                     self.focus = FocusTarget::Draft;
                     self.input_mode = InputMode::Insert;
                     self.draft = draft;
@@ -1085,22 +1421,26 @@ impl ShellState {
             }
             KeyAction::HistoryNext => {
                 if let Some(draft) = self.history.next_entry() {
+                    self.slash_dismissed = false;
                     self.focus = FocusTarget::Draft;
                     self.input_mode = InputMode::Insert;
                     self.draft = draft;
                 }
             }
             KeyAction::DraftInsertChar(ch) => {
+                self.slash_dismissed = false;
                 self.focus = FocusTarget::Draft;
                 self.input_mode = InputMode::Insert;
                 self.history.reset_navigation();
                 self.draft.insert_char(ch);
             }
             KeyAction::DraftBackspace => {
+                self.slash_dismissed = false;
                 self.history.reset_navigation();
                 self.draft.backspace();
             }
             KeyAction::DraftDelete => {
+                self.slash_dismissed = false;
                 self.history.reset_navigation();
                 self.draft.delete();
             }
@@ -1141,15 +1481,30 @@ impl ShellState {
                 ScreenState::MainMenu => self.menu.move_up(),
                 ScreenState::SessionList => self.session_list.move_up(),
                 ScreenState::CharacterManager => self.character_list.move_up(),
+                ScreenState::Settings => self.settings.nav_up(),
                 _ => {}
             },
             KeyAction::MenuDown => match self.screen {
                 ScreenState::MainMenu => self.menu.move_down(),
                 ScreenState::SessionList => self.session_list.move_down(),
                 ScreenState::CharacterManager => self.character_list.move_down(),
+                ScreenState::Settings => self.settings.nav_down(),
+                _ => {}
+            },
+            KeyAction::PageUp => match self.screen {
+                ScreenState::SessionList => self.session_list.page_up(),
+                ScreenState::CharacterManager => self.character_list.page_up(),
+                _ => {}
+            },
+            KeyAction::PageDown => match self.screen {
+                ScreenState::SessionList => self.session_list.page_down(),
+                ScreenState::CharacterManager => self.character_list.page_down(),
                 _ => {}
             },
             KeyAction::MenuSelect => match self.screen {
+                ScreenState::Settings => {
+                    self.settings.enter();
+                }
                 ScreenState::MainMenu => {
                     if let Some(item) = self.menu.selected_item() {
                         match item.id {
@@ -1169,6 +1524,10 @@ impl ShellState {
                                 self.screen = ScreenState::Settings;
                                 self.status_line = Some("Viewing settings".into());
                             }
+                            "model-intel" => {
+                                self.screen = ScreenState::ModelIntelligence;
+                                self.status_line = Some("Viewing model intelligence".into());
+                            }
                             "quit" => {
                                 self.screen = ScreenState::Quit;
                                 self.should_quit = true;
@@ -1187,10 +1546,18 @@ impl ShellState {
             },
             KeyAction::MenuBack => {
                 match self.screen {
+                    ScreenState::Settings => {
+                        // If drilled into a category, go back to category list.
+                        // Otherwise, navigate to main menu.
+                        if !self.settings.back() {
+                            self.screen = ScreenState::MainMenu;
+                            self.status_line = Some("Returned to main menu".into());
+                        }
+                    }
                     ScreenState::SessionList
                     | ScreenState::CharacterManager
-                    | ScreenState::Settings
-                    | ScreenState::Conversation => {
+                    | ScreenState::Conversation
+                    | ScreenState::ModelIntelligence => {
                         self.screen = ScreenState::MainMenu;
                         self.status_line = Some("Returned to main menu".into());
                     }
@@ -1319,7 +1686,45 @@ impl ShellState {
                 }
                 _ => {}
             },
+            // Slash-popup actions
+            KeyAction::SlashUp => {
+                self.slash_dismissed = false;
+                self.slash_move_up();
+            }
+            KeyAction::SlashDown => {
+                self.slash_dismissed = false;
+                self.slash_move_down();
+            }
+            KeyAction::SlashAccept => {
+                self.slash_accept();
+            }
+            KeyAction::SlashDismiss => {
+                self.slash_selected = None;
+                self.slash_dismissed = true;
+            }
+            KeyAction::SlashTabComplete => {
+                let names = self.slash_completion_names();
+                match names.len() {
+                    0 => {}
+                    1 => {
+                        let filled = names[0].clone() + " ";
+                        let len = filled.len();
+                        self.draft.text = filled;
+                        self.draft.cursor = len;
+                        self.draft.dirty = true;
+                        self.slash_selected = None;
+                        self.slash_dismissed = false;
+                    }
+                    _ => {
+                        self.slash_dismissed = false;
+                        self.slash_selected = Some(self.slash_selected.unwrap_or(0));
+                    }
+                }
+            }
         }
+
+        // Keep slash_selected / slash_dismissed in sync with current draft state.
+        self.sync_slash_state();
     }
 
     fn execute_command(&mut self, name: &str) {
@@ -1645,6 +2050,7 @@ mod tests {
             context_preview: None,
             context_dry_run: None,
             recall_browser: None,
+            active_launch_plan: None,
         };
 
         app.hydrate(bootstrap);
@@ -1872,6 +2278,7 @@ mod tests {
             context_preview: None,
             context_dry_run: None,
             recall_browser: None,
+            active_launch_plan: None,
         });
 
         assert_eq!(
@@ -1908,6 +2315,7 @@ mod tests {
             context_preview: None,
             context_dry_run: None,
             recall_browser: None,
+            active_launch_plan: None,
         });
 
         assert_eq!(
@@ -2244,7 +2652,7 @@ mod tests {
         let mut state = ShellState::new(session_context());
         assert_eq!(state.screen, ScreenState::MainMenu);
 
-        state.menu.selected = 4; // "Quit"
+        state.menu.selected = 5; // "Quit"
         state.apply_action(KeyAction::MenuSelect);
         assert!(state.should_quit);
     }
@@ -2857,5 +3265,294 @@ mod tests {
             }
             other => panic!("Expected ImportCharacter, got {:?}", other),
         }
+    }
+
+    // ── SettingsState unit tests ──────────────────────────────────────────
+
+    #[test]
+    fn settings_state_enter_sets_drill_down() {
+        let mut s = super::SettingsState::default();
+        assert!(!s.drill_down);
+        assert_eq!(s.selected_category, 0);
+        s.enter();
+        assert!(s.drill_down);
+        assert_eq!(s.selected_entry, 0);
+    }
+
+    #[test]
+    fn settings_state_back_returns_to_category_list() {
+        let mut s = super::SettingsState::default();
+        s.enter();
+        assert!(s.drill_down);
+        let handled = s.back();
+        assert!(handled);
+        assert!(!s.drill_down);
+    }
+
+    #[test]
+    fn settings_state_back_returns_false_at_top_level() {
+        let mut s = super::SettingsState::default();
+        assert!(!s.drill_down);
+        let handled = s.back();
+        assert!(!handled);
+    }
+
+    #[test]
+    fn settings_state_nav_down_wraps_category_list() {
+        let mut s = super::SettingsState::default();
+        let last = s.categories.len() - 1;
+        s.selected_category = last;
+        s.nav_down();
+        assert_eq!(s.selected_category, 0);
+    }
+
+    #[test]
+    fn settings_state_nav_up_wraps_category_list() {
+        let mut s = super::SettingsState::default();
+        s.selected_category = 0;
+        s.nav_up();
+        assert_eq!(s.selected_category, s.categories.len() - 1);
+    }
+
+    #[test]
+    fn settings_state_nav_down_wraps_entry_list() {
+        let mut s = super::SettingsState::default();
+        // Keybindings (index 3) always has static entries
+        s.selected_category = 3;
+        s.enter();
+        let count = s
+            .entries_for_category(&super::SettingsCategory::Keybindings)
+            .len();
+        s.selected_entry = count - 1;
+        s.nav_down();
+        assert_eq!(s.selected_entry, 0);
+    }
+
+    #[test]
+    fn settings_state_nav_up_wraps_entry_list() {
+        let mut s = super::SettingsState::default();
+        s.selected_category = 3; // Keybindings
+        s.enter();
+        s.selected_entry = 0;
+        s.nav_up();
+        let count = s
+            .entries_for_category(&super::SettingsCategory::Keybindings)
+            .len();
+        assert_eq!(s.selected_entry, count - 1);
+    }
+
+    #[test]
+    fn settings_menu_back_when_drilled_stays_on_settings_screen() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::Settings;
+        state.settings.enter();
+        assert!(state.settings.drill_down);
+
+        state.apply_action(KeyAction::MenuBack);
+        assert_eq!(state.screen, ScreenState::Settings);
+        assert!(!state.settings.drill_down);
+    }
+
+    #[test]
+    fn settings_menu_back_at_category_list_goes_to_main_menu() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::Settings;
+        assert!(!state.settings.drill_down);
+
+        state.apply_action(KeyAction::MenuBack);
+        assert_eq!(state.screen, ScreenState::MainMenu);
+    }
+
+    #[test]
+    fn settings_menu_select_drills_into_category() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::Settings;
+        assert!(!state.settings.drill_down);
+
+        state.apply_action(KeyAction::MenuSelect);
+        assert!(state.settings.drill_down);
+        assert_eq!(state.screen, ScreenState::Settings);
+    }
+
+    #[test]
+    fn settings_nav_down_up_moves_selection_on_settings_screen() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::Settings;
+        assert_eq!(state.settings.selected_category, 0);
+
+        state.apply_action(KeyAction::MenuDown);
+        assert_eq!(state.settings.selected_category, 1);
+
+        state.apply_action(KeyAction::MenuUp);
+        assert_eq!(state.settings.selected_category, 0);
+    }
+
+    #[test]
+    fn settings_display_and_keybindings_always_have_static_entries() {
+        let s = super::SettingsState::default();
+        let disp = s.entries_for_category(&super::SettingsCategory::Display);
+        assert!(!disp.is_empty());
+        let keys = s.entries_for_category(&super::SettingsCategory::Keybindings);
+        assert!(!keys.is_empty());
+    }
+
+    #[test]
+    fn settings_load_populates_backend_and_model_entries() {
+        let mut s = super::SettingsState::default();
+        assert!(!s.is_loaded());
+        s.load(vec![
+            super::SettingsEntry {
+                category: "Backend".into(),
+                key: "Type".into(),
+                value: "koboldcpp".into(),
+            },
+            super::SettingsEntry {
+                category: "Backend".into(),
+                key: "URL".into(),
+                value: "http://localhost:5001".into(),
+            },
+        ]);
+        assert!(s.is_loaded());
+        let entries = s.entries_for_category(&super::SettingsCategory::Backend);
+        assert_eq!(entries.len(), 2);
+        assert_eq!(entries[0].0, "Type");
+        assert_eq!(entries[0].1, "koboldcpp");
+    }
+
+    // ── Slash popup helper tests ─────────────────────────────────────────
+
+    fn slash_insert_state() -> ShellState {
+        let mut state = ShellState::new(session_context());
+        state.enter_conversation();
+        state.input_mode = InputMode::Insert;
+        state
+    }
+
+    #[test]
+    fn slash_popup_auto_highlights_first_item_when_typing_slash() {
+        let mut state = slash_insert_state();
+        state.apply_action(KeyAction::DraftInsertChar('/'));
+        assert_eq!(state.slash_selected, Some(0), "first item auto-selected");
+    }
+
+    #[test]
+    fn slash_move_down_wraps_at_end() {
+        let mut state = slash_insert_state();
+        state.apply_action(KeyAction::DraftInsertChar('/'));
+        let len = state.slash_completion_names().len();
+        assert!(len > 1, "need at least 2 suggestions for wrap test");
+        // Move to the last item
+        state.slash_selected = Some(len - 1);
+        state.slash_move_down();
+        assert_eq!(state.slash_selected, Some(0), "should wrap to first item");
+    }
+
+    #[test]
+    fn slash_move_up_wraps_at_beginning() {
+        let mut state = slash_insert_state();
+        state.apply_action(KeyAction::DraftInsertChar('/'));
+        let len = state.slash_completion_names().len();
+        assert!(len > 1, "need at least 2 suggestions for wrap test");
+        // Move from first item upward
+        state.slash_selected = Some(0);
+        state.slash_move_up();
+        assert_eq!(
+            state.slash_selected,
+            Some(len - 1),
+            "should wrap to last item"
+        );
+    }
+
+    #[test]
+    fn slash_accept_fills_draft_with_command_and_space() {
+        let mut state = slash_insert_state();
+        state.apply_action(KeyAction::DraftInsertChar('/'));
+        // Select the first suggestion
+        let names = state.slash_completion_names();
+        let expected = names[0].clone() + " ";
+        state.slash_selected = Some(0);
+        let accepted = state.slash_accept();
+        assert!(accepted, "slash_accept should return true");
+        assert_eq!(state.draft.text, expected);
+        assert_eq!(state.draft.cursor, expected.len());
+        assert!(state.draft.dirty);
+        assert_eq!(state.slash_selected, None, "selection cleared after accept");
+    }
+
+    #[test]
+    fn slash_dismiss_hides_popup_until_next_edit() {
+        let mut state = slash_insert_state();
+        state.apply_action(KeyAction::DraftInsertChar('/'));
+        assert_eq!(state.slash_selected, Some(0));
+        // Dismiss
+        state.apply_action(KeyAction::SlashDismiss);
+        assert_eq!(state.slash_selected, None);
+        assert!(state.slash_dismissed);
+        // Any draft edit should re-enable the popup
+        state.apply_action(KeyAction::DraftInsertChar('h'));
+        assert_eq!(state.slash_selected, Some(0), "popup reopens after edit");
+    }
+
+    #[test]
+    fn slash_tab_complete_fills_immediately_when_single_match() {
+        let mut state = slash_insert_state();
+        // "/qui" should match exactly "quit"
+        state.apply_action(KeyAction::DraftInsertChar('/'));
+        state.apply_action(KeyAction::DraftInsertChar('q'));
+        state.apply_action(KeyAction::DraftInsertChar('u'));
+        state.apply_action(KeyAction::DraftInsertChar('i'));
+        let names = state.slash_completion_names();
+        assert_eq!(names.len(), 1, "expect exactly one match for /qui");
+        let expected = names[0].clone() + " ";
+        // Reset selected to None so tab triggers TabComplete path
+        state.slash_selected = None;
+        state.apply_action(KeyAction::SlashTabComplete);
+        assert_eq!(state.draft.text, expected);
+    }
+
+    #[test]
+    fn slash_tab_complete_opens_popup_when_multiple_matches() {
+        let mut state = slash_insert_state();
+        state.apply_action(KeyAction::DraftInsertChar('/'));
+        let names = state.slash_completion_names();
+        assert!(names.len() > 1, "expect multiple matches for /");
+        // Reset selected so we test the multi-match code path
+        state.slash_selected = None;
+        state.slash_dismissed = false;
+        state.apply_action(KeyAction::SlashTabComplete);
+        assert_eq!(state.slash_selected, Some(0), "first item highlighted");
+    }
+
+    // ── Model Intelligence screen tests ───────────────────────────────
+
+    #[test]
+    fn navigating_to_model_intelligence_sets_screen() {
+        // Via menu shortcut 'm'
+        let mut state = ShellState::new(session_context());
+        assert_eq!(state.screen, ScreenState::MainMenu);
+        state.apply_action(KeyAction::MenuShortcut('m'));
+        assert_eq!(state.screen, ScreenState::ModelIntelligence);
+    }
+
+    #[test]
+    fn escape_from_model_intelligence_returns_to_main_menu() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::ModelIntelligence;
+        state.apply_action(KeyAction::MenuBack);
+        assert_eq!(state.screen, ScreenState::MainMenu);
+        assert!(!state.should_quit);
+    }
+
+    #[test]
+    fn render_model_intelligence_with_no_plan() {
+        use crate::layout::build_layout_for_area;
+        use crate::render::build_render_model;
+        use ratatui::layout::Rect;
+
+        let state = ShellState::new(session_context());
+        assert!(state.active_launch_plan.is_none());
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
+        let model = build_render_model(&state, &layout);
+        assert!(!model.model_intelligence.has_plan);
     }
 }

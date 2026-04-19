@@ -26,8 +26,8 @@ pub use app::{
     FocusTarget, GenerationPoll, MenuItem, MenuState, RecallBrowser, RuntimeCancellation,
     RuntimeCompletion, RuntimeContextRefresh, RuntimeFailure, RuntimePhase, RuntimeProgress,
     RuntimeSendReceipt, ScreenState, SessionContext, SessionListEntry, SessionListState,
-    SessionMetadata, SessionState, SessionStats, SettingsEntry, SettingsState, ShellState,
-    TranscriptItem,
+    SessionMetadata, SessionState, SessionStats, SettingsCategory, SettingsEntry, SettingsState,
+    ShellState, TranscriptItem,
 };
 pub use input::{
     dispatch_command_palette_key, dispatch_key, dispatch_menu_key, InputMode, KeyAction,
@@ -142,6 +142,8 @@ where
     const INPUT_POLL_INTERVAL: Duration = Duration::from_millis(50);
 
     loop {
+        app.tick_count = app.tick_count.wrapping_add(1);
+
         let (layout, render) = {
             let mut drawn_layout = None;
             let mut drawn_render = None;
@@ -195,9 +197,9 @@ where
                     }
 
                     // Populate settings when entering the Settings screen
-                    if app.screen == ScreenState::Settings && app.settings.entries.is_empty() {
+                    if app.screen == ScreenState::Settings && !app.settings.is_loaded() {
                         if let Ok(entries) = runtime.get_settings() {
-                            app.settings = crate::app::SettingsState { entries };
+                            app.settings.load(entries);
                         }
                     }
 
@@ -392,6 +394,7 @@ mod tests {
             context_preview: None,
             context_dry_run: None,
             recall_browser: None,
+            active_launch_plan: None,
         };
         let mut runtime = MockRuntime::with_bootstrap(bootstrap);
 

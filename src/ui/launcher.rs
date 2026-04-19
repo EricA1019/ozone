@@ -196,6 +196,7 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
         ("Launch", "Start configured backend & frontend"),
         ("Profile", "Auto-tune GPU layers for a model"),
         ("Open ozone+", "Direct shell (no model needed)"),
+        ("Launch ozone+ (side-by-side)", "Spawn ozone+ in new terminal, stay in Monitor"),
         ("Settings", "Configure backend & frontend"),
         ("Clear GPU", "Kill running backends"),
         ("Monitor", "View system resources"),

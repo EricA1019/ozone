@@ -202,9 +202,9 @@ fn focused_pane(focus: FocusTarget) -> PaneId {
 
 fn composer_height(input_mode: InputMode, viewport_height: u16) -> u16 {
     let base = match input_mode {
-        InputMode::Normal => 4,
-        InputMode::Insert => 6,
-        InputMode::Command => 5,
+        InputMode::Normal => 3,
+        InputMode::Insert => 5,
+        InputMode::Command => 4,
     };
 
     if viewport_height >= 36 {
@@ -214,12 +214,8 @@ fn composer_height(input_mode: InputMode, viewport_height: u16) -> u16 {
     }
 }
 
-fn status_height(viewport_height: u16) -> u16 {
-    if viewport_height >= 32 {
-        4
-    } else {
-        3
-    }
+fn status_height(_viewport_height: u16) -> u16 {
+    1
 }
 
 fn inspector_width(viewport_width: u16) -> u16 {
@@ -235,6 +231,7 @@ fn overlay_for_screen(screen: ScreenState, viewport: Rect) -> Option<PaneLayout>
         | ScreenState::CharacterCreate
         | ScreenState::CharacterImport
         | ScreenState::Settings
+        | ScreenState::ModelIntelligence
         | ScreenState::Conversation => return None,
         ScreenState::Help => PaneId::HelpOverlay,
         ScreenState::Quit => PaneId::QuitOverlay,
@@ -285,9 +282,9 @@ mod tests {
 
         assert_eq!(layout.mode, LayoutMode::Compact);
         assert!(layout.inspector.is_none());
-        assert_eq!(layout.conversation.area, Rect::new(0, 0, 80, 17));
-        assert_eq!(layout.composer.area, Rect::new(0, 17, 80, 4));
-        assert_eq!(layout.status.area, Rect::new(0, 21, 80, 3));
+        assert_eq!(layout.conversation.area, Rect::new(0, 0, 80, 20));
+        assert_eq!(layout.composer.area, Rect::new(0, 20, 80, 3));
+        assert_eq!(layout.status.area, Rect::new(0, 23, 80, 1));
         assert_eq!(layout.focused, PaneId::Composer);
     }
 
@@ -299,9 +296,9 @@ mod tests {
         let inspector = layout.inspector.expect("wide layout should show inspector");
 
         assert_eq!(layout.mode, LayoutMode::Wide);
-        assert_eq!(layout.conversation.area, Rect::new(0, 0, 87, 31));
-        assert_eq!(layout.composer.area, Rect::new(0, 31, 87, 5));
-        assert_eq!(layout.status.area, Rect::new(0, 36, 87, 4));
+        assert_eq!(layout.conversation.area, Rect::new(0, 0, 87, 35));
+        assert_eq!(layout.composer.area, Rect::new(0, 35, 87, 4));
+        assert_eq!(layout.status.area, Rect::new(0, 39, 87, 1));
         assert_eq!(inspector.area, Rect::new(87, 0, 33, 40));
     }
 
@@ -316,7 +313,7 @@ mod tests {
 
         assert_eq!(state.screen, ScreenState::Help);
         assert_eq!(overlay.pane, PaneId::HelpOverlay);
-        assert_eq!(layout.composer.area.height, 6);
+        assert_eq!(layout.composer.area.height, 5);
         assert_eq!(overlay.area, Rect::new(4, 6, 72, 12));
     }
 

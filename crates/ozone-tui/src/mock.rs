@@ -204,6 +204,7 @@ impl MockRuntime {
             context_preview: None,
             context_dry_run: None,
             recall_browser: None,
+            active_launch_plan: None,
         })
     }
 

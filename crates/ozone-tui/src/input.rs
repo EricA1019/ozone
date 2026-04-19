@@ -55,6 +55,15 @@ pub enum KeyAction {
     FormToggleField,
     FormSubmit,
     FormCancel,
+    // Slash-popup navigation
+    SlashUp,
+    SlashDown,
+    SlashAccept,
+    SlashDismiss,
+    SlashTabComplete,
+    // Page navigation
+    PageUp,
+    PageDown,
 }
 
 pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
@@ -126,6 +135,8 @@ pub fn dispatch_menu_key(key: KeyEvent, is_root_menu: bool) -> KeyAction {
     match key.code {
         KeyCode::Up | KeyCode::Char('k') => KeyAction::MenuUp,
         KeyCode::Down | KeyCode::Char('j') => KeyAction::MenuDown,
+        KeyCode::PageUp => KeyAction::PageUp,
+        KeyCode::PageDown => KeyAction::PageDown,
         KeyCode::Enter => KeyAction::MenuSelect,
         KeyCode::Esc | KeyCode::Backspace => KeyAction::MenuBack,
         KeyCode::Char('q') if is_root_menu => KeyAction::ConfirmQuit,

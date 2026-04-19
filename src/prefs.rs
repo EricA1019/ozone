@@ -30,6 +30,10 @@ pub struct Preferences {
     pub preferred_frontend: Option<FrontendMode>,
     #[serde(default)]
     pub preferred_tier: Option<Tier>,
+    /// When true, "Launch ozone+ (side-by-side)" opens ozone+ in a new terminal
+    /// window instead of replacing this process via exec().
+    #[serde(default)]
+    pub side_by_side_monitor: bool,
 }
 
 impl Default for Preferences {
@@ -46,6 +50,7 @@ impl Default for Preferences {
             preferred_backend: None,
             preferred_frontend: None,
             preferred_tier: None,
+            side_by_side_monitor: false,
         }
     }
 }

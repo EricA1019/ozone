@@ -5,64 +5,7 @@ use crate::hardware::HardwareProfile;
 const MIB_PER_GIB: f64 = 1024.0;
 const VRAM_HEADROOM_RATIO: f64 = 0.9;
 
-#[derive(Debug, Clone, PartialEq)]
-pub enum RecommendationMode {
-    VramFirst,
-    MixedMemory,
-    CpuOnly,
-}
-
-impl RecommendationMode {
-    pub fn label(&self) -> &'static str {
-        match self {
-            RecommendationMode::VramFirst => "VRAM",
-            RecommendationMode::MixedMemory => "Mixed",
-            RecommendationMode::CpuOnly => "CPU",
-        }
-    }
-}
-
-#[derive(Debug, Clone)]
-pub struct LaunchPlan {
-    pub model_name: String,
-    pub context_size: u32,
-    pub gpu_layers: i32,
-    pub total_layers: u32,
-    pub cpu_layers: u32,
-    pub quant_kv: u8,
-    pub threads: Option<u32>,
-    pub blas_threads: Option<u32>,
-    pub mode: RecommendationMode,
-    pub rationale: String,
-    /// Set during plan construction; reserved for future advisory UI.
-    #[allow(dead_code)]
-    pub estimated: bool,
-    /// Set during plan construction; reserved for future advisory UI.
-    #[allow(dead_code)]
-    pub estimated_vram_mb: u32,
-    /// Set during plan construction; reserved for future advisory UI.
-    #[allow(dead_code)]
-    pub estimated_ram_mb: u32,
-    /// Set during plan construction; reserved for future advisory UI.
-    #[allow(dead_code)]
-    pub source: String,
-    /// Set during plan construction; reserved for future advisory UI.
-    #[allow(dead_code)]
-    pub layer_source_label: String,
-    /// Set during plan construction; reserved for future advisory UI.
-    #[allow(dead_code)]
-    pub layer_source_note: Option<String>,
-}
-
-impl LaunchPlan {
-    pub fn gpu_layers_display(&self) -> u32 {
-        if self.gpu_layers < 0 {
-            self.total_layers
-        } else {
-            self.gpu_layers.max(0) as u32
-        }
-    }
-}
+pub use ozone_core::planner::{LaunchPlan, RecommendationMode};
 
 pub fn estimate_total_layers(size_gb: f64) -> u32 {
     let s = size_gb.max(0.1);
