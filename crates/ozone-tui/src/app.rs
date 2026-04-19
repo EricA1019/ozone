@@ -2338,7 +2338,7 @@ mod tests {
         state.command_palette.open();
         state.command_palette.input = "ses".into();
         let filtered = state.command_palette.filtered_commands();
-        assert!(filtered.len() >= 1);
+        assert!(!filtered.is_empty());
         assert!(filtered.iter().any(|c| c.name == "sessions"));
 
         // More specific filter
