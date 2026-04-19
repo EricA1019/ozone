@@ -1,6 +1,6 @@
 [package]
 name = "ozone-memory"
-version = "0.4.2-alpha"
+version = "0.4.3-alpha"
 edition = "2021"
 publish = false
 description = "Memory domain types, embeddings, hybrid retrieval, and lifecycle for ozone+"

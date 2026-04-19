@@ -53,7 +53,7 @@ fn detect_tier_from_binary_name(name: &str) -> Option<prefs::Tier> {
 #[command(
     name = "ozone",
     about = "⬡ Ozone — local AI stack operator & launcher",
-    version
+    version = concat!(env!("CARGO_PKG_VERSION"), "+", env!("OZONE_GIT_HASH"))
 )]
 struct Cli {
     #[command(subcommand)]

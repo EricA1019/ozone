@@ -52,7 +52,7 @@ const LAUNCHER_SESSION_NAME: &str = "Launcher Session";
 #[derive(Parser)]
 #[command(
     name = "ozone-plus",
-    version,
+    version = concat!(env!("CARGO_PKG_VERSION"), "+", env!("OZONE_GIT_HASH")),
     about = "⬡ ozone+ — local-LLM chat shell with persistent memory and sessions",
     long_about = "⬡ ozone+ — a chat-first terminal shell for local LLM conversations with persistent memory across sessions.\n\nFeatures: session management, pinned memories, freeform notes, session and global FTS search, branching and swipes, character card import, transcript and session export, hybrid vector/keyword recall, and streaming inference via the current local-backend runtime path.",
     after_help = "Examples:\n  ozone-plus create \"First Session\"\n  ozone-plus open <session-id>\n  ozone-plus send <session-id> \"Hello there\"\n  ozone-plus transcript <session-id>\n  ozone-plus memory pin <session-id> <message-id>\n  ozone-plus memory note <session-id> \"Remember the observatory key\"\n  ozone-plus search session <session-id> nebula\n  ozone-plus search global nebula\n  ozone-plus index rebuild\n  ozone-plus branch create <session-id> fork --activate\n  ozone-plus swipe add <session-id> <parent-message-id> \"Alternate reply\"\n  ozone-plus swipe list <session-id>\n  ozone-plus swipe activate <session-id> <swipe-group-id> <ordinal>\n  ozone-plus import card ./aster.json\n  ozone-plus export transcript <session-id> --output ./transcript.txt\n  ozone-plus export session <session-id> --output ./session.json"

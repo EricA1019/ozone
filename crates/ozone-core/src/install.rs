@@ -48,9 +48,21 @@ pub fn maybe_prompt_for_local_install_update(binary_name: &str) -> io::Result<bo
         return Ok(false);
     };
 
+    // Show the first 8 hex chars of the source artifact's SHA-256 as a build ID.
+    let build_id = sha256_file(&update.source_artifact)
+        .map(|digest| {
+            digest[..4]
+                .iter()
+                .fold(String::with_capacity(8), |mut s, b| {
+                    use std::fmt::Write;
+                    let _ = write!(s, "{b:02x}");
+                    s
+                })
+        })
+        .unwrap_or_else(|_| "????????".to_string());
+
     print!(
-        "A newer local build from this repo is ready at {}. Update installed binaries now? [Y/n] ",
-        update.source_artifact.display()
+        "A newer local build is ready (build-id: {build_id}). Update installed binaries now? [Y/n] "
     );
     io::stdout().flush()?;
 
