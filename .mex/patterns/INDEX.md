@@ -26,6 +26,8 @@ Lookup table for all pattern files in this directory. Check here before starting
 | [copilot-skill-customization.md](copilot-skill-customization.md) | Creating or updating reusable local Copilot skills in the user-level Copilot skill library |
 | [github-actions-release.md](github-actions-release.md) | Debugging or updating this repo's GitHub Actions CI or release automation |
 | [koboldcpp-launch-diagnostics.md](koboldcpp-launch-diagnostics.md) | Diagnosing or hardening the KoboldCpp launcher path, startup failures, or override-wrapper behavior in base Ozone |
+| [local-install-sync.md](local-install-sync.md) | Updating `~/.cargo/bin` / `~/.local/bin` safely from current release artifacts without overwriting matching binaries |
+| [llamacpp-backend-integration.md](llamacpp-backend-integration.md) | Adding or extending llama.cpp-backed HF imports, ozone+ runtime support, or base-launcher llama.cpp wiring |
 | [mex-scaffold-sync.md](mex-scaffold-sync.md) | Detecting or fixing drift in the .mex scaffold, paths, or helper scripts |
 | [ozone-mcp-automation.md](ozone-mcp-automation.md) | Building or extending the developer-facing ozone MCP server, its stdio tool contract, sandbox helpers, or launcher smoke orchestration |
 | [ozoneplus-conversation-engine.md](ozoneplus-conversation-engine.md) | Building or extending the Phase 1B ozone+ engine, engine-backed CLI, branches, or swipe flows |

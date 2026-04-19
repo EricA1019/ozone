@@ -1,5 +1,6 @@
 use anyhow::{bail, Context, Result};
 use clap::Subcommand;
+use std::collections::HashSet;
 use std::fs;
 use std::io::{self, BufRead, Write};
 use std::os::unix::fs as unix_fs;
@@ -81,6 +82,90 @@ fn validate_model_name(name: &str) -> Result<()> {
 
 fn models_dir() -> PathBuf {
     ozone_core::paths::models_dir()
+}
+
+fn repo_cache_snapshots_dir(repo: &str) -> PathBuf {
+    crate::llama::hugging_face_repo_cache_dir(repo).join("snapshots")
+}
+
+fn collect_gguf_files(root: &Path) -> Result<Vec<PathBuf>> {
+    if !root.exists() {
+        return Ok(Vec::new());
+    }
+    let mut files = Vec::new();
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir).with_context(|| format!("Cannot read {}", dir.display()))? {
+            let entry = entry?;
+            let path = entry.path();
+            let file_type = entry.file_type()?;
+            if file_type.is_dir() {
+                stack.push(path);
+            } else if file_type.is_file()
+                && path
+                    .extension()
+                    .and_then(|ext| ext.to_str())
+                    .is_some_and(|ext| ext.eq_ignore_ascii_case("gguf"))
+            {
+                files.push(path);
+            }
+        }
+    }
+    files.sort_by_key(|path| path.file_name().map(|name| name.to_os_string()));
+    Ok(files)
+}
+
+fn preferred_hf_cache_file(
+    candidates: &[PathBuf],
+    explicit_filename: Option<&str>,
+    existing: &HashSet<PathBuf>,
+) -> Option<PathBuf> {
+    if let Some(filename) = explicit_filename {
+        return candidates.iter().find_map(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .filter(|name| *name == filename)
+                .map(|_| path.clone())
+        });
+    }
+
+    let fresh: Vec<PathBuf> = candidates
+        .iter()
+        .filter(|path| !existing.contains(*path))
+        .cloned()
+        .collect();
+
+    pick_preferred_candidate(&fresh).or_else(|| pick_preferred_candidate(candidates))
+}
+
+fn pick_preferred_candidate(candidates: &[PathBuf]) -> Option<PathBuf> {
+    if candidates.is_empty() {
+        return None;
+    }
+
+    let mut ranked = candidates.to_vec();
+    ranked.sort_by_key(|path| path.file_name().map(|name| name.to_os_string()));
+
+    ranked
+        .iter()
+        .find(|path| {
+            path.file_name()
+                .and_then(|name| name.to_str())
+                .map(|name| name.to_ascii_uppercase().contains("Q4_K_M"))
+                .unwrap_or(false)
+        })
+        .cloned()
+        .or_else(|| ranked.into_iter().next())
+}
+
+fn link_model_into_library(source: &Path, preferred_name: Option<&str>) -> Result<PathBuf> {
+    let target = crate::llama::model_library_target(source, preferred_name)?;
+    if target.exists() {
+        bail!("{} already exists in ~/models/", target.display());
+    }
+    unix_fs::symlink(source, &target)
+        .with_context(|| format!("Failed to create symlink {}", target.display()))?;
+    Ok(target)
 }
 
 fn human_size(bytes: u64) -> String {
@@ -345,41 +430,55 @@ async fn add_hf(repo: &str, filename: Option<&str>) -> Result<()> {
     let dir = models_dir();
     fs::create_dir_all(&dir)?;
 
-    let hf_bin = PathBuf::from(std::env::var("HOME").unwrap_or_default()).join(".local/bin/hf");
-    if !hf_bin.exists() {
-        bail!(
-            "HuggingFace CLI not found at {}. Install with: pip install huggingface_hub[cli]",
-            hf_bin.display()
-        );
-    }
-
-    let mut cmd = std::process::Command::new(&hf_bin);
-    cmd.arg("download").arg(repo);
     if let Some(fname) = filename {
-        cmd.arg(fname);
-    } else {
-        cmd.args(["--include", "*.gguf"]);
+        validate_model_name(fname)?;
     }
-    cmd.arg("--local-dir").arg(&dir);
 
-    println!("Running: {} {}", hf_bin.display(), {
-        let mut args = vec!["download".to_string(), repo.to_string()];
-        if let Some(f) = filename {
-            args.push(f.to_string());
+    let llama_cli = crate::llama::discover_llama_cli_binary()?;
+    let cache_dir = repo_cache_snapshots_dir(repo);
+    let before_files: HashSet<PathBuf> = collect_gguf_files(&cache_dir)?.into_iter().collect();
+
+    let mut cmd = std::process::Command::new(&llama_cli);
+    cmd.arg("--hf-repo")
+        .arg(repo)
+        .arg("-n")
+        .arg("0")
+        .arg("-p")
+        .arg("");
+    if let Some(fname) = filename {
+        cmd.arg("--hf-file").arg(fname);
+    }
+
+    let output = cmd
+        .output()
+        .with_context(|| format!("Failed to run {}", llama_cli.display()))?;
+    if !output.status.success() {
+        let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
+        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
+        let detail = if !stderr.is_empty() {
+            stderr
+        } else if !stdout.is_empty() {
+            stdout
         } else {
-            args.push("--include".into());
-            args.push("*.gguf".into());
-        }
-        args.push("--local-dir".into());
-        args.push(dir.display().to_string());
-        args.join(" ")
-    });
-
-    let status = cmd.status().context("Failed to run hf CLI")?;
-    if !status.success() {
-        bail!("hf download exited with {}", status);
+            format!("process exited with {}", output.status)
+        };
+        bail!("llama.cpp HF download failed: {detail}");
     }
-    println!("✓ Download complete.");
+
+    let cache_files = collect_gguf_files(&cache_dir)?;
+    let source =
+        preferred_hf_cache_file(&cache_files, filename, &before_files).ok_or_else(|| {
+            anyhow::anyhow!(
+                "llama.cpp finished but no GGUF file was found in {}",
+                cache_dir.display()
+            )
+        })?;
+    let target = link_model_into_library(&source, filename)?;
+    println!(
+        "✓ Downloaded via llama.cpp and linked {} → {}",
+        target.display(),
+        source.display()
+    );
     Ok(())
 }
 
@@ -636,5 +735,27 @@ mod tests {
         assert!(validate_model_name("model..gguf").is_err());
         assert!(validate_model_name("good-model-Q4_K_M.gguf").is_ok());
         assert!(validate_model_name("mn-12b-mag-mell-r1.gguf").is_ok());
+    }
+
+    #[test]
+    fn prefers_explicit_hf_filename() {
+        let candidates = vec![
+            PathBuf::from("/tmp/Q4_K_M.gguf"),
+            PathBuf::from("/tmp/Q6_K.gguf"),
+        ];
+        let selected =
+            preferred_hf_cache_file(&candidates, Some("Q6_K.gguf"), &HashSet::new()).unwrap();
+        assert_eq!(selected, PathBuf::from("/tmp/Q6_K.gguf"));
+    }
+
+    #[test]
+    fn prefers_new_q4km_cache_entry_when_filename_is_omitted() {
+        let existing = HashSet::from([PathBuf::from("/tmp/older-Q6_K.gguf")]);
+        let candidates = vec![
+            PathBuf::from("/tmp/older-Q6_K.gguf"),
+            PathBuf::from("/tmp/newer-Q4_K_M.gguf"),
+        ];
+        let selected = preferred_hf_cache_file(&candidates, None, &existing).unwrap();
+        assert_eq!(selected, PathBuf::from("/tmp/newer-Q4_K_M.gguf"));
     }
 }

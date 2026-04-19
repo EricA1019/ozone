@@ -48,6 +48,7 @@ last_updated: 2026-04-16
 - Passing Rust debug formatting (`Some(...)`) into Python helpers will break; serialize optional values as JSON strings/null instead.
 - PTY-driven launcher smoke is noisy and partial by nature; report concrete findings like launcher invocation, created sessions, and captured tail text instead of pretending it is a perfect UI oracle.
 - A sandboxed HOME can break cargo/rustup if you do not preserve the real toolchain env vars.
+- A sandboxed HOME also hides user-site Python modules from the VTE screenshot helper; if `screenshot_tool` reports missing `pyte` or Pillow in temp-XDG runs, export the real site-packages path through `PYTHONPATH` or install those modules system-wide.
 - For front-door journeys, matching against the entire accumulated capture can create false positives; prefer a recent-screen window or step-local view so old launcher text does not satisfy a later ozone+ assertion.
 - `cargo run` is less reliable than directly launching the built binary for PTY-style mock-user flows; prefer `target/debug/...` when it exists.
 

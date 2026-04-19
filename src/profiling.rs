@@ -1130,6 +1130,8 @@ mod tests {
             &ServiceStatus {
                 kobold_running: false,
                 kobold_model: None,
+                llamacpp_running: false,
+                llamacpp_model: None,
                 ollama_running: false,
                 st_running: false,
             },

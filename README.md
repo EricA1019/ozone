@@ -58,9 +58,11 @@ Binary name detection: symlinking to `ozone-lite`, `ozone+`, or `oz+` auto-selec
 
 ## ⬡ Quick Start
 
-### 1. Install KoboldCpp
+### 1. Install a Local Backend
 
-Ozone uses [KoboldCpp](https://github.com/LostRuins/koboldcpp) as its primary inference backend.
+Ozone still uses [KoboldCpp](https://github.com/LostRuins/koboldcpp) for the established profiling and launcher workflow, and ozone+ now also supports [llama.cpp](https://github.com/ggml-org/llama.cpp) as a first-class runtime backend.
+
+**KoboldCpp setup**
 
 **Option A — prebuilt release (recommended for most users):**
 
@@ -83,6 +85,17 @@ make LLAMA_CUBLAS=1    # with NVIDIA CUDA
 ```
 
 The binary must exist at `~/koboldcpp/koboldcpp`. To use a different path, set `OZONE_KOBOLDCPP_LAUNCHER` (see [Environment Variables](#-environment-variables)).
+
+**llama.cpp setup**
+
+Install `llama-server` and `llama-cli` from a release, package manager, or source build, then make sure both binaries are on your `PATH`.
+
+```bash
+llama-server --version
+llama-cli --version
+```
+
+If your install lives outside `PATH`, set `OZONE_LLAMACPP_SERVER` and/or `OZONE_LLAMACPP_CLI`.
 
 ### 2. Set Up the Launch Wrapper
 
@@ -108,13 +121,14 @@ exec "$KCPP" --model "$1" "${@:2}"
 
 Ozone looks for `.gguf` files in `~/models/`. GGUF is the standard format for local quantized models.
 
-**Download from HuggingFace** (requires `huggingface-cli`):
+**Download from HuggingFace via llama.cpp**:
 
 ```bash
-pip install huggingface-hub
-hf download <repo-id> <filename>.gguf --local-dir ~/models/
-# Example: hf download TheBloke/Mistral-7B-v0.1-GGUF mistral-7b-v0.1.Q4_K_M.gguf --local-dir ~/models/
+ozone model add --hf <repo-id> [filename.gguf]
+# Example: ozone model add --hf ggml-org/gemma-3-1b-it-GGUF gemma-3-1b-it-Q4_K_M.gguf
 ```
+
+This uses llama.cpp's built-in Hugging Face downloader, then symlinks the resolved GGUF from the HF cache into `~/models/` so `ozone model list`, the launcher picker, and `ozone model info` keep working as before.
 
 **Use Ollama models** (Ollama must be installed and the model pulled):
 
@@ -132,11 +146,19 @@ ln -s /path/to/ollama/blob ~/models/<model-name>.gguf
 ```bash
 git clone https://github.com/EricA1019/ozone.git
 cd ozone
-cargo build --workspace --release
+./contrib/sync-local-install.sh
+```
 
-cp target/release/ozone ~/.local/bin/
-cp target/release/ozone-plus ~/.local/bin/
-cp target/release/ozone-mcp ~/.local/bin/   # optional developer automation binary
+This helper builds the current release artifacts for `ozone`, `ozone-plus`, and
+`ozone-mcp`, then updates both `~/.cargo/bin` and `~/.local/bin` only when the
+SHA-256 checksum changed.
+
+Once you've synced from a repo once, launching an installed `ozone` or
+`ozone-plus` binary will notice when that repo's `target/release` artifact is
+newer than the installed copy and prompt:
+
+```text
+Update installed binaries now? [Y/n]
 ```
 
 ### 5. First Run
@@ -157,7 +179,7 @@ The base `ozone` binary now includes first-class local model management:
 ozone model list
 ozone model list --json
 ozone model info <model>.gguf
-ozone model add --hf <repo> <filename>.gguf
+ozone model add --hf <repo> [filename.gguf]
 ozone model add --ollama <model-name>
 ozone model add --link /path/to/model.gguf
 ozone model remove <model>.gguf
@@ -332,6 +354,8 @@ ozone-plus export <session-id> --format markdown   # Markdown transcript
 | Variable | Effect |
 |---|---|
 | `OZONE_KOBOLDCPP_LAUNCHER` | Override the KoboldCpp executable path. Use this when your KoboldCpp install is not at `~/koboldcpp/koboldcpp`, or when you need to point at a repaired or alternate build. Example: `OZONE_KOBOLDCPP_LAUNCHER=/opt/koboldcpp/koboldcpp ozone` |
+| `OZONE_LLAMACPP_SERVER` | Override the `llama-server` executable path used by the base launcher when `Backend = LlamaCpp`. Example: `OZONE_LLAMACPP_SERVER=/opt/llama.cpp/bin/llama-server ozone` |
+| `OZONE_LLAMACPP_CLI` | Override the `llama-cli` executable path used by `ozone model add --hf`. Example: `OZONE_LLAMACPP_CLI=/opt/llama.cpp/bin/llama-cli ozone model add --hf ggml-org/gemma-3-1b-it-GGUF` |
 
 ---
 
@@ -363,6 +387,24 @@ Check the path: ozone expects `~/koboldcpp/koboldcpp` by default. If your instal
 ~/koboldcpp/koboldcpp --version
 ```
 
+**llama.cpp not launching from the base launcher**
+
+Make sure `llama-server` is available on `PATH` or point ozone at it explicitly:
+
+```bash
+llama-server --version
+OZONE_LLAMACPP_SERVER=/path/to/llama-server ozone
+```
+
+**`ozone model add --hf` cannot find llama-cli**
+
+The HF import path now uses llama.cpp instead of `huggingface_hub`. Make sure `llama-cli` is installed and visible:
+
+```bash
+llama-cli --version
+OZONE_LLAMACPP_CLI=/path/to/llama-cli ozone model add --hf <repo> <filename>.gguf
+```
+
 **"VRAM over budget" warning in autoprofiling**
 
 This is expected for large models — it means the recommended GPU layer count exhausts free VRAM. Ozone shows it so you can lower `gpu_layers` manually. Start the benchmark anyway; KoboldCpp will report the actual VRAM used and you can compare.
@@ -382,10 +424,12 @@ This usually means the model is running in mixed-memory or CPU mode. Use autopro
 ```bash
 cd ozone-rs
 git pull
-cargo build --workspace --release
-cp target/release/ozone ~/.local/bin/
-cp target/release/ozone-plus ~/.local/bin/
+./contrib/sync-local-install.sh
 ```
+
+If you rebuild `target/release` later without resyncing the installed binaries,
+the installed `ozone` / `ozone-plus` launch path will offer a `Y/n` refresh
+prompt automatically.
 
 Check your current version:
 

@@ -169,7 +169,7 @@ What is available today:
 |---------|--------|
 | Session create / list / open | ✅ |
 | TUI chat with streaming tokens | ✅ |
-| KoboldCpp-backed ozone+ runtime path | ✅ |
+| KoboldCpp- or llama.cpp-backed ozone+ runtime path | ✅ |
 | Character card import (SillyTavern V2) | ✅ |
 | Pinned memories (persist across sessions) | ✅ |
 | Note memories and keyword tagging | ✅ |

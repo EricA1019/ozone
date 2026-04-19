@@ -29,7 +29,9 @@ pub use app::{
     SessionMetadata, SessionState, SessionStats, SettingsEntry, SettingsState, ShellState,
     TranscriptItem,
 };
-pub use input::{dispatch_command_palette_key, dispatch_key, dispatch_menu_key, InputMode, KeyAction};
+pub use input::{
+    dispatch_command_palette_key, dispatch_key, dispatch_menu_key, InputMode, KeyAction,
+};
 pub use layout::{
     build_layout, build_layout_for_area, LayoutMode, LayoutModel, PaneId, PaneLayout,
 };
@@ -175,8 +177,7 @@ where
                     let action = app.handle_key_event(key);
 
                     // Populate session list when entering the SessionList screen
-                    if app.screen == ScreenState::SessionList
-                        && app.session_list.entries.is_empty()
+                    if app.screen == ScreenState::SessionList && app.session_list.entries.is_empty()
                     {
                         if let Ok(entries) = runtime.list_sessions() {
                             app.session_list.entries = entries;
@@ -194,9 +195,7 @@ where
                     }
 
                     // Populate settings when entering the Settings screen
-                    if app.screen == ScreenState::Settings
-                        && app.settings.entries.is_empty()
-                    {
+                    if app.screen == ScreenState::Settings && app.settings.entries.is_empty() {
                         if let Ok(entries) = runtime.get_settings() {
                             app.settings = crate::app::SettingsState { entries };
                         }
@@ -261,30 +260,23 @@ where
                                 app::RuntimeCommand::CreateCharacter {
                                     name,
                                     system_prompt,
-                                } => {
-                                    match runtime.create_character(name, system_prompt) {
-                                        Ok(entry) => {
-                                            app.status_line = Some(format!(
-                                                "Created character: {}",
-                                                entry.name
-                                            ));
-                                            if let Ok(chars) = runtime.list_characters() {
-                                                app.character_list.entries = chars;
-                                            }
-                                        }
-                                        Err(e) => {
-                                            app.status_line =
-                                                Some(format!("Create failed: {:?}", e));
+                                } => match runtime.create_character(name, system_prompt) {
+                                    Ok(entry) => {
+                                        app.status_line =
+                                            Some(format!("Created character: {}", entry.name));
+                                        if let Ok(chars) = runtime.list_characters() {
+                                            app.character_list.entries = chars;
                                         }
                                     }
-                                }
+                                    Err(e) => {
+                                        app.status_line = Some(format!("Create failed: {:?}", e));
+                                    }
+                                },
                                 app::RuntimeCommand::ImportCharacter { path } => {
                                     match runtime.import_character(path) {
                                         Ok(entry) => {
-                                            app.status_line = Some(format!(
-                                                "Imported character: {}",
-                                                entry.name
-                                            ));
+                                            app.status_line =
+                                                Some(format!("Imported character: {}", entry.name));
                                             if let Ok(chars) = runtime.list_characters() {
                                                 app.character_list.entries = chars;
                                             }

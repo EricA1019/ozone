@@ -255,10 +255,7 @@ fn derive_embedding_records(
             ));
         }
 
-        for (source, embedding) in source_batch
-            .iter()
-            .zip(generated_batch.embeddings)
-        {
+        for (source, embedding) in source_batch.iter().zip(generated_batch.embeddings) {
             records.push(EmbeddingRecord {
                 artifact_id: source.artifact_id.clone(),
                 session_id: source.session_id.clone(),

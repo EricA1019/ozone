@@ -202,8 +202,8 @@ impl InferenceAdapter {
                 Ok(())
             }
             BackendHealth::Unreachable => Err(InferenceAdapterError::Gateway(format!(
-                "no LLM backend found at {}. Start KoboldCpp with `ozone` or check session config.",
-                self.config.backend.url
+                "no {} backend found at {}. Start it with `ozone` or check session config.",
+                self.config.backend.r#type, self.config.backend.url
             ))),
         }
     }

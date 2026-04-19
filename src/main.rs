@@ -4,6 +4,7 @@ mod catalog;
 mod db;
 mod gguf;
 mod hardware;
+mod llama;
 mod model;
 mod planner;
 mod prefs;
@@ -49,7 +50,11 @@ fn detect_tier_from_binary_name(name: &str) -> Option<prefs::Tier> {
 }
 
 #[derive(Parser)]
-#[command(name = "ozone", about = "⬡ Ozone — local AI stack operator", version)]
+#[command(
+    name = "ozone",
+    about = "⬡ Ozone — local AI stack operator & launcher",
+    version
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Commands>,
@@ -79,7 +84,7 @@ enum Commands {
         #[arg(long, help = "Output as JSON")]
         json: bool,
     },
-    /// Clear GPU backends (KoboldCpp, Ollama)
+    /// Clear GPU backends (KoboldCpp, llama.cpp, Ollama)
     Clear,
     /// Live monitor dashboard
     Monitor,
@@ -132,6 +137,10 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    if ozone_core::install::maybe_prompt_for_local_install_update("ozone")? {
+        ozone_core::install::relaunch_current_process()?;
+    }
+
     let cli = Cli::parse();
 
     // Determine tier from --mode, argv[0], or saved preference

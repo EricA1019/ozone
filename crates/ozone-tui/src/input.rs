@@ -132,9 +132,7 @@ pub fn dispatch_menu_key(key: KeyEvent, is_root_menu: bool) -> KeyAction {
         KeyCode::Char('q') => KeyAction::MenuBack,
         KeyCode::Char('?') => KeyAction::ToggleHelp,
         KeyCode::Char('/') | KeyCode::Char(':') => KeyAction::OpenCommandPalette,
-        KeyCode::Char(ch) if ch.is_ascii_digit() => {
-            KeyAction::MenuShortcut(ch)
-        }
+        KeyCode::Char(ch) if ch.is_ascii_digit() => KeyAction::MenuShortcut(ch),
         _ => KeyAction::Noop,
     }
 }

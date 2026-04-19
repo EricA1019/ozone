@@ -79,9 +79,7 @@ pub fn border_style() -> Style {
 
 /// Title in a focused pane.
 pub fn title_focused_style() -> Style {
-    Style::default()
-        .fg(TEAL)
-        .add_modifier(Modifier::BOLD)
+    Style::default().fg(TEAL).add_modifier(Modifier::BOLD)
 }
 
 /// Title in an unfocused pane.
@@ -91,9 +89,7 @@ pub fn title_style() -> Style {
 
 /// Primary highlight — teal with bold.
 pub fn highlight_style() -> Style {
-    Style::default()
-        .fg(TEAL)
-        .add_modifier(Modifier::BOLD)
+    Style::default().fg(TEAL).add_modifier(Modifier::BOLD)
 }
 
 /// Selected conversation entry author — violet accent.
@@ -142,16 +138,12 @@ pub fn mode_badge_style() -> Style {
 
 /// Accent style for hint keys and breadcrumb text.
 pub fn accent_style() -> Style {
-    Style::default()
-        .fg(TEAL)
-        .add_modifier(Modifier::BOLD)
+    Style::default().fg(TEAL).add_modifier(Modifier::BOLD)
 }
 
 /// Streaming cursor / generation-in-progress indicator.
 pub fn streaming_style() -> Style {
-    Style::default()
-        .fg(TEAL)
-        .add_modifier(Modifier::BOLD)
+    Style::default().fg(TEAL).add_modifier(Modifier::BOLD)
 }
 
 /// The hex prefix for the ozone+ title.

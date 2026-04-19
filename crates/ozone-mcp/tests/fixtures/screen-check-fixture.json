@@ -1,0 +1,4063 @@
+{
+  "screenRows": 5,
+  "screenColumns": 18,
+  "lineCount": 5,
+  "columnCount": 18,
+  "cursor": {
+    "row": 2,
+    "column": 7
+  },
+  "cursorRow": 2,
+  "cursorCol": 7,
+  "display": [
+    "┌─Menu───────────┐",
+    "│L1   R1         │",
+    "│L2   R2         │",
+    "│                │",
+    "└────────────────┘"
+  ],
+  "text": "┌─Menu───────────┐\n│L1   R1         │\n│L2   R2         │\n│                │\n└────────────────┘",
+  "tailText": "┌─Menu───────────┐\n│L1   R1         │\n│L2   R2         │\n│                │\n└────────────────┘",
+  "rows": [
+    {
+      "index": 0,
+      "row": 0,
+      "text": "┌─Menu───────────┐",
+      "cells": [
+        {
+          "column": 0,
+          "text": "┌",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 1,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 2,
+          "text": "M",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 3,
+          "text": "e",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 4,
+          "text": "n",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 5,
+          "text": "u",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 6,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 7,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 8,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 9,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 10,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 11,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 12,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 13,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 14,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 15,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 16,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 17,
+          "text": "┐",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "row": 1,
+      "text": "│L1   R1         │",
+      "cells": [
+        {
+          "column": 0,
+          "text": "│",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 1,
+          "text": "L",
+          "fg": "yellow",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            16
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 2,
+          "text": "1",
+          "fg": "yellow",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            16
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 3,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 4,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 5,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 6,
+          "text": "R",
+          "fg": "yellow",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            16
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 7,
+          "text": "1",
+          "fg": "yellow",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            16
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 8,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 9,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 10,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 11,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 12,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 13,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 14,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 15,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 16,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 17,
+          "text": "│",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "row": 2,
+      "text": "│L2   R2         │",
+      "cells": [
+        {
+          "column": 0,
+          "text": "│",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 1,
+          "text": "L",
+          "fg": "yellow",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            16
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 2,
+          "text": "2",
+          "fg": "yellow",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            16
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 3,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 4,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 5,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 6,
+          "text": "R",
+          "fg": "yellow",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            16
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 7,
+          "text": "2",
+          "fg": "yellow",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            16
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 8,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 9,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 10,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 11,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 12,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 13,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 14,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 15,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 16,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 17,
+          "text": "│",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "row": 3,
+      "text": "│                │",
+      "cells": [
+        {
+          "column": 0,
+          "text": "│",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 1,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 2,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 3,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 4,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 5,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 6,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 7,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 8,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 9,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 10,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 11,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 12,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 13,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 14,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 15,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 16,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 17,
+          "text": "│",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "row": 4,
+      "text": "└────────────────┘",
+      "cells": [
+        {
+          "column": 0,
+          "text": "└",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 1,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 2,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 3,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 4,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 5,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 6,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 7,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 8,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 9,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 10,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 11,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 12,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 13,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 14,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 15,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 16,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 17,
+          "text": "┘",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        }
+      ]
+    }
+  ],
+  "grid": [
+    {
+      "index": 0,
+      "row": 0,
+      "text": "┌─Menu───────────┐",
+      "cells": [
+        {
+          "column": 0,
+          "text": "┌",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 1,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 2,
+          "text": "M",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 3,
+          "text": "e",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 4,
+          "text": "n",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 5,
+          "text": "u",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 6,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 7,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 8,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 9,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 10,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 11,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 12,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 13,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 14,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 15,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 16,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 17,
+          "text": "┐",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        }
+      ]
+    },
+    {
+      "index": 1,
+      "row": 1,
+      "text": "│L1   R1         │",
+      "cells": [
+        {
+          "column": 0,
+          "text": "│",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 1,
+          "text": "L",
+          "fg": "yellow",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            16
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 2,
+          "text": "1",
+          "fg": "yellow",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            16
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 3,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 4,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 5,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 6,
+          "text": "R",
+          "fg": "yellow",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            16
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 7,
+          "text": "1",
+          "fg": "yellow",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            16
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 8,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 9,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 10,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 11,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 12,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 13,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 14,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 15,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 16,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 17,
+          "text": "│",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        }
+      ]
+    },
+    {
+      "index": 2,
+      "row": 2,
+      "text": "│L2   R2         │",
+      "cells": [
+        {
+          "column": 0,
+          "text": "│",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 1,
+          "text": "L",
+          "fg": "yellow",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            16
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 2,
+          "text": "2",
+          "fg": "yellow",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            16
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 3,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 4,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 5,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 6,
+          "text": "R",
+          "fg": "yellow",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            16
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 7,
+          "text": "2",
+          "fg": "yellow",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            16
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 8,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 9,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 10,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 11,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 12,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 13,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 14,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 15,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 16,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 17,
+          "text": "│",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        }
+      ]
+    },
+    {
+      "index": 3,
+      "row": 3,
+      "text": "│                │",
+      "cells": [
+        {
+          "column": 0,
+          "text": "│",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 1,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 2,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 3,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 4,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 5,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 6,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 7,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 8,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 9,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 10,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 11,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 12,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 13,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 14,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 15,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 16,
+          "text": " ",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 17,
+          "text": "│",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        }
+      ]
+    },
+    {
+      "index": 4,
+      "row": 4,
+      "text": "└────────────────┘",
+      "cells": [
+        {
+          "column": 0,
+          "text": "└",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 1,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 2,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 3,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 4,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 5,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 6,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 7,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 8,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 9,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 10,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 11,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 12,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 13,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 14,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 15,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 16,
+          "text": "─",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        },
+        {
+          "column": 17,
+          "text": "┘",
+          "fg": "default",
+          "bg": "default",
+          "bold": false,
+          "italics": false,
+          "underscore": false,
+          "strikethrough": false,
+          "blink": false,
+          "reverse": false,
+          "resolvedFg": [
+            229,
+            229,
+            229
+          ],
+          "resolvedBg": [
+            12,
+            12,
+            12
+          ]
+        }
+      ]
+    }
+  ],
+  "pngPath": "fixtures/screen-check-fixture.png",
+  "jsonPath": "fixtures/screen-check-fixture.json",
+  "font": {
+    "family": "TestFont",
+    "size": 16,
+    "cellWidth": 8,
+    "cellHeight": 16
+  }
+}

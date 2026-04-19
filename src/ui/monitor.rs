@@ -18,7 +18,7 @@ pub fn render(f: &mut Frame, app: &App) {
             Constraint::Length(4), // VRAM + RAM bars
             Constraint::Length(3), // CPU + disk info
             Constraint::Length(3), // disk sparkline
-            Constraint::Length(5), // services
+            Constraint::Length(6), // services
             Constraint::Fill(1),   // spacer
             Constraint::Length(2), // key hints
         ])
@@ -179,8 +179,14 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
     } else {
         ("○", style_gray())
     };
+    let (llama_icon, llama_style) = if app.services.llamacpp_running {
+        ("●", style_green())
+    } else {
+        ("○", style_gray())
+    };
 
     let model_str = app.services.kobold_model.as_deref().unwrap_or("—");
+    let llama_model_str = app.services.llamacpp_model.as_deref().unwrap_or("—");
     let tps_str = app
         .tokens_per_sec
         .map(|t| format!("  {t:.1} t/s"))
@@ -191,6 +197,11 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
             Span::styled(format!("  {kc_icon} KoboldCpp  "), kc_style),
             Span::styled(model_str, style_cyan()),
             Span::styled(tps_str, style_green()),
+        ]),
+        Line::from(vec![
+            Span::styled(format!("  {llama_icon} LlamaCpp   "), llama_style),
+            Span::styled(llama_model_str, style_violet()),
+            Span::styled("  :8080", style_gray()),
         ]),
         Line::from(vec![
             Span::styled(format!("  {ollama_icon} Ollama     "), ollama_style),

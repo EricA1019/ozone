@@ -5,6 +5,7 @@ triggers:
   - "phase 1d"
   - "ozone-inference"
   - "koboldcpp"
+  - "llamacpp"
   - "streaming backend"
   - "inference adapter"
   - "real backend"
@@ -28,6 +29,9 @@ last_updated: 2026-04-13
   hooks, and render behavior, but not HTTP clients or app-specific persistence.
 - `crates/ozone-inference` owns layered config loading, prompt-template
   rendering, backend descriptors, streaming decode, and gateway behavior.
+- The runtime no longer assumes KoboldCpp only: new backend work should fit the
+  descriptor/client/gateway seam so ozone+ can accept multiple local backends
+  without forking the TUI/runtime contract.
 - `apps/ozone-plus` owns the app-side adapter and the runtime bridge that turns
   engine transcripts into backend requests and backend stream events into TUI
   polling results.
@@ -38,11 +42,12 @@ last_updated: 2026-04-13
    needs new UI states, expose them as generic runtime progress/failure types
    instead of importing inference logic into the shell crate.
 2. Put config/template/backend protocol work in `crates/ozone-inference`:
-   - layered TOML config
-   - template registry / selection
-   - backend descriptors
-   - streaming decoder
-   - gateway / cancellation / retry behavior
+    - layered TOML config
+    - template registry / selection
+    - backend descriptors
+    - per-backend HTTP clients / request builders
+    - streaming decoder
+    - gateway / cancellation / retry behavior
 3. Create or extend an app-side adapter in `apps/ozone-plus` so the runtime can
    ask for:
    - resolved config
@@ -70,8 +75,8 @@ last_updated: 2026-04-13
 - Keep config path handling aligned with the project layout:
   - global config should live in the XDG config home for ozone
   - session overrides should live in the session-local config file
-- If no real KoboldCpp instance is available during development, a
-  Kobold-compatible mock server is good enough to verify the streaming control
+- If no real KoboldCpp or llama.cpp instance is available during development, a
+  protocol-compatible mock server is good enough to verify the streaming control
   flow — but record that distinction in the plan/router instead of pretending it
   was a real-model smoke.
 

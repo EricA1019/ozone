@@ -46,6 +46,7 @@ crates/
 ```bash
 cargo build                            # debug build (all crates)
 cargo build --workspace --release      # release build
+./contrib/sync-local-install.sh        # release build + checksum-aware local install sync
 cargo clippy --workspace --all-targets # lints
 cargo test --workspace                 # all tests
 ```

@@ -55,8 +55,17 @@ if app.ozone_plus_handoff {
     use std::os::unix::process::CommandExt;
     let mut command = std::process::Command::new(ozone_plus_bin);
     command.arg("handoff").arg("--launcher-session");
-    command.env("OZONE__BACKEND__TYPE", "koboldcpp");
-    command.env("OZONE__BACKEND__URL", ozone_core::paths::koboldcpp_base_url());
+    match app.prefs.preferred_backend {
+        Some(BackendMode::KoboldCpp) => {
+            command.env("OZONE__BACKEND__TYPE", "koboldcpp");
+            command.env("OZONE__BACKEND__URL", ozone_core::paths::koboldcpp_base_url());
+        }
+        Some(BackendMode::LlamaCpp) => {
+            command.env("OZONE__BACKEND__TYPE", "llamacpp");
+            command.env("OZONE__BACKEND__URL", ozone_core::paths::llamacpp_base_url());
+        }
+        Some(BackendMode::Ollama) | None => {}
+    }
     let err = command.exec();
     return Err(anyhow::anyhow!("Failed to exec ozone-plus: {err}"));
 }
@@ -67,11 +76,11 @@ The `exec()` call **replaces the current process** — terminal state is clean b
 The newer handoff path makes two policy choices explicit instead of implicit:
 
 1. The launcher asks ozone+ for a dedicated `Launcher Session` via `--launcher-session`.
-2. The launcher only exports backend env overrides for the KoboldCpp-backed path it actually starts itself.
+2. The launcher only exports backend env overrides for backends it actually starts itself (`KoboldCpp` / `LlamaCpp`).
 
 ## Backend is always started first
 
-When the user picks ozone+, the KoboldCpp backend is **still started** (same as the ST path) before handing off. This means ozone+ gets a running inference endpoint. The backend start code in `Screen::Confirm`'s Enter handler is shared.
+When the user picks ozone+, the selected local backend is **still started** (same as the ST path) before handing off. Today that means `KoboldCpp` or `LlamaCpp`; `Ollama + ozone+` is still rejected. The backend start code in `Screen::Confirm`'s Enter handler is shared.
 
 ## Key behaviour differences from ST path
 
@@ -84,7 +93,7 @@ When the user picks ozone+, the KoboldCpp backend is **still started** (same as 
 
 ## Current guardrail
 
-The current ozone+ runtime path is still **KoboldCpp-backed**. If the base launcher is in `Ollama + ozone+` mode, reject that combo clearly instead of silently pretending the guided launch path is wired end-to-end.
+The current ozone+ runtime path supports **KoboldCpp and llama.cpp**, but still not `Ollama + ozone+`. Reject the unsupported combo clearly instead of silently pretending the guided launch path is wired end-to-end.
 
 ## Adding a new frontend option
 

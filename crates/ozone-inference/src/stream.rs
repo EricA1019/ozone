@@ -108,6 +108,22 @@ impl StreamDecoder {
             return None;
         }
 
+        // llama.cpp native `/completion` format: top-level `content` and `stop`.
+        if v.get("content").is_some() || v.get("stop").is_some() {
+            let text = v.get("content").and_then(|c| c.as_str()).unwrap_or("");
+            if !text.is_empty() {
+                return Some(StreamChunk::Token(text.to_string()));
+            }
+            if v.get("stop").and_then(|s| s.as_bool()) == Some(true) {
+                let reason = v
+                    .get("stop_type")
+                    .and_then(|value| value.as_str())
+                    .unwrap_or("stop");
+                return Some(StreamChunk::FinishReason(reason.to_string()));
+            }
+            return None;
+        }
+
         // OpenAI chat-completions format: has a "choices" array.
         if let Some(choice) = v
             .get("choices")
@@ -302,6 +318,20 @@ mod tests {
         assert_eq!(chunks[1], StreamChunk::Token(" world".into()));
         assert_eq!(chunks[2], StreamChunk::FinishReason("stop".into()));
         assert_eq!(chunks[3], StreamChunk::Done);
+    }
+
+    #[test]
+    fn sse_llamacpp_completion_format() {
+        let mut dec = StreamDecoder::new(StreamingFormat::ServerSentEvents);
+        let input = concat!(
+            "data: {\"content\":\"Hello\",\"stop\":false}\n",
+            "data: {\"content\":\" world\",\"stop\":false}\n",
+            "data: {\"content\":\"\",\"stop\":true,\"stop_type\":\"limit\"}\n",
+        );
+        let chunks = feed(&mut dec, input);
+        assert_eq!(chunks[0], StreamChunk::Token("Hello".into()));
+        assert_eq!(chunks[1], StreamChunk::Token(" world".into()));
+        assert_eq!(chunks[2], StreamChunk::FinishReason("limit".into()));
     }
 
     #[test]

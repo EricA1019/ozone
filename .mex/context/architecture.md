@@ -53,6 +53,7 @@ Monitor mode shows live VRAM/RAM/CPU/services with 2s refresh.
 ## External Dependencies
 
 - KoboldCpp: LLM inference server at localhost:5001.
+- llama.cpp: local `llama-server` runtime at localhost:8080.
 - SillyTavern: Chat frontend at localhost:8000.
 - nvidia-smi: GPU monitoring.
 - ~/models/: .gguf files, koboldcpp-presets.conf, bench-results.txt.
@@ -62,6 +63,6 @@ Monitor mode shows live VRAM/RAM/CPU/services with 2s refresh.
 - No direct inference.
 - No web UI (terminal only).
 - No Windows support (Linux only).
-- No direct Ollama-backed ozone+ runtime path yet; base ozone still intentionally rejects guided `Ollama + ozone+` launch while the ozone+ runtime remains KoboldCpp-backed.
+- No direct Ollama-backed ozone+ runtime path yet; base ozone still intentionally rejects guided `Ollama + ozone+` launch while the ozone+ runtime now supports KoboldCpp and llama.cpp only.
 - The new MCP server is a developer/testing control plane, not an end-user product tier.
 - Front-door mock-user journeys now live inside the MCP server as PTY-driven terminal scripts; they still rely on recent-screen text markers rather than any real DOM/pixel automation layer.

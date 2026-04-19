@@ -15,6 +15,7 @@ use ozone_memory::{
 };
 use serde::{Deserialize, Serialize};
 
+use crate::backend::BackendDescriptor;
 use crate::error::InferenceError;
 
 // ---------------------------------------------------------------------------
@@ -636,6 +637,13 @@ fn validate_config(cfg: &OzoneConfig) -> anyhow::Result<()> {
         }
         .into());
     }
+    if BackendDescriptor::for_type(&cfg.backend.r#type).is_none() {
+        return Err(InferenceError::ConfigInvalid {
+            key: "backend.type".into(),
+            reason: format!("unsupported backend '{}'", cfg.backend.r#type),
+        }
+        .into());
+    }
     if cfg.context.safety_margin_pct > 50 {
         return Err(InferenceError::ConfigInvalid {
             key: "context.safety_margin_pct".into(),
@@ -815,6 +823,16 @@ mod tests {
         );
         assert_eq!(cfg.memory.embedding.model, "BAAI/bge-small-en-v1.5");
         assert_eq!(cfg.memory.embedding.expected_dimensions, Some(384));
+    }
+
+    #[test]
+    fn rejects_unknown_backend_type() {
+        let err = ConfigLoader::new()
+            .global_config_path("/nonexistent/path/config.toml")
+            .extra_toml_override("[backend]\ntype = \"mystery\"\n")
+            .build()
+            .expect_err("unknown backend should fail");
+        assert!(err.to_string().contains("backend.type"));
     }
 
     #[test]

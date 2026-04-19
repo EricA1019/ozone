@@ -1900,6 +1900,7 @@ dependencies = [
  "directories",
  "dirs 5.0.1",
  "serde",
+ "sha2",
 ]
 
 [[package]]

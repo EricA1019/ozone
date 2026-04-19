@@ -17,7 +17,7 @@ pub fn render(f: &mut Frame, app: &App) {
         .constraints([
             Constraint::Length(4), // header (increased for badge line)
             Constraint::Length(4), // resources
-            Constraint::Length(5), // services
+            Constraint::Length(6), // services
             Constraint::Fill(1),   // actions
             Constraint::Length(2), // status bar
         ])
@@ -53,6 +53,7 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
     // Backend/frontend badge line
     let (backend_label, backend_style) = match app.prefs.preferred_backend {
         Some(BackendMode::KoboldCpp) => ("KoboldCpp", style_cyan()),
+        Some(BackendMode::LlamaCpp) => ("LlamaCpp", style_violet()),
         Some(BackendMode::Ollama) => ("Ollama", style_green()),
         None => ("—", style_gray()),
     };
@@ -148,13 +149,24 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
     } else {
         ("○", style_gray())
     };
+    let (llama_icon, llama_style) = if app.services.llamacpp_running {
+        ("●", style_green())
+    } else {
+        ("○", style_gray())
+    };
 
     let model_label = app.services.kobold_model.as_deref().unwrap_or("—");
+    let llama_model_label = app.services.llamacpp_model.as_deref().unwrap_or("—");
     let lines = vec![
         Line::from(vec![
             Span::styled(format!("  {kc_icon} KoboldCpp  "), kc_style),
             Span::styled(model_label, style_cyan()),
             Span::styled("  :5001", style_gray()),
+        ]),
+        Line::from(vec![
+            Span::styled(format!("  {llama_icon} LlamaCpp   "), llama_style),
+            Span::styled(llama_model_label, style_violet()),
+            Span::styled("  :8080", style_gray()),
         ]),
         Line::from(vec![
             Span::styled(format!("  {ollama_icon} Ollama     "), ollama_style),
@@ -403,7 +415,15 @@ pub fn render_launching(f: &mut Frame, app: &App) {
     };
 
     let lines = vec![
-        Line::from(Span::styled("  Launching KoboldCpp…", style_bold_violet())),
+        Line::from(Span::styled(
+            match app.prefs.preferred_backend {
+                Some(BackendMode::KoboldCpp) => "  Launching KoboldCpp…",
+                Some(BackendMode::LlamaCpp) => "  Launching llama.cpp…",
+                Some(BackendMode::Ollama) => "  Launching Ollama…",
+                None => "  Launching backend…",
+            },
+            style_bold_violet(),
+        )),
         Line::from(Span::styled(format!("  {model}"), style_cyan())),
         Line::from(Span::raw("")),
         Line::from(Span::styled(format!("  Loading {dots}"), style_amber())),
@@ -1244,7 +1264,7 @@ pub fn render_settings(f: &mut Frame, app: &App) {
     let backend_inner = backend_block.inner(chunks[1]);
     f.render_widget(backend_block, chunks[1]);
 
-    let backend_options = ["KoboldCpp", "Ollama"];
+    let backend_options = ["KoboldCpp", "LlamaCpp", "Ollama"];
     let backend_items: Vec<ListItem> = backend_options
         .iter()
         .enumerate()

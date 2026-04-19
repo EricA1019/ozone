@@ -5,6 +5,7 @@
 
 pub mod cli;
 pub mod engine;
+pub mod install;
 pub mod session;
 
 pub mod product {
@@ -54,10 +55,12 @@ pub mod paths {
     const SESSION_DB_FILE_NAME: &str = "session.db";
     const SESSION_CONFIG_FILE_NAME: &str = "config.toml";
     const SESSION_DRAFT_FILE_NAME: &str = "draft.txt";
+    const INSTALL_SOURCE_ROOT_FILE_NAME: &str = "install-source-root.txt";
 
     const ENV_MODELS_DIR: &str = "OZONE_MODELS_DIR";
     const ENV_KOBOLDCPP_LAUNCHER: &str = "OZONE_KOBOLDCPP_LAUNCHER";
     const DEFAULT_KOBOLDCPP_PORT: u16 = 5001;
+    const DEFAULT_LLAMACPP_PORT: u16 = 8080;
 
     fn project_dirs() -> Option<ProjectDirs> {
         ProjectDirs::from("", "", "ozone")
@@ -116,12 +119,30 @@ pub mod paths {
         data_dir().map(|path| path.join("preferences.json"))
     }
 
+    pub fn install_source_root_path() -> Option<PathBuf> {
+        data_dir().map(|path| path.join(INSTALL_SOURCE_ROOT_FILE_NAME))
+    }
+
     pub fn benchmarks_db_path() -> Option<PathBuf> {
         data_dir().map(|path| path.join("benchmarks.db"))
     }
 
     pub fn kobold_log_path() -> Option<PathBuf> {
         data_dir().map(|path| path.join("koboldcpp.log"))
+    }
+
+    /// The default llama.cpp server API base URL.
+    pub fn llamacpp_base_url() -> String {
+        format!("http://127.0.0.1:{DEFAULT_LLAMACPP_PORT}")
+    }
+
+    /// The default llama.cpp ready-check endpoint.
+    pub fn llamacpp_ready_url() -> String {
+        format!("http://127.0.0.1:{DEFAULT_LLAMACPP_PORT}/health")
+    }
+
+    pub fn llamacpp_log_path() -> Option<PathBuf> {
+        data_dir().map(|path| path.join("llamacpp.log"))
     }
 
     pub fn global_db_path() -> Option<PathBuf> {
@@ -199,12 +220,22 @@ mod tests {
             data_dir.clone().map(|path| path.join("preferences.json"))
         );
         assert_eq!(
+            paths::install_source_root_path(),
+            data_dir
+                .clone()
+                .map(|path| path.join("install-source-root.txt"))
+        );
+        assert_eq!(
             paths::benchmarks_db_path(),
             data_dir.clone().map(|path| path.join("benchmarks.db"))
         );
         assert_eq!(
             paths::kobold_log_path(),
             data_dir.clone().map(|path| path.join("koboldcpp.log"))
+        );
+        assert_eq!(
+            paths::llamacpp_log_path(),
+            data_dir.clone().map(|path| path.join("llamacpp.log"))
         );
         assert_eq!(
             paths::global_db_path(),
@@ -236,5 +267,16 @@ mod tests {
             paths::session_draft_path(&session_id),
             expected_sessions_dir.map(|path| path.join(session_id.as_str()).join("draft.txt"))
         );
+    }
+
+    #[test]
+    fn backend_default_urls_are_stable() {
+        assert_eq!(paths::koboldcpp_base_url(), "http://127.0.0.1:5001");
+        assert_eq!(
+            paths::koboldcpp_ready_url(),
+            "http://127.0.0.1:5001/api/v1/model"
+        );
+        assert_eq!(paths::llamacpp_base_url(), "http://127.0.0.1:8080");
+        assert_eq!(paths::llamacpp_ready_url(), "http://127.0.0.1:8080/health");
     }
 }

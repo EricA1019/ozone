@@ -10,3 +10,4 @@ license = "MIT"
 directories = "5"
 dirs = "5"
 serde = { version = "1", features = ["derive"] }
+sha2 = "0.10"

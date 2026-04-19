@@ -6,6 +6,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 const KOBOLD_START_TIMEOUT_SECS: u64 = 120;
+const LLAMACPP_START_TIMEOUT_SECS: u64 = 120;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KoboldStartupFailureKind {
@@ -58,18 +59,53 @@ pub async fn get_kobold_perf() -> Option<f64> {
     }
 }
 
+pub async fn get_llamacpp_model() -> Option<String> {
+    #[derive(serde::Deserialize)]
+    struct ModelsResponse {
+        data: Vec<ModelEntry>,
+    }
+
+    #[derive(serde::Deserialize)]
+    struct ModelEntry {
+        id: String,
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(2))
+        .build()
+        .ok()?;
+    let resp = client
+        .get(format!("{}/v1/models", paths::llamacpp_base_url()))
+        .send()
+        .await
+        .ok()?;
+    let data: ModelsResponse = resp.json().await.ok()?;
+    let id = data.data.into_iter().next()?.id;
+    Some(
+        std::path::Path::new(&id)
+            .file_name()
+            .and_then(|name| name.to_str())
+            .unwrap_or(&id)
+            .to_string(),
+    )
+}
+
 #[derive(Debug, Clone)]
 pub struct ServiceStatus {
     pub kobold_running: bool,
     pub kobold_model: Option<String>,
+    pub llamacpp_running: bool,
+    pub llamacpp_model: Option<String>,
     pub ollama_running: bool,
     pub st_running: bool,
 }
 
 pub async fn get_service_status() -> ServiceStatus {
     let kobold_url = paths::koboldcpp_ready_url();
-    let (kobold_ready, ollama_ready, st_ready) = tokio::join!(
+    let llama_url = paths::llamacpp_ready_url();
+    let (kobold_ready, llamacpp_ready, ollama_ready, st_ready) = tokio::join!(
         is_url_ready(&kobold_url),
+        is_url_ready(&llama_url),
         is_url_ready("http://127.0.0.1:11434/api/tags"),
         is_url_ready("http://127.0.0.1:8000"),
     );
@@ -78,9 +114,16 @@ pub async fn get_service_status() -> ServiceStatus {
     } else {
         None
     };
+    let llamacpp_model = if llamacpp_ready {
+        get_llamacpp_model().await
+    } else {
+        None
+    };
     ServiceStatus {
         kobold_running: kobold_ready,
         kobold_model,
+        llamacpp_running: llamacpp_ready,
+        llamacpp_model,
         ollama_running: ollama_ready,
         st_running: st_ready,
     }
@@ -103,7 +146,9 @@ pub async fn clear_gpu_backends() -> Result<Vec<String>> {
             Err(_) => continue,
         };
         let args = parts[1];
-        if (args.contains("koboldcpp") || (args.contains("ollama") && args.contains("runner")))
+        if (args.contains("koboldcpp")
+            || args.contains("llama-server")
+            || (args.contains("ollama") && args.contains("runner")))
             && nix_kill(pid)
         {
             killed.push(args.split('/').next_back().unwrap_or(args).to_string());
@@ -122,6 +167,10 @@ fn nix_kill(pid: u32) -> bool {
 
 pub fn resolved_kobold_launcher_path() -> PathBuf {
     paths::launcher_path()
+}
+
+pub fn resolved_llamacpp_server_path() -> Result<PathBuf> {
+    crate::llama::discover_llama_server_binary()
 }
 
 pub async fn start_kobold(launcher_path: &Path, model_name: &str, args: &[String]) -> Result<()> {
@@ -193,6 +242,89 @@ pub async fn start_kobold(launcher_path: &Path, model_name: &str, args: &[String
                 &tail,
                 KoboldStartupFailureKind::Timeout,
             )));
+        }
+
+        sleep(Duration::from_millis(800)).await;
+    }
+}
+
+pub async fn start_llamacpp(server_path: &Path, model_name: &str, args: &[String]) -> Result<()> {
+    if !server_path.exists() {
+        return Err(anyhow!(
+            "llama.cpp server binary not found: {}\nSet OZONE_LLAMACPP_SERVER=/path/to/llama-server to use a local install.",
+            server_path.display(),
+        ));
+    }
+    if is_url_ready(&paths::llamacpp_ready_url()).await {
+        return Ok(());
+    }
+
+    let log_path = paths::llamacpp_log_path()
+        .ok_or_else(|| anyhow!("could not determine ozone data directory"))?;
+    if let Some(parent) = log_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let log_file = std::fs::OpenOptions::new()
+        .create(true)
+        .write(true)
+        .truncate(true)
+        .open(&log_path)?;
+    let log_file2 = log_file.try_clone()?;
+
+    let mut cmd = std::process::Command::new(server_path);
+    cmd.arg("--model")
+        .arg(model_name)
+        .args(args)
+        .stdin(Stdio::null())
+        .stdout(log_file)
+        .stderr(log_file2);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+    }
+
+    let mut child = cmd.spawn()?;
+    let deadline = std::time::Instant::now() + Duration::from_secs(LLAMACPP_START_TIMEOUT_SECS);
+    loop {
+        if is_url_ready(&paths::llamacpp_ready_url()).await {
+            return Ok(());
+        }
+
+        if let Some(status) = child.try_wait()? {
+            let tail = tail_file(&log_path, 40).await;
+            let mut message = format!(
+                "llama.cpp exited before its API became ready.\nProcess status: {}\nBinary: {}",
+                describe_exit_status(status),
+                server_path.display()
+            );
+            if !tail.trim().is_empty() {
+                message.push_str("\n\nllama.cpp log tail:\n");
+                message.push_str(tail.trim());
+            }
+            return Err(anyhow!(message));
+        }
+
+        if std::time::Instant::now() >= deadline {
+            let _ = child.kill();
+            let _ = child.wait();
+            let tail = tail_file(&log_path, 40).await;
+            let mut message = format!(
+                "llama.cpp did not become ready before the startup timeout.\nBinary: {}",
+                server_path.display()
+            );
+            if !tail.trim().is_empty() {
+                message.push_str("\n\nllama.cpp log tail:\n");
+                message.push_str(tail.trim());
+            }
+            return Err(anyhow!(message));
         }
 
         sleep(Duration::from_millis(800)).await;

@@ -484,7 +484,7 @@ impl Phase1dRuntime {
 
                 runtime.block_on(async move {
                     // Probe backend max context length and warn if our prompt is large.
-                    if let Some(max_ctx) = gateway.client().probe_max_context_length().await {
+                    if let Some(max_ctx) = gateway.probe_max_context_length().await {
                         let prompt_chars = request.prompt.len();
                         // Rough heuristic: ~3.5 chars per token for English text.
                         let estimated_prompt_tokens = prompt_chars * 10 / 35;
@@ -1574,7 +1574,10 @@ impl SessionRuntime for Phase1dRuntime {
     }
 
     fn list_characters(&mut self) -> Result<Vec<ozone_tui::CharacterEntry>, Self::Error> {
-        let chars = self.repo.list_characters_global().map_err(|e| e.to_string())?;
+        let chars = self
+            .repo
+            .list_characters_global()
+            .map_err(|e| e.to_string())?;
         Ok(chars
             .into_iter()
             .map(|c| ozone_tui::CharacterEntry {
@@ -1591,7 +1594,10 @@ impl SessionRuntime for Phase1dRuntime {
         name: String,
         system_prompt: String,
     ) -> Result<ozone_tui::CharacterEntry, Self::Error> {
-        let stored = self.repo.create_character(&name, "", &system_prompt).map_err(|e| e.to_string())?;
+        let stored = self
+            .repo
+            .create_character(&name, "", &system_prompt)
+            .map_err(|e| e.to_string())?;
         Ok(ozone_tui::CharacterEntry {
             card_id: stored.card_id,
             name: stored.name,
@@ -1600,23 +1606,23 @@ impl SessionRuntime for Phase1dRuntime {
         })
     }
 
-    fn import_character(
-        &mut self,
-        path: String,
-    ) -> Result<ozone_tui::CharacterEntry, Self::Error> {
-        let contents = fs::read_to_string(&path).map_err(|e| {
-            format!("failed to read {path}: {e}")
-        })?;
-        let card = ozone_persist::CharacterCard::from_json_str(&contents).map_err(|e| e.to_string())?;
-        let stored = self.repo.create_character_full(
-            &card.name,
-            card.description.as_deref().unwrap_or(""),
-            card.system_prompt.as_deref().unwrap_or(""),
-            card.personality.as_deref().unwrap_or(""),
-            card.scenario.as_deref().unwrap_or(""),
-            card.greeting.as_deref().unwrap_or(""),
-            card.example_dialogue.as_deref().unwrap_or(""),
-        ).map_err(|e| e.to_string())?;
+    fn import_character(&mut self, path: String) -> Result<ozone_tui::CharacterEntry, Self::Error> {
+        let contents =
+            fs::read_to_string(&path).map_err(|e| format!("failed to read {path}: {e}"))?;
+        let card =
+            ozone_persist::CharacterCard::from_json_str(&contents).map_err(|e| e.to_string())?;
+        let stored = self
+            .repo
+            .create_character_full(
+                &card.name,
+                card.description.as_deref().unwrap_or(""),
+                card.system_prompt.as_deref().unwrap_or(""),
+                card.personality.as_deref().unwrap_or(""),
+                card.scenario.as_deref().unwrap_or(""),
+                card.greeting.as_deref().unwrap_or(""),
+                card.example_dialogue.as_deref().unwrap_or(""),
+            )
+            .map_err(|e| e.to_string())?;
         Ok(ozone_tui::CharacterEntry {
             card_id: stored.card_id,
             name: stored.name,

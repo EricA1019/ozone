@@ -67,6 +67,7 @@ pub enum FrontendMode {
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum BackendMode {
     KoboldCpp,
+    LlamaCpp,
     Ollama,
 }
 
@@ -110,7 +111,7 @@ pub struct App {
     pub exit_confirm_index: usize,
     // Settings screen state
     pub settings_section: usize,        // 0=backend, 1=frontend
-    pub settings_backend_index: usize,  // 0=KoboldCpp, 1=Ollama
+    pub settings_backend_index: usize,  // 0=KoboldCpp, 1=LlamaCpp, 2=Ollama
     pub settings_frontend_index: usize, // 0=SillyTavern, 1=OzonePlus
     // Profiling flow state
     pub profiling_advisory: Option<ProfilingAdvisory>,
@@ -143,6 +144,8 @@ impl App {
             services: ServiceStatus {
                 kobold_running: false,
                 kobold_model: None,
+                llamacpp_running: false,
+                llamacpp_model: None,
                 ollama_running: false,
                 st_running: false,
             },
@@ -297,6 +300,30 @@ fn build_kc_args(plan: &LaunchPlan) -> Vec<String> {
     args
 }
 
+fn build_llama_args(plan: &LaunchPlan) -> Vec<String> {
+    let gpu_layers = if plan.gpu_layers < 0 {
+        "all".to_string()
+    } else {
+        plan.gpu_layers.to_string()
+    };
+    let mut args = vec![
+        "--host".to_string(),
+        "127.0.0.1".to_string(),
+        "--port".to_string(),
+        "8080".to_string(),
+        "--ctx-size".to_string(),
+        plan.context_size.to_string(),
+        "--gpu-layers".to_string(),
+        gpu_layers,
+        "--no-webui".to_string(),
+    ];
+    if let Some(t) = plan.threads {
+        args.push("--threads".to_string());
+        args.push(t.to_string());
+    }
+    args
+}
+
 fn next_screen_after_splash(app: &App) -> Screen {
     if app.prefs.preferred_tier.is_none() {
         Screen::TierPicker
@@ -369,7 +396,8 @@ fn queue_frontend_launch(app: &mut App) {
 fn sync_settings_from_prefs(app: &mut App) {
     app.settings_section = 0;
     app.settings_backend_index = match app.prefs.preferred_backend {
-        Some(BackendMode::Ollama) => 1,
+        Some(BackendMode::LlamaCpp) => 1,
+        Some(BackendMode::Ollama) => 2,
         _ => 0,
     };
     app.settings_frontend_index = match app.prefs.preferred_frontend {
@@ -594,6 +622,59 @@ pub async fn run_launcher(
                         app.screen = Screen::Launcher;
                     }
                 }
+                Some(BackendMode::LlamaCpp) => {
+                    if let Some(plan) = app.current_plan.clone() {
+                        app.screen = Screen::Launching;
+                        app.launch_start = Some(Instant::now());
+
+                        let home = std::env::var("HOME").unwrap_or_default();
+                        let server_path = match crate::processes::resolved_llamacpp_server_path() {
+                            Ok(path) => path,
+                            Err(error) => {
+                                app.set_error(format!("Launch failed: {error}"));
+                                app.screen = Screen::Launcher;
+                                continue;
+                            }
+                        };
+                        let model_path = std::path::PathBuf::from(&home)
+                            .join("models")
+                            .join(&plan.model_name);
+                        let llama_args = build_llama_args(&plan);
+                        match crate::processes::start_llamacpp(
+                            &server_path,
+                            &model_path.to_string_lossy(),
+                            &llama_args,
+                        )
+                        .await
+                        {
+                            Ok(_) => {
+                                let mut updated_prefs = app.prefs.clone();
+                                updated_prefs.last_model_name = plan.model_name.clone();
+                                updated_prefs.last_context_size = Some(plan.context_size);
+                                updated_prefs.last_gpu_layers = Some(plan.gpu_layers);
+                                updated_prefs.last_quant_kv = Some(plan.quant_kv);
+                                let _ = crate::prefs::save_prefs(&updated_prefs).await;
+                                app.prefs = updated_prefs;
+                                if choice_idx == 0 {
+                                    if !app.prefs.no_browser {
+                                        crate::processes::open_browser_app("http://localhost:8000");
+                                    }
+                                    app.screen = Screen::Monitor;
+                                } else {
+                                    app.ozone_plus_handoff = true;
+                                    break Ok(());
+                                }
+                            }
+                            Err(error) => {
+                                app.set_error(format!("Launch failed: {error}"));
+                                app.screen = Screen::Launcher;
+                            }
+                        }
+                    } else {
+                        app.set_error("No launch plan selected.".into());
+                        app.screen = Screen::Launcher;
+                    }
+                }
                 Some(BackendMode::Ollama) => {
                     if choice_idx == 0 {
                         if !app.prefs.no_browser {
@@ -687,6 +768,13 @@ pub async fn run_launcher(
                                             app.screen = Screen::ModelPicker;
                                         }
                                     }
+                                    Some(BackendMode::LlamaCpp) => {
+                                        if !app.catalog.is_empty() {
+                                            app.reset_profile_flow();
+                                            app.model_picker_mode = ModelPickerMode::Launch;
+                                            app.screen = Screen::ModelPicker;
+                                        }
+                                    }
                                     Some(BackendMode::Ollama) => {
                                         if crate::processes::is_url_ready(
                                             "http://127.0.0.1:11434/api/tags",
@@ -771,7 +859,7 @@ pub async fn run_launcher(
                         },
                         KeyCode::Down => match app.settings_section {
                             0 => {
-                                if app.settings_backend_index < 1 {
+                                if app.settings_backend_index < 2 {
                                     app.settings_backend_index += 1;
                                 }
                             }
@@ -784,7 +872,8 @@ pub async fn run_launcher(
                         KeyCode::Enter => {
                             app.prefs.preferred_backend = match app.settings_backend_index {
                                 0 => Some(BackendMode::KoboldCpp),
-                                1 => Some(BackendMode::Ollama),
+                                1 => Some(BackendMode::LlamaCpp),
+                                2 => Some(BackendMode::Ollama),
                                 _ => None,
                             };
                             app.prefs.preferred_frontend = match app.settings_frontend_index {
@@ -1163,7 +1252,11 @@ pub async fn run_launcher(
             if matches!(app.screen, Screen::Monitor) {
                 app.services = crate::processes::get_service_status().await;
                 app.update_disk();
-                app.tokens_per_sec = crate::processes::get_kobold_perf().await;
+                app.tokens_per_sec = if app.services.kobold_running {
+                    crate::processes::get_kobold_perf().await
+                } else {
+                    None
+                };
                 if let Some(ref mut hw) = app.hardware {
                     *hw = tokio::task::spawn_blocking(crate::hardware::load_hardware)
                         .await
@@ -1219,12 +1312,22 @@ pub async fn run_launcher(
         use std::os::unix::process::CommandExt;
         let mut command = std::process::Command::new(ozone_plus_bin);
         command.arg("handoff").arg("--launcher-session");
-        if matches!(app.prefs.preferred_backend, Some(BackendMode::KoboldCpp)) {
-            command.env("OZONE__BACKEND__TYPE", "koboldcpp");
-            command.env(
-                "OZONE__BACKEND__URL",
-                ozone_core::paths::koboldcpp_base_url(),
-            );
+        match app.prefs.preferred_backend {
+            Some(BackendMode::KoboldCpp) => {
+                command.env("OZONE__BACKEND__TYPE", "koboldcpp");
+                command.env(
+                    "OZONE__BACKEND__URL",
+                    ozone_core::paths::koboldcpp_base_url(),
+                );
+            }
+            Some(BackendMode::LlamaCpp) => {
+                command.env("OZONE__BACKEND__TYPE", "llamacpp");
+                command.env(
+                    "OZONE__BACKEND__URL",
+                    ozone_core::paths::llamacpp_base_url(),
+                );
+            }
+            Some(BackendMode::Ollama) | None => {}
         }
         let err = command.exec();
         return Err(anyhow::anyhow!("Failed to exec ozone-plus: {err}"));
@@ -1286,7 +1389,11 @@ pub async fn run_monitor() -> Result<()> {
             last_refresh = Instant::now();
             app.services = crate::processes::get_service_status().await;
             app.update_disk();
-            app.tokens_per_sec = crate::processes::get_kobold_perf().await;
+            app.tokens_per_sec = if app.services.kobold_running {
+                crate::processes::get_kobold_perf().await
+            } else {
+                None
+            };
             if let Some(ref mut hw) = app.hardware {
                 *hw = tokio::task::spawn_blocking(crate::hardware::load_hardware)
                     .await
@@ -1319,7 +1426,7 @@ mod tests {
         sync_settings_from_prefs(&mut app);
 
         assert_eq!(app.settings_section, 0);
-        assert_eq!(app.settings_backend_index, 1);
+        assert_eq!(app.settings_backend_index, 2);
         assert_eq!(app.settings_frontend_index, 1);
     }
 

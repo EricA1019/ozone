@@ -7,7 +7,10 @@ use ratatui::{
 };
 
 use crate::{
-    app::{CommandEntry, ContextPreview, FocusTarget, InspectorFocus, RuntimePhase, ScreenState, ShellState},
+    app::{
+        CommandEntry, ContextPreview, FocusTarget, InspectorFocus, RuntimePhase, ScreenState,
+        ShellState,
+    },
     input::InputMode,
     layout::{LayoutMode, LayoutModel, PaneId, PaneLayout},
     theme,
@@ -255,9 +258,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
             entries
         },
         empty_state: "⬡ Start a conversation — press i to enter insert mode".into(),
-        hint:
-            "j/k navigate · b bookmark · Ctrl+K pin · Tab focus · i insert · ? help"
-                .into(),
+        hint: "j/k navigate · b bookmark · Ctrl+K pin · Tab focus · i insert · ? help".into(),
     };
 
     let composer = ComposerPaneModel {
@@ -272,8 +273,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         cursor: state.draft.cursor,
         dirty: state.draft.dirty,
         hint: composer_hint(state.input_mode).into(),
-        show_cursor: state.focus == FocusTarget::Draft
-            && !state.command_palette.open,
+        show_cursor: state.focus == FocusTarget::Draft && !state.command_palette.open,
         slash_suggestions: build_slash_suggestions(&state.draft.text),
     };
 
@@ -396,13 +396,15 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
                 selected: i == state.character_list.selected,
             })
             .collect();
-        let selected_detail = state.character_list.selected_entry().map(|e| {
-            CharacterDetailRenderModel {
-                name: e.name.clone(),
-                description: e.description.clone(),
-                session_count: e.session_count,
-            }
-        });
+        let selected_detail =
+            state
+                .character_list
+                .selected_entry()
+                .map(|e| CharacterDetailRenderModel {
+                    name: e.name.clone(),
+                    description: e.description.clone(),
+                    session_count: e.session_count,
+                });
         Some(CharacterListRenderModel {
             total_count: state.character_list.entries.len(),
             entries,
@@ -414,13 +416,16 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
 
     let settings = if state.screen == ScreenState::Settings {
         Some(SettingsRenderModel {
-            entries: state.settings.entries.iter().map(|e| {
-                SettingsRenderEntry {
+            entries: state
+                .settings
+                .entries
+                .iter()
+                .map(|e| SettingsRenderEntry {
                     category: e.category.clone(),
                     key: e.key.clone(),
                     value: e.value.clone(),
-                }
-            }).collect(),
+                })
+                .collect(),
         })
     } else {
         None
@@ -470,11 +475,15 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
             let filtered = state.command_palette.filtered_commands();
             Some(CommandPaletteRenderModel {
                 input: state.command_palette.input.clone(),
-                entries: filtered.iter().enumerate().map(|(i, cmd)| CommandPaletteEntry {
-                    name: format!("/{}", cmd.name),
-                    description: cmd.description.clone(),
-                    selected: i == state.command_palette.selected,
-                }).collect(),
+                entries: filtered
+                    .iter()
+                    .enumerate()
+                    .map(|(i, cmd)| CommandPaletteEntry {
+                        name: format!("/{}", cmd.name),
+                        description: cmd.description.clone(),
+                        selected: i == state.command_palette.selected,
+                    })
+                    .collect(),
                 selected: state.command_palette.selected,
             })
         } else {
@@ -486,55 +495,149 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
 fn build_hints(state: &ShellState) -> Vec<HintItem> {
     match state.screen {
         ScreenState::MainMenu => vec![
-            HintItem { key: "↑↓".into(), action: "Navigate".into() },
-            HintItem { key: "Enter".into(), action: "Select".into() },
-            HintItem { key: "1-4".into(), action: "Quick select".into() },
-            HintItem { key: "q".into(), action: "Quit".into() },
-            HintItem { key: "/".into(), action: "Commands".into() },
+            HintItem {
+                key: "↑↓".into(),
+                action: "Navigate".into(),
+            },
+            HintItem {
+                key: "Enter".into(),
+                action: "Select".into(),
+            },
+            HintItem {
+                key: "1-4".into(),
+                action: "Quick select".into(),
+            },
+            HintItem {
+                key: "q".into(),
+                action: "Quit".into(),
+            },
+            HintItem {
+                key: "/".into(),
+                action: "Commands".into(),
+            },
         ],
         ScreenState::SessionList => vec![
-            HintItem { key: "↑↓".into(), action: "Navigate".into() },
-            HintItem { key: "Enter".into(), action: "Open".into() },
-            HintItem { key: "/".into(), action: "Commands".into() },
-            HintItem { key: "q".into(), action: "Back".into() },
-            HintItem { key: "Esc".into(), action: "Back".into() },
+            HintItem {
+                key: "↑↓".into(),
+                action: "Navigate".into(),
+            },
+            HintItem {
+                key: "Enter".into(),
+                action: "Open".into(),
+            },
+            HintItem {
+                key: "/".into(),
+                action: "Commands".into(),
+            },
+            HintItem {
+                key: "q".into(),
+                action: "Back".into(),
+            },
+            HintItem {
+                key: "Esc".into(),
+                action: "Back".into(),
+            },
         ],
         ScreenState::CharacterManager => vec![
-            HintItem { key: "↑↓".into(), action: "Navigate".into() },
-            HintItem { key: "n".into(), action: "New character".into() },
-            HintItem { key: "i".into(), action: "Import JSON".into() },
-            HintItem { key: "/".into(), action: "Commands".into() },
-            HintItem { key: "q".into(), action: "Back".into() },
+            HintItem {
+                key: "↑↓".into(),
+                action: "Navigate".into(),
+            },
+            HintItem {
+                key: "n".into(),
+                action: "New character".into(),
+            },
+            HintItem {
+                key: "i".into(),
+                action: "Import JSON".into(),
+            },
+            HintItem {
+                key: "/".into(),
+                action: "Commands".into(),
+            },
+            HintItem {
+                key: "q".into(),
+                action: "Back".into(),
+            },
         ],
         ScreenState::CharacterCreate => vec![
-            HintItem { key: "Tab".into(), action: "Switch field".into() },
-            HintItem { key: "Enter".into(), action: "Save".into() },
-            HintItem { key: "Esc".into(), action: "Cancel".into() },
+            HintItem {
+                key: "Tab".into(),
+                action: "Switch field".into(),
+            },
+            HintItem {
+                key: "Enter".into(),
+                action: "Save".into(),
+            },
+            HintItem {
+                key: "Esc".into(),
+                action: "Cancel".into(),
+            },
         ],
         ScreenState::CharacterImport => vec![
-            HintItem { key: "Enter".into(), action: "Import".into() },
-            HintItem { key: "Esc".into(), action: "Cancel".into() },
+            HintItem {
+                key: "Enter".into(),
+                action: "Import".into(),
+            },
+            HintItem {
+                key: "Esc".into(),
+                action: "Cancel".into(),
+            },
         ],
         ScreenState::Settings => vec![
-            HintItem { key: "↑↓".into(), action: "Navigate".into() },
-            HintItem { key: "/".into(), action: "Commands".into() },
-            HintItem { key: "q".into(), action: "Back".into() },
-            HintItem { key: "Esc".into(), action: "Back".into() },
+            HintItem {
+                key: "↑↓".into(),
+                action: "Navigate".into(),
+            },
+            HintItem {
+                key: "/".into(),
+                action: "Commands".into(),
+            },
+            HintItem {
+                key: "q".into(),
+                action: "Back".into(),
+            },
+            HintItem {
+                key: "Esc".into(),
+                action: "Back".into(),
+            },
         ],
         ScreenState::Conversation => vec![
-            HintItem { key: "i".into(), action: "Insert mode".into() },
-            HintItem { key: "Enter".into(), action: "Send".into() },
-            HintItem { key: "?".into(), action: "Help".into() },
-            HintItem { key: "Esc".into(), action: "Menu".into() },
-            HintItem { key: "/".into(), action: "Commands".into() },
+            HintItem {
+                key: "i".into(),
+                action: "Insert mode".into(),
+            },
+            HintItem {
+                key: "Enter".into(),
+                action: "Send".into(),
+            },
+            HintItem {
+                key: "?".into(),
+                action: "Help".into(),
+            },
+            HintItem {
+                key: "Esc".into(),
+                action: "Menu".into(),
+            },
+            HintItem {
+                key: "/".into(),
+                action: "Commands".into(),
+            },
         ],
         ScreenState::Help => vec![
-            HintItem { key: "Esc".into(), action: "Back".into() },
-            HintItem { key: "q".into(), action: "Quit".into() },
+            HintItem {
+                key: "Esc".into(),
+                action: "Back".into(),
+            },
+            HintItem {
+                key: "q".into(),
+                action: "Quit".into(),
+            },
         ],
-        _ => vec![
-            HintItem { key: "Esc".into(), action: "Back".into() },
-        ],
+        _ => vec![HintItem {
+            key: "Esc".into(),
+            action: "Back".into(),
+        }],
     }
 }
 
@@ -557,14 +660,24 @@ pub fn render_shell(frame: &mut Frame, layout: &LayoutModel, model: &RenderModel
 
     // Reserve bottom row for hints
     let hint_area = if full_area.height > 3 && !model.hints.is_empty() {
-        Rect::new(full_area.x, full_area.y + full_area.height - 1, full_area.width, 1)
+        Rect::new(
+            full_area.x,
+            full_area.y + full_area.height - 1,
+            full_area.width,
+            1,
+        )
     } else {
         Rect::default()
     };
 
     // Reserve top row for breadcrumb
     let breadcrumb_area = if full_area.height > 5 {
-        Rect::new(full_area.x + 1, full_area.y, full_area.width.saturating_sub(2), 1)
+        Rect::new(
+            full_area.x + 1,
+            full_area.y,
+            full_area.width.saturating_sub(2),
+            1,
+        )
     } else {
         Rect::default()
     };
@@ -714,10 +827,7 @@ fn render_command_palette(frame: &mut Frame, model: &CommandPaletteRenderModel) 
         .border_style(theme::focus_border_style())
         .title(Span::styled(" Command Palette ", theme::accent_style()));
 
-    frame.render_widget(
-        Paragraph::new(lines).block(block),
-        palette_area,
-    );
+    frame.render_widget(Paragraph::new(lines).block(block), palette_area);
 }
 
 /// Floating autocomplete popup rendered ABOVE the composer pane.
@@ -754,19 +864,14 @@ fn render_slash_popup(frame: &mut Frame, composer_pane: &PaneLayout, model: &Com
         .title(Span::styled(" / Commands ", theme::accent_style()));
 
     frame.render_widget(Clear, popup_area);
-    frame.render_widget(
-        Paragraph::new(lines).block(block),
-        popup_area,
-    );
+    frame.render_widget(Paragraph::new(lines).block(block), popup_area);
 }
 
 fn render_breadcrumb(frame: &mut Frame, area: Rect, breadcrumb: &str) {
     if area.height == 0 {
         return;
     }
-    let line = Line::from(vec![
-        Span::styled(breadcrumb, theme::accent_style()),
-    ]);
+    let line = Line::from(vec![Span::styled(breadcrumb, theme::accent_style())]);
     frame.render_widget(Paragraph::new(line), area);
 }
 
@@ -855,11 +960,7 @@ fn render_composer(frame: &mut Frame, pane: &PaneLayout, model: &ComposerPaneMod
             .collect()
     };
 
-    let draft_state = if model.dirty {
-        "dirty"
-    } else {
-        "clean"
-    };
+    let draft_state = if model.dirty { "dirty" } else { "clean" };
     lines.push(Line::default());
     lines.push(Line::from(vec![
         Span::styled("mode ", theme::dim_style()),
@@ -869,7 +970,10 @@ fn render_composer(frame: &mut Frame, pane: &PaneLayout, model: &ComposerPaneMod
             theme::dim_style(),
         ),
     ]));
-    lines.push(Line::from(Span::styled(model.hint.clone(), theme::dim_style())));
+    lines.push(Line::from(Span::styled(
+        model.hint.clone(),
+        theme::dim_style(),
+    )));
 
     frame.render_widget(
         Paragraph::new(lines)
@@ -911,8 +1015,7 @@ fn render_composer(frame: &mut Frame, pane: &PaneLayout, model: &ComposerPaneMod
             let cursor_y = inner_y + row;
 
             // Only set cursor if it fits within the pane.
-            if cursor_x < pane.area.x + pane.area.width
-                && cursor_y < pane.area.y + pane.area.height
+            if cursor_x < pane.area.x + pane.area.width && cursor_y < pane.area.y + pane.area.height
             {
                 frame.set_cursor_position(Position::new(cursor_x, cursor_y));
             }
@@ -932,7 +1035,10 @@ fn render_status(frame: &mut Frame, pane: &PaneLayout, model: &StatusPaneModel, 
         };
         lines.push(Line::from(vec![
             Span::styled(format!("[{badge}] "), badge_style),
-            Span::styled(model.summary.clone(), theme::text_style().add_modifier(Modifier::BOLD)),
+            Span::styled(
+                model.summary.clone(),
+                theme::text_style().add_modifier(Modifier::BOLD),
+            ),
         ]));
     } else {
         lines.push(Line::from(Span::styled(
@@ -948,7 +1054,10 @@ fn render_status(frame: &mut Frame, pane: &PaneLayout, model: &StatusPaneModel, 
             .cloned()
             .map(|line| Line::from(Span::styled(line, theme::dim_style()))),
     );
-    lines.push(Line::from(Span::styled(model.hint.clone(), theme::dim_style())));
+    lines.push(Line::from(Span::styled(
+        model.hint.clone(),
+        theme::dim_style(),
+    )));
 
     frame.render_widget(
         Paragraph::new(lines)
@@ -1156,7 +1265,9 @@ fn render_menu_placeholder(frame: &mut Frame, pane: &PaneLayout, title: &str) {
         ));
 
     frame.render_widget(
-        Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
         pane.area,
     );
 }
@@ -1254,10 +1365,7 @@ fn render_session_list(frame: &mut Frame, pane: &PaneLayout, model: &SessionList
                         theme::muted_style()
                     },
                 ),
-                Span::styled(
-                    format!("{:<30}", truncate_str(&entry.name, 28)),
-                    name_style,
-                ),
+                Span::styled(format!("{:<30}", truncate_str(&entry.name, 28)), name_style),
                 Span::styled(
                     format!("{:<16}", truncate_str(&entry.character, 14)),
                     detail_style,
@@ -1414,12 +1522,10 @@ fn render_character_form(frame: &mut Frame, pane: &PaneLayout, model: &Character
     };
 
     lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled(
-            format!("  {} {title}", theme::HEX),
-            theme::title_focused_style().add_modifier(Modifier::BOLD),
-        ),
-    ]));
+    lines.push(Line::from(vec![Span::styled(
+        format!("  {} {title}", theme::HEX),
+        theme::title_focused_style().add_modifier(Modifier::BOLD),
+    )]));
     lines.push(Line::from(Span::styled(
         "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
         theme::muted_style(),
@@ -1462,7 +1568,10 @@ fn render_character_form(frame: &mut Frame, pane: &PaneLayout, model: &Character
             } else {
                 theme::dim_style()
             };
-            lines.push(Line::from(Span::styled("  System Prompt", prompt_label_style)));
+            lines.push(Line::from(Span::styled(
+                "  System Prompt",
+                prompt_label_style,
+            )));
             let prompt_indicator = if prompt_active { "\u{25b6} " } else { "  " };
             let prompt_display = if model.system_prompt_text.is_empty() {
                 "(optional: describe this character's personality)".to_string()
@@ -1482,7 +1591,10 @@ fn render_character_form(frame: &mut Frame, pane: &PaneLayout, model: &Character
             ]));
         }
         CharacterFormType::Import => {
-            lines.push(Line::from(Span::styled("  File Path", theme::accent_style().add_modifier(Modifier::BOLD))));
+            lines.push(Line::from(Span::styled(
+                "  File Path",
+                theme::accent_style().add_modifier(Modifier::BOLD),
+            )));
             let path_display = if model.path_text.is_empty() {
                 "(type or paste path to .json character card)".to_string()
             } else {
@@ -1528,12 +1640,10 @@ fn render_settings(frame: &mut Frame, pane: &PaneLayout, model: &SettingsRenderM
     let mut lines = vec![];
 
     lines.push(Line::from(""));
-    lines.push(Line::from(vec![
-        Span::styled(
-            format!("  {} Settings", theme::HEX),
-            theme::title_focused_style().add_modifier(Modifier::BOLD),
-        ),
-    ]));
+    lines.push(Line::from(vec![Span::styled(
+        format!("  {} Settings", theme::HEX),
+        theme::title_focused_style().add_modifier(Modifier::BOLD),
+    )]));
     lines.push(Line::from(Span::styled(
         "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
         theme::muted_style(),
@@ -1554,12 +1664,10 @@ fn render_settings(frame: &mut Frame, pane: &PaneLayout, model: &SettingsRenderM
         for entry in &model.entries {
             if entry.category != current_category {
                 lines.push(Line::from(""));
-                lines.push(Line::from(vec![
-                    Span::styled(
-                        format!("  {} {}", theme::HEX_FILLED, entry.category),
-                        theme::title_focused_style(),
-                    ),
-                ]));
+                lines.push(Line::from(vec![Span::styled(
+                    format!("  {} {}", theme::HEX_FILLED, entry.category),
+                    theme::title_focused_style(),
+                )]));
                 lines.push(Line::from(Span::styled(
                     "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
                     theme::muted_style(),
@@ -1595,10 +1703,7 @@ fn render_settings(frame: &mut Frame, pane: &PaneLayout, model: &SettingsRenderM
             theme::accent_style(),
         ));
 
-    frame.render_widget(
-        Paragraph::new(lines).block(block),
-        area,
-    );
+    frame.render_widget(Paragraph::new(lines).block(block), area);
 }
 
 fn truncate_str(s: &str, max_len: usize) -> String {
@@ -1892,7 +1997,10 @@ fn overlay_model(screen: ScreenState, input_mode: InputMode) -> Option<OverlayRe
         ScreenState::Help => Some(OverlayRenderModel {
             title: "Help".into(),
             lines: vec![
-                format!("⬡ ozone+ TUI — current mode: {}", input_mode_label(input_mode)),
+                format!(
+                    "⬡ ozone+ TUI — current mode: {}",
+                    input_mode_label(input_mode)
+                ),
                 String::new(),
                 "Navigation".into(),
                 "  j / k          move selection up/down".into(),
@@ -2048,7 +2156,10 @@ mod tests {
 
         let rendered = render_to_string(80, 24, &layout, &model);
 
-        assert!(rendered.contains("Ozone+"), "breadcrumb should be visible on top row");
+        assert!(
+            rendered.contains("Ozone+"),
+            "breadcrumb should be visible on top row"
+        );
         assert!(rendered.contains("Composer"));
         assert!(rendered.contains("Status"));
         assert!(rendered.contains("mock runtime ready"));

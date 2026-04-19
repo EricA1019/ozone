@@ -13,15 +13,17 @@ use std::time::Duration;
 use anyhow::Context as _;
 use bytes::BytesMut;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use tokio::sync::{mpsc, oneshot, Semaphore};
 use tokio_util::codec::Decoder as _;
 use tracing::{debug, warn};
 
 use crate::backend::koboldcpp::{KoboldCppClient, KoboldGenerateRequest};
-use crate::backend::BackendDescriptor;
+use crate::backend::llamacpp::{LlamaCppClient, LlamaCppCompletionRequest};
+use crate::backend::{BackendDescriptor, BackendModelInfo};
 use crate::config::{BackendConfig, RateLimitConfig};
 use crate::error::InferenceError;
-use crate::stream::{StreamChunk, StreamDecoder, StreamingFormat};
+use crate::stream::{StreamChunk, StreamDecoder};
 
 // ---------------------------------------------------------------------------
 // Request / response types
@@ -105,7 +107,6 @@ pub enum BackendHealth {
 #[derive(Debug, Clone)]
 pub struct GatewayConfig {
     pub base_url: String,
-    pub streaming_format: StreamingFormat,
     pub rate_limit: RateLimitConfig,
     /// Maximum concurrent in-flight inference requests.
     pub max_concurrent: usize,
@@ -115,9 +116,79 @@ impl From<&BackendConfig> for GatewayConfig {
     fn from(cfg: &BackendConfig) -> Self {
         Self {
             base_url: cfg.url.clone(),
-            streaming_format: StreamingFormat::ServerSentEvents,
             rate_limit: cfg.rate_limit.clone(),
             max_concurrent: 4,
+        }
+    }
+}
+
+#[derive(Clone)]
+enum GatewayBackend {
+    KoboldCpp(KoboldCppClient),
+    LlamaCpp(LlamaCppClient),
+}
+
+impl GatewayBackend {
+    fn from_config(cfg: &BackendConfig) -> anyhow::Result<Self> {
+        match cfg.r#type.as_str() {
+            "koboldcpp" => KoboldCppClient::new(&cfg.url)
+                .context("failed to create KoboldCpp client")
+                .map(Self::KoboldCpp),
+            "llamacpp" => LlamaCppClient::new(&cfg.url)
+                .context("failed to create llama.cpp client")
+                .map(Self::LlamaCpp),
+            other => anyhow::bail!("unsupported backend type '{other}'"),
+        }
+    }
+
+    fn descriptor(&self) -> &BackendDescriptor {
+        match self {
+            Self::KoboldCpp(client) => client.descriptor(),
+            Self::LlamaCpp(client) => client.descriptor(),
+        }
+    }
+
+    fn http(&self) -> &reqwest::Client {
+        match self {
+            Self::KoboldCpp(client) => client.http(),
+            Self::LlamaCpp(client) => client.http(),
+        }
+    }
+
+    fn streaming_url(&self) -> String {
+        match self {
+            Self::KoboldCpp(client) => client.streaming_url(),
+            Self::LlamaCpp(client) => client.streaming_url(),
+        }
+    }
+
+    fn request_body(&self, req: &InferenceRequest) -> Value {
+        match self {
+            Self::KoboldCpp(_) => serde_json::to_value(build_kobold_request(req))
+                .expect("kobold request should serialize"),
+            Self::LlamaCpp(_) => serde_json::to_value(build_llama_request(req))
+                .expect("llama request should serialize"),
+        }
+    }
+
+    async fn is_healthy(&self) -> bool {
+        match self {
+            Self::KoboldCpp(client) => client.is_healthy().await,
+            Self::LlamaCpp(client) => client.is_healthy().await,
+        }
+    }
+
+    async fn probe_model_info(&self) -> anyhow::Result<BackendModelInfo> {
+        match self {
+            Self::KoboldCpp(client) => client.probe_model_info().await,
+            Self::LlamaCpp(client) => client.probe_model_info().await,
+        }
+    }
+
+    async fn probe_max_context_length(&self) -> Option<usize> {
+        match self {
+            Self::KoboldCpp(client) => client.probe_max_context_length().await,
+            Self::LlamaCpp(client) => client.probe_max_context_length().await,
         }
     }
 }
@@ -128,7 +199,7 @@ impl From<&BackendConfig> for GatewayConfig {
 /// Cloning is cheap — all state is behind `Arc`.
 #[derive(Clone)]
 pub struct InferenceGateway {
-    client: KoboldCppClient,
+    backend: GatewayBackend,
     config: GatewayConfig,
     /// Limits concurrent in-flight requests.
     semaphore: Arc<Semaphore>,
@@ -138,11 +209,10 @@ impl InferenceGateway {
     /// Build a gateway from a backend config section.
     pub fn new(cfg: &BackendConfig) -> anyhow::Result<Self> {
         let gateway_cfg = GatewayConfig::from(cfg);
-        let client = KoboldCppClient::new(&gateway_cfg.base_url)
-            .context("failed to create KoboldCpp client")?;
+        let backend = GatewayBackend::from_config(cfg)?;
         let semaphore = Arc::new(Semaphore::new(gateway_cfg.max_concurrent));
         Ok(Self {
-            client,
+            backend,
             config: gateway_cfg,
             semaphore,
         })
@@ -150,12 +220,15 @@ impl InferenceGateway {
 
     /// Return the backend capability descriptor (no network required).
     pub fn descriptor(&self) -> &BackendDescriptor {
-        self.client.descriptor()
+        self.backend.descriptor()
     }
 
-    /// Return a reference to the underlying KoboldCpp client for direct probing.
-    pub fn client(&self) -> &KoboldCppClient {
-        &self.client
+    pub async fn probe_model_info(&self) -> anyhow::Result<BackendModelInfo> {
+        self.backend.probe_model_info().await
+    }
+
+    pub async fn probe_max_context_length(&self) -> Option<usize> {
+        self.backend.probe_max_context_length().await
     }
 
     // -----------------------------------------------------------------------
@@ -165,7 +238,7 @@ impl InferenceGateway {
     /// Perform a single health probe.
     pub async fn check_health(&self) -> BackendHealth {
         let start = std::time::Instant::now();
-        if self.client.is_healthy().await {
+        if self.backend.is_healthy().await {
             let latency = start.elapsed().as_millis() as u64;
             if latency > 5_000 {
                 BackendHealth::Slow {
@@ -206,20 +279,20 @@ impl InferenceGateway {
             .await
             .context("semaphore closed")?;
 
-        let kobold_req = build_kobold_request(&req);
-        let url = self.client.streaming_url();
+        let request_body = self.backend.request_body(&req);
+        let url = self.backend.streaming_url();
 
         // Reuse the pooled HTTP client from the backend for connection reuse.
-        let http = self.client.http();
+        let http = self.backend.http();
 
         let response = http
             .post(&url)
             .timeout(Duration::from_secs(300))
-            .json(&kobold_req)
+            .json(&request_body)
             .send()
             .await
             .map_err(|e| InferenceError::BackendUnreachable {
-                backend_id: self.client.descriptor().id.to_string(),
+                backend_id: self.backend.descriptor().id.to_string(),
                 reason: e.to_string(),
             })?;
 
@@ -243,7 +316,7 @@ impl InferenceGateway {
             );
         }
 
-        let mut decoder = StreamDecoder::new(self.config.streaming_format);
+        let mut decoder = StreamDecoder::new(self.backend.descriptor().streaming_format);
         let mut buf = BytesMut::new();
         let mut tokens_generated: usize = 0;
 
@@ -340,6 +413,19 @@ fn build_kobold_request(req: &InferenceRequest) -> KoboldGenerateRequest {
     }
 }
 
+fn build_llama_request(req: &InferenceRequest) -> LlamaCppCompletionRequest {
+    LlamaCppCompletionRequest {
+        prompt: req.prompt.clone(),
+        n_predict: req.max_tokens,
+        temperature: req.temperature,
+        top_p: req.top_p,
+        top_k: req.top_k,
+        repeat_penalty: req.rep_pen,
+        stop: req.stop_sequences.clone(),
+        stream: true,
+    }
+}
+
 // ---------------------------------------------------------------------------
 // Tests
 // ---------------------------------------------------------------------------
@@ -348,6 +434,7 @@ fn build_kobold_request(req: &InferenceRequest) -> KoboldGenerateRequest {
 mod tests {
     use super::*;
     use crate::config::BackendConfig;
+    use crate::stream::StreamingFormat;
     use tokio::sync::mpsc;
 
     fn default_cfg() -> BackendConfig {
@@ -373,6 +460,17 @@ mod tests {
             gw.descriptor().streaming_format,
             StreamingFormat::ServerSentEvents
         );
+    }
+
+    #[test]
+    fn gateway_builds_llamacpp_from_config() {
+        let cfg = BackendConfig {
+            url: "http://127.0.0.1:8080".into(),
+            r#type: "llamacpp".into(),
+            ..Default::default()
+        };
+        let gw = InferenceGateway::new(&cfg).unwrap();
+        assert_eq!(gw.descriptor().id.as_str(), "llamacpp");
     }
 
     #[test]
@@ -428,5 +526,25 @@ mod tests {
         assert_eq!(kobold.max_length, 100);
         assert_eq!(kobold.temperature, Some(0.8));
         assert_eq!(kobold.stop_sequence, vec!["<|im_end|>"]);
+    }
+
+    #[test]
+    fn llama_request_built_correctly() {
+        let req = InferenceRequest {
+            id: RequestId::new(),
+            prompt: "Hello".into(),
+            max_tokens: 64,
+            temperature: Some(0.7),
+            top_p: Some(0.95),
+            top_k: Some(40),
+            rep_pen: Some(1.1),
+            stop_sequences: vec!["</s>".into()],
+        };
+        let llama = build_llama_request(&req);
+        assert_eq!(llama.prompt, "Hello");
+        assert_eq!(llama.n_predict, 64);
+        assert_eq!(llama.top_k, Some(40));
+        assert_eq!(llama.stop, vec!["</s>"]);
+        assert!(llama.stream);
     }
 }

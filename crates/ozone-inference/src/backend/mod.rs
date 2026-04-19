@@ -4,6 +4,7 @@
 //! optionally probe live capabilities at startup.
 
 pub mod koboldcpp;
+pub mod llamacpp;
 
 use serde::{Deserialize, Serialize};
 
@@ -20,6 +21,10 @@ pub struct BackendId(pub String);
 impl BackendId {
     pub fn koboldcpp() -> Self {
         Self("koboldcpp".into())
+    }
+
+    pub fn llamacpp() -> Self {
+        Self("llamacpp".into())
     }
 
     pub fn as_str(&self) -> &str {
@@ -103,17 +108,35 @@ impl BackendDescriptor {
         }
     }
 
+    /// Return the descriptor for the built-in llama.cpp backend.
+    pub fn llamacpp() -> Self {
+        Self {
+            id: BackendId::llamacpp(),
+            display_name: "llama.cpp".into(),
+            default_url: ozone_core::paths::llamacpp_base_url(),
+            streaming_format: StreamingFormat::ServerSentEvents,
+            supports_streaming: true,
+            health_endpoint: "/health".into(),
+            sampling: SamplingCapabilities {
+                grammar: true,
+                min_p: true,
+                ..Default::default()
+            },
+        }
+    }
+
     /// Look up a descriptor by backend type name (e.g. `"koboldcpp"`).
     pub fn for_type(backend_type: &str) -> Option<Self> {
         match backend_type {
             "koboldcpp" => Some(Self::koboldcpp()),
+            "llamacpp" => Some(Self::llamacpp()),
             _ => None,
         }
     }
 
     /// All built-in backend descriptors.
     pub fn all() -> Vec<Self> {
-        vec![Self::koboldcpp()]
+        vec![Self::koboldcpp(), Self::llamacpp()]
     }
 }
 
@@ -163,6 +186,7 @@ mod tests {
     #[test]
     fn for_type_lookup() {
         assert!(BackendDescriptor::for_type("koboldcpp").is_some());
+        assert!(BackendDescriptor::for_type("llamacpp").is_some());
         assert!(BackendDescriptor::for_type("unknown").is_none());
     }
 
@@ -174,6 +198,7 @@ mod tests {
     #[test]
     fn backend_id_display() {
         assert_eq!(BackendId::koboldcpp().to_string(), "koboldcpp");
+        assert_eq!(BackendId::llamacpp().to_string(), "llamacpp");
     }
 
     #[test]
@@ -187,5 +212,15 @@ mod tests {
         let (desc, url) = assert_backend(&client);
         assert_eq!(desc.id.as_str(), "koboldcpp");
         assert_eq!(url, "http://localhost:5001/api/extra/generate/stream");
+    }
+
+    #[test]
+    fn llamacpp_descriptor_is_consistent() {
+        let desc = BackendDescriptor::llamacpp();
+        assert_eq!(desc.id, BackendId::llamacpp());
+        assert_eq!(desc.id.as_str(), "llamacpp");
+        assert!(desc.supports_streaming);
+        assert_eq!(desc.streaming_format, StreamingFormat::ServerSentEvents);
+        assert_eq!(desc.health_endpoint, "/health");
     }
 }
