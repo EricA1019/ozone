@@ -391,7 +391,11 @@ impl OzoneMcpServer {
 
         if let Some(preferences) = args.get("preferences") {
             let preferences_path = root.join("data/ozone/preferences.json");
-            let text = serde_json::to_string_pretty(preferences)?;
+            let normalized_preferences = merge_json_objects(
+                default_preferences_json(),
+                normalize_preferences_json(preferences),
+            );
+            let text = serde_json::to_string_pretty(&normalized_preferences)?;
             fs::write(preferences_path, format!("{text}\n"))?;
         }
 
@@ -1290,18 +1294,23 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
     }
 
     fn mock_user_tool(&mut self, args: &Value) -> Result<ToolReply> {
-        let sandbox_id = required_string(args, "sandboxId")?;
-        let journey = match (
-            optional_string(args, "journey"),
-            optional_string(args, "target"),
-        ) {
+        let requested_journey = optional_string(args, "journey");
+        let requested_target = optional_string(args, "target");
+        let prepared_sandbox = self.prepare_mock_user_sandbox(
+            optional_string(args, "sandboxId"),
+            requested_journey.as_deref(),
+            requested_target.as_deref(),
+        )?;
+        let journey = match (requested_journey.as_deref(), requested_target.as_deref()) {
             (Some(_), Some(_)) => bail!("provide either `journey` or `target`, not both"),
-            (Some(journey_name), None) => self.build_mock_user_journey(&journey_name, args)?,
-            (None, Some(target_name)) => self.build_mock_user_target_journey(&target_name)?,
+            (Some(journey_name), None) => self.build_mock_user_journey(journey_name, args)?,
+            (None, Some(target_name)) => self.build_mock_user_target_journey(target_name)?,
             (None, None) => bail!("mock_user_tool requires either `journey` or `target`"),
         };
         let run_name = journey.name.clone();
-        let data = self.run_mock_user_journey(&sandbox_id, &journey, None, args, None)?;
+        let mut data =
+            self.run_mock_user_journey(&prepared_sandbox.sandbox_id, &journey, None, args, None)?;
+        self.annotate_prepared_sandbox(&mut data, &prepared_sandbox);
         let success = data
             .get("success")
             .and_then(Value::as_bool)
@@ -1334,21 +1343,23 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
     }
 
     fn screenshot_tool(&mut self, args: &Value) -> Result<ToolReply> {
-        let sandbox_id = required_string(args, "sandboxId")?;
         let target = required_string(args, "target")?;
         let output_dir = PathBuf::from(required_string(args, "outputDir")?);
+        let prepared_sandbox =
+            self.prepare_target_sandbox(optional_string(args, "sandboxId"), &target)?;
         let journey = self.build_mock_user_target_journey(&target)?;
         fs::create_dir_all(&output_dir)
             .with_context(|| format!("failed to create output dir {}", output_dir.display()))?;
 
         let capture = screenshot_capture_config(args, &output_dir, &target)?;
         let mut data = self.run_mock_user_journey(
-            &sandbox_id,
+            &prepared_sandbox.sandbox_id,
             &journey,
             Some(target.clone()),
             args,
             Some(capture),
         )?;
+        self.annotate_prepared_sandbox(&mut data, &prepared_sandbox);
         if let Value::Object(map) = &mut data {
             map.insert(
                 "outputDir".to_owned(),
@@ -1468,13 +1479,18 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
                     step.settle_ms = 2500;
                 }
                 journey.steps.extend([
-                    MockUserJourneyStep::text("enter insert mode", "i", 400, ["INSERT"]),
+                    MockUserJourneyStep::key(
+                        "open new chat",
+                        "enter",
+                        800,
+                        ["Composer", "insert mode", "NOR"],
+                    ),
                     MockUserJourneyStep::text("type prompt", &prompt, 400, []),
                     MockUserJourneyStep::key(
                         "send prompt",
                         "enter",
-                        3500,
-                        ["koboldcpp backend", "observatory", "logged", "mock backend"],
+                        8000,
+                        ["You", "User", "assistant", "AI", "ozone+"],
                     ),
                 ]);
                 Ok(journey)
@@ -1485,6 +1501,126 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
 
     fn build_mock_user_target_journey(&self, target_name: &str) -> Result<MockUserJourneySpec> {
         self.build_capturable_screen_journey(target_name, &json!({}), target_name)
+    }
+
+    fn prepare_mock_user_sandbox(
+        &mut self,
+        sandbox_id: Option<String>,
+        journey_name: Option<&str>,
+        target_name: Option<&str>,
+    ) -> Result<PreparedSandbox> {
+        let setup = match (journey_name, target_name) {
+            (Some(_), Some(_)) => bail!("provide either `journey` or `target`, not both"),
+            (Some(journey_name), None) => {
+                self.recommended_mock_user_journey_sandbox_setup(journey_name)?
+            }
+            (None, Some(target_name)) => self.capturable_target_sandbox_setup(target_name)?,
+            (None, None) => bail!("mock_user_tool requires either `journey` or `target`"),
+        };
+        self.prepare_sandbox_from_setup(sandbox_id, setup)
+    }
+
+    fn prepare_target_sandbox(
+        &mut self,
+        sandbox_id: Option<String>,
+        target_name: &str,
+    ) -> Result<PreparedSandbox> {
+        let setup = self.capturable_target_sandbox_setup(target_name)?;
+        self.prepare_sandbox_from_setup(sandbox_id, setup)
+    }
+
+    fn capturable_target_sandbox_setup(&self, target_name: &str) -> Result<Value> {
+        Ok((self
+            .capturable_screen_definition(target_name)?
+            .sandbox_setup)())
+    }
+
+    fn recommended_mock_user_journey_sandbox_setup(&self, journey_name: &str) -> Result<Value> {
+        match journey_name {
+            "launcher_monitor_roundtrip" => self.capturable_target_sandbox_setup("base_monitor"),
+            "launcher_to_ozone_plus" => {
+                self.capturable_target_sandbox_setup("base_ozone_plus_shell")
+            }
+            "ozone_plus_chat_journey" => {
+                let mut setup = self.capturable_target_sandbox_setup("base_ozone_plus_shell")?;
+                let setup_map = setup.as_object_mut().ok_or_else(|| {
+                    anyhow!("sandbox setup for `{journey_name}` must be an object")
+                })?;
+                setup_map.insert("requiresMockBackend".to_owned(), Value::Bool(true));
+                Ok(setup)
+            }
+            other => bail!("unsupported mock-user journey `{other}`"),
+        }
+    }
+
+    fn prepare_sandbox_from_setup(
+        &mut self,
+        sandbox_id: Option<String>,
+        setup: Value,
+    ) -> Result<PreparedSandbox> {
+        if let Some(sandbox_id) = sandbox_id {
+            return Ok(PreparedSandbox {
+                sandbox_id,
+                auto_created: false,
+                auto_started_mock_backend: false,
+                setup_applied: None,
+            });
+        }
+
+        let setup_map = setup
+            .as_object()
+            .cloned()
+            .ok_or_else(|| anyhow!("sandbox setup must be a JSON object"))?;
+        let mut create_args = Map::new();
+        create_args.insert("action".to_owned(), Value::String("create".to_owned()));
+        create_args.extend(setup_map);
+        let reply = self.create_sandbox(&Value::Object(create_args))?;
+        let sandbox_id = reply
+            .data
+            .get("sandboxId")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow!("sandbox creation reply did not include sandboxId"))?
+            .to_owned();
+        let auto_started_mock_backend = setup
+            .get("requiresMockBackend")
+            .and_then(Value::as_bool)
+            .unwrap_or(false);
+        if auto_started_mock_backend {
+            let model_name = setup
+                .get("models")
+                .and_then(Value::as_array)
+                .and_then(|models| models.first())
+                .and_then(Value::as_str)
+                .unwrap_or("mock-model.gguf");
+            self.start_mock_backend(&json!({
+                "action": "start",
+                "sandboxId": sandbox_id,
+                "modelName": model_name,
+            }))?;
+        }
+        Ok(PreparedSandbox {
+            sandbox_id,
+            auto_created: true,
+            auto_started_mock_backend,
+            setup_applied: Some(setup),
+        })
+    }
+
+    fn annotate_prepared_sandbox(&self, data: &mut Value, prepared: &PreparedSandbox) {
+        let Value::Object(map) = data else {
+            return;
+        };
+        if !prepared.auto_created {
+            return;
+        }
+        map.insert("sandboxAutoCreated".to_owned(), Value::Bool(true));
+        map.insert(
+            "mockBackendAutoStarted".to_owned(),
+            Value::Bool(prepared.auto_started_mock_backend),
+        );
+        if let Some(setup) = prepared.setup_applied.clone() {
+            map.insert("sandboxSetupApplied".to_owned(), setup);
+        }
     }
 
     fn build_capturable_screen_journey(
@@ -1819,25 +1955,28 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
         Ok(MockUserJourneySpec {
             name: journey_name.to_owned(),
             cwd: self.repo_root.to_string_lossy().into_owned(),
-            command: append_args(
-                &self.front_door_binary_command("ozone", &["--mode", "base"]),
-                &["--frontend", "ozonePlus", "--no-browser"],
-            ),
+            // Launch the ozone launcher directly (no auto-frontend flag so the UI renders).
+            // The splash advertises Enter once model scan + hardware detection are ready.
+            // Use that explicit handoff before navigating the launcher action list.
+            command: self.front_door_binary_command("ozone", &["--no-browser"]),
             steps: vec![
-                MockUserJourneyStep::wait("splash settle", 5500),
-                MockUserJourneyStep::key("advance splash", "enter", 1000, []),
-                MockUserJourneyStep::key("confirm launch 1", "enter", 1000, []),
-                MockUserJourneyStep::key("confirm launch 2", "enter", 1000, []),
+                MockUserJourneyStep::wait_for(
+                    "reach launcher or ready splash",
+                    35000,
+                    ["Continue", "Open ozone+", "Launch ozone+"],
+                ),
                 MockUserJourneyStep::key(
-                    "reach ozone plus shell",
+                    "enter launcher",
                     "enter",
-                    3500,
-                    [
-                        ":memories",
-                        "context transcript-fallback",
-                        "0 turns via",
-                        "Ctrl+K pin",
-                    ],
+                    1000,
+                    ["Open ozone+", "Launch ozone+"],
+                ),
+                MockUserJourneyStep::key("select ozone+", "down", 1000, []),
+                MockUserJourneyStep::key(
+                    "open ozone+ shell",
+                    "enter",
+                    4500,
+                    ["New Chat", "Sessions", "Characters", "Settings"],
                 ),
             ],
         })
@@ -2044,22 +2183,39 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
             else:
                 CAPTURE["jsonPath"] = previous_json
 
+    def wait_for_markers(markers, timeout_s):
+        if not markers:
+            pump(master, proc, timeout_s)
+            return []
+        deadline = time.time() + timeout_s
+        matched = []
+        while time.time() < deadline:
+            pump(master, proc, min(0.2, max(0.0, deadline - time.time())))
+            full_screen = screen_text()
+            matched = [marker for marker in markers if marker in full_screen]
+            if matched:
+                return matched
+        return matched
+
     for index, step in enumerate(SPEC["steps"]):
         action = step["action"]
         if action["kind"] == "wait":
-            pump(master, proc, action["ms"] / 1000.0)
+            matched = wait_for_markers(step.get("expectAny", []), action["ms"] / 1000.0)
         elif action["kind"] == "key":
             send_key(master, action["key"])
             pump(master, proc, step["settleMs"] / 1000.0)
+            matched = None
         elif action["kind"] == "text":
             send_text(master, action["text"])
             pump(master, proc, step["settleMs"] / 1000.0)
+            matched = None
         else:
             fail("unsupported action kind `" + action["kind"] + "`")
 
         full_screen = screen_text()
         window_snapshot = screen_tail()
-        matched = [marker for marker in step.get("expectAny", []) if marker in full_screen]
+        if matched is None:
+            matched = [marker for marker in step.get("expectAny", []) if marker in full_screen]
         ok = True if not step.get("expectAny") else bool(matched)
         step_result = {
             "name": step["name"],
@@ -2304,11 +2460,7 @@ impl Sandbox {
                 if let Ok(entries) = std::fs::read_dir(&user_site_base) {
                     let paths: Vec<String> = entries
                         .filter_map(|e| e.ok())
-                        .filter(|e| {
-                            e.file_name()
-                                .to_string_lossy()
-                                .starts_with("python")
-                        })
+                        .filter(|e| e.file_name().to_string_lossy().starts_with("python"))
                         .map(|e| format!("{}/site-packages", e.path().display()))
                         .filter(|p| std::path::Path::new(p).exists())
                         .collect();
@@ -2350,6 +2502,14 @@ impl ManagedBackend {
             "logPath": self.log_path
         })
     }
+}
+
+#[derive(Clone, Debug)]
+struct PreparedSandbox {
+    sandbox_id: String,
+    auto_created: bool,
+    auto_started_mock_backend: bool,
+    setup_applied: Option<Value>,
 }
 
 type CapturableScreenJourneyBuilder =
@@ -3629,7 +3789,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
         },
         ToolDefinition {
             name: "mock_user_tool",
-            description: "Play through named front-door terminal journeys in real ozone / ozone-plus binaries using PTY input only.",
+            description: "Play through named front-door terminal journeys in real ozone / ozone-plus binaries using PTY input only. Omitting sandboxId auto-prepares the recommended temp-XDG sandbox for the requested target or journey.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -3653,17 +3813,16 @@ fn tool_definitions() -> Vec<ToolDefinition> {
                     "fontSize": { "type": "integer", "minimum": 1 },
                     "tailChars": { "type": "integer", "minimum": 1 }
                 },
-                "required": ["sandboxId"],
                 "anyOf": [
-                    { "required": ["sandboxId", "journey"] },
-                    { "required": ["sandboxId", "target"] }
+                    { "required": ["journey"] },
+                    { "required": ["target"] }
                 ],
                 "additionalProperties": false
             }),
         },
         ToolDefinition {
             name: "screenshot_tool",
-            description: "Navigate to a centralized capturable screen target and save a PNG plus JSON terminal snapshot.",
+            description: "Navigate to a centralized capturable screen target and save a PNG plus JSON terminal snapshot. Omitting sandboxId auto-prepares the target's recommended temp-XDG sandbox.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
@@ -3690,7 +3849,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
                     "fontSize": { "type": "integer", "minimum": 1 },
                     "tailChars": { "type": "integer", "minimum": 1 }
                 },
-                "required": ["sandboxId", "target", "outputDir"],
+                "required": ["target", "outputDir"],
                 "additionalProperties": false
             }),
         },
@@ -5180,6 +5339,80 @@ fn parse_prefixed_field(text: &str, prefix: &str) -> Option<String> {
     })
 }
 
+fn normalize_preferences_json(value: &Value) -> Value {
+    match value {
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(key, nested)| {
+                    (
+                        normalize_preferences_key(key),
+                        normalize_preferences_json(nested),
+                    )
+                })
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(normalize_preferences_json).collect()),
+        other => other.clone(),
+    }
+}
+
+fn normalize_preferences_key(key: &str) -> String {
+    let mut normalized = String::with_capacity(key.len() + 4);
+    for ch in key.chars() {
+        if ch == '-' {
+            normalized.push('_');
+        } else if ch.is_ascii_uppercase() {
+            if !normalized.is_empty() {
+                normalized.push('_');
+            }
+            normalized.push(ch.to_ascii_lowercase());
+        } else {
+            normalized.push(ch);
+        }
+    }
+    normalized
+}
+
+fn default_preferences_json() -> Value {
+    json!({
+        "version": 1,
+        "last_model_name": "",
+        "last_context_size": null,
+        "last_gpu_layers": null,
+        "last_quant_kv": null,
+        "last_threads": null,
+        "last_blas_threads": null,
+        "no_browser": false,
+        "preferred_backend": null,
+        "preferred_frontend": null,
+        "preferred_tier": null,
+        "side_by_side_monitor": false,
+        "llamacpp_gpu_layers": null,
+        "llamacpp_context_size": null,
+        "llamacpp_threads": null,
+        "theme_preset": "dark-mint",
+        "show_inspector": false,
+        "timestamp_style": "relative",
+        "message_density": "comfortable"
+    })
+}
+
+fn merge_json_objects(base: Value, overlay: Value) -> Value {
+    match (base, overlay) {
+        (Value::Object(mut base_map), Value::Object(overlay_map)) => {
+            for (key, overlay_value) in overlay_map {
+                let merged_value = match base_map.remove(&key) {
+                    Some(base_value) => merge_json_objects(base_value, overlay_value),
+                    None => overlay_value,
+                };
+                base_map.insert(key, merged_value);
+            }
+            Value::Object(base_map)
+        }
+        (_, overlay) => overlay,
+    }
+}
+
 fn sanitize_prefix(value: &str) -> String {
     value
         .chars()
@@ -5320,7 +5553,8 @@ fn render_transcript_text(export: &ozone_persist::TranscriptExport) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        capturable_screen_journey_builders, mock_user_capture_settings, read_message,
+        capturable_screen_journey_builders, default_preferences_json, merge_json_objects,
+        mock_user_capture_settings, normalize_preferences_json, read_message,
         screenshot_capture_config, tool_definitions, MockUserAction, OzoneMcpServer, Sandbox,
     };
     use serde_json::json;
@@ -5376,19 +5610,20 @@ mod tests {
         assert!(journey.steps[4]
             .expect_any
             .iter()
-            .any(|marker| marker == ":memories"));
+            .any(|marker| marker == "Composer"));
         assert!(matches!(
             journey.steps[5].action,
             MockUserAction::Text { .. }
         ));
-        assert!(journey.steps[5]
+        assert!(journey.steps[5].expect_any.is_empty());
+        assert!(matches!(
+            journey.steps[6].action,
+            MockUserAction::Key { .. }
+        ));
+        assert!(journey.steps[6]
             .expect_any
             .iter()
-            .any(|marker| marker == "INSERT"));
-        assert!(journey.steps[7]
-            .expect_any
-            .iter()
-            .any(|marker| marker == "koboldcpp backend"));
+            .any(|marker| marker == "assistant"));
     }
 
     #[test]
@@ -5451,7 +5686,7 @@ mod tests {
             ("base_profile_confirm", "ozone", "Confirm Profiling Step"),
             ("base_profile_running", "ozone", "Profiling In Progress"),
             ("base_profile_failure", "ozone", "Profiling Failed"),
-            ("base_ozone_plus_shell", "ozone", "Ctrl+K pin"),
+            ("base_ozone_plus_shell", "ozone", "New Chat"),
             ("ozone_plus_main_menu", "ozone-plus", "New Chat"),
             ("ozone_plus_sessions", "ozone-plus", "Sessions"),
             ("ozone_plus_characters", "ozone-plus", "Characters"),
@@ -5539,6 +5774,11 @@ mod tests {
         assert!(definition.input_schema["properties"]
             .get("fontSize")
             .is_some());
+        assert!(definition.input_schema.get("required").is_none());
+        assert_eq!(
+            definition.input_schema["anyOf"],
+            json!([{ "required": ["journey"] }, { "required": ["target"] }])
+        );
     }
 
     #[test]
@@ -5596,7 +5836,7 @@ mod tests {
             .expect("screenshot tool");
         assert_eq!(
             definition.input_schema["required"],
-            json!(["sandboxId", "target", "outputDir"])
+            json!(["target", "outputDir"])
         );
         assert_eq!(
             definition.input_schema["properties"]["target"]["enum"]
@@ -5676,6 +5916,35 @@ mod tests {
                 "baseline_compare"
             ])
         );
+    }
+
+    #[test]
+    fn chat_journey_auto_setup_enables_mock_backend() {
+        let server = OzoneMcpServer::new().expect("server");
+        let setup = server
+            .recommended_mock_user_journey_sandbox_setup("ozone_plus_chat_journey")
+            .expect("setup");
+        assert_eq!(setup["models"], json!(["mock-model.gguf"]));
+        assert_eq!(setup["createLauncherStub"], json!(true));
+        assert_eq!(setup["requiresMockBackend"], json!(true));
+    }
+
+    #[test]
+    fn normalize_preferences_json_converts_camel_case_keys() {
+        let normalized = merge_json_objects(
+            default_preferences_json(),
+            normalize_preferences_json(&json!({
+                "preferredTier": "base",
+                "preferredBackend": "KoboldCpp",
+                "preferredFrontend": "OzonePlus",
+                "sideBySideMonitor": true
+            })),
+        );
+        assert_eq!(normalized["version"], json!(1));
+        assert_eq!(normalized["preferred_tier"], json!("base"));
+        assert_eq!(normalized["preferred_backend"], json!("KoboldCpp"));
+        assert_eq!(normalized["preferred_frontend"], json!("OzonePlus"));
+        assert_eq!(normalized["side_by_side_monitor"], json!(true));
     }
 
     #[test]

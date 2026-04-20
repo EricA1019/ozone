@@ -1,6 +1,6 @@
 [package]
 name = "ozone-plus"
-version = "0.4.7-alpha"
+version = "0.4.8-alpha"
 edition = "2021"
 publish = false
 description = "⬡ ozone+ — local-LLM chat shell with persistent memory and sessions"

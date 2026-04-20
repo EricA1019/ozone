@@ -213,206 +213,192 @@ where
 
                     for command in app.take_runtime_commands() {
                         match command {
-                                app::RuntimeCommand::SendDraft { prompt } => {
-                                    if let Some(receipt) = runtime
-                                        .send_draft(&app.session.context, &prompt)
-                                        .map_err(RunSessionError::Runtime)?
-                                    {
-                                        app.apply_send_receipt(receipt);
+                            app::RuntimeCommand::SendDraft { prompt } => {
+                                if let Some(receipt) = runtime
+                                    .send_draft(&app.session.context, &prompt)
+                                    .map_err(RunSessionError::Runtime)?
+                                {
+                                    app.apply_send_receipt(receipt);
+                                }
+                            }
+                            app::RuntimeCommand::CancelGeneration => {
+                                if let Some(cancellation) = runtime
+                                    .cancel_generation(&app.session.context)
+                                    .map_err(RunSessionError::Runtime)?
+                                {
+                                    app.apply_runtime_cancellation(cancellation);
+                                }
+                            }
+                            app::RuntimeCommand::BuildContextDryRun => {
+                                if let Some(refresh) = runtime
+                                    .build_context_dry_run(&app.session.context)
+                                    .map_err(RunSessionError::Runtime)?
+                                {
+                                    app.apply_context_refresh(refresh);
+                                }
+                            }
+                            app::RuntimeCommand::ToggleBookmark { message_id } => {
+                                if let Some(refresh) = runtime
+                                    .toggle_bookmark(&app.session.context, &message_id)
+                                    .map_err(RunSessionError::Runtime)?
+                                {
+                                    app.apply_context_refresh(refresh);
+                                }
+                            }
+                            app::RuntimeCommand::TogglePinnedMemory { message_id } => {
+                                if let Some(refresh) = runtime
+                                    .toggle_pinned_memory(&app.session.context, &message_id)
+                                    .map_err(RunSessionError::Runtime)?
+                                {
+                                    app.apply_context_refresh(refresh);
+                                }
+                            }
+                            app::RuntimeCommand::RunCommand { input } => {
+                                if let Some(refresh) = runtime
+                                    .run_command(&app.session.context, &input)
+                                    .map_err(RunSessionError::Runtime)?
+                                {
+                                    app.apply_context_refresh(refresh);
+                                }
+                            }
+                            app::RuntimeCommand::CreateCharacter {
+                                name,
+                                description,
+                                system_prompt,
+                                personality,
+                                scenario,
+                                greeting,
+                                example_dialogue,
+                            } => match runtime.create_character(app::CharacterDetail {
+                                card_id: String::new(),
+                                name,
+                                description,
+                                system_prompt,
+                                personality,
+                                scenario,
+                                greeting,
+                                example_dialogue,
+                            }) {
+                                Ok(entry) => {
+                                    app.status_line =
+                                        Some(format!("Created character: {}", entry.name));
+                                    if let Ok(chars) = runtime.list_characters() {
+                                        app.character_list.entries = chars;
                                     }
                                 }
-                                app::RuntimeCommand::CancelGeneration => {
-                                    if let Some(cancellation) = runtime
-                                        .cancel_generation(&app.session.context)
-                                        .map_err(RunSessionError::Runtime)?
-                                    {
-                                        app.apply_runtime_cancellation(cancellation);
+                                Err(e) => {
+                                    app.status_line = Some(format!("Create failed: {:?}", e));
+                                }
+                            },
+                            app::RuntimeCommand::UpdateCharacter {
+                                card_id,
+                                name,
+                                description,
+                                system_prompt,
+                                personality,
+                                scenario,
+                                greeting,
+                                example_dialogue,
+                            } => match runtime.update_character(app::CharacterDetail {
+                                card_id,
+                                name,
+                                description,
+                                system_prompt,
+                                personality,
+                                scenario,
+                                greeting,
+                                example_dialogue,
+                            }) {
+                                Ok(entry) => {
+                                    app.status_line =
+                                        Some(format!("Updated character: {}", entry.name));
+                                    if let Ok(chars) = runtime.list_characters() {
+                                        app.character_list.entries = chars;
                                     }
                                 }
-                                app::RuntimeCommand::BuildContextDryRun => {
-                                    if let Some(refresh) = runtime
-                                        .build_context_dry_run(&app.session.context)
-                                        .map_err(RunSessionError::Runtime)?
-                                    {
-                                        app.apply_context_refresh(refresh);
-                                    }
+                                Err(e) => {
+                                    app.status_line = Some(format!("Update failed: {:?}", e));
                                 }
-                                app::RuntimeCommand::ToggleBookmark { message_id } => {
-                                    if let Some(refresh) = runtime
-                                        .toggle_bookmark(&app.session.context, &message_id)
-                                        .map_err(RunSessionError::Runtime)?
-                                    {
-                                        app.apply_context_refresh(refresh);
-                                    }
-                                }
-                                app::RuntimeCommand::TogglePinnedMemory { message_id } => {
-                                    if let Some(refresh) = runtime
-                                        .toggle_pinned_memory(&app.session.context, &message_id)
-                                        .map_err(RunSessionError::Runtime)?
-                                    {
-                                        app.apply_context_refresh(refresh);
-                                    }
-                                }
-                                app::RuntimeCommand::RunCommand { input } => {
-                                    if let Some(refresh) = runtime
-                                        .run_command(&app.session.context, &input)
-                                        .map_err(RunSessionError::Runtime)?
-                                    {
-                                        app.apply_context_refresh(refresh);
-                                    }
-                                }
-                                app::RuntimeCommand::CreateCharacter {
-                                    name,
-                                    description,
-                                    system_prompt,
-                                    personality,
-                                    scenario,
-                                    greeting,
-                                    example_dialogue,
-                                } => match runtime.create_character(
-                                    name,
-                                    description,
-                                    system_prompt,
-                                    personality,
-                                    scenario,
-                                    greeting,
-                                    example_dialogue,
-                                ) {
+                            },
+                            app::RuntimeCommand::ImportCharacter { path } => {
+                                match runtime.import_character(path) {
                                     Ok(entry) => {
                                         app.status_line =
-                                            Some(format!("Created character: {}", entry.name));
+                                            Some(format!("Imported character: {}", entry.name));
                                         if let Ok(chars) = runtime.list_characters() {
                                             app.character_list.entries = chars;
                                         }
                                     }
                                     Err(e) => {
-                                        app.status_line = Some(format!("Create failed: {:?}", e));
+                                        app.status_line = Some(format!("Import failed: {:?}", e));
                                     }
-                                },
-                                app::RuntimeCommand::UpdateCharacter {
-                                    card_id,
-                                    name,
-                                    description,
-                                    system_prompt,
-                                    personality,
-                                    scenario,
-                                    greeting,
-                                    example_dialogue,
-                                } => match runtime.update_character(
-                                    &card_id,
-                                    name,
-                                    description,
-                                    system_prompt,
-                                    personality,
-                                    scenario,
-                                    greeting,
-                                    example_dialogue,
-                                ) {
-                                    Ok(entry) => {
-                                        app.status_line =
-                                            Some(format!("Updated character: {}", entry.name));
-                                        if let Ok(chars) = runtime.list_characters() {
-                                            app.character_list.entries = chars;
-                                        }
+                                }
+                            }
+                            app::RuntimeCommand::EditCharacter { card_id } => {
+                                match runtime.get_character(&card_id) {
+                                    Ok(Some(detail)) => {
+                                        app.character_create.load_from_character(&detail);
+                                        app.screen = app::ScreenState::CharacterEdit;
+                                    }
+                                    Ok(None) => {
+                                        app.status_line = Some("Character not found".into());
                                     }
                                     Err(e) => {
-                                        app.status_line = Some(format!("Update failed: {:?}", e));
+                                        app.status_line = Some(format!("Edit failed: {:?}", e));
                                     }
-                                },
-                                app::RuntimeCommand::ImportCharacter { path } => {
-                                    match runtime.import_character(path) {
-                                        Ok(entry) => {
-                                            app.status_line =
-                                                Some(format!("Imported character: {}", entry.name));
-                                            if let Ok(chars) = runtime.list_characters() {
-                                                app.character_list.entries = chars;
+                                }
+                            }
+                            app::RuntimeCommand::PrefChanged { pref_key, value } => {
+                                let _ = runtime.save_pref(&pref_key, &value);
+                                // Apply theme change immediately at runtime.
+                                if pref_key == "theme_preset" {
+                                    crate::theme::set_preset(
+                                        crate::theme::ThemePreset::from_pref_str(&value),
+                                    );
+                                }
+                            }
+                            app::RuntimeCommand::SetSessionFolder { session_id, folder } => {
+                                match runtime.set_session_folder(&session_id, folder.as_deref()) {
+                                    Ok(()) => {
+                                        let status = match folder.as_deref() {
+                                            Some(name) => {
+                                                format!("Moved session into folder: {name}")
                                             }
-                                        }
-                                        Err(e) => {
-                                            app.status_line =
-                                                Some(format!("Import failed: {:?}", e));
-                                        }
+                                            None => "Removed session from folder".to_owned(),
+                                        };
+                                        app.status_line = Some(status);
+                                    }
+                                    Err(error) => {
+                                        app.status_line =
+                                            Some(format!("Folder update failed: {:?}", error));
                                     }
                                 }
-                                app::RuntimeCommand::EditCharacter { card_id } => {
-                                    match runtime.get_character(&card_id) {
-                                        Ok(Some(detail)) => {
-                                            app.character_create.load_from_character(
-                                                detail.card_id,
-                                                &detail.name,
-                                                &detail.description,
-                                                &detail.system_prompt,
-                                                &detail.personality,
-                                                &detail.scenario,
-                                                &detail.greeting,
-                                                &detail.example_dialogue,
-                                            );
-                                            app.screen = app::ScreenState::CharacterEdit;
-                                        }
-                                        Ok(None) => {
-                                            app.status_line =
-                                                Some("Character not found".into());
-                                        }
-                                        Err(e) => {
-                                            app.status_line =
-                                                Some(format!("Edit failed: {:?}", e));
-                                        }
-                                    }
+                                if let Ok(entries) = runtime.list_sessions() {
+                                    app.session_list.entries = entries;
                                 }
-                                app::RuntimeCommand::PrefChanged { pref_key, value } => {
-                                    let _ = runtime.save_pref(&pref_key, &value);
-                                    // Apply theme change immediately at runtime.
-                                    if pref_key == "theme_preset" {
-                                        crate::theme::set_preset(
-                                            crate::theme::ThemePreset::from_pref_str(&value),
-                                        );
-                                    }
-                                }
-                                app::RuntimeCommand::SetSessionFolder { session_id, folder } => {
-                                    match runtime
-                                        .set_session_folder(&session_id, folder.as_deref())
+                            }
+                            app::RuntimeCommand::OpenSession {
+                                session_id,
+                                session_name,
+                            } => match runtime.open_session(&session_id) {
+                                Ok(Some(bootstrap)) => {
+                                    if let Ok(sid) =
+                                        ozone_core::session::SessionId::parse(&session_id)
                                     {
-                                        Ok(()) => {
-                                            let status = match folder.as_deref() {
-                                                Some(name) => {
-                                                    format!("Moved session into folder: {name}")
-                                                }
-                                                None => "Removed session from folder".to_owned(),
-                                            };
-                                            app.status_line = Some(status);
-                                        }
-                                        Err(error) => {
-                                            app.status_line = Some(format!(
-                                                "Folder update failed: {:?}",
-                                                error
-                                            ));
-                                        }
+                                        app.session.context =
+                                            app::SessionContext::new(sid, session_name);
                                     }
-                                    if let Ok(entries) = runtime.list_sessions() {
-                                        app.session_list.entries = entries;
-                                    }
+                                    app.hydrate(bootstrap);
                                 }
-                                app::RuntimeCommand::OpenSession { session_id, session_name } => {
-                                    match runtime.open_session(&session_id) {
-                                        Ok(Some(bootstrap)) => {
-                                            if let Ok(sid) = ozone_core::session::SessionId::parse(&session_id) {
-                                                app.session.context = app::SessionContext::new(sid, session_name);
-                                            }
-                                            app.hydrate(bootstrap);
-                                        }
-                                        Ok(None) => {
-                                            app.status_line = Some(format!(
-                                                "Session not found: {session_id}"
-                                            ));
-                                        }
-                                        Err(error) => {
-                                            app.status_line = Some(format!(
-                                                "Failed to open session: {:?}",
-                                                error
-                                            ));
-                                        }
-                                    }
+                                Ok(None) => {
+                                    app.status_line =
+                                        Some(format!("Session not found: {session_id}"));
                                 }
+                                Err(error) => {
+                                    app.status_line =
+                                        Some(format!("Failed to open session: {:?}", error));
+                                }
+                            },
                         }
                         sync_draft(runtime, app)?;
                     }
@@ -598,27 +584,14 @@ mod tests {
 
         fn create_character(
             &mut self,
-            _name: String,
-            _description: String,
-            _system_prompt: String,
-            _personality: String,
-            _scenario: String,
-            _greeting: String,
-            _example_dialogue: String,
+            _detail: crate::app::CharacterDetail,
         ) -> Result<crate::app::CharacterEntry, Self::Error> {
             Err("not implemented in stub".into())
         }
 
         fn update_character(
             &mut self,
-            _card_id: &str,
-            _name: String,
-            _description: String,
-            _system_prompt: String,
-            _personality: String,
-            _scenario: String,
-            _greeting: String,
-            _example_dialogue: String,
+            _detail: crate::app::CharacterDetail,
         ) -> Result<crate::app::CharacterEntry, Self::Error> {
             Err("not implemented in stub".into())
         }
@@ -673,27 +646,14 @@ mod tests {
 
         fn create_character(
             &mut self,
-            _name: String,
-            _description: String,
-            _system_prompt: String,
-            _personality: String,
-            _scenario: String,
-            _greeting: String,
-            _example_dialogue: String,
+            _detail: crate::app::CharacterDetail,
         ) -> Result<crate::app::CharacterEntry, Self::Error> {
             Err("not implemented in stub".into())
         }
 
         fn update_character(
             &mut self,
-            _card_id: &str,
-            _name: String,
-            _description: String,
-            _system_prompt: String,
-            _personality: String,
-            _scenario: String,
-            _greeting: String,
-            _example_dialogue: String,
+            _detail: crate::app::CharacterDetail,
         ) -> Result<crate::app::CharacterEntry, Self::Error> {
             Err("not implemented in stub".into())
         }

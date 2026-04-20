@@ -42,7 +42,11 @@ fn query_amd_gpu_memory() -> Option<GpuMemory> {
                         let total_mb = total_b / 1024 / 1024;
                         let used_mb = used_b / 1024 / 1024;
                         let free_mb = total_mb.saturating_sub(used_mb);
-                        return Some(GpuMemory { used_mb, free_mb, total_mb });
+                        return Some(GpuMemory {
+                            used_mb,
+                            free_mb,
+                            total_mb,
+                        });
                     }
                 }
             }
@@ -70,7 +74,11 @@ fn query_amd_gpu_memory() -> Option<GpuMemory> {
                 let total_mb = total_b / 1024 / 1024;
                 let used_mb = used_b.unwrap_or(0) / 1024 / 1024;
                 let free_mb = total_mb.saturating_sub(used_mb);
-                return Some(GpuMemory { used_mb, free_mb, total_mb });
+                return Some(GpuMemory {
+                    used_mb,
+                    free_mb,
+                    total_mb,
+                });
             }
         }
     }

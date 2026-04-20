@@ -323,7 +323,10 @@ fn render_confirm_download(f: &mut Frame, area: Rect, binary: &str) {
         Span::styled("[N/Esc] ", style_lime()),
         Span::styled("Use Lite instead", style_gray()),
     ]);
-    f.render_widget(Paragraph::new(hint).alignment(Alignment::Center), chunks[10]);
+    f.render_widget(
+        Paragraph::new(hint).alignment(Alignment::Center),
+        chunks[10],
+    );
 
     f.render_widget(
         Paragraph::new(hex_line()).alignment(Alignment::Center),
@@ -514,10 +517,7 @@ fn render_install_error(f: &mut Frame, area: Rect, msg: &str) {
         Span::styled("[Enter] ", style_lime()),
         Span::styled("Continue with Lite", style_gray()),
     ]);
-    f.render_widget(
-        Paragraph::new(hint).alignment(Alignment::Center),
-        chunks[9],
-    );
+    f.render_widget(Paragraph::new(hint).alignment(Alignment::Center), chunks[9]);
 
     f.render_widget(
         Paragraph::new(hex_line()).alignment(Alignment::Center),

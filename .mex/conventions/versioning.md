@@ -46,5 +46,6 @@ Before bumping the version in any Cargo.toml:
 | `0.4.5-alpha` | Settings crash fix + theme presets + editable settings sprint |
 | `0.4.7-alpha` | ozone-lite kernel + branch setup + versioning rules sprint (skips 0.4.6 — never shipped) |
 | `0.4.7-alpha` | Session folders — organizational layer on existing sessions; git hash only, no bump |
-| `0.4.8-alpha` | ozone-note plugin sprint (general chat + RAG — new capability) |
+| `0.4.8-alpha` | ozone+ hardening + MCP front-door automation sprint |
+| `0.4.9-alpha` | ozone-note plugin sprint (general chat + RAG — new capability) |
 | `0.5.0-beta` | First public beta — feature-complete, polished, no known blockers |

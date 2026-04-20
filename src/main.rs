@@ -179,7 +179,8 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Some(Commands::Monitor) => ui::run_monitor().await,
-        Some(Commands::List { json }) => {            if !json {
+        Some(Commands::List { json }) => {
+            if !json {
                 eprintln!("  hint: `ozone list` is deprecated — use `ozone model list` instead.");
                 eprintln!();
             }

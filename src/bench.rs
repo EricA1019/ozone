@@ -8,14 +8,14 @@ use std::time::{Duration, Instant};
 #[derive(Debug, Clone)]
 pub enum BenchBackend {
     KoboldCpp { launcher_path: std::path::PathBuf },
-    LlamaCpp  { server_path: std::path::PathBuf },
+    LlamaCpp { server_path: std::path::PathBuf },
 }
 
 impl BenchBackend {
     pub fn display_name(&self) -> &'static str {
         match self {
             BenchBackend::KoboldCpp { .. } => "KoboldCpp",
-            BenchBackend::LlamaCpp  { .. } => "llama.cpp",
+            BenchBackend::LlamaCpp { .. } => "llama.cpp",
         }
     }
 }
@@ -147,9 +147,12 @@ where
 
     // Step 3: Confirm model is loaded
     let loaded_model = match backend {
-        BenchBackend::KoboldCpp { .. } => processes::get_kobold_model()
-            .await
-            .ok_or_else(|| anyhow!("{} launched but model not available via API", backend.display_name()))?,
+        BenchBackend::KoboldCpp { .. } => processes::get_kobold_model().await.ok_or_else(|| {
+            anyhow!(
+                "{} launched but model not available via API",
+                backend.display_name()
+            )
+        })?,
         BenchBackend::LlamaCpp { .. } => processes::get_llamacpp_model()
             .await
             .ok_or_else(|| anyhow!("llama.cpp launched but model not available via API"))?,
@@ -169,7 +172,7 @@ where
     });
     let gen_result = match backend {
         BenchBackend::KoboldCpp { .. } => run_kobold_generation().await,
-        BenchBackend::LlamaCpp { .. }  => run_llamacpp_generation().await,
+        BenchBackend::LlamaCpp { .. } => run_llamacpp_generation().await,
     };
 
     // Step 6: Snapshot VRAM during/after generation

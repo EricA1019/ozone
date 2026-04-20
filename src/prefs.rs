@@ -120,5 +120,3 @@ pub async fn save_prefs(prefs: &Preferences) -> Result<()> {
     fs::write(&path, format!("{text}\n")).await?;
     Ok(())
 }
-
-

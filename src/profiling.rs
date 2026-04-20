@@ -26,7 +26,7 @@ impl ProfilingBackend {
     pub fn display_name(&self) -> &'static str {
         match self {
             ProfilingBackend::KoboldCpp => "KoboldCpp",
-            ProfilingBackend::LlamaCpp  => "llama.cpp",
+            ProfilingBackend::LlamaCpp => "llama.cpp",
         }
     }
 }
@@ -260,7 +260,10 @@ fn kobold_log_path() -> Option<PathBuf> {
 fn llamacpp_export_dir() -> PathBuf {
     paths::data_dir().unwrap_or_else(|| {
         let home = std::env::var("HOME").unwrap_or_default();
-        PathBuf::from(home).join(".local").join("share").join("ozone")
+        PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("ozone")
     })
 }
 
@@ -854,17 +857,12 @@ pub async fn run_workflow(
             let sh_path = llamacpp_export_dir().join("llamacpp-profiles.sh");
             let _ = tx.send(WorkflowEvent::Status {
                 title: "Export".into(),
-                detail: format!(
-                    "Exporting llama.cpp profiles to {}…",
-                    sh_path.display()
-                ),
+                detail: format!("Exporting llama.cpp profiles to {}…", sh_path.display()),
             });
             match export_llamacpp_profiles(&profiles) {
                 Ok(out) => {
-                    let mut report =
-                        build_success_report(&request.record, request.action)?;
-                    report.export_detail =
-                        Some(format!("llama.cpp: {}", out.display()));
+                    let mut report = build_success_report(&request.record, request.action)?;
+                    report.export_detail = Some(format!("llama.cpp: {}", out.display()));
                     let _ = tx.send(WorkflowEvent::Completed(report));
                 }
                 Err(error) => {
@@ -890,8 +888,7 @@ pub async fn run_workflow(
                 Some(&request.record.model_name),
             ) {
                 Ok(_count) => {
-                    let mut report =
-                        build_success_report(&request.record, request.action)?;
+                    let mut report = build_success_report(&request.record, request.action)?;
                     if let Ok(content) = std::fs::read_to_string(presets_path()) {
                         let model_lines: Vec<&str> = content
                             .lines()
@@ -947,8 +944,9 @@ pub async fn run_workflow(
                 .as_ref()
                 .map(|gpu| (gpu.total_mb as f64 * 0.9) as u32)
                 .unwrap_or(0);
-            let backend = processes::resolved_backend_for_profiling()
-                .ok_or_else(|| anyhow!("No profiling backend available (KoboldCpp or llama-server not found)"))?;
+            let backend = processes::resolved_backend_for_profiling().ok_or_else(|| {
+                anyhow!("No profiling backend available (KoboldCpp or llama-server not found)")
+            })?;
             let seed_plan = planner::plan_profiling_launch(&request.record, &request.hardware);
             let config = sweep::SweepConfig {
                 model_name: request.record.model_name.clone(),
@@ -1021,8 +1019,9 @@ pub async fn run_workflow(
                 let _ = tx.send(WorkflowEvent::Cancelled);
                 return Ok(());
             }
-            let backend = processes::resolved_backend_for_profiling()
-                .ok_or_else(|| anyhow!("No profiling backend available (KoboldCpp or llama-server not found)"))?;
+            let backend = processes::resolved_backend_for_profiling().ok_or_else(|| {
+                anyhow!("No profiling backend available (KoboldCpp or llama-server not found)")
+            })?;
             let plan = planner::plan_profiling_launch(&request.record, &request.hardware);
             let _ = tx.send(WorkflowEvent::Status {
                 title: "Benchmark".into(),

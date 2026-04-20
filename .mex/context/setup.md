@@ -42,6 +42,7 @@ last_updated: 2026-04-18
 
 ## Common Commands
 - `cargo build --workspace --release` — build the whole workspace
+- `cargo build -p ozone -p ozone-plus -p ozone-mcp-app` — build the live-test binaries in debug mode
 - `cargo build -p ozone -p ozone-plus -p ozone-mcp-app --release` — build the installable binaries explicitly
 - `./contrib/sync-local-install.sh` — rebuild and refresh `~/.cargo/bin` + `~/.local/bin` only when checksums changed
 - `cargo clippy --workspace --all-targets` — lint the workspace
@@ -51,5 +52,6 @@ last_updated: 2026-04-18
 ## Common Issues
 - **Installed binary is stale:** run `./contrib/sync-local-install.sh` instead of manually copying `target/release/*` into `~/.local/bin`
 - **`ozone-plus` release artifact is stale after a partial build:** build explicit packages (`cargo build -p ozone-plus --release` or use `./contrib/sync-local-install.sh`) instead of relying on an older root release artifact
+- **PTY smoke tools are launching stale debug binaries:** rebuild the real app targets (`cargo build -p ozone -p ozone-plus -p ozone-mcp-app`) or just run `cargo build --workspace` before `mock_user_tool` / `screenshot_tool`
 - **Interactive automation should not stop for a `Y/n` update question:** set `OZONE_SKIP_INSTALL_UPDATE_PROMPT=1`
 - **llama.cpp backend commands fail with "not found":** set `OZONE_LLAMACPP_CLI` / `OZONE_LLAMACPP_SERVER` to your local llama.cpp install paths

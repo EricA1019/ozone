@@ -129,26 +129,13 @@ pub trait SessionRuntime {
     /// Create a new character card in the global library.
     fn create_character(
         &mut self,
-        _name: String,
-        _description: String,
-        _system_prompt: String,
-        _personality: String,
-        _scenario: String,
-        _greeting: String,
-        _example_dialogue: String,
+        _detail: crate::app::CharacterDetail,
     ) -> Result<crate::app::CharacterEntry, Self::Error>;
 
     /// Update an existing character card.
     fn update_character(
         &mut self,
-        _card_id: &str,
-        _name: String,
-        _description: String,
-        _system_prompt: String,
-        _personality: String,
-        _scenario: String,
-        _greeting: String,
-        _example_dialogue: String,
+        _detail: crate::app::CharacterDetail,
     ) -> Result<crate::app::CharacterEntry, Self::Error>;
 
     /// Load a character card by ID for editing.
@@ -184,10 +171,7 @@ pub trait SessionRuntime {
     /// Switch to a different session — release the current lock, open the new
     /// session, and return its bootstrap data so the TUI can hydrate.
     /// The default returns `None` (session switching not supported).
-    fn open_session(
-        &mut self,
-        _session_id: &str,
-    ) -> Result<Option<AppBootstrap>, Self::Error> {
+    fn open_session(&mut self, _session_id: &str) -> Result<Option<AppBootstrap>, Self::Error> {
         Ok(None)
     }
 }
@@ -427,17 +411,11 @@ impl SessionRuntime for MockRuntime {
 
     fn create_character(
         &mut self,
-        name: String,
-        _description: String,
-        _system_prompt: String,
-        _personality: String,
-        _scenario: String,
-        _greeting: String,
-        _example_dialogue: String,
+        detail: crate::app::CharacterDetail,
     ) -> Result<crate::app::CharacterEntry, Self::Error> {
         let entry = crate::app::CharacterEntry {
             card_id: format!("mock-char-{}", self.available_characters.len() + 1),
-            name: name.clone(),
+            name: detail.name.clone(),
             description: String::new(),
             session_count: 0,
         };
@@ -447,23 +425,20 @@ impl SessionRuntime for MockRuntime {
 
     fn update_character(
         &mut self,
-        card_id: &str,
-        name: String,
-        description: String,
-        _system_prompt: String,
-        _personality: String,
-        _scenario: String,
-        _greeting: String,
-        _example_dialogue: String,
+        detail: crate::app::CharacterDetail,
     ) -> Result<crate::app::CharacterEntry, Self::Error> {
-        if let Some(entry) = self.available_characters.iter_mut().find(|e| e.card_id == card_id) {
-            entry.name = name.clone();
-            entry.description = description.clone();
+        if let Some(entry) = self
+            .available_characters
+            .iter_mut()
+            .find(|e| e.card_id == detail.card_id)
+        {
+            entry.name = detail.name.clone();
+            entry.description = detail.description.clone();
         }
         Ok(crate::app::CharacterEntry {
-            card_id: card_id.to_owned(),
-            name,
-            description,
+            card_id: detail.card_id,
+            name: detail.name,
+            description: detail.description,
             session_count: 0,
         })
     }
@@ -472,7 +447,10 @@ impl SessionRuntime for MockRuntime {
         &mut self,
         card_id: &str,
     ) -> Result<Option<crate::app::CharacterDetail>, Self::Error> {
-        let entry = self.available_characters.iter().find(|e| e.card_id == card_id);
+        let entry = self
+            .available_characters
+            .iter()
+            .find(|e| e.card_id == card_id);
         Ok(entry.map(|e| crate::app::CharacterDetail {
             card_id: e.card_id.clone(),
             name: e.name.clone(),
@@ -495,10 +473,7 @@ impl SessionRuntime for MockRuntime {
         Ok(entry)
     }
 
-    fn open_session(
-        &mut self,
-        session_id: &str,
-    ) -> Result<Option<AppBootstrap>, Self::Error> {
+    fn open_session(&mut self, session_id: &str) -> Result<Option<AppBootstrap>, Self::Error> {
         if let Some(bootstrap) = self.session_bootstraps.get(session_id) {
             Ok(Some(bootstrap.clone()))
         } else {

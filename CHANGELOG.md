@@ -8,6 +8,24 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ---
 
+## [0.4.8-alpha] — ozone+ Hardening + MCP Front-Door Automation
+
+### Fixed
+- ozone+ Display settings now map visual entries to the correct backing preferences
+- runtime theme switching applies immediately instead of waiting for restart
+- character management now supports the full 7-field form plus edit flow
+- built-in launcher → ozone+ PTY journeys now reach the real launcher and handoff path reliably in temp-XDG smoke runs
+
+### Added
+- automatic sandbox provisioning for `mock_user_tool` and `screenshot_tool` when `sandboxId` is omitted
+- automatic mock-backend startup for the built-in ozone+ chat journey
+
+### Changed
+- version strings are aligned to `0.4.8-alpha` across workspace crates, product labels, and current docs
+- front-door testing docs now point at `ozone-mcp-app` / workspace debug builds so PTY smoke runs do not reuse stale binaries
+
+---
+
 ## [0.4.7-alpha] — ozone-lite Kernel + Branch Setup
 
 ### Added
@@ -205,6 +223,7 @@ Initial release. Full Rust rewrite of the original Node.js Ozone TUI.
 - `ozone clear` falsely reported `ollama serve` as stopped when the signal was rejected — now only reports processes that were actually stopped
 - `ollama serve` (system daemon) excluded from the clear target list; only `koboldcpp` and `ollama runner` sub-processes are targeted
 
-[Unreleased]: https://github.com/EricA1019/ozone/compare/v0.4.0-alpha...HEAD
+[Unreleased]: https://github.com/EricA1019/ozone/compare/v0.4.8-alpha...HEAD
+[0.4.8-alpha]: https://github.com/EricA1019/ozone/compare/v0.4.7-alpha...v0.4.8-alpha
 [0.4.0-alpha]: https://github.com/EricA1019/ozone/compare/v0.1.0...v0.4.0-alpha
 [0.1.0]: https://github.com/EricA1019/ozone/releases/tag/v0.1.0

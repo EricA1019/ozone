@@ -196,7 +196,9 @@ pub fn border_style() -> Style {
 
 /// Title in a focused pane.
 pub fn title_focused_style() -> Style {
-    Style::default().fg(teal(active_preset())).add_modifier(Modifier::BOLD)
+    Style::default()
+        .fg(teal(active_preset()))
+        .add_modifier(Modifier::BOLD)
 }
 
 /// Title in an unfocused pane.
@@ -206,7 +208,9 @@ pub fn title_style() -> Style {
 
 /// Primary highlight — teal with bold.
 pub fn highlight_style() -> Style {
-    Style::default().fg(teal(active_preset())).add_modifier(Modifier::BOLD)
+    Style::default()
+        .fg(teal(active_preset()))
+        .add_modifier(Modifier::BOLD)
 }
 
 /// Selected conversation entry author — violet accent.
@@ -255,12 +259,16 @@ pub fn mode_badge_style() -> Style {
 
 /// Accent style for hint keys and breadcrumb text.
 pub fn accent_style() -> Style {
-    Style::default().fg(teal(active_preset())).add_modifier(Modifier::BOLD)
+    Style::default()
+        .fg(teal(active_preset()))
+        .add_modifier(Modifier::BOLD)
 }
 
 /// Streaming cursor / generation-in-progress indicator.
 pub fn streaming_style() -> Style {
-    Style::default().fg(teal(active_preset())).add_modifier(Modifier::BOLD)
+    Style::default()
+        .fg(teal(active_preset()))
+        .add_modifier(Modifier::BOLD)
 }
 
 /// The hex prefix for the ozone+ title.
@@ -281,16 +289,29 @@ mod tests {
 
     #[test]
     fn theme_preset_from_pref_str() {
-        assert_eq!(ThemePreset::from_pref_str("dark-mint"), ThemePreset::DarkMint);
-        assert_eq!(ThemePreset::from_pref_str("ozone-dark"), ThemePreset::OzoneDark);
-        assert_eq!(ThemePreset::from_pref_str("high-contrast"), ThemePreset::HighContrast);
+        assert_eq!(
+            ThemePreset::from_pref_str("dark-mint"),
+            ThemePreset::DarkMint
+        );
+        assert_eq!(
+            ThemePreset::from_pref_str("ozone-dark"),
+            ThemePreset::OzoneDark
+        );
+        assert_eq!(
+            ThemePreset::from_pref_str("high-contrast"),
+            ThemePreset::HighContrast
+        );
         assert_eq!(ThemePreset::from_pref_str("unknown"), ThemePreset::DarkMint);
         assert_eq!(ThemePreset::from_pref_str(""), ThemePreset::DarkMint);
     }
 
     #[test]
     fn theme_preset_serde_roundtrip() {
-        for preset in [ThemePreset::DarkMint, ThemePreset::OzoneDark, ThemePreset::HighContrast] {
+        for preset in [
+            ThemePreset::DarkMint,
+            ThemePreset::OzoneDark,
+            ThemePreset::HighContrast,
+        ] {
             let json = serde_json::to_string(&preset).unwrap();
             let back: ThemePreset = serde_json::from_str(&json).unwrap();
             assert_eq!(back, preset);
@@ -316,7 +337,11 @@ mod tests {
 
     #[test]
     fn accent_color_matches_teal() {
-        for preset in [ThemePreset::DarkMint, ThemePreset::OzoneDark, ThemePreset::HighContrast] {
+        for preset in [
+            ThemePreset::DarkMint,
+            ThemePreset::OzoneDark,
+            ThemePreset::HighContrast,
+        ] {
             assert_eq!(accent_color(preset), teal(preset));
         }
     }

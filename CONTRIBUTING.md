@@ -57,7 +57,12 @@ Build just one target:
 ```bash
 cargo build -p ozone            # base launcher only
 cargo build -p ozone-plus       # ozone+ binary only
+cargo build -p ozone-mcp-app    # ozone-mcp stdio binary only
 ```
+
+For front-door PTY smoke work, prefer `cargo build --workspace` or at least
+`cargo build -p ozone -p ozone-plus -p ozone-mcp-app` so `mock_user_tool` and
+`screenshot_tool` do not reuse stale `target/debug` binaries.
 
 The project uses stable Rust. No nightly features.
 

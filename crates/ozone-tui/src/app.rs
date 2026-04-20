@@ -73,7 +73,10 @@ pub enum EntryKind {
     /// Boolean toggle — Enter flips the value.
     Toggle(bool),
     /// Cycle through a list of options — Enter advances to the next.
-    Cycle { options: Vec<String>, current: usize },
+    Cycle {
+        options: Vec<String>,
+        current: usize,
+    },
 }
 
 impl EntryKind {
@@ -83,9 +86,7 @@ impl EntryKind {
         match self {
             EntryKind::ReadOnly => None,
             EntryKind::Toggle(v) => Some(v.to_string()),
-            EntryKind::Cycle { options, current } => {
-                options.get(*current).cloned()
-            }
+            EntryKind::Cycle { options, current } => options.get(*current).cloned(),
         }
     }
 
@@ -159,10 +160,7 @@ impl SettingsState {
     /// Display and Keybindings have built-in read-only entries; the editable
     /// Display rows and the Appearance / Launch / Backend / Model / Session
     /// entries come from `raw_entries`.
-    pub fn entries_for_category(
-        &self,
-        cat: &SettingsCategory,
-    ) -> Vec<(String, String, EntryKind)> {
+    pub fn entries_for_category(&self, cat: &SettingsCategory) -> Vec<(String, String, EntryKind)> {
         match cat {
             SettingsCategory::Display => {
                 let mut entries: Vec<(String, String, EntryKind)> = vec![
@@ -186,31 +184,15 @@ impl SettingsState {
                 entries
             }
             SettingsCategory::Keybindings => vec![
-                (
-                    "Move up".into(),
-                    "↑ / k".into(),
-                    EntryKind::ReadOnly,
-                ),
-                (
-                    "Move down".into(),
-                    "↓ / j".into(),
-                    EntryKind::ReadOnly,
-                ),
-                (
-                    "Select / open".into(),
-                    "Enter".into(),
-                    EntryKind::ReadOnly,
-                ),
+                ("Move up".into(), "↑ / k".into(), EntryKind::ReadOnly),
+                ("Move down".into(), "↓ / j".into(), EntryKind::ReadOnly),
+                ("Select / open".into(), "Enter".into(), EntryKind::ReadOnly),
                 (
                     "Back / cancel".into(),
                     "Esc / q".into(),
                     EntryKind::ReadOnly,
                 ),
-                (
-                    "Insert mode".into(),
-                    "i".into(),
-                    EntryKind::ReadOnly,
-                ),
+                ("Insert mode".into(), "i".into(), EntryKind::ReadOnly),
                 (
                     "Send message".into(),
                     "Enter (insert)".into(),
@@ -233,8 +215,7 @@ impl SettingsState {
                     .iter()
                     .filter(|e| e.category == cat_name)
                     .map(|e| {
-                        let val =
-                            e.kind.current_value().unwrap_or_else(|| e.value.clone());
+                        let val = e.kind.current_value().unwrap_or_else(|| e.value.clone());
                         (e.key.clone(), val, e.kind.clone())
                     })
                     .collect()
@@ -309,11 +290,8 @@ impl SettingsState {
         // (which indexes the *merged* visual list) maps to the correct position
         // inside `raw_entries`.
         let static_count = self.static_entry_count(cat);
-        let idx = match self.selected_entry.checked_sub(static_count) {
-            Some(i) => i,
-            // Selected entry is within the static rows — always read-only.
-            None => return None,
-        };
+        // Selected entry is within the static rows — always read-only.
+        let idx = self.selected_entry.checked_sub(static_count)?;
 
         let mut pos = 0usize;
         for entry in &mut self.raw_entries {
@@ -337,8 +315,8 @@ impl SettingsState {
     /// before the runtime-provided `raw_entries` for the given category.
     fn static_entry_count(&self, cat: &SettingsCategory) -> usize {
         match cat {
-            SettingsCategory::Display => 2,      // Color theme, Wide mode threshold
-            SettingsCategory::Keybindings => 8,   // all keybinding rows are static
+            SettingsCategory::Display => 2, // Color theme, Wide mode threshold
+            SettingsCategory::Keybindings => 8, // all keybinding rows are static
             _ => 0,
         }
     }
@@ -501,9 +479,14 @@ pub struct SessionListEntry {
 /// An item in the visible session list — either a folder header row or a session entry.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum VisibleSessionItem {
-    FolderHeader { name: String },
+    FolderHeader {
+        name: String,
+    },
     /// `visual_index` counts only Entry items (headers skipped), mapping `selected` to entries.
-    Entry { entry: SessionListEntry, visual_index: usize },
+    Entry {
+        entry: SessionListEntry,
+        visual_index: usize,
+    },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -598,19 +581,29 @@ impl SessionListState {
         let mut visual_index = 0usize;
 
         for (folder_name, entries) in &folders {
-            items.push(VisibleSessionItem::FolderHeader { name: folder_name.clone() });
+            items.push(VisibleSessionItem::FolderHeader {
+                name: folder_name.clone(),
+            });
             for entry in entries {
-                items.push(VisibleSessionItem::Entry { entry: entry.clone(), visual_index });
+                items.push(VisibleSessionItem::Entry {
+                    entry: entry.clone(),
+                    visual_index,
+                });
                 visual_index += 1;
             }
         }
 
         if !unfiled.is_empty() {
             if !folders.is_empty() {
-                items.push(VisibleSessionItem::FolderHeader { name: "[Unfiled]".to_string() });
+                items.push(VisibleSessionItem::FolderHeader {
+                    name: "[Unfiled]".to_string(),
+                });
             }
             for entry in unfiled {
-                items.push(VisibleSessionItem::Entry { entry, visual_index });
+                items.push(VisibleSessionItem::Entry {
+                    entry,
+                    visual_index,
+                });
                 visual_index += 1;
             }
         }
@@ -861,25 +854,15 @@ impl CharacterCreateState {
     }
 
     /// Populate form from an existing character for editing.
-    pub fn load_from_character(
-        &mut self,
-        card_id: String,
-        name: &str,
-        description: &str,
-        system_prompt: &str,
-        personality: &str,
-        scenario: &str,
-        greeting: &str,
-        example_dialogue: &str,
-    ) {
-        self.editing_card_id = Some(card_id);
-        self.name = DraftState::with_text(name);
-        self.description = DraftState::with_text(description);
-        self.system_prompt = DraftState::with_text(system_prompt);
-        self.personality = DraftState::with_text(personality);
-        self.scenario = DraftState::with_text(scenario);
-        self.greeting = DraftState::with_text(greeting);
-        self.example_dialogue = DraftState::with_text(example_dialogue);
+    pub fn load_from_character(&mut self, detail: &CharacterDetail) {
+        self.editing_card_id = Some(detail.card_id.clone());
+        self.name = DraftState::with_text(&detail.name);
+        self.description = DraftState::with_text(&detail.description);
+        self.system_prompt = DraftState::with_text(&detail.system_prompt);
+        self.personality = DraftState::with_text(&detail.personality);
+        self.scenario = DraftState::with_text(&detail.scenario);
+        self.greeting = DraftState::with_text(&detail.greeting);
+        self.example_dialogue = DraftState::with_text(&detail.example_dialogue);
         self.active_field = CharacterFormField::Name;
     }
 }
@@ -1253,12 +1236,20 @@ impl RuntimePhase {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeCommand {
-    SendDraft { prompt: String },
+    SendDraft {
+        prompt: String,
+    },
     CancelGeneration,
     BuildContextDryRun,
-    ToggleBookmark { message_id: String },
-    TogglePinnedMemory { message_id: String },
-    RunCommand { input: String },
+    ToggleBookmark {
+        message_id: String,
+    },
+    TogglePinnedMemory {
+        message_id: String,
+    },
+    RunCommand {
+        input: String,
+    },
     CreateCharacter {
         name: String,
         description: String,
@@ -1279,15 +1270,28 @@ pub enum RuntimeCommand {
         example_dialogue: String,
     },
     /// Load a character's full details and enter edit mode.
-    EditCharacter { card_id: String },
-    ImportCharacter { path: String },
+    EditCharacter {
+        card_id: String,
+    },
+    ImportCharacter {
+        path: String,
+    },
     /// A user-editable preference was changed from the settings screen.
     /// `pref_key` is the JSON field name; `value` is the new serialised value.
-    PrefChanged { pref_key: String, value: String },
+    PrefChanged {
+        pref_key: String,
+        value: String,
+    },
     /// Assign or remove the folder for a session.
-    SetSessionFolder { session_id: String, folder: Option<String> },
+    SetSessionFolder {
+        session_id: String,
+        folder: Option<String>,
+    },
     /// Switch to a different session — load its transcript, branches, and metadata.
-    OpenSession { session_id: String, session_name: String },
+    OpenSession {
+        session_id: String,
+        session_name: String,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1619,8 +1623,7 @@ impl ShellState {
                     lines
                 });
                 self.textarea.set_cursor_line_style(Style::default());
-                self.textarea
-                    .set_block(ratatui::widgets::Block::default());
+                self.textarea.set_block(ratatui::widgets::Block::default());
                 self.textarea
                     .set_style(Style::default().fg(crate::theme::CYAN));
                 self.textarea.set_cursor_style(
@@ -1684,8 +1687,7 @@ impl ShellState {
         };
         self.textarea = TextArea::new(lines);
         self.textarea.set_cursor_line_style(Style::default());
-        self.textarea
-            .set_block(ratatui::widgets::Block::default());
+        self.textarea.set_block(ratatui::widgets::Block::default());
         self.textarea
             .set_style(Style::default().fg(crate::theme::CYAN));
         self.textarea.set_cursor_style(
@@ -1862,28 +1864,30 @@ impl ShellState {
                         let name = self.folder_picker.new_folder_input.trim().to_owned();
                         self.folder_picker.close();
                         if !name.is_empty() {
-                            let session_id_opt =
-                                self.session_list.selected_entry().map(|e| e.session_id.clone());
+                            let session_id_opt = self
+                                .session_list
+                                .selected_entry()
+                                .map(|e| e.session_id.clone());
                             if let Some(session_id) = session_id_opt {
-                                self.runtime_commands.push(RuntimeCommand::SetSessionFolder {
-                                    session_id,
-                                    folder: Some(name),
-                                });
+                                self.runtime_commands
+                                    .push(RuntimeCommand::SetSessionFolder {
+                                        session_id,
+                                        folder: Some(name),
+                                    });
                             }
                         }
                     } else if self.folder_picker.selected == self.folder_picker.new_folder_index() {
                         self.folder_picker.creating = true;
                     } else {
-                        let folder =
-                            self.folder_picker.selected_folder().map(|s| s.to_owned());
+                        let folder = self.folder_picker.selected_folder().map(|s| s.to_owned());
                         self.folder_picker.close();
-                        let session_id_opt =
-                            self.session_list.selected_entry().map(|e| e.session_id.clone());
+                        let session_id_opt = self
+                            .session_list
+                            .selected_entry()
+                            .map(|e| e.session_id.clone());
                         if let Some(session_id) = session_id_opt {
-                            self.runtime_commands.push(RuntimeCommand::SetSessionFolder {
-                                session_id,
-                                folder,
-                            });
+                            self.runtime_commands
+                                .push(RuntimeCommand::SetSessionFolder { session_id, folder });
                         }
                     }
                 }
@@ -1908,13 +1912,13 @@ impl ShellState {
                     _ => dispatch_menu_key(key, false),
                 }
             }
-            ScreenState::CharacterCreate | ScreenState::CharacterEdit | ScreenState::CharacterImport => dispatch_form_key(key),
+            ScreenState::CharacterCreate
+            | ScreenState::CharacterEdit
+            | ScreenState::CharacterImport => dispatch_form_key(key),
             ScreenState::SessionList => {
                 // Intercept f/F for folder management before normal menu dispatch
                 match key.code {
-                    KeyCode::Char('f')
-                        if !key.modifiers.contains(KeyModifiers::SHIFT) =>
-                    {
+                    KeyCode::Char('f') if !key.modifiers.contains(KeyModifiers::SHIFT) => {
                         if self.session_list.selected_entry().is_some() {
                             let folders: Vec<String> = self
                                 .session_list
@@ -1928,13 +1932,16 @@ impl ShellState {
                     }
                     KeyCode::Char('F') => {
                         // Shift+F: immediately remove from folder
-                        let session_id_opt =
-                            self.session_list.selected_entry().map(|e| e.session_id.clone());
+                        let session_id_opt = self
+                            .session_list
+                            .selected_entry()
+                            .map(|e| e.session_id.clone());
                         if let Some(session_id) = session_id_opt {
-                            self.runtime_commands.push(RuntimeCommand::SetSessionFolder {
-                                session_id,
-                                folder: None,
-                            });
+                            self.runtime_commands
+                                .push(RuntimeCommand::SetSessionFolder {
+                                    session_id,
+                                    folder: None,
+                                });
                         }
                         KeyAction::Noop
                     }
@@ -2158,7 +2165,10 @@ impl ShellState {
                         let session_id = entry.session_id.clone();
                         let session_name = entry.name.clone();
                         self.status_line = Some(format!("Opening: {}", session_name));
-                        self.runtime_commands.push(RuntimeCommand::OpenSession { session_id, session_name });
+                        self.runtime_commands.push(RuntimeCommand::OpenSession {
+                            session_id,
+                            session_name,
+                        });
                         self.enter_conversation();
                     }
                 }
@@ -2231,7 +2241,8 @@ impl ShellState {
             KeyAction::CharacterEditSelected => {
                 if let Some(entry) = self.character_list.selected_entry() {
                     let card_id = entry.card_id.clone();
-                    self.runtime_commands.push(RuntimeCommand::EditCharacter { card_id });
+                    self.runtime_commands
+                        .push(RuntimeCommand::EditCharacter { card_id });
                 }
             }
             KeyAction::CharacterImportPrompt => {
@@ -2275,7 +2286,10 @@ impl ShellState {
                 _ => {}
             },
             KeyAction::FormToggleField => {
-                if matches!(self.screen, ScreenState::CharacterCreate | ScreenState::CharacterEdit) {
+                if matches!(
+                    self.screen,
+                    ScreenState::CharacterCreate | ScreenState::CharacterEdit
+                ) {
                     self.character_create.toggle_field();
                 }
             }
@@ -2288,11 +2302,21 @@ impl ShellState {
                         self.runtime_commands.push(RuntimeCommand::CreateCharacter {
                             name,
                             description: self.character_create.description.text.trim().to_string(),
-                            system_prompt: self.character_create.system_prompt.text.trim().to_string(),
+                            system_prompt: self
+                                .character_create
+                                .system_prompt
+                                .text
+                                .trim()
+                                .to_string(),
                             personality: self.character_create.personality.text.trim().to_string(),
                             scenario: self.character_create.scenario.text.trim().to_string(),
                             greeting: self.character_create.greeting.text.trim().to_string(),
-                            example_dialogue: self.character_create.example_dialogue.text.trim().to_string(),
+                            example_dialogue: self
+                                .character_create
+                                .example_dialogue
+                                .text
+                                .trim()
+                                .to_string(),
                         });
                         self.character_create = CharacterCreateState::default();
                         self.screen = ScreenState::CharacterManager;
@@ -2308,11 +2332,21 @@ impl ShellState {
                             card_id,
                             name,
                             description: self.character_create.description.text.trim().to_string(),
-                            system_prompt: self.character_create.system_prompt.text.trim().to_string(),
+                            system_prompt: self
+                                .character_create
+                                .system_prompt
+                                .text
+                                .trim()
+                                .to_string(),
                             personality: self.character_create.personality.text.trim().to_string(),
                             scenario: self.character_create.scenario.text.trim().to_string(),
                             greeting: self.character_create.greeting.text.trim().to_string(),
-                            example_dialogue: self.character_create.example_dialogue.text.trim().to_string(),
+                            example_dialogue: self
+                                .character_create
+                                .example_dialogue
+                                .text
+                                .trim()
+                                .to_string(),
                         });
                         self.character_create = CharacterCreateState::default();
                         self.screen = ScreenState::CharacterManager;
@@ -2331,7 +2365,9 @@ impl ShellState {
                 _ => {}
             },
             KeyAction::FormCancel => match self.screen {
-                ScreenState::CharacterCreate | ScreenState::CharacterEdit | ScreenState::CharacterImport => {
+                ScreenState::CharacterCreate
+                | ScreenState::CharacterEdit
+                | ScreenState::CharacterImport => {
                     self.character_create = CharacterCreateState::default();
                     self.screen = ScreenState::CharacterManager;
                 }
@@ -3978,14 +4014,20 @@ mod tests {
 
     #[test]
     fn settings_state_nav_up_wraps_category_list() {
-        let mut s = super::SettingsState { selected_category: 0, ..Default::default() };
+        let mut s = super::SettingsState {
+            selected_category: 0,
+            ..Default::default()
+        };
         s.nav_up();
         assert_eq!(s.selected_category, s.categories.len() - 1);
     }
 
     #[test]
     fn settings_state_nav_down_wraps_entry_list() {
-        let mut s = super::SettingsState { selected_category: 3, ..Default::default() };
+        let mut s = super::SettingsState {
+            selected_category: 3,
+            ..Default::default()
+        };
         s.enter();
         let count = s
             .entries_for_category(&super::SettingsCategory::Keybindings)
@@ -3997,7 +4039,10 @@ mod tests {
 
     #[test]
     fn settings_state_nav_up_wraps_entry_list() {
-        let mut s = super::SettingsState { selected_category: 3, ..Default::default() };
+        let mut s = super::SettingsState {
+            selected_category: 3,
+            ..Default::default()
+        };
         s.enter();
         s.selected_entry = 0;
         s.nav_up();
@@ -4232,7 +4277,10 @@ mod tests {
     fn settings_category_navigation_never_panics_on_oob_index() {
         use super::{SettingsCategory, SettingsState};
 
-        let state = SettingsState { selected_category: 999, ..Default::default() };
+        let state = SettingsState {
+            selected_category: 999,
+            ..Default::default()
+        };
         // Must not panic — falls back to categories[0]
         let cat = state.current_category();
         assert_eq!(cat, &SettingsCategory::Backend);
@@ -4493,11 +4541,17 @@ mod tests {
 
         // Index 0 = static "Color theme" → must be no-op
         s.selected_entry = 0;
-        assert!(s.activate_entry().is_none(), "static Color theme must be no-op");
+        assert!(
+            s.activate_entry().is_none(),
+            "static Color theme must be no-op"
+        );
 
         // Index 1 = static "Wide mode threshold" → must be no-op
         s.selected_entry = 1;
-        assert!(s.activate_entry().is_none(), "static Wide mode must be no-op");
+        assert!(
+            s.activate_entry().is_none(),
+            "static Wide mode must be no-op"
+        );
 
         // Index 2 = runtime "Timestamp style" → must emit PrefChanged
         s.selected_entry = 2;
@@ -4522,26 +4576,20 @@ mod tests {
 
     #[test]
     fn selecting_session_emits_open_session_command() {
-        let session_id = ozone_core::session::SessionId::parse(
-            "123e4567-e89b-12d3-a456-426614174000",
-        )
-        .unwrap();
-        let mut app = super::ShellState::new(super::SessionContext::new(
-            session_id,
-            "Original Session",
-        ));
+        let session_id =
+            ozone_core::session::SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap();
+        let mut app =
+            super::ShellState::new(super::SessionContext::new(session_id, "Original Session"));
 
         // Populate session list and navigate to it.
-        app.session_list.entries = vec![
-            super::SessionListEntry {
-                session_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into(),
-                name: "Test Session Alpha".into(),
-                character_name: None,
-                message_count: 5,
-                last_active: None,
-                folder: None,
-            },
-        ];
+        app.session_list.entries = vec![super::SessionListEntry {
+            session_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into(),
+            name: "Test Session Alpha".into(),
+            character_name: None,
+            message_count: 5,
+            last_active: None,
+            folder: None,
+        }];
         app.screen = super::ScreenState::SessionList;
         app.session_list.selected = 0;
 

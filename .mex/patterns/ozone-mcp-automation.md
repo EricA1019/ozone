@@ -36,6 +36,7 @@ last_updated: 2026-04-16
    - use real `target/debug/ozone` / `target/debug/ozone-plus` binaries when available
    - drive them with PTY keys/text only after setup
    - assert against recent-screen terminal markers, not repo internals
+   - let `mock_user_tool` / `screenshot_tool` auto-create the recommended sandbox when the default capturable-screen setup is enough; pass `sandboxId` only when a test needs custom persistent state across calls
 6. Validate both layers:
    - cargo compile/tests for the crate
    - at least one real stdio MCP smoke (`initialize`, `tools/list`, one or more `tools/call` flows)
@@ -49,6 +50,7 @@ last_updated: 2026-04-16
 - PTY-driven launcher smoke is noisy and partial by nature; report concrete findings like launcher invocation, created sessions, and captured tail text instead of pretending it is a perfect UI oracle.
 - A sandboxed HOME can break cargo/rustup if you do not preserve the real toolchain env vars.
 - A sandboxed HOME also hides user-site Python modules from the VTE screenshot helper; if `screenshot_tool` reports missing `pyte` or Pillow in temp-XDG runs, export the real site-packages path through `PYTHONPATH` or install those modules system-wide.
+- The MCP library crate (`crates/ozone-mcp`) is not the executable that PTY flows launch; after changing that crate, rebuild `-p ozone-mcp-app` or the workspace so `target/debug/ozone-mcp` actually refreshes.
 - For front-door journeys, matching against the entire accumulated capture can create false positives; prefer a recent-screen window or step-local view so old launcher text does not satisfy a later ozone+ assertion.
 - `cargo run` is less reliable than directly launching the built binary for PTY-style mock-user flows; prefer `target/debug/...` when it exists.
 

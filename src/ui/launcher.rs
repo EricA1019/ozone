@@ -214,17 +214,12 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
 
     // Action 2 label/desc adapts to the side_by_side_monitor preference.
     let (open_ozone_label, open_ozone_desc) = if app.prefs.side_by_side_monitor {
-        (
-            "Open ozone+ [new window]",
-            "New terminal (side-by-side on)",
-        )
+        ("Open ozone+ [new window]", "New terminal (side-by-side on)")
     } else {
         ("Open ozone+", "Direct shell (no model needed)")
     };
 
-    let mut actions: Vec<(&str, &str)> = vec![
-        ("Launch", "Start configured backend & frontend"),
-    ];
+    let mut actions: Vec<(&str, &str)> = vec![("Launch", "Start configured backend & frontend")];
     #[cfg(feature = "profiling-ui")]
     actions.push(("Profile", "Auto-tune GPU layers for a model"));
 

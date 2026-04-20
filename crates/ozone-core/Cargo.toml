@@ -1,6 +1,6 @@
 [package]
 name = "ozone-core"
-version = "0.4.7-alpha"
+version = "0.4.8-alpha"
 edition = "2021"
 publish = false
 description = "Shared core foundations for the Ozone product family"

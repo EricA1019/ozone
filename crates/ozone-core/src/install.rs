@@ -119,16 +119,23 @@ fn pending_install_update(binary_name: &str) -> io::Result<Option<PendingInstall
     debug(&format!("repo_root={}", repo_root.display()));
     let sync_script = repo_root.join("contrib/sync-local-install.sh");
     if !sync_script.is_file() {
-        debug(&format!("skipped: sync script not found at {}", sync_script.display()));
+        debug(&format!(
+            "skipped: sync script not found at {}",
+            sync_script.display()
+        ));
         return Ok(None);
     }
 
-    let Some(source_artifact) = stale_release_artifact(&current_exe, &repo_root, binary_name, &home_dir)?
+    let Some(source_artifact) =
+        stale_release_artifact(&current_exe, &repo_root, binary_name, &home_dir)?
     else {
         debug("skipped: installed binary matches release artifact (checksums equal)");
         return Ok(None);
     };
-    debug(&format!("stale! source_artifact={}", source_artifact.display()));
+    debug(&format!(
+        "stale! source_artifact={}",
+        source_artifact.display()
+    ));
 
     Ok(Some(PendingInstallUpdate {
         repo_root,
@@ -214,12 +221,12 @@ fn sha256_file(path: &Path) -> io::Result<[u8; 32]> {
 
 fn env_truthy(name: &str) -> bool {
     matches!(
-        env::var(name),
-        Ok(value)
-            if value == "1"
-                || value.eq_ignore_ascii_case("true")
-                || value.eq_ignore_ascii_case("yes")
-        )
+    env::var(name),
+    Ok(value)
+        if value == "1"
+            || value.eq_ignore_ascii_case("true")
+            || value.eq_ignore_ascii_case("yes")
+    )
 }
 
 fn answer_is_yes(answer: &str) -> bool {

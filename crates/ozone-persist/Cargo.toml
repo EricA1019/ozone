@@ -1,6 +1,6 @@
 [package]
 name = "ozone-persist"
-version = "0.4.7-alpha"
+version = "0.4.8-alpha"
 edition = "2021"
 publish = false
 description = "SQLite persistence layer for sessions, messages, memories, and search in ozone+"

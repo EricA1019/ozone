@@ -190,7 +190,17 @@ impl SqliteRepository {
                     personality = ?5, scenario = ?6, greeting = ?7,
                     example_dialogue = ?8, updated_at = ?9
               WHERE card_id = ?1",
-            params![card_id, name, description, system_prompt, personality, scenario, greeting, example_dialogue, now],
+            params![
+                card_id,
+                name,
+                description,
+                system_prompt,
+                personality,
+                scenario,
+                greeting,
+                example_dialogue,
+                now
+            ],
         )?;
 
         if affected == 0 {

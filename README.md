@@ -8,7 +8,7 @@
 
 **⬡ Use AI smarter. Not bigger.**
 
-![Version](https://img.shields.io/badge/v0.4.7--alpha-2daf82?style=for-the-badge)
+![Version](https://img.shields.io/badge/v0.4.8--alpha-2daf82?style=for-the-badge)
 ![License](https://img.shields.io/badge/MIT-7c3aed?style=for-the-badge)
 ![Local-first](https://img.shields.io/badge/local--first-06b6d4?style=for-the-badge)
 
@@ -197,6 +197,11 @@ ozone-mcp
 cargo run -p ozone-mcp-app --bin ozone-mcp
 ```
 
+After changing `crates/ozone-mcp`, rebuild the real stdio entrypoint with
+`cargo build -p ozone-mcp-app` (or `cargo build --workspace` when your PTY
+flows also depend on fresh `ozone` / `ozone-plus` binaries). The front-door
+smoke helpers prefer `target/debug/*` artifacts when they already exist.
+
 First-cut tools include:
 
 - workspace/repo ops: `workspace_status`, `cargo_tool`, `catalog_list`, `preferences_get`
@@ -206,6 +211,11 @@ First-cut tools include:
 The server prefers direct crate APIs for persistence-heavy session work and uses explicit subprocess wrappers only for seams that still live in the end-user CLIs, such as runtime-backed `send`, `search`, and launcher PTY smoke flows.
 
 `mock_user_tool` is the front-door layer: it launches the real terminal binaries in a PTY and plays named scripted journeys like a user would, using only keys/text plus visible terminal markers instead of repo/API back doors.
+
+For capturable screen targets and the built-in launcher/ozone+ journeys, both
+`mock_user_tool` and `screenshot_tool` can auto-create the recommended temp-XDG
+sandbox when `sandboxId` is omitted. Pass an explicit `sandboxId` only when you
+need to keep custom sandbox state across multiple calls.
 
 ---
 
@@ -393,7 +403,7 @@ ozone-plus export <session-id> --format markdown   # Markdown transcript
 
 ### Settings
 
-The in-TUI Settings screen (accessible from the ozone launcher main menu) has **interactive entries** as of v0.4.7-alpha:
+The in-TUI Settings screen (accessible from the ozone launcher main menu) has **interactive entries** as of v0.4.8-alpha:
 
 - **Appearance** — cycle through theme presets: *Dark Mint* (default, `#2DAF82`), *Ozone Dark*, *High Contrast*
 - **Launch** — toggle side-by-side monitor mode; toggle inspector-on-start

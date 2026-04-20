@@ -1680,9 +1680,7 @@ impl SessionRuntime for Phase1dRuntime {
             "side_by_side_monitor" => {
                 prefs.side_by_side_monitor = value.parse::<bool>().unwrap_or(false)
             }
-            "show_inspector" => {
-                prefs.show_inspector = value.parse::<bool>().unwrap_or(false)
-            }
+            "show_inspector" => prefs.show_inspector = value.parse::<bool>().unwrap_or(false),
             _ => {}
         }
         crate::save_prefs_sync(&prefs)
@@ -1718,24 +1716,18 @@ impl SessionRuntime for Phase1dRuntime {
 
     fn create_character(
         &mut self,
-        name: String,
-        description: String,
-        system_prompt: String,
-        personality: String,
-        scenario: String,
-        greeting: String,
-        example_dialogue: String,
+        detail: ozone_tui::CharacterDetail,
     ) -> Result<ozone_tui::CharacterEntry, Self::Error> {
         let stored = self
             .repo
             .create_character_full(
-                &name,
-                &description,
-                &system_prompt,
-                &personality,
-                &scenario,
-                &greeting,
-                &example_dialogue,
+                &detail.name,
+                &detail.description,
+                &detail.system_prompt,
+                &detail.personality,
+                &detail.scenario,
+                &detail.greeting,
+                &detail.example_dialogue,
             )
             .map_err(|e| e.to_string())?;
         Ok(ozone_tui::CharacterEntry {
@@ -1748,26 +1740,19 @@ impl SessionRuntime for Phase1dRuntime {
 
     fn update_character(
         &mut self,
-        card_id: &str,
-        name: String,
-        description: String,
-        system_prompt: String,
-        personality: String,
-        scenario: String,
-        greeting: String,
-        example_dialogue: String,
+        detail: ozone_tui::CharacterDetail,
     ) -> Result<ozone_tui::CharacterEntry, Self::Error> {
         let stored = self
             .repo
             .update_character(
-                card_id,
-                &name,
-                &description,
-                &system_prompt,
-                &personality,
-                &scenario,
-                &greeting,
-                &example_dialogue,
+                &detail.card_id,
+                &detail.name,
+                &detail.description,
+                &detail.system_prompt,
+                &detail.personality,
+                &detail.scenario,
+                &detail.greeting,
+                &detail.example_dialogue,
             )
             .map_err(|e| e.to_string())?;
         Ok(ozone_tui::CharacterEntry {
@@ -1823,10 +1808,7 @@ impl SessionRuntime for Phase1dRuntime {
         })
     }
 
-    fn open_session(
-        &mut self,
-        session_id: &str,
-    ) -> Result<Option<TuiBootstrap>, Self::Error> {
+    fn open_session(&mut self, session_id: &str) -> Result<Option<TuiBootstrap>, Self::Error> {
         let new_sid = SessionId::parse(session_id).map_err(|e| e.to_string())?;
         if new_sid == self.session_id {
             // Already on this session — just reload.

@@ -101,8 +101,7 @@ impl SessionSummary {
     /// Returns the folder this session belongs to, if any.
     /// Folder membership is stored as a `folder:<name>` tag.
     pub fn folder(&self) -> Option<&str> {
-        self.tags.iter()
-            .find_map(|tag| tag.strip_prefix("folder:"))
+        self.tags.iter().find_map(|tag| tag.strip_prefix("folder:"))
     }
 
     /// Set or remove the folder for this session.
@@ -203,23 +202,38 @@ mod tests {
 
     #[test]
     fn folder_returns_none_when_no_folder_tag() {
-        let s = SessionSummary::new(SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap(), "test", 0);
+        let s = SessionSummary::new(
+            SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap(),
+            "test",
+            0,
+        );
         assert_eq!(s.folder(), None);
     }
 
     #[test]
     fn set_folder_adds_and_replaces_folder_tag() {
-        let mut s = SessionSummary::new(SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap(), "test", 0);
+        let mut s = SessionSummary::new(
+            SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap(),
+            "test",
+            0,
+        );
         s.set_folder(Some("Work"));
         assert_eq!(s.folder(), Some("Work"));
         s.set_folder(Some("Personal"));
         assert_eq!(s.folder(), Some("Personal"));
-        assert_eq!(s.tags.iter().filter(|t| t.starts_with("folder:")).count(), 1);
+        assert_eq!(
+            s.tags.iter().filter(|t| t.starts_with("folder:")).count(),
+            1
+        );
     }
 
     #[test]
     fn set_folder_none_removes_folder_tag() {
-        let mut s = SessionSummary::new(SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap(), "test", 0);
+        let mut s = SessionSummary::new(
+            SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap(),
+            "test",
+            0,
+        );
         s.set_folder(Some("Work"));
         s.set_folder(None);
         assert_eq!(s.folder(), None);

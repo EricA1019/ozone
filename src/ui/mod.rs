@@ -1,16 +1,6 @@
 use std::io;
 use std::time::{Duration, Instant};
 
-use anyhow::Result;
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
-    execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
-};
-use ratatui::{backend::CrosstermBackend, widgets::Clear, Terminal};
-use serde::{Deserialize, Serialize};
-#[cfg(feature = "profiling-ui")]
-use tokio::sync::mpsc::{error::TryRecvError, UnboundedReceiver};
 use crate::catalog::CatalogRecord;
 use crate::hardware::HardwareProfile;
 use crate::planner::LaunchPlan;
@@ -21,14 +11,24 @@ use crate::profiling::{
     self, ProfilingAction, ProfilingAdvisory, ProfilingFailureReport, ProfilingSuccessReport,
     WorkflowEvent, WorkflowRequest,
 };
+use anyhow::Result;
+use crossterm::{
+    event::{self, Event, KeyCode, KeyEventKind},
+    execute,
+    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+};
+use ratatui::{backend::CrosstermBackend, widgets::Clear, Terminal};
+use serde::{Deserialize, Serialize};
+#[cfg(feature = "profiling-ui")]
+use tokio::sync::mpsc::{error::TryRecvError, UnboundedReceiver};
 #[cfg(feature = "profiling-ui")]
 use tokio_util::sync::CancellationToken;
 
 pub mod launcher;
 pub mod monitor;
 pub mod splash;
-pub mod tier_picker;
 pub mod tier_install;
+pub mod tier_picker;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
@@ -605,10 +605,7 @@ pub async fn run_launcher(
                 {
                     let tier = *tier;
                     app.tier_picker.phase = match result {
-                        Ok(path) => tier_picker::TierPickerPhase::InstallDone {
-                            tier,
-                            path,
-                        },
+                        Ok(path) => tier_picker::TierPickerPhase::InstallDone { tier, path },
                         Err(msg) => tier_picker::TierPickerPhase::InstallError { _tier: tier, msg },
                     };
                 }
@@ -978,11 +975,16 @@ pub async fn run_launcher(
                         KeyCode::Down => {
                             // Build the same action list the renderer builds so
                             // max_index stays in sync with what is on screen.
-                            let is_lite = matches!(app.prefs.preferred_tier, Some(crate::prefs::Tier::Lite));
+                            let is_lite =
+                                matches!(app.prefs.preferred_tier, Some(crate::prefs::Tier::Lite));
                             let mut count: usize = 1; // Launch
                             #[cfg(feature = "profiling-ui")]
-                            { count += 1; } // Profile
-                            if !is_lite { count += 2; } // Open ozone+, Launch ozone+ sbs
+                            {
+                                count += 1;
+                            } // Profile
+                            if !is_lite {
+                                count += 2;
+                            } // Open ozone+, Launch ozone+ sbs
                             count += 4; // Settings, Clear GPU, Monitor, Exit
                             if app.selected_action < count - 1 {
                                 app.selected_action += 1;
@@ -991,7 +993,8 @@ pub async fn run_launcher(
                         KeyCode::Enter => {
                             // Build a slot-lookup that maps the visible action
                             // index to the canonical action_slot used below.
-                            let is_lite = matches!(app.prefs.preferred_tier, Some(crate::prefs::Tier::Lite));
+                            let is_lite =
+                                matches!(app.prefs.preferred_tier, Some(crate::prefs::Tier::Lite));
                             let mut slots: Vec<usize> = vec![0]; // Launch
                             #[cfg(feature = "profiling-ui")]
                             slots.push(1); // Profile
@@ -1131,7 +1134,8 @@ pub async fn run_launcher(
                             }
                             7 => open_exit_confirm(&mut app),
                             _ => {}
-                        }},
+                        }
+                        }
                         _ => {}
                     },
                     Screen::ExitConfirm => match key.code {

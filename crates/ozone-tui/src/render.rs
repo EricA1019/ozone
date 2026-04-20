@@ -393,7 +393,9 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
             entries
         },
         empty_state: "⬡ Start a conversation — press i to enter insert mode".into(),
-        hint: "j/k navigate · b bookmark · Ctrl+K pin · Tab focus · i insert · I inspector · ? help".into(),
+        hint:
+            "j/k navigate · b bookmark · Ctrl+K pin · Tab focus · i insert · I inspector · ? help"
+                .into(),
         tick_count: state.tick_count,
     };
 
@@ -445,14 +447,17 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         None
     };
 
-    let model_info = state.active_launch_plan.as_ref().map(|plan| ModelInfoDisplay {
-        estimated_vram_mb: plan.estimated_vram_mb,
-        estimated_ram_mb: plan.estimated_ram_mb,
-        gpu_layers: plan.gpu_layers_display(),
-        cpu_layers: plan.cpu_layers,
-        mode_label: plan.mode.display_label().to_string(),
-        source_label: plan.layer_source_label.clone(),
-    });
+    let model_info = state
+        .active_launch_plan
+        .as_ref()
+        .map(|plan| ModelInfoDisplay {
+            estimated_vram_mb: plan.estimated_vram_mb,
+            estimated_ram_mb: plan.estimated_ram_mb,
+            gpu_layers: plan.gpu_layers_display(),
+            cpu_layers: plan.cpu_layers,
+            mode_label: plan.mode.display_label().to_string(),
+            source_label: plan.layer_source_label.clone(),
+        });
 
     let vram_hint = if matches!(layout.mode, LayoutMode::Compact) {
         state.active_launch_plan.as_ref().map(|plan| {
@@ -516,29 +521,32 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
 
     let session_list = if state.screen == ScreenState::SessionList {
         let grouped = state.session_list.grouped_visible_items();
-        let has_headers = grouped.iter().any(|i| matches!(i, VisibleSessionItem::FolderHeader { .. }));
+        let has_headers = grouped
+            .iter()
+            .any(|i| matches!(i, VisibleSessionItem::FolderHeader { .. }));
         let items = grouped
             .into_iter()
             .map(|item| match item {
                 VisibleSessionItem::FolderHeader { name } => {
                     SessionListItemRenderModel::Header { name }
                 }
-                VisibleSessionItem::Entry { entry, visual_index } => {
-                    SessionListItemRenderModel::Entry(SessionListEntryRenderModel {
-                        name: entry.name.clone(),
-                        character: entry
-                            .character_name
-                            .clone()
-                            .unwrap_or_else(|| "\u{2014}".into()),
-                        message_count: format!("{} msgs", entry.message_count),
-                        last_active: entry
-                            .last_active
-                            .clone()
-                            .unwrap_or_else(|| "\u{2014}".into()),
-                        selected: visual_index == state.session_list.selected,
-                        indented: has_headers,
-                    })
-                }
+                VisibleSessionItem::Entry {
+                    entry,
+                    visual_index,
+                } => SessionListItemRenderModel::Entry(SessionListEntryRenderModel {
+                    name: entry.name.clone(),
+                    character: entry
+                        .character_name
+                        .clone()
+                        .unwrap_or_else(|| "\u{2014}".into()),
+                    message_count: format!("{} msgs", entry.message_count),
+                    last_active: entry
+                        .last_active
+                        .clone()
+                        .unwrap_or_else(|| "\u{2014}".into()),
+                    selected: visual_index == state.session_list.selected,
+                    indented: has_headers,
+                }),
             })
             .collect();
         Some(SessionListRenderModel {
@@ -1349,18 +1357,13 @@ fn render_composer(
             let hint_height: u16 = 2; // blank line + hint
             let ta_height = inner.height.saturating_sub(hint_height);
             if ta_height > 0 {
-                let ta_area =
-                    Rect::new(inner.x, inner.y, inner.width, ta_height);
+                let ta_area = Rect::new(inner.x, inner.y, inner.width, ta_height);
                 frame.render_widget(ta, ta_area);
 
                 // Hint line
                 if inner.height > ta_height {
-                    let hint_area = Rect::new(
-                        inner.x,
-                        inner.y + ta_height,
-                        inner.width,
-                        hint_height,
-                    );
+                    let hint_area =
+                        Rect::new(inner.x, inner.y + ta_height, inner.width, hint_height);
                     let hint_lines = vec![
                         Line::default(),
                         Line::from(Span::styled(model.hint.clone(), theme::dim_style())),
@@ -1504,10 +1507,7 @@ fn render_status(frame: &mut Frame, pane: &PaneLayout, model: &StatusPaneModel, 
 
     if let Some(vram) = model.vram_hint.as_deref() {
         let hint_width = vram.len() as u16 + 5; // "  ···  " (5) + vram text
-        let current_width: u16 = spans
-            .iter()
-            .map(|s| s.content.chars().count() as u16)
-            .sum();
+        let current_width: u16 = spans.iter().map(|s| s.content.chars().count() as u16).sum();
         if current_width + hint_width < pane.area.width {
             spans.push(Span::styled("  ···  ", theme::muted_style()));
             spans.push(Span::styled(vram.to_string(), theme::highlight_style()));
@@ -1878,7 +1878,10 @@ fn render_session_list(frame: &mut Frame, pane: &PaneLayout, model: &SessionList
     if model.loading {
         let mut lines = vec![
             Line::default(),
-            Line::from(Span::styled("  Loading sessions\u{2026}", theme::dim_style())),
+            Line::from(Span::styled(
+                "  Loading sessions\u{2026}",
+                theme::dim_style(),
+            )),
         ];
         lines.push(Line::default());
         lines.push(Line::from(Span::styled(
@@ -1886,7 +1889,9 @@ fn render_session_list(frame: &mut Frame, pane: &PaneLayout, model: &SessionList
             theme::dim_style(),
         )));
         frame.render_widget(
-            Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+            Paragraph::new(lines)
+                .block(block)
+                .wrap(Wrap { trim: false }),
             area,
         );
         return;
@@ -1908,7 +1913,9 @@ fn render_session_list(frame: &mut Frame, pane: &PaneLayout, model: &SessionList
             )),
         ];
         frame.render_widget(
-            Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+            Paragraph::new(lines)
+                .block(block)
+                .wrap(Wrap { trim: false }),
             area,
         );
         return;
@@ -1980,7 +1987,11 @@ fn render_session_list(frame: &mut Frame, pane: &PaneLayout, model: &SessionList
         x: inner.x,
         y: inner.y + header_area.height + list_height,
         width: inner.width,
-        height: hint_height.min(inner.height.saturating_sub(header_area.height + list_height)),
+        height: hint_height.min(
+            inner
+                .height
+                .saturating_sub(header_area.height + list_height),
+        ),
     };
 
     frame.render_widget(block, area);
@@ -2000,10 +2011,7 @@ fn render_session_list(frame: &mut Frame, pane: &PaneLayout, model: &SessionList
                         format!("{} ", name),
                         theme::accent_style().add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(
-                        "\u{2500}".repeat(40),
-                        theme::muted_style(),
-                    ),
+                    Span::styled("\u{2500}".repeat(40), theme::muted_style()),
                 ]);
                 ListItem::new(line)
             }
@@ -2075,11 +2083,13 @@ fn render_session_list(frame: &mut Frame, pane: &PaneLayout, model: &SessionList
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))
             .end_symbol(Some("↓"));
-        let mut sb_state = ScrollbarState::new(total)
-            .position(sel_list_idx.unwrap_or(0));
+        let mut sb_state = ScrollbarState::new(total).position(sel_list_idx.unwrap_or(0));
         frame.render_stateful_widget(
             scrollbar,
-            list_area.inner(Margin { vertical: 0, horizontal: 0 }),
+            list_area.inner(Margin {
+                vertical: 0,
+                horizontal: 0,
+            }),
             &mut sb_state,
         );
     }
@@ -2155,7 +2165,11 @@ fn render_folder_picker(frame: &mut Frame, area: Rect, model: &FolderPickerRende
             ),
         ]));
     } else {
-        let prefix = if model.selected == new_idx { "● " } else { "  " };
+        let prefix = if model.selected == new_idx {
+            "● "
+        } else {
+            "  "
+        };
         let sty = if model.selected == new_idx {
             theme::accent_style()
         } else {
@@ -2261,9 +2275,7 @@ fn render_character_list(frame: &mut Frame, pane: &PaneLayout, model: &Character
         0
     };
 
-    let list_height = inner
-        .height
-        .saturating_sub(header_height + detail_height);
+    let list_height = inner.height.saturating_sub(header_height + detail_height);
 
     let header_area = Rect {
         x: inner.x,
@@ -2281,7 +2293,11 @@ fn render_character_list(frame: &mut Frame, pane: &PaneLayout, model: &Character
         x: inner.x,
         y: inner.y + header_area.height + list_height,
         width: inner.width,
-        height: detail_height.min(inner.height.saturating_sub(header_area.height + list_height)),
+        height: detail_height.min(
+            inner
+                .height
+                .saturating_sub(header_area.height + list_height),
+        ),
     };
 
     frame.render_widget(block, area);
@@ -2328,11 +2344,13 @@ fn render_character_list(frame: &mut Frame, pane: &PaneLayout, model: &Character
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))
             .end_symbol(Some("↓"));
-        let mut sb_state = ScrollbarState::new(total)
-            .position(list_state.selected().unwrap_or(0));
+        let mut sb_state = ScrollbarState::new(total).position(list_state.selected().unwrap_or(0));
         frame.render_stateful_widget(
             scrollbar,
-            list_area.inner(Margin { vertical: 0, horizontal: 0 }),
+            list_area.inner(Margin {
+                vertical: 0,
+                horizontal: 0,
+            }),
             &mut sb_state,
         );
     }
@@ -2491,17 +2509,12 @@ fn render_settings(frame: &mut Frame, pane: &PaneLayout, model: &SettingsRenderM
                         format!("  {} ", theme::HEX_FILLED),
                     )
                 } else {
-                    (
-                        theme::dim_style(),
-                        format!("  {} ", theme::HEX),
-                    )
+                    (theme::dim_style(), format!("  {} ", theme::HEX))
                 };
 
                 // Right-side indicator depends on entry kind
                 let right_span = match &entry.kind {
-                    EntryKind::ReadOnly => {
-                        Span::styled(entry.value.clone(), theme::text_style())
-                    }
+                    EntryKind::ReadOnly => Span::styled(entry.value.clone(), theme::text_style()),
                     EntryKind::Toggle(v) => {
                         let indicator = if *v { "[✓]" } else { "[ ]" };
                         let style = if *v {
@@ -2512,23 +2525,20 @@ fn render_settings(frame: &mut Frame, pane: &PaneLayout, model: &SettingsRenderM
                         Span::styled(indicator, style)
                     }
                     EntryKind::Cycle { options, current } => {
-                        let cur = options
-                            .get(*current)
-                            .map(|s| s.as_str())
-                            .unwrap_or("—");
-                        Span::styled(
-                            format!("< {cur} >"),
-                            theme::accent_style(),
-                        )
+                        let cur = options.get(*current).map(|s| s.as_str()).unwrap_or("—");
+                        Span::styled(format!("< {cur} >"), theme::accent_style())
                     }
                 };
 
                 lines.push(Line::from(vec![
-                    Span::styled(marker, if entry.selected {
-                        theme::highlight_style()
-                    } else {
-                        theme::muted_style()
-                    }),
+                    Span::styled(
+                        marker,
+                        if entry.selected {
+                            theme::highlight_style()
+                        } else {
+                            theme::muted_style()
+                        },
+                    ),
                     Span::styled(format!("{:<22}", entry.label), label_style),
                     right_span,
                 ]));
@@ -2546,23 +2556,14 @@ fn render_settings(frame: &mut Frame, pane: &PaneLayout, model: &SettingsRenderM
         )));
 
         // Breadcrumb in block title: " Settings › Backend "
-        let category_label = model
-            .breadcrumb_category
-            .as_deref()
-            .unwrap_or("Settings");
+        let category_label = model.breadcrumb_category.as_deref().unwrap_or("Settings");
         let block = Block::default()
             .borders(Borders::ALL)
             .border_style(theme::focus_border_style())
             .title(vec![
-                Span::styled(
-                    format!(" {} Settings ", theme::HEX),
-                    theme::dim_style(),
-                ),
+                Span::styled(format!(" {} Settings ", theme::HEX), theme::dim_style()),
                 Span::styled("\u{203a} ", theme::dim_style()),
-                Span::styled(
-                    format!("{category_label} "),
-                    theme::accent_style(),
-                ),
+                Span::styled(format!("{category_label} "), theme::accent_style()),
             ]);
 
         frame.render_widget(Paragraph::new(lines).block(block), area);
@@ -2577,17 +2578,17 @@ fn render_settings(frame: &mut Frame, pane: &PaneLayout, model: &SettingsRenderM
                     theme::highlight_style(),
                 )
             } else {
-                (
-                    format!("  {} ", theme::HEX),
-                    theme::text_style(),
-                )
+                (format!("  {} ", theme::HEX), theme::text_style())
             };
             lines.push(Line::from(vec![
-                Span::styled(marker, if cat.selected {
-                    theme::highlight_style()
-                } else {
-                    theme::muted_style()
-                }),
+                Span::styled(
+                    marker,
+                    if cat.selected {
+                        theme::highlight_style()
+                    } else {
+                        theme::muted_style()
+                    },
+                ),
                 Span::styled(cat.label.clone(), style),
             ]));
             lines.push(Line::from(""));
@@ -2664,18 +2665,9 @@ fn render_model_intelligence(
             "CPU layers",
             format!("{}", model.total_layers.saturating_sub(model.gpu_layers)),
         ));
-        lines.push(row(
-            "Context",
-            format!("{} tokens", model.context_size),
-        ));
-        lines.push(row(
-            "Est. VRAM",
-            format!("{} MiB", model.estimated_vram_mb),
-        ));
-        lines.push(row(
-            "Est. RAM",
-            format!("{} MiB", model.estimated_ram_mb),
-        ));
+        lines.push(row("Context", format!("{} tokens", model.context_size)));
+        lines.push(row("Est. VRAM", format!("{} MiB", model.estimated_vram_mb)));
+        lines.push(row("Est. RAM", format!("{} MiB", model.estimated_ram_mb)));
         lines.push(Line::default());
         lines.push(Line::from(Span::styled(
             "  ──────────────────────────────────────────",
@@ -2721,7 +2713,9 @@ fn render_model_intelligence(
         ));
 
     frame.render_widget(
-        Paragraph::new(lines).block(block).wrap(Wrap { trim: false }),
+        Paragraph::new(lines)
+            .block(block)
+            .wrap(Wrap { trim: false }),
         area,
     );
 }
@@ -3226,7 +3220,10 @@ mod tests {
             "breadcrumb should be visible on top row"
         );
         assert!(rendered.contains("Composer"));
-        assert!(rendered.contains("Phase 1C"), "session title should appear in footer");
+        assert!(
+            rendered.contains("Phase 1C"),
+            "session title should appear in footer"
+        );
         assert!(rendered.contains("mock runtime ready"));
         assert!(!rendered.contains(" Inspector "));
     }
@@ -3243,7 +3240,10 @@ mod tests {
 
         assert!(rendered.contains("Inspector"));
         assert!(rendered.contains("branch main"));
-        assert!(rendered.contains(" INS "), "Insert mode badge should appear in footer");
+        assert!(
+            rendered.contains(" INS "),
+            "Insert mode badge should appear in footer"
+        );
         assert!(rendered.contains("123e4567"));
         assert!(rendered.contains("context preview unavailable"));
     }
