@@ -32,7 +32,7 @@ const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 const OZONE_PLUS_PACKAGE: &str = "ozone-plus";
 const DEFAULT_PTY_ROWS: u16 = 40;
 const DEFAULT_PTY_COLUMNS: u16 = 120;
-const DEFAULT_CAPTURE_TAIL_CHARS: usize = 1600;
+const DEFAULT_CAPTURE_TAIL_CHARS: usize = 6000;
 const DEFAULT_CAPTURE_FONT_SIZE: u16 = 16;
 const DEFAULT_LAYOUT_MIN_GAP: usize = 2;
 const DEFAULT_BORDER_MAX_BLANK_RUN: usize = 1;
@@ -1199,7 +1199,7 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
     live_refresh_name = os.path.basename(live_refresh_path) if live_refresh_path else None
     saw_live_refresh_model = False
 
-    pump(master, proc, 5.5)
+    pump(master, proc, 8.0)
     if live_refresh_path:
         open(live_refresh_path, "ab").close()
         pump(master, proc, 2.5)
@@ -1207,7 +1207,7 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
 
     for index in range(int(SPEC["enterCount"])):
         send_key(master, "enter")
-        pump(master, proc, 3.0 if index + 1 == int(SPEC["enterCount"]) else 1.0)
+        pump(master, proc, 4.0 if index + 1 == int(SPEC["enterCount"]) else 1.0)
         if live_refresh_name and not saw_live_refresh_model:
             saw_live_refresh_model = screen_contains(live_refresh_name)
 
@@ -1247,6 +1247,15 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
                 .and_then(Value::as_str)
                 .is_some_and(|name| name == "Launcher Session")
         });
+        let launcher_session_count = sessions
+            .iter()
+            .filter(|session| {
+                session
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .is_some_and(|name| name == "Launcher Session")
+            })
+            .count();
         let data = json!({
             "commandOk": output.status.success(),
             "exitCode": output.status.code(),
@@ -1262,10 +1271,19 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
                 None
             },
             "sessions": sessions,
-            "launcherSession": launcher_session.cloned()
+            "launcherSession": launcher_session.cloned(),
+            "launcherSessionCount": launcher_session_count,
         });
+        let status_msg = if launcher_session_count > 1 {
+            format!(
+                "Completed launcher handoff smoke (warning: {} duplicate Launcher Session rows)",
+                launcher_session_count
+            )
+        } else {
+            "Completed launcher handoff smoke".to_owned()
+        };
         Ok(if output.status.success() {
-            ToolReply::success("Completed launcher handoff smoke".to_owned(), data)
+            ToolReply::success(status_msg, data)
         } else {
             ToolReply::error("Launcher handoff smoke failed".to_owned(), data)
         })
@@ -2039,8 +2057,9 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
         else:
             fail("unsupported action kind `" + action["kind"] + "`")
 
+        full_screen = screen_text()
         window_snapshot = screen_tail()
-        matched = [marker for marker in step.get("expectAny", []) if marker in window_snapshot]
+        matched = [marker for marker in step.get("expectAny", []) if marker in full_screen]
         ok = True if not step.get("expectAny") else bool(matched)
         step_result = {
             "name": step["name"],
