@@ -34,6 +34,12 @@ pub struct Preferences {
     /// window instead of replacing this process via exec().
     #[serde(default)]
     pub side_by_side_monitor: bool,
+    #[serde(default)]
+    pub llamacpp_gpu_layers: Option<i32>,
+    #[serde(default)]
+    pub llamacpp_context_size: Option<u32>,
+    #[serde(default)]
+    pub llamacpp_threads: Option<u32>,
 }
 
 impl Default for Preferences {
@@ -51,7 +57,16 @@ impl Default for Preferences {
             preferred_frontend: None,
             preferred_tier: None,
             side_by_side_monitor: false,
+            llamacpp_gpu_layers: None,
+            llamacpp_context_size: None,
+            llamacpp_threads: None,
         }
+    }
+}
+
+impl Preferences {
+    pub fn has_llamacpp_profile(&self) -> bool {
+        self.llamacpp_gpu_layers.is_some()
     }
 }
 

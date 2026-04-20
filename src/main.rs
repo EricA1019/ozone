@@ -219,6 +219,7 @@ async fn main() -> Result<()> {
             let model_dir = ozone_core::paths::models_dir();
             let model_path = model_dir.join(&model);
             let launcher_path = processes::resolved_kobold_launcher_path();
+            let backend = bench::BenchBackend::KoboldCpp { launcher_path };
 
             if !model_path.exists() {
                 ozone_core::cli::error(&format!("Model not found: {}", model_path.display()));
@@ -243,7 +244,7 @@ async fn main() -> Result<()> {
             let result = bench::run_benchmark(
                 &model,
                 &model_path,
-                &launcher_path,
+                &backend,
                 gpu_layers,
                 context,
                 quant_kv,
@@ -308,7 +309,7 @@ async fn main() -> Result<()> {
             let sweep_config = sweep::SweepConfig {
                 model_name: model,
                 model_path: model_path.clone(),
-                launcher_path,
+                backend: bench::BenchBackend::KoboldCpp { launcher_path },
                 model_size_gb,
                 total_layers: gguf::inspect_model_topology(
                     &model_path,

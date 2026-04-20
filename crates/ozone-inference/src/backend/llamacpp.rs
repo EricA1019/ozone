@@ -31,6 +31,24 @@ pub struct LlamaCppCompletionRequest {
     pub stream: bool,
 }
 
+/// Timing data returned by llama.cpp's `/completion` endpoint.
+#[derive(Debug, Clone, serde::Deserialize)]
+pub struct LlamaCppTimings {
+    pub predicted_n: u32,
+    pub predicted_ms: f64,
+    #[serde(default)]
+    pub prompt_n: u32,
+    #[serde(default)]
+    pub prompt_ms: f64,
+}
+
+/// Minimal completion response used by the bench path to extract timing.
+#[derive(Debug, serde::Deserialize)]
+pub struct LlamaCppCompletionResponse {
+    pub content: Option<String>,
+    pub timings: Option<LlamaCppTimings>,
+}
+
 #[derive(Debug, Deserialize)]
 struct LlamaModelsResponse {
     data: Vec<LlamaModelEntry>,

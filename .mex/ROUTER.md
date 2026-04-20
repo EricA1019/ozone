@@ -126,6 +126,14 @@ Load the relevant file based on the current task. Always load `context/architect
 | Setting up or running the project | `context/setup.md` |
 | Any specific task | Check `patterns/INDEX.md` for a matching pattern |
 
+## Commands
+
+- **Dev build**: `cargo build`
+- **Release build + install both binaries**: `make install` (always run after any code change)
+- **Tests**: `make test` or `cargo test`
+
+> **Rule**: After any code change, always run `make install` to update both `ozone` and `ozone-plus` locally. Never leave the installed binaries out of sync with the codebase.
+
 ## Behavioural Contract
 
 For every task, follow this loop:

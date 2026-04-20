@@ -8,7 +8,7 @@ use crate::planner;
 pub struct SweepConfig {
     pub model_name: String,
     pub model_path: PathBuf,
-    pub launcher_path: PathBuf,
+    pub backend: crate::bench::BenchBackend,
     pub model_size_gb: f64,
     pub total_layers: u32,
     pub context_sizes: Vec<u32>,
@@ -174,7 +174,7 @@ where
             let bench_result = bench::run_benchmark_with_progress(
                 &config.model_name,
                 &config.model_path,
-                &config.launcher_path,
+                &config.backend.clone(),
                 layers,
                 ctx,
                 qkv,
@@ -200,7 +200,7 @@ where
                     let retry = bench::run_benchmark_with_progress(
                         &config.model_name,
                         &config.model_path,
-                        &config.launcher_path,
+                        &config.backend.clone(),
                         retry_layers,
                         ctx,
                         qkv,

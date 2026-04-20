@@ -17,6 +17,26 @@ enum KoboldStartupFailureKind {
     Unknown,
 }
 
+#[derive(Debug, Clone, PartialEq)]
+pub enum LlamaCppStartupFailure {
+    /// GGML assertion failure — usually means OOM, unsupported op, or corrupt model
+    GgmlAbort,
+    /// CUDA out-of-memory — reduce -ngl
+    CudaOom,
+    /// CUDA runtime error (other than OOM)
+    CudaError,
+    /// Model file could not be opened or parsed
+    ModelLoadFailed,
+    /// Missing shared library (.so / .dll)
+    MissingSharedLibrary,
+    /// Process exited before becoming healthy (generic crash)
+    RuntimeCrash { exit_code: Option<i32> },
+    /// Health endpoint never responded within timeout
+    Timeout,
+    /// Unknown failure
+    Unknown,
+}
+
 pub async fn is_url_ready(url: &str) -> bool {
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
@@ -173,6 +193,20 @@ pub fn resolved_llamacpp_server_path() -> Result<PathBuf> {
     crate::llama::discover_llama_server_binary()
 }
 
+/// Resolves which backend to use for profiling. Prefers KoboldCpp if available,
+/// falls back to llama.cpp if the kobold launcher is not found but llama-server is.
+/// Returns None if neither is available.
+pub fn resolved_backend_for_profiling() -> Option<crate::bench::BenchBackend> {
+    let p = resolved_kobold_launcher_path();
+    if p.exists() {
+        return Some(crate::bench::BenchBackend::KoboldCpp { launcher_path: p });
+    }
+    if let Ok(p) = resolved_llamacpp_server_path() {
+        return Some(crate::bench::BenchBackend::LlamaCpp { server_path: p });
+    }
+    None
+}
+
 pub async fn start_kobold(launcher_path: &Path, model_name: &str, args: &[String]) -> Result<()> {
     if !launcher_path.exists() {
         return Err(anyhow!(
@@ -299,32 +333,27 @@ pub async fn start_llamacpp(server_path: &Path, model_name: &str, args: &[String
         }
 
         if let Some(status) = child.try_wait()? {
-            let tail = tail_file(&log_path, 40).await;
-            let mut message = format!(
-                "llama.cpp exited before its API became ready.\nProcess status: {}\nBinary: {}",
-                describe_exit_status(status),
-                server_path.display()
-            );
-            if !tail.trim().is_empty() {
-                message.push_str("\n\nllama.cpp log tail:\n");
-                message.push_str(tail.trim());
-            }
-            return Err(anyhow!(message));
+            let tail = tail_file(&log_path, 50).await;
+            let failure = classify_llamacpp_startup_failure(&tail, status.code());
+            let suggestion = llamacpp_failure_suggestion(&failure);
+            return Err(anyhow!(
+                "llama-server failed to start ({:?}). {}",
+                failure,
+                suggestion
+            ));
         }
 
         if std::time::Instant::now() >= deadline {
             let _ = child.kill();
             let _ = child.wait();
-            let tail = tail_file(&log_path, 40).await;
-            let mut message = format!(
-                "llama.cpp did not become ready before the startup timeout.\nBinary: {}",
-                server_path.display()
-            );
-            if !tail.trim().is_empty() {
-                message.push_str("\n\nllama.cpp log tail:\n");
-                message.push_str(tail.trim());
-            }
-            return Err(anyhow!(message));
+            let tail = tail_file(&log_path, 50).await;
+            let failure = classify_llamacpp_startup_failure(&tail, None);
+            let suggestion = llamacpp_failure_suggestion(&failure);
+            return Err(anyhow!(
+                "llama-server failed to start ({:?}). {}",
+                failure,
+                suggestion
+            ));
         }
 
         sleep(Duration::from_millis(800)).await;
@@ -364,6 +393,67 @@ fn classify_startup_failure(log_tail: &str) -> KoboldStartupFailureKind {
         KoboldStartupFailureKind::Timeout
     } else {
         KoboldStartupFailureKind::Unknown
+    }
+}
+
+pub fn classify_llamacpp_startup_failure(
+    log_tail: &str,
+    exit_status: Option<i32>,
+) -> LlamaCppStartupFailure {
+    let lower = log_tail.to_lowercase();
+    if lower.contains("ggml_abort") {
+        LlamaCppStartupFailure::GgmlAbort
+    } else if lower.contains("cudaerroroutofmemory")
+        || (lower.contains("out of memory") && lower.contains("cuda"))
+    {
+        LlamaCppStartupFailure::CudaOom
+    } else if lower.contains("cuda error") {
+        LlamaCppStartupFailure::CudaError
+    } else if lower.contains("failed to load model")
+        || lower.contains("error loading model")
+        || lower.contains("unable to open")
+    {
+        LlamaCppStartupFailure::ModelLoadFailed
+    } else if lower.contains("cannot open shared object")
+        || (lower.contains("no such file or directory") && lower.contains(".so"))
+    {
+        LlamaCppStartupFailure::MissingSharedLibrary
+    } else {
+        match exit_status {
+            Some(code) => LlamaCppStartupFailure::RuntimeCrash {
+                exit_code: Some(code),
+            },
+            None => LlamaCppStartupFailure::Timeout,
+        }
+    }
+}
+
+pub fn llamacpp_failure_suggestion(failure: &LlamaCppStartupFailure) -> &'static str {
+    match failure {
+        LlamaCppStartupFailure::GgmlAbort => {
+            "A GGML assertion failed — this usually means the model ran out of GPU memory or the GGUF file is corrupt. Try reducing -ngl (GPU layers) or verify the model file."
+        }
+        LlamaCppStartupFailure::CudaOom => {
+            "CUDA ran out of GPU memory. Reduce the number of GPU layers (-ngl) or try a smaller quantization."
+        }
+        LlamaCppStartupFailure::CudaError => {
+            "A CUDA runtime error occurred. Check your GPU drivers and CUDA installation."
+        }
+        LlamaCppStartupFailure::ModelLoadFailed => {
+            "llama-server could not open the model file. Check the model path and ensure the file is a valid GGUF."
+        }
+        LlamaCppStartupFailure::MissingSharedLibrary => {
+            "A required shared library is missing. Check that llama-server dependencies are installed (e.g. libcuda.so, libgomp.so)."
+        }
+        LlamaCppStartupFailure::RuntimeCrash { .. } => {
+            "llama-server crashed before becoming ready. Check the log for details."
+        }
+        LlamaCppStartupFailure::Timeout => {
+            "llama-server did not become ready within the timeout. It may still be loading a large model — try again or reduce context size."
+        }
+        LlamaCppStartupFailure::Unknown => {
+            "llama-server failed for an unknown reason. Check the log file for details."
+        }
     }
 }
 
@@ -467,6 +557,25 @@ fn describe_exit_status(status: std::process::ExitStatus) -> String {
     }
 }
 
+/// Build llama-server CLI args from a profiled launch plan.
+pub fn build_llamacpp_args(
+    gpu_layers: i32,
+    context_size: u32,
+    threads: Option<u32>,
+) -> Vec<String> {
+    let mut args = vec![
+        "--n-gpu-layers".into(),
+        gpu_layers.to_string(),
+        "--ctx-size".into(),
+        context_size.to_string(),
+    ];
+    if let Some(t) = threads {
+        args.push("--threads".into());
+        args.push(t.to_string());
+    }
+    args
+}
+
 pub fn open_browser_app(url: &str) {
     let candidates = [
         "chromium-browser",
@@ -554,6 +663,53 @@ mod tests {
             .status()
             .unwrap();
         assert_eq!(describe_exit_status(status), "exit code 7");
+    }
+}
+
+#[cfg(test)]
+mod llamacpp_tests {
+    use super::{classify_llamacpp_startup_failure, LlamaCppStartupFailure};
+
+    #[test]
+    fn ggml_abort_detected() {
+        let kind = classify_llamacpp_startup_failure(
+            "GGML_ABORT: ggml_abort called — assertion failed at ggml.c:1234",
+            Some(134),
+        );
+        assert_eq!(kind, LlamaCppStartupFailure::GgmlAbort);
+    }
+
+    #[test]
+    fn cuda_oom_detected() {
+        let kind = classify_llamacpp_startup_failure(
+            "CUDA error: cudaErrorOutOfMemory — not enough memory on device",
+            Some(1),
+        );
+        assert_eq!(kind, LlamaCppStartupFailure::CudaOom);
+    }
+
+    #[test]
+    fn model_load_failure_detected() {
+        let kind = classify_llamacpp_startup_failure(
+            "error: failed to load model from '/models/mymodel.gguf'",
+            Some(1),
+        );
+        assert_eq!(kind, LlamaCppStartupFailure::ModelLoadFailed);
+    }
+
+    #[test]
+    fn timeout_on_none_exit() {
+        let kind = classify_llamacpp_startup_failure("", None);
+        assert_eq!(kind, LlamaCppStartupFailure::Timeout);
+    }
+
+    #[test]
+    fn unknown_on_empty_log() {
+        let kind = classify_llamacpp_startup_failure("", Some(1));
+        assert_eq!(
+            kind,
+            LlamaCppStartupFailure::RuntimeCrash { exit_code: Some(1) }
+        );
     }
 }
 

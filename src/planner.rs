@@ -177,6 +177,19 @@ pub fn plan_profiling_launch(record: &CatalogRecord, hw: &HardwareProfile) -> La
     )
 }
 
+pub fn plan_llamacpp_profiling_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
+    let fallback_layers = estimate_total_layers(record.model_size_gb.max(0.1));
+    let topology = gguf::inspect_model_topology(&record.model_path, fallback_layers);
+    plan_launch_with_layers(
+        record,
+        hw,
+        topology.total_layers,
+        topology.source.label().to_string(),
+        topology.note,
+        true,
+    )
+}
+
 fn plan_launch_with_layers(
     record: &CatalogRecord,
     hw: &HardwareProfile,

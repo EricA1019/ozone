@@ -552,6 +552,19 @@ pub async fn run_launcher(
                 WorkflowEvent::Completed(report) => {
                     app.profiling_event_rx = None;
                     app.profiling_cancel = None;
+                    // TODO(phase2): gate on ProfilingBackend::LlamaCpp once Phase 2 is merged.
+                    // For now, save the recommended profile to prefs when llama.cpp is the
+                    // preferred backend, so profile-driven args are used on next launch.
+                    if app.prefs.preferred_backend == Some(BackendMode::LlamaCpp) {
+                        if let Some(ref profile) = report.recommended_profile {
+                            app.prefs.llamacpp_gpu_layers = Some(profile.gpu_layers);
+                            app.prefs.llamacpp_context_size = Some(profile.context_size);
+                            let prefs_clone = app.prefs.clone();
+                            tokio::spawn(async move {
+                                let _ = crate::prefs::save_prefs(&prefs_clone).await;
+                            });
+                        }
+                    }
                     app.profiling_success = Some(report);
                     app.profiling_failure = None;
                     app.profiling_choice_index = 0;
@@ -640,7 +653,23 @@ pub async fn run_launcher(
                         let model_path = std::path::PathBuf::from(&home)
                             .join("models")
                             .join(&plan.model_name);
-                        let llama_args = build_llama_args(&plan);
+                        let llama_args = if app.prefs.has_llamacpp_profile() {
+                            let mut base_args = vec![
+                                "--host".into(),
+                                "127.0.0.1".into(),
+                                "--port".into(),
+                                "8080".into(),
+                                "--no-webui".into(),
+                            ];
+                            base_args.extend(crate::processes::build_llamacpp_args(
+                                app.prefs.llamacpp_gpu_layers.unwrap_or(plan.gpu_layers),
+                                app.prefs.llamacpp_context_size.unwrap_or(plan.context_size),
+                                app.prefs.llamacpp_threads.or(plan.threads),
+                            ));
+                            base_args
+                        } else {
+                            build_llama_args(&plan)
+                        };
                         match crate::processes::start_llamacpp(
                             &server_path,
                             &model_path.to_string_lossy(),
@@ -1079,6 +1108,7 @@ pub async fn run_launcher(
                                     record,
                                     hardware: app.hardware.clone().unwrap_or_default(),
                                     action,
+                                    profiling_backend: profiling::ProfilingBackend::default(),
                                 };
                                 let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
                                 let cancel = CancellationToken::new();
