@@ -174,12 +174,17 @@ pub async fn clear_gpu_backends() -> Result<Vec<String>> {
             killed.push(args.split('/').next_back().unwrap_or(args).to_string());
         }
     }
+    // Give killed processes time to release their ports before the caller
+    // re-checks service status, otherwise the HTTP probe may still succeed.
+    if !killed.is_empty() {
+        tokio::time::sleep(tokio::time::Duration::from_millis(600)).await;
+    }
     Ok(killed)
 }
 
 fn nix_kill(pid: u32) -> bool {
     std::process::Command::new("kill")
-        .args(["-TERM", &pid.to_string()])
+        .args(["-9", &pid.to_string()])
         .status()
         .map(|s| s.success())
         .unwrap_or(false)
