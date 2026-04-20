@@ -30,6 +30,7 @@ pub enum ScreenState {
     SessionList,
     CharacterManager,
     CharacterCreate,
+    CharacterEdit,
     CharacterImport,
     Settings,
     ModelIntelligence,
@@ -300,11 +301,20 @@ impl SettingsState {
         if !self.drill_down {
             return None;
         }
-        let cat_name = self.categories[self.selected_category].label();
-        let idx = self.selected_entry;
+        let cat = &self.categories[self.selected_category];
+        let cat_name = cat.label();
 
-        // Keybindings and static Display rows (the first 2) are always read-only.
-        // Find the idx-th raw_entry for this category and activate it.
+        // Some categories prepend hardcoded static/read-only rows that are NOT
+        // in `raw_entries`.  We must subtract that count so `selected_entry`
+        // (which indexes the *merged* visual list) maps to the correct position
+        // inside `raw_entries`.
+        let static_count = self.static_entry_count(cat);
+        let idx = match self.selected_entry.checked_sub(static_count) {
+            Some(i) => i,
+            // Selected entry is within the static rows — always read-only.
+            None => return None,
+        };
+
         let mut pos = 0usize;
         for entry in &mut self.raw_entries {
             if entry.category == cat_name {
@@ -321,6 +331,16 @@ impl SettingsState {
             }
         }
         None
+    }
+
+    /// Number of hardcoded static entries that `entries_for_category` prepends
+    /// before the runtime-provided `raw_entries` for the given category.
+    fn static_entry_count(&self, cat: &SettingsCategory) -> usize {
+        match cat {
+            SettingsCategory::Display => 2,      // Color theme, Wide mode threshold
+            SettingsCategory::Keybindings => 8,   // all keybinding rows are static
+            _ => 0,
+        }
     }
 
     /// Go back one level.  Returns `true` if handled (was in entry list);
@@ -695,6 +715,19 @@ pub struct CharacterEntry {
     pub session_count: usize,
 }
 
+/// Full character card data for editing (all ST-style fields).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct CharacterDetail {
+    pub card_id: String,
+    pub name: String,
+    pub description: String,
+    pub system_prompt: String,
+    pub personality: String,
+    pub scenario: String,
+    pub greeting: String,
+    pub example_dialogue: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CharacterListState {
     pub entries: Vec<CharacterEntry>,
@@ -734,36 +767,120 @@ impl CharacterListState {
 pub enum CharacterFormField {
     #[default]
     Name,
+    Description,
     SystemPrompt,
+    Personality,
+    Scenario,
+    Greeting,
+    ExampleDialogue,
+}
+
+impl CharacterFormField {
+    /// All fields in display order.
+    pub const ALL: [CharacterFormField; 7] = [
+        CharacterFormField::Name,
+        CharacterFormField::Description,
+        CharacterFormField::SystemPrompt,
+        CharacterFormField::Personality,
+        CharacterFormField::Scenario,
+        CharacterFormField::Greeting,
+        CharacterFormField::ExampleDialogue,
+    ];
+
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Name => "Name",
+            Self::Description => "Description",
+            Self::SystemPrompt => "System Prompt",
+            Self::Personality => "Personality",
+            Self::Scenario => "Scenario",
+            Self::Greeting => "Greeting",
+            Self::ExampleDialogue => "Example Dialogue",
+        }
+    }
+
+    fn ordinal(self) -> usize {
+        match self {
+            Self::Name => 0,
+            Self::Description => 1,
+            Self::SystemPrompt => 2,
+            Self::Personality => 3,
+            Self::Scenario => 4,
+            Self::Greeting => 5,
+            Self::ExampleDialogue => 6,
+        }
+    }
+
+    fn from_ordinal(n: usize) -> Self {
+        Self::ALL[n % Self::ALL.len()]
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct CharacterCreateState {
     pub name: DraftState,
+    pub description: DraftState,
     pub system_prompt: DraftState,
+    pub personality: DraftState,
+    pub scenario: DraftState,
+    pub greeting: DraftState,
+    pub example_dialogue: DraftState,
     pub active_field: CharacterFormField,
+    /// When editing an existing character, holds the card_id.
+    pub editing_card_id: Option<String>,
 }
 
 impl CharacterCreateState {
     pub fn active_draft(&self) -> &DraftState {
         match self.active_field {
             CharacterFormField::Name => &self.name,
+            CharacterFormField::Description => &self.description,
             CharacterFormField::SystemPrompt => &self.system_prompt,
+            CharacterFormField::Personality => &self.personality,
+            CharacterFormField::Scenario => &self.scenario,
+            CharacterFormField::Greeting => &self.greeting,
+            CharacterFormField::ExampleDialogue => &self.example_dialogue,
         }
     }
 
     pub fn active_draft_mut(&mut self) -> &mut DraftState {
         match self.active_field {
             CharacterFormField::Name => &mut self.name,
+            CharacterFormField::Description => &mut self.description,
             CharacterFormField::SystemPrompt => &mut self.system_prompt,
+            CharacterFormField::Personality => &mut self.personality,
+            CharacterFormField::Scenario => &mut self.scenario,
+            CharacterFormField::Greeting => &mut self.greeting,
+            CharacterFormField::ExampleDialogue => &mut self.example_dialogue,
         }
     }
 
     pub fn toggle_field(&mut self) {
-        self.active_field = match self.active_field {
-            CharacterFormField::Name => CharacterFormField::SystemPrompt,
-            CharacterFormField::SystemPrompt => CharacterFormField::Name,
-        };
+        let next = (self.active_field.ordinal() + 1) % CharacterFormField::ALL.len();
+        self.active_field = CharacterFormField::from_ordinal(next);
+    }
+
+    /// Populate form from an existing character for editing.
+    pub fn load_from_character(
+        &mut self,
+        card_id: String,
+        name: &str,
+        description: &str,
+        system_prompt: &str,
+        personality: &str,
+        scenario: &str,
+        greeting: &str,
+        example_dialogue: &str,
+    ) {
+        self.editing_card_id = Some(card_id);
+        self.name = DraftState::with_text(name);
+        self.description = DraftState::with_text(description);
+        self.system_prompt = DraftState::with_text(system_prompt);
+        self.personality = DraftState::with_text(personality);
+        self.scenario = DraftState::with_text(scenario);
+        self.greeting = DraftState::with_text(greeting);
+        self.example_dialogue = DraftState::with_text(example_dialogue);
+        self.active_field = CharacterFormField::Name;
     }
 }
 
@@ -1142,7 +1259,27 @@ pub enum RuntimeCommand {
     ToggleBookmark { message_id: String },
     TogglePinnedMemory { message_id: String },
     RunCommand { input: String },
-    CreateCharacter { name: String, system_prompt: String },
+    CreateCharacter {
+        name: String,
+        description: String,
+        system_prompt: String,
+        personality: String,
+        scenario: String,
+        greeting: String,
+        example_dialogue: String,
+    },
+    UpdateCharacter {
+        card_id: String,
+        name: String,
+        description: String,
+        system_prompt: String,
+        personality: String,
+        scenario: String,
+        greeting: String,
+        example_dialogue: String,
+    },
+    /// Load a character's full details and enter edit mode.
+    EditCharacter { card_id: String },
     ImportCharacter { path: String },
     /// A user-editable preference was changed from the settings screen.
     /// `pref_key` is the JSON field name; `value` is the new serialised value.
@@ -1763,14 +1900,15 @@ impl ShellState {
 
         let action = match self.screen {
             ScreenState::CharacterManager => {
-                // Intercept n/i for create/import before normal menu dispatch
+                // Intercept n/i/e for create/import/edit before normal menu dispatch
                 match key.code {
                     crossterm::event::KeyCode::Char('n') => KeyAction::CharacterCreate,
+                    crossterm::event::KeyCode::Char('e') => KeyAction::CharacterEditSelected,
                     crossterm::event::KeyCode::Char('i') => KeyAction::CharacterImportPrompt,
                     _ => dispatch_menu_key(key, false),
                 }
             }
-            ScreenState::CharacterCreate | ScreenState::CharacterImport => dispatch_form_key(key),
+            ScreenState::CharacterCreate | ScreenState::CharacterEdit | ScreenState::CharacterImport => dispatch_form_key(key),
             ScreenState::SessionList => {
                 // Intercept f/F for folder management before normal menu dispatch
                 match key.code {
@@ -2090,12 +2228,18 @@ impl ShellState {
                 self.character_create = CharacterCreateState::default();
                 self.screen = ScreenState::CharacterCreate;
             }
+            KeyAction::CharacterEditSelected => {
+                if let Some(entry) = self.character_list.selected_entry() {
+                    let card_id = entry.card_id.clone();
+                    self.runtime_commands.push(RuntimeCommand::EditCharacter { card_id });
+                }
+            }
             KeyAction::CharacterImportPrompt => {
                 self.character_import = CharacterImportState::default();
                 self.screen = ScreenState::CharacterImport;
             }
             KeyAction::FormInsertChar(ch) => match self.screen {
-                ScreenState::CharacterCreate => {
+                ScreenState::CharacterCreate | ScreenState::CharacterEdit => {
                     self.character_create.active_draft_mut().insert_char(ch);
                 }
                 ScreenState::CharacterImport => {
@@ -2104,7 +2248,7 @@ impl ShellState {
                 _ => {}
             },
             KeyAction::FormBackspace => match self.screen {
-                ScreenState::CharacterCreate => {
+                ScreenState::CharacterCreate | ScreenState::CharacterEdit => {
                     self.character_create.active_draft_mut().backspace();
                 }
                 ScreenState::CharacterImport => {
@@ -2113,7 +2257,7 @@ impl ShellState {
                 _ => {}
             },
             KeyAction::FormMoveCursorLeft => match self.screen {
-                ScreenState::CharacterCreate => {
+                ScreenState::CharacterCreate | ScreenState::CharacterEdit => {
                     self.character_create.active_draft_mut().move_cursor_left();
                 }
                 ScreenState::CharacterImport => {
@@ -2122,7 +2266,7 @@ impl ShellState {
                 _ => {}
             },
             KeyAction::FormMoveCursorRight => match self.screen {
-                ScreenState::CharacterCreate => {
+                ScreenState::CharacterCreate | ScreenState::CharacterEdit => {
                     self.character_create.active_draft_mut().move_cursor_right();
                 }
                 ScreenState::CharacterImport => {
@@ -2131,7 +2275,7 @@ impl ShellState {
                 _ => {}
             },
             KeyAction::FormToggleField => {
-                if self.screen == ScreenState::CharacterCreate {
+                if matches!(self.screen, ScreenState::CharacterCreate | ScreenState::CharacterEdit) {
                     self.character_create.toggle_field();
                 }
             }
@@ -2141,12 +2285,36 @@ impl ShellState {
                     if name.is_empty() {
                         self.status_line = Some("Character name cannot be empty".into());
                     } else {
-                        let system_prompt =
-                            self.character_create.system_prompt.text.trim().to_string();
                         self.runtime_commands.push(RuntimeCommand::CreateCharacter {
                             name,
-                            system_prompt,
+                            description: self.character_create.description.text.trim().to_string(),
+                            system_prompt: self.character_create.system_prompt.text.trim().to_string(),
+                            personality: self.character_create.personality.text.trim().to_string(),
+                            scenario: self.character_create.scenario.text.trim().to_string(),
+                            greeting: self.character_create.greeting.text.trim().to_string(),
+                            example_dialogue: self.character_create.example_dialogue.text.trim().to_string(),
                         });
+                        self.character_create = CharacterCreateState::default();
+                        self.screen = ScreenState::CharacterManager;
+                    }
+                }
+                ScreenState::CharacterEdit => {
+                    let name = self.character_create.name.text.trim().to_string();
+                    let card_id = self.character_create.editing_card_id.clone();
+                    if name.is_empty() {
+                        self.status_line = Some("Character name cannot be empty".into());
+                    } else if let Some(card_id) = card_id {
+                        self.runtime_commands.push(RuntimeCommand::UpdateCharacter {
+                            card_id,
+                            name,
+                            description: self.character_create.description.text.trim().to_string(),
+                            system_prompt: self.character_create.system_prompt.text.trim().to_string(),
+                            personality: self.character_create.personality.text.trim().to_string(),
+                            scenario: self.character_create.scenario.text.trim().to_string(),
+                            greeting: self.character_create.greeting.text.trim().to_string(),
+                            example_dialogue: self.character_create.example_dialogue.text.trim().to_string(),
+                        });
+                        self.character_create = CharacterCreateState::default();
                         self.screen = ScreenState::CharacterManager;
                     }
                 }
@@ -2163,7 +2331,8 @@ impl ShellState {
                 _ => {}
             },
             KeyAction::FormCancel => match self.screen {
-                ScreenState::CharacterCreate | ScreenState::CharacterImport => {
+                ScreenState::CharacterCreate | ScreenState::CharacterEdit | ScreenState::CharacterImport => {
+                    self.character_create = CharacterCreateState::default();
                     self.screen = ScreenState::CharacterManager;
                 }
                 _ => {}
@@ -3675,9 +3844,17 @@ mod tests {
         state.apply_action(KeyAction::FormToggleField);
         assert_eq!(
             state.character_create.active_field,
-            CharacterFormField::SystemPrompt
+            CharacterFormField::Description
         );
         state.apply_action(KeyAction::FormToggleField);
+        assert_eq!(
+            state.character_create.active_field,
+            CharacterFormField::SystemPrompt
+        );
+        // Cycle through remaining fields back to Name (4 more fields then wrap)
+        for _ in 0..5 {
+            state.apply_action(KeyAction::FormToggleField);
+        }
         assert_eq!(
             state.character_create.active_field,
             CharacterFormField::Name
@@ -3706,6 +3883,7 @@ mod tests {
             RuntimeCommand::CreateCharacter {
                 name,
                 system_prompt,
+                ..
             } => {
                 assert_eq!(name, "TestChar");
                 assert!(system_prompt.is_empty());
@@ -4274,6 +4452,72 @@ mod tests {
         // Editable entries are Cycle
         assert!(matches!(entries[2].2, super::EntryKind::Cycle { .. }));
         assert!(matches!(entries[3].2, super::EntryKind::Cycle { .. }));
+    }
+
+    #[test]
+    fn display_static_entries_are_skipped_when_activating() {
+        // Regression test: selecting the first visible Display row (index 0 =
+        // "Color theme", a static ReadOnly entry) must NOT accidentally activate
+        // the first *raw* entry ("Timestamp style").
+        let mut s = super::SettingsState::default();
+        s.load(vec![
+            super::SettingsEntry {
+                category: "Display".into(),
+                key: "Timestamp style".into(),
+                value: String::new(),
+                kind: super::EntryKind::Cycle {
+                    options: vec!["relative".into(), "absolute".into(), "off".into()],
+                    current: 0,
+                },
+                pref_key: "timestamp_style".into(),
+            },
+            super::SettingsEntry {
+                category: "Display".into(),
+                key: "Message density".into(),
+                value: String::new(),
+                kind: super::EntryKind::Cycle {
+                    options: vec!["comfortable".into(), "compact".into()],
+                    current: 0,
+                },
+                pref_key: "message_density".into(),
+            },
+        ]);
+
+        let display_idx = s
+            .categories
+            .iter()
+            .position(|c| *c == super::SettingsCategory::Display)
+            .unwrap();
+        s.selected_category = display_idx;
+        s.drill_down = true;
+
+        // Index 0 = static "Color theme" → must be no-op
+        s.selected_entry = 0;
+        assert!(s.activate_entry().is_none(), "static Color theme must be no-op");
+
+        // Index 1 = static "Wide mode threshold" → must be no-op
+        s.selected_entry = 1;
+        assert!(s.activate_entry().is_none(), "static Wide mode must be no-op");
+
+        // Index 2 = runtime "Timestamp style" → must emit PrefChanged
+        s.selected_entry = 2;
+        let cmd = s.activate_entry();
+        match cmd {
+            Some(super::RuntimeCommand::PrefChanged { pref_key, .. }) => {
+                assert_eq!(pref_key, "timestamp_style");
+            }
+            other => panic!("Expected PrefChanged for timestamp_style, got {:?}", other),
+        }
+
+        // Index 3 = runtime "Message density" → must emit PrefChanged
+        s.selected_entry = 3;
+        let cmd = s.activate_entry();
+        match cmd {
+            Some(super::RuntimeCommand::PrefChanged { pref_key, .. }) => {
+                assert_eq!(pref_key, "message_density");
+            }
+            other => panic!("Expected PrefChanged for message_density, got {:?}", other),
+        }
     }
 
     #[test]

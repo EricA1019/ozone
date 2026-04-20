@@ -21,7 +21,7 @@ use crossterm::{
 use ratatui::{backend::CrosstermBackend, Terminal};
 
 pub use app::{
-    AppBootstrap, BranchItem, CharacterEntry, CharacterListState, CommandEntry,
+    AppBootstrap, BranchItem, CharacterDetail, CharacterEntry, CharacterListState, CommandEntry,
     CommandPaletteState, ContextDryRunPreview, ContextPreview, ContextTokenBudget, DraftState,
     EntryKind, FocusTarget, FolderPickerState, GenerationPoll, MenuItem, MenuState, RecallBrowser,
     RuntimeCancellation, RuntimeCompletion, RuntimeContextRefresh, RuntimeFailure, RuntimePhase,
@@ -263,8 +263,21 @@ where
                                 }
                                 app::RuntimeCommand::CreateCharacter {
                                     name,
+                                    description,
                                     system_prompt,
-                                } => match runtime.create_character(name, system_prompt) {
+                                    personality,
+                                    scenario,
+                                    greeting,
+                                    example_dialogue,
+                                } => match runtime.create_character(
+                                    name,
+                                    description,
+                                    system_prompt,
+                                    personality,
+                                    scenario,
+                                    greeting,
+                                    example_dialogue,
+                                ) {
                                     Ok(entry) => {
                                         app.status_line =
                                             Some(format!("Created character: {}", entry.name));
@@ -274,6 +287,36 @@ where
                                     }
                                     Err(e) => {
                                         app.status_line = Some(format!("Create failed: {:?}", e));
+                                    }
+                                },
+                                app::RuntimeCommand::UpdateCharacter {
+                                    card_id,
+                                    name,
+                                    description,
+                                    system_prompt,
+                                    personality,
+                                    scenario,
+                                    greeting,
+                                    example_dialogue,
+                                } => match runtime.update_character(
+                                    &card_id,
+                                    name,
+                                    description,
+                                    system_prompt,
+                                    personality,
+                                    scenario,
+                                    greeting,
+                                    example_dialogue,
+                                ) {
+                                    Ok(entry) => {
+                                        app.status_line =
+                                            Some(format!("Updated character: {}", entry.name));
+                                        if let Ok(chars) = runtime.list_characters() {
+                                            app.character_list.entries = chars;
+                                        }
+                                    }
+                                    Err(e) => {
+                                        app.status_line = Some(format!("Update failed: {:?}", e));
                                     }
                                 },
                                 app::RuntimeCommand::ImportCharacter { path } => {
@@ -291,8 +334,39 @@ where
                                         }
                                     }
                                 }
+                                app::RuntimeCommand::EditCharacter { card_id } => {
+                                    match runtime.get_character(&card_id) {
+                                        Ok(Some(detail)) => {
+                                            app.character_create.load_from_character(
+                                                detail.card_id,
+                                                &detail.name,
+                                                &detail.description,
+                                                &detail.system_prompt,
+                                                &detail.personality,
+                                                &detail.scenario,
+                                                &detail.greeting,
+                                                &detail.example_dialogue,
+                                            );
+                                            app.screen = app::ScreenState::CharacterEdit;
+                                        }
+                                        Ok(None) => {
+                                            app.status_line =
+                                                Some("Character not found".into());
+                                        }
+                                        Err(e) => {
+                                            app.status_line =
+                                                Some(format!("Edit failed: {:?}", e));
+                                        }
+                                    }
+                                }
                                 app::RuntimeCommand::PrefChanged { pref_key, value } => {
                                     let _ = runtime.save_pref(&pref_key, &value);
+                                    // Apply theme change immediately at runtime.
+                                    if pref_key == "theme_preset" {
+                                        crate::theme::set_preset(
+                                            crate::theme::ThemePreset::from_pref_str(&value),
+                                        );
+                                    }
                                 }
                                 app::RuntimeCommand::SetSessionFolder { session_id, folder } => {
                                     match runtime
@@ -525,9 +599,35 @@ mod tests {
         fn create_character(
             &mut self,
             _name: String,
+            _description: String,
             _system_prompt: String,
+            _personality: String,
+            _scenario: String,
+            _greeting: String,
+            _example_dialogue: String,
         ) -> Result<crate::app::CharacterEntry, Self::Error> {
             Err("not implemented in stub".into())
+        }
+
+        fn update_character(
+            &mut self,
+            _card_id: &str,
+            _name: String,
+            _description: String,
+            _system_prompt: String,
+            _personality: String,
+            _scenario: String,
+            _greeting: String,
+            _example_dialogue: String,
+        ) -> Result<crate::app::CharacterEntry, Self::Error> {
+            Err("not implemented in stub".into())
+        }
+
+        fn get_character(
+            &mut self,
+            _card_id: &str,
+        ) -> Result<Option<crate::app::CharacterDetail>, Self::Error> {
+            Ok(None)
         }
 
         fn import_character(
@@ -574,9 +674,35 @@ mod tests {
         fn create_character(
             &mut self,
             _name: String,
+            _description: String,
             _system_prompt: String,
+            _personality: String,
+            _scenario: String,
+            _greeting: String,
+            _example_dialogue: String,
         ) -> Result<crate::app::CharacterEntry, Self::Error> {
             Err("not implemented in stub".into())
+        }
+
+        fn update_character(
+            &mut self,
+            _card_id: &str,
+            _name: String,
+            _description: String,
+            _system_prompt: String,
+            _personality: String,
+            _scenario: String,
+            _greeting: String,
+            _example_dialogue: String,
+        ) -> Result<crate::app::CharacterEntry, Self::Error> {
+            Err("not implemented in stub".into())
+        }
+
+        fn get_character(
+            &mut self,
+            _card_id: &str,
+        ) -> Result<Option<crate::app::CharacterDetail>, Self::Error> {
+            Ok(None)
         }
 
         fn import_character(

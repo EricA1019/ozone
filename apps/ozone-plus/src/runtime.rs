@@ -1719,11 +1719,24 @@ impl SessionRuntime for Phase1dRuntime {
     fn create_character(
         &mut self,
         name: String,
+        description: String,
         system_prompt: String,
+        personality: String,
+        scenario: String,
+        greeting: String,
+        example_dialogue: String,
     ) -> Result<ozone_tui::CharacterEntry, Self::Error> {
         let stored = self
             .repo
-            .create_character(&name, "", &system_prompt)
+            .create_character_full(
+                &name,
+                &description,
+                &system_prompt,
+                &personality,
+                &scenario,
+                &greeting,
+                &example_dialogue,
+            )
             .map_err(|e| e.to_string())?;
         Ok(ozone_tui::CharacterEntry {
             card_id: stored.card_id,
@@ -1731,6 +1744,58 @@ impl SessionRuntime for Phase1dRuntime {
             description: stored.description,
             session_count: 0,
         })
+    }
+
+    fn update_character(
+        &mut self,
+        card_id: &str,
+        name: String,
+        description: String,
+        system_prompt: String,
+        personality: String,
+        scenario: String,
+        greeting: String,
+        example_dialogue: String,
+    ) -> Result<ozone_tui::CharacterEntry, Self::Error> {
+        let stored = self
+            .repo
+            .update_character(
+                card_id,
+                &name,
+                &description,
+                &system_prompt,
+                &personality,
+                &scenario,
+                &greeting,
+                &example_dialogue,
+            )
+            .map_err(|e| e.to_string())?;
+        Ok(ozone_tui::CharacterEntry {
+            card_id: stored.card_id,
+            name: stored.name,
+            description: stored.description,
+            session_count: 0,
+        })
+    }
+
+    fn get_character(
+        &mut self,
+        card_id: &str,
+    ) -> Result<Option<ozone_tui::app::CharacterDetail>, Self::Error> {
+        let stored = self
+            .repo
+            .get_character(card_id)
+            .map_err(|e| e.to_string())?;
+        Ok(stored.map(|s| ozone_tui::app::CharacterDetail {
+            card_id: s.card_id,
+            name: s.name,
+            description: s.description,
+            system_prompt: s.system_prompt,
+            personality: s.personality,
+            scenario: s.scenario,
+            greeting: s.greeting,
+            example_dialogue: s.example_dialogue,
+        }))
     }
 
     fn import_character(&mut self, path: String) -> Result<ozone_tui::CharacterEntry, Self::Error> {

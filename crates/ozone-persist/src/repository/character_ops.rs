@@ -160,4 +160,63 @@ impl SqliteRepository {
         )?;
         Ok(affected > 0)
     }
+
+    /// Update an existing character card.  All fields are overwritten.
+    #[allow(clippy::too_many_arguments)]
+    pub fn update_character(
+        &self,
+        card_id: &str,
+        name: impl Into<String>,
+        description: impl Into<String>,
+        system_prompt: impl Into<String>,
+        personality: impl Into<String>,
+        scenario: impl Into<String>,
+        greeting: impl Into<String>,
+        example_dialogue: impl Into<String>,
+    ) -> Result<StoredCharacter> {
+        let now = self.now();
+        let name = name.into();
+        let description = description.into();
+        let system_prompt = system_prompt.into();
+        let personality = personality.into();
+        let scenario = scenario.into();
+        let greeting = greeting.into();
+        let example_dialogue = example_dialogue.into();
+
+        let conn = self.ensure_global_connection()?;
+        let affected = conn.execute(
+            "UPDATE character_cards
+                SET name = ?2, description = ?3, system_prompt = ?4,
+                    personality = ?5, scenario = ?6, greeting = ?7,
+                    example_dialogue = ?8, updated_at = ?9
+              WHERE card_id = ?1",
+            params![card_id, name, description, system_prompt, personality, scenario, greeting, example_dialogue, now],
+        )?;
+
+        if affected == 0 {
+            return Err(crate::PersistError::InvalidData(format!(
+                "character card {card_id} not found"
+            )));
+        }
+
+        // Retrieve the original created_at.
+        let created_at: UnixTimestamp = conn.query_row(
+            "SELECT created_at FROM character_cards WHERE card_id = ?1",
+            params![card_id],
+            |row| row.get(0),
+        )?;
+
+        Ok(StoredCharacter {
+            card_id: card_id.to_owned(),
+            name,
+            description,
+            system_prompt,
+            personality,
+            scenario,
+            greeting,
+            example_dialogue,
+            created_at,
+            updated_at: now,
+        })
+    }
 }

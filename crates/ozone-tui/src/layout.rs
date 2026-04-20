@@ -229,6 +229,7 @@ fn overlay_for_screen(screen: ScreenState, viewport: Rect) -> Option<PaneLayout>
         | ScreenState::SessionList
         | ScreenState::CharacterManager
         | ScreenState::CharacterCreate
+        | ScreenState::CharacterEdit
         | ScreenState::CharacterImport
         | ScreenState::Settings
         | ScreenState::ModelIntelligence

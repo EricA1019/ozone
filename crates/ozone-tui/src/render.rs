@@ -235,18 +235,27 @@ pub struct SettingsRenderModel {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct CharacterFormRenderModel {
     pub form_type: CharacterFormType,
-    pub name_text: String,
-    pub name_cursor: usize,
-    pub system_prompt_text: String,
-    pub system_prompt_cursor: usize,
+    /// All 7 editable text fields in display order.
+    pub fields: Vec<CharacterFieldRenderModel>,
     pub active_field: crate::app::CharacterFormField,
     pub path_text: String,
     pub path_cursor: usize,
 }
 
+/// One editable field in the character form.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CharacterFieldRenderModel {
+    pub field: crate::app::CharacterFormField,
+    pub label: &'static str,
+    pub text: String,
+    pub cursor: usize,
+    pub placeholder: &'static str,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum CharacterFormType {
     Create,
+    Edit,
     Import,
 }
 
@@ -624,22 +633,75 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
     };
 
     let character_form = match state.screen {
-        ScreenState::CharacterCreate => Some(CharacterFormRenderModel {
-            form_type: CharacterFormType::Create,
-            name_text: state.character_create.name.text.clone(),
-            name_cursor: state.character_create.name.cursor,
-            system_prompt_text: state.character_create.system_prompt.text.clone(),
-            system_prompt_cursor: state.character_create.system_prompt.cursor,
-            active_field: state.character_create.active_field,
-            path_text: String::new(),
-            path_cursor: 0,
-        }),
+        ScreenState::CharacterCreate | ScreenState::CharacterEdit => {
+            let form_type = if state.screen == ScreenState::CharacterEdit {
+                CharacterFormType::Edit
+            } else {
+                CharacterFormType::Create
+            };
+            let cs = &state.character_create;
+            let fields = vec![
+                CharacterFieldRenderModel {
+                    field: crate::app::CharacterFormField::Name,
+                    label: "Name",
+                    text: cs.name.text.clone(),
+                    cursor: cs.name.cursor,
+                    placeholder: "(type character name)",
+                },
+                CharacterFieldRenderModel {
+                    field: crate::app::CharacterFormField::Description,
+                    label: "Description",
+                    text: cs.description.text.clone(),
+                    cursor: cs.description.cursor,
+                    placeholder: "(short tagline or description)",
+                },
+                CharacterFieldRenderModel {
+                    field: crate::app::CharacterFormField::SystemPrompt,
+                    label: "System Prompt",
+                    text: cs.system_prompt.text.clone(),
+                    cursor: cs.system_prompt.cursor,
+                    placeholder: "(instructions for the AI — personality, rules, context)",
+                },
+                CharacterFieldRenderModel {
+                    field: crate::app::CharacterFormField::Personality,
+                    label: "Personality",
+                    text: cs.personality.text.clone(),
+                    cursor: cs.personality.cursor,
+                    placeholder: "(personality traits — kind, sarcastic, stoic…)",
+                },
+                CharacterFieldRenderModel {
+                    field: crate::app::CharacterFormField::Scenario,
+                    label: "Scenario",
+                    text: cs.scenario.text.clone(),
+                    cursor: cs.scenario.cursor,
+                    placeholder: "(the setting or situation for conversations)",
+                },
+                CharacterFieldRenderModel {
+                    field: crate::app::CharacterFormField::Greeting,
+                    label: "First Message",
+                    text: cs.greeting.text.clone(),
+                    cursor: cs.greeting.cursor,
+                    placeholder: "(character's opening message)",
+                },
+                CharacterFieldRenderModel {
+                    field: crate::app::CharacterFormField::ExampleDialogue,
+                    label: "Example Dialogue",
+                    text: cs.example_dialogue.text.clone(),
+                    cursor: cs.example_dialogue.cursor,
+                    placeholder: "(example conversation to guide style)",
+                },
+            ];
+            Some(CharacterFormRenderModel {
+                form_type,
+                fields,
+                active_field: cs.active_field,
+                path_text: String::new(),
+                path_cursor: 0,
+            })
+        }
         ScreenState::CharacterImport => Some(CharacterFormRenderModel {
             form_type: CharacterFormType::Import,
-            name_text: String::new(),
-            name_cursor: 0,
-            system_prompt_text: String::new(),
-            system_prompt_cursor: 0,
+            fields: Vec::new(),
             active_field: crate::app::CharacterFormField::Name,
             path_text: state.character_import.path.text.clone(),
             path_cursor: state.character_import.path.cursor,
@@ -770,6 +832,10 @@ fn build_hints(state: &ShellState) -> Vec<HintItem> {
                 action: "New character".into(),
             },
             HintItem {
+                key: "e".into(),
+                action: "Edit".into(),
+            },
+            HintItem {
                 key: "i".into(),
                 action: "Import JSON".into(),
             },
@@ -782,7 +848,7 @@ fn build_hints(state: &ShellState) -> Vec<HintItem> {
                 action: "Back".into(),
             },
         ],
-        ScreenState::CharacterCreate => vec![
+        ScreenState::CharacterCreate | ScreenState::CharacterEdit => vec![
             HintItem {
                 key: "Tab".into(),
                 action: "Switch field".into(),
@@ -884,6 +950,7 @@ fn build_breadcrumb(state: &ShellState) -> String {
         ScreenState::SessionList => "⬡ Ozone+ › Sessions".into(),
         ScreenState::CharacterManager => "⬡ Ozone+ › Characters".into(),
         ScreenState::CharacterCreate => "⬡ Ozone+ › Characters › New".into(),
+        ScreenState::CharacterEdit => "⬡ Ozone+ › Characters › Edit".into(),
         ScreenState::CharacterImport => "⬡ Ozone+ › Characters › Import".into(),
         ScreenState::Settings => {
             if state.settings.drill_down {
@@ -2307,6 +2374,7 @@ fn render_character_form(frame: &mut Frame, pane: &PaneLayout, model: &Character
 
     let title = match model.form_type {
         CharacterFormType::Create => "New Character",
+        CharacterFormType::Edit => "Edit Character",
         CharacterFormType::Import => "Import Character Card",
     };
 
@@ -2322,62 +2390,37 @@ fn render_character_form(frame: &mut Frame, pane: &PaneLayout, model: &Character
     lines.push(Line::from(""));
 
     match model.form_type {
-        CharacterFormType::Create => {
-            // Name field
-            let name_active = model.active_field == crate::app::CharacterFormField::Name;
-            let name_label_style = if name_active {
-                theme::accent_style().add_modifier(Modifier::BOLD)
-            } else {
-                theme::dim_style()
-            };
-            lines.push(Line::from(Span::styled("  Name", name_label_style)));
-            let name_indicator = if name_active { "\u{25b6} " } else { "  " };
-            let name_display = if model.name_text.is_empty() {
-                "(type character name)".to_string()
-            } else {
-                model.name_text.clone()
-            };
-            let name_style = if model.name_text.is_empty() && name_active {
-                theme::dim_style()
-            } else if name_active {
-                theme::text_style().add_modifier(Modifier::UNDERLINED)
-            } else {
-                theme::text_style()
-            };
-            lines.push(Line::from(vec![
-                Span::styled(format!("  {name_indicator}"), theme::accent_style()),
-                Span::styled(name_display, name_style),
-            ]));
-            lines.push(Line::from(""));
-
-            // System Prompt field
-            let prompt_active = model.active_field == crate::app::CharacterFormField::SystemPrompt;
-            let prompt_label_style = if prompt_active {
-                theme::accent_style().add_modifier(Modifier::BOLD)
-            } else {
-                theme::dim_style()
-            };
-            lines.push(Line::from(Span::styled(
-                "  System Prompt",
-                prompt_label_style,
-            )));
-            let prompt_indicator = if prompt_active { "\u{25b6} " } else { "  " };
-            let prompt_display = if model.system_prompt_text.is_empty() {
-                "(optional: describe this character's personality)".to_string()
-            } else {
-                model.system_prompt_text.clone()
-            };
-            let prompt_style = if model.system_prompt_text.is_empty() && prompt_active {
-                theme::dim_style()
-            } else if prompt_active {
-                theme::text_style().add_modifier(Modifier::UNDERLINED)
-            } else {
-                theme::text_style()
-            };
-            lines.push(Line::from(vec![
-                Span::styled(format!("  {prompt_indicator}"), theme::accent_style()),
-                Span::styled(prompt_display, prompt_style),
-            ]));
+        CharacterFormType::Create | CharacterFormType::Edit => {
+            for field_model in &model.fields {
+                let is_active = field_model.field == model.active_field;
+                let label_style = if is_active {
+                    theme::accent_style().add_modifier(Modifier::BOLD)
+                } else {
+                    theme::dim_style()
+                };
+                lines.push(Line::from(Span::styled(
+                    format!("  {}", field_model.label),
+                    label_style,
+                )));
+                let indicator = if is_active { "\u{25b6} " } else { "  " };
+                let display = if field_model.text.is_empty() {
+                    field_model.placeholder.to_string()
+                } else {
+                    field_model.text.clone()
+                };
+                let style = if field_model.text.is_empty() && is_active {
+                    theme::dim_style()
+                } else if is_active {
+                    theme::text_style().add_modifier(Modifier::UNDERLINED)
+                } else {
+                    theme::text_style()
+                };
+                lines.push(Line::from(vec![
+                    Span::styled(format!("  {indicator}"), theme::accent_style()),
+                    Span::styled(display, style),
+                ]));
+                lines.push(Line::from(""));
+            }
         }
         CharacterFormType::Import => {
             lines.push(Line::from(Span::styled(
@@ -2408,7 +2451,9 @@ fn render_character_form(frame: &mut Frame, pane: &PaneLayout, model: &Character
 
     lines.push(Line::from(""));
     let hint = match model.form_type {
-        CharacterFormType::Create => "  Tab switch field \u{00b7} Enter save \u{00b7} Esc cancel",
+        CharacterFormType::Create | CharacterFormType::Edit => {
+            "  Tab switch field \u{00b7} Enter save \u{00b7} Esc cancel"
+        }
         CharacterFormType::Import => "  Enter import \u{00b7} Esc cancel",
     };
     lines.push(Line::from(Span::styled(hint, theme::muted_style())));
@@ -2750,6 +2795,7 @@ fn screen_label(screen: ScreenState) -> &'static str {
         ScreenState::SessionList => "sessions",
         ScreenState::CharacterManager => "characters",
         ScreenState::CharacterCreate => "character create",
+        ScreenState::CharacterEdit => "character edit",
         ScreenState::CharacterImport => "character import",
         ScreenState::Settings => "settings",
         ScreenState::Conversation => "conversation",
@@ -3007,6 +3053,7 @@ fn overlay_model(screen: ScreenState, input_mode: InputMode) -> Option<OverlayRe
         | ScreenState::SessionList
         | ScreenState::CharacterManager
         | ScreenState::CharacterCreate
+        | ScreenState::CharacterEdit
         | ScreenState::CharacterImport
         | ScreenState::Settings
         | ScreenState::ModelIntelligence

@@ -49,6 +49,7 @@ pub enum KeyAction {
     CommandPaletteClose,
     // Character form actions
     CharacterCreate,
+    CharacterEditSelected,
     CharacterImportPrompt,
     FormInsertChar(char),
     FormBackspace,

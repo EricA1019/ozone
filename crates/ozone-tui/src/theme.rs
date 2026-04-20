@@ -3,7 +3,7 @@
 //! These mirror the base ozone palette from `src/theme.rs` so the product
 //! family feels cohesive while ozone+ retains its own accent (VIOLET).
 
-use std::sync::OnceLock;
+use std::sync::atomic::{AtomicU8, Ordering};
 
 use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, Serialize};
@@ -42,16 +42,30 @@ impl ThemePreset {
 
 // ── Active-preset singleton ───────────────────────────────────────────────
 
-static ACTIVE_PRESET: OnceLock<ThemePreset> = OnceLock::new();
+/// Stores the active preset discriminant as a `u8`.
+/// 0 = DarkMint (default), 1 = OzoneDark, 2 = HighContrast.
+static ACTIVE_PRESET: AtomicU8 = AtomicU8::new(0);
 
-/// Set the active preset once at startup (subsequent calls are ignored).
+/// Set the active preset.  Can be called multiple times to change the
+/// theme at runtime — each call takes effect immediately for all
+/// subsequent `active_preset()` reads.
 pub fn set_preset(preset: ThemePreset) {
-    let _ = ACTIVE_PRESET.set(preset);
+    let disc = match preset {
+        ThemePreset::DarkMint => 0,
+        ThemePreset::OzoneDark => 1,
+        ThemePreset::HighContrast => 2,
+    };
+    ACTIVE_PRESET.store(disc, Ordering::Relaxed);
 }
 
-/// Return the active preset, defaulting to `DarkMint` if never set.
+/// Return the active preset, defaulting to `DarkMint` for unknown values.
 pub fn active_preset() -> ThemePreset {
-    *ACTIVE_PRESET.get().unwrap_or(&ThemePreset::DarkMint)
+    match ACTIVE_PRESET.load(Ordering::Relaxed) {
+        0 => ThemePreset::DarkMint,
+        1 => ThemePreset::OzoneDark,
+        2 => ThemePreset::HighContrast,
+        _ => ThemePreset::DarkMint,
+    }
 }
 
 // ── Preset-aware color getters ────────────────────────────────────────────
@@ -305,5 +319,19 @@ mod tests {
         for preset in [ThemePreset::DarkMint, ThemePreset::OzoneDark, ThemePreset::HighContrast] {
             assert_eq!(accent_color(preset), teal(preset));
         }
+    }
+
+    #[test]
+    fn set_preset_can_change_at_runtime() {
+        // The old OnceLock implementation silently ignored subsequent calls.
+        // With AtomicU8, set_preset must update immediately.
+        set_preset(ThemePreset::OzoneDark);
+        assert_eq!(active_preset(), ThemePreset::OzoneDark);
+
+        set_preset(ThemePreset::HighContrast);
+        assert_eq!(active_preset(), ThemePreset::HighContrast);
+
+        set_preset(ThemePreset::DarkMint);
+        assert_eq!(active_preset(), ThemePreset::DarkMint);
     }
 }

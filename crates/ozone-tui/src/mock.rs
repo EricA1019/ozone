@@ -130,8 +130,32 @@ pub trait SessionRuntime {
     fn create_character(
         &mut self,
         _name: String,
+        _description: String,
         _system_prompt: String,
+        _personality: String,
+        _scenario: String,
+        _greeting: String,
+        _example_dialogue: String,
     ) -> Result<crate::app::CharacterEntry, Self::Error>;
+
+    /// Update an existing character card.
+    fn update_character(
+        &mut self,
+        _card_id: &str,
+        _name: String,
+        _description: String,
+        _system_prompt: String,
+        _personality: String,
+        _scenario: String,
+        _greeting: String,
+        _example_dialogue: String,
+    ) -> Result<crate::app::CharacterEntry, Self::Error>;
+
+    /// Load a character card by ID for editing.
+    fn get_character(
+        &mut self,
+        _card_id: &str,
+    ) -> Result<Option<crate::app::CharacterDetail>, Self::Error>;
 
     /// Import a character card from a JSON file path.
     fn import_character(
@@ -404,7 +428,12 @@ impl SessionRuntime for MockRuntime {
     fn create_character(
         &mut self,
         name: String,
+        _description: String,
         _system_prompt: String,
+        _personality: String,
+        _scenario: String,
+        _greeting: String,
+        _example_dialogue: String,
     ) -> Result<crate::app::CharacterEntry, Self::Error> {
         let entry = crate::app::CharacterEntry {
             card_id: format!("mock-char-{}", self.available_characters.len() + 1),
@@ -414,6 +443,42 @@ impl SessionRuntime for MockRuntime {
         };
         self.available_characters.push(entry.clone());
         Ok(entry)
+    }
+
+    fn update_character(
+        &mut self,
+        card_id: &str,
+        name: String,
+        description: String,
+        _system_prompt: String,
+        _personality: String,
+        _scenario: String,
+        _greeting: String,
+        _example_dialogue: String,
+    ) -> Result<crate::app::CharacterEntry, Self::Error> {
+        if let Some(entry) = self.available_characters.iter_mut().find(|e| e.card_id == card_id) {
+            entry.name = name.clone();
+            entry.description = description.clone();
+        }
+        Ok(crate::app::CharacterEntry {
+            card_id: card_id.to_owned(),
+            name,
+            description,
+            session_count: 0,
+        })
+    }
+
+    fn get_character(
+        &mut self,
+        card_id: &str,
+    ) -> Result<Option<crate::app::CharacterDetail>, Self::Error> {
+        let entry = self.available_characters.iter().find(|e| e.card_id == card_id);
+        Ok(entry.map(|e| crate::app::CharacterDetail {
+            card_id: e.card_id.clone(),
+            name: e.name.clone(),
+            description: e.description.clone(),
+            ..Default::default()
+        }))
     }
 
     fn import_character(
