@@ -2271,6 +2271,34 @@ impl Sandbox {
             env_map.insert("OZONE__BACKEND__TYPE".to_owned(), "koboldcpp".to_owned());
             env_map.insert("OZONE__BACKEND__URL".to_owned(), backend.base_url.clone());
         }
+        // Carry the host's Python user-site path so pyte/Pillow remain findable
+        // even when HOME is overridden to the sandbox home dir.
+        if let Ok(pythonpath) = env::var("PYTHONPATH") {
+            env_map.insert("PYTHONPATH".to_owned(), pythonpath);
+        } else {
+            // Derive it from the real HOME before the sandbox override takes effect.
+            let real_home = env::var("HOME").unwrap_or_default();
+            if !real_home.is_empty() {
+                // Mirror Python's default user-site path: $HOME/.local/lib/pythonX.Y/site-packages
+                // We don't know the exact X.Y so we glob the known prefix pattern.
+                let user_site_base = format!("{real_home}/.local/lib");
+                if let Ok(entries) = std::fs::read_dir(&user_site_base) {
+                    let paths: Vec<String> = entries
+                        .filter_map(|e| e.ok())
+                        .filter(|e| {
+                            e.file_name()
+                                .to_string_lossy()
+                                .starts_with("python")
+                        })
+                        .map(|e| format!("{}/site-packages", e.path().display()))
+                        .filter(|p| std::path::Path::new(p).exists())
+                        .collect();
+                    if !paths.is_empty() {
+                        env_map.insert("PYTHONPATH".to_owned(), paths.join(":"));
+                    }
+                }
+            }
+        }
         env_map
     }
 
