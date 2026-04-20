@@ -8,7 +8,7 @@
 
 **⬡ Use AI smarter. Not bigger.**
 
-![Version](https://img.shields.io/badge/v0.4.1--alpha-76b7b2?style=for-the-badge)
+![Version](https://img.shields.io/badge/v0.4.3--alpha-76b7b2?style=for-the-badge)
 ![License](https://img.shields.io/badge/MIT-7c3aed?style=for-the-badge)
 ![Local-first](https://img.shields.io/badge/local--first-06b6d4?style=for-the-badge)
 
@@ -60,7 +60,7 @@ Binary name detection: symlinking to `ozone-lite`, `ozone+`, or `oz+` auto-selec
 
 ### 1. Install a Local Backend
 
-Ozone still uses [KoboldCpp](https://github.com/LostRuins/koboldcpp) for the established profiling and launcher workflow, and ozone+ now also supports [llama.cpp](https://github.com/ggml-org/llama.cpp) as a first-class runtime backend.
+Ozone supports both [KoboldCpp](https://github.com/LostRuins/koboldcpp) and [llama.cpp](https://github.com/ggml-org/llama.cpp) as first-class backends. Both backends support the full profiling workflow (QuickSweep, FullSweep, SingleBenchmark, GenerateProfiles) and are interchangeable for ozone+ chat sessions.
 
 **KoboldCpp setup**
 
@@ -211,7 +211,7 @@ The server prefers direct crate APIs for persistence-heavy session work and uses
 
 ## ⬡ ozone — Autoprofiling
 
-Autoprofiling is the key feature that separates ozone base from just launching KoboldCpp manually. It reads your model, your hardware, and produces a concrete starting point for manual tuning.
+Autoprofiling is the key feature that separates ozone base from just launching a backend manually. It reads your model, your hardware, and produces a concrete starting point for manual tuning. Both **KoboldCpp** and **llama.cpp** backends are fully supported — ozone auto-detects which backend to use, preferring KoboldCpp when both are available.
 
 ### How it works
 
@@ -292,6 +292,8 @@ If you prefer a short shell symlink, pointing `oz+` at the `ozone` binary also s
 | `i` | Insert mode (start typing) |
 | `q` | Quit session |
 | `↑` `↓` | Scroll transcript |
+| `PgUp` `PgDn` | Scroll long lists (model picker, session list) |
+| `/` | Open slash-command autocomplete popup |
 | `Ctrl+K` | Pin selected message to memory |
 | `Ctrl+D` | Dry-run context preview (see what goes into the prompt) |
 | `?` | Help overlay |

@@ -10,6 +10,37 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ---
 
+## [0.4.3-alpha] — TUI QOL · llama.cpp Profiling · Version Hash
+
+### Added
+
+- **TUI scrollable lists**: model picker and session list now use ratatui `ListState` + `Scrollbar`; `PgUp`/`PgDn` navigate long lists
+- **Slash autocomplete**: typing `/` in the ozone+ input box opens a popup list of available commands
+- **Settings drill-down**: Settings screen now navigates into sub-sections instead of displaying a flat list
+- **Spinner**: braille spinner (⠋⠙⠹…) animates in the footer while the model is streaming a reply
+- **Message separators**: visual dividers between conversation turns in the ozone+ TUI
+- **Colored mode badges**: INS/CMD mode badge now has a colored background (violet for insert mode, amber for command mode)
+- **Model Intelligence screen**: new main-menu screen showing hardware-aware model recommendations
+- **Side-by-side monitor**: base `ozone` can now launch the TUI alongside the backend monitor
+- **1-row footer**: footer compressed from two rows to one, freeing vertical space for the message pane
+- **llama.cpp profiler support**: llama.cpp (`llama-server`) can now be profiled with QuickSweep, FullSweep, SingleBenchmark, and GenerateProfiles — full parity with KoboldCpp
+- **llama.cpp token rate**: profiler reads `timings.predicted_n / predicted_ms` from the `/completion` response for accurate tok/s
+- **llama.cpp profile export**: after profiling, `llamacpp-profiles.sh` (executable) and `llamacpp-profiles.json` are written to `~/.local/share/ozone/`
+- **Auto backend detection**: `resolved_backend_for_profiling()` prefers KoboldCpp when available, falls back to llama-server automatically
+- **llama.cpp startup diagnostics**: launch failures are now classified — `GgmlAbort`, `CudaOom`, `CudaError`, `ModelLoadFailed`, `MissingSharedLibrary`, `RuntimeCrash`, `Timeout` — each with specific recovery advice
+- **Structured launcher args**: profiled settings (`-ngl`, `--ctx-size`, `--threads`) are saved to prefs and applied at next launch
+- **Version hash embedding**: `ozone --version` and `ozone-plus --version` now report `0.4.3-alpha+<git-hash>` (e.g. `0.4.3-alpha+7b46264`)
+- **`make install`**: new `Makefile` target builds and installs both `ozone` and `ozone-plus` in one command
+- **Build hash auto-update**: `build.rs` re-runs on `.git/HEAD` change so the embedded hash stays current without manual bumping
+- **Install update prompt**: the stale-install refresh prompt now shows `build-id:` (SHA-256 prefix of the pending artifact) alongside the version string
+
+### Changed
+
+- **Profiling UI copy**: progress messages and labels no longer hardcode "KoboldCpp" — strings are backend-agnostic
+- **Version**: bumped to `0.4.3-alpha` across all workspace crates
+
+---
+
 ## [0.4.2-alpha] — Quality & Brand Hardening
 
 ### Fixed

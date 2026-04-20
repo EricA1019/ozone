@@ -161,7 +161,7 @@ For project questions, collaboration, or direct contact:
 
 ## 10. Current Status
 
-**ozone+ is fully implemented through Phase 3 and ships as `v0.4.2-alpha`.**
+**ozone+ is fully implemented through Phase 3 and ships as `v0.4.3-alpha`.**
 
 What is available today:
 
@@ -169,6 +169,10 @@ What is available today:
 |---------|--------|
 | Session create / list / open | ✅ |
 | TUI chat with streaming tokens | ✅ |
+| Slash autocomplete (`/` in input to browse commands) | ✅ |
+| Scrollable lists with `PgUp`/`PgDn` navigation | ✅ |
+| Braille spinner during model generation | ✅ |
+| Model Intelligence screen (hardware-aware recommendations) | ✅ |
 | KoboldCpp- or llama.cpp-backed ozone+ runtime path | ✅ |
 | Character card import (SillyTavern V2) | ✅ |
 | Pinned memories (persist across sessions) | ✅ |

@@ -26,6 +26,8 @@ Then read this file fully before doing anything else in this session.
 ## Current Project State
 
 **Working:**
+- TUI QOL upgrade shipped: scrollable lists with `PgUp`/`PgDn` (ratatui `ListState` + `Scrollbar`), slash autocomplete popup, settings drill-down, 1-row footer, braille spinner during generation, message separators, colored INS/CMD mode badges, Model Intelligence screen, and side-by-side monitor mode
+- llama.cpp native profiler support shipped: full QuickSweep/FullSweep/SingleBenchmark/GenerateProfiles parity with KoboldCpp, token rate from `/completion` timings, profile export to `~/.local/share/ozone/`, auto backend detection, structured launcher args saved to prefs, and classified startup diagnostics (`GgmlAbort`, `CudaOom`, `CudaError`, `ModelLoadFailed`, `MissingSharedLibrary`, `RuntimeCrash`, `Timeout`)
 - Launcher dashboard, model picker, launch confirm flow, and live monitor all work in the ratatui TUI
 - CLI profiling commands work: `bench`, `sweep`, `analyze`, profile generation, and preset export
 - New TUI profiling flow works: advisory -> confirm -> running -> success/failure report
