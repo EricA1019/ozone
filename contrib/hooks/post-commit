@@ -1,0 +1,30 @@
+#!/usr/bin/env bash
+# post-commit: sync local ozone binaries from the current release build.
+# Runs only when target/release/ozone already exists; never blocks a commit.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+RELEASE_BIN="$REPO_ROOT/target/release/ozone"
+SYNC_SCRIPT="$REPO_ROOT/contrib/sync-local-install.sh"
+LOG_FILE="${TMPDIR:-/tmp}/ozone-install-sync.log"
+
+if [[ ! -x "$RELEASE_BIN" ]]; then
+    # No release binary yet — skip silently on the first checkout.
+    exit 0
+fi
+
+if [[ ! -x "$SYNC_SCRIPT" ]]; then
+    exit 0
+fi
+
+# Run in background so the terminal is not held up; log any errors.
+(
+    cd "$REPO_ROOT"
+    ./contrib/sync-local-install.sh --no-build >"$LOG_FILE" 2>&1
+    if [[ $? -ne 0 ]]; then
+        printf '\n[ozone post-commit] install sync failed — see %s\n' "$LOG_FILE" >&2
+    fi
+) &
+
+# Never block the commit.
+exit 0

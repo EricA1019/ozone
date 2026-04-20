@@ -1,0 +1,27 @@
+#!/usr/bin/env bash
+# post-merge: rebuild and sync local ozone binaries after a git pull or merge.
+# Merged code may have changed, so a full release build is required.
+# Never blocks the merge.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+SYNC_SCRIPT="$REPO_ROOT/contrib/sync-local-install.sh"
+
+if [[ ! -x "$SYNC_SCRIPT" ]]; then
+    exit 0
+fi
+
+printf '\n[ozone] rebuilding and syncing local binaries after merge...\n'
+
+(
+    cd "$REPO_ROOT"
+    ./contrib/sync-local-install.sh
+)
+STATUS=$?
+
+if [[ $STATUS -ne 0 ]]; then
+    printf '[ozone] sync failed (exit %d) — run ./contrib/sync-local-install.sh manually\n' "$STATUS" >&2
+fi
+
+# Never block the merge.
+exit 0

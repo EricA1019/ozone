@@ -13,7 +13,7 @@ edges:
     condition: when specific technology versions or library details are needed
   - target: context/architecture.md
     condition: when understanding how components connect during setup
-last_updated: 2026-04-18
+last_updated: 2026-04-20
 ---
 
 # Setup
@@ -30,7 +30,8 @@ last_updated: 2026-04-18
 1. `git clone https://github.com/EricA1019/ozone.git`
 2. `cd ozone`
 3. `./contrib/sync-local-install.sh`
-4. `ozone`
+4. `make setup-hooks` — install git hooks so local binaries auto-sync after every commit/merge
+5. `ozone`
 
 ## Environment Variables
 - `OZONE__BACKEND__TYPE` (conditionally required) — force `ozone-plus` to use a specific runtime backend such as `koboldcpp` or `llamacpp`
@@ -45,12 +46,15 @@ last_updated: 2026-04-18
 - `cargo build -p ozone -p ozone-plus -p ozone-mcp-app` — build the live-test binaries in debug mode
 - `cargo build -p ozone -p ozone-plus -p ozone-mcp-app --release` — build the installable binaries explicitly
 - `./contrib/sync-local-install.sh` — rebuild and refresh `~/.cargo/bin` + `~/.local/bin` only when checksums changed
+- `make sync` — same as above (preferred shorthand)
+- `make setup-hooks` — one-time: install git hooks so commits/merges auto-sync the local install
 - `cargo clippy --workspace --all-targets` — lint the workspace
 - `cargo test --workspace` — run the full test suite
 - `ozone --version && ozone-plus --version` — verify the installed launcher/runtime version pair
 
 ## Common Issues
-- **Installed binary is stale:** run `./contrib/sync-local-install.sh` instead of manually copying `target/release/*` into `~/.local/bin`
+- **Installed binary is stale:** run `make sync` (or `./contrib/sync-local-install.sh`); for permanent fix, run `make setup-hooks` once
+- **Stale install after a commit:** run `make setup-hooks` to install git hooks — after that, every local commit auto-syncs the installed binaries from the current `target/release` build
 - **`ozone-plus` release artifact is stale after a partial build:** build explicit packages (`cargo build -p ozone-plus --release` or use `./contrib/sync-local-install.sh`) instead of relying on an older root release artifact
 - **PTY smoke tools are launching stale debug binaries:** rebuild the real app targets (`cargo build -p ozone -p ozone-plus -p ozone-mcp-app`) or just run `cargo build --workspace` before `mock_user_tool` / `screenshot_tool`
 - **Interactive automation should not stop for a `Y/n` update question:** set `OZONE_SKIP_INSTALL_UPDATE_PROMPT=1`

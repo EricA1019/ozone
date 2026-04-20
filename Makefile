@@ -1,9 +1,14 @@
-.PHONY: install install-lite install-base install-plus build test lint preflight prune-artifacts prune-artifacts-dry-run
+.PHONY: install install-lite install-base install-plus build test lint preflight prune-artifacts prune-artifacts-dry-run sync setup-hooks
 
-# Install both binaries locally after any code change
-install:
-	cargo install --path . --locked
-	cargo install --path apps/ozone-plus --locked
+# Build release binaries and sync into ~/.cargo/bin + ~/.local/bin (checksum-aware)
+install: sync
+
+sync:
+	./contrib/sync-local-install.sh
+
+# One-time dev setup: symlink contrib/hooks/* into .git/hooks/
+setup-hooks:
+	./contrib/install-dev-hooks.sh
 
 install-lite:
 	cargo install --path . --locked --profile release-lite
