@@ -1149,6 +1149,8 @@ pub enum RuntimeCommand {
     PrefChanged { pref_key: String, value: String },
     /// Assign or remove the folder for a session.
     SetSessionFolder { session_id: String, folder: Option<String> },
+    /// Switch to a different session — load its transcript, branches, and metadata.
+    OpenSession { session_id: String, session_name: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -2015,7 +2017,10 @@ impl ShellState {
                 }
                 ScreenState::SessionList => {
                     if let Some(entry) = self.session_list.selected_entry() {
-                        self.status_line = Some(format!("Opening: {}", entry.name));
+                        let session_id = entry.session_id.clone();
+                        let session_name = entry.name.clone();
+                        self.status_line = Some(format!("Opening: {}", session_name));
+                        self.runtime_commands.push(RuntimeCommand::OpenSession { session_id, session_name });
                         self.enter_conversation();
                     }
                 }
@@ -4269,5 +4274,48 @@ mod tests {
         // Editable entries are Cycle
         assert!(matches!(entries[2].2, super::EntryKind::Cycle { .. }));
         assert!(matches!(entries[3].2, super::EntryKind::Cycle { .. }));
+    }
+
+    #[test]
+    fn selecting_session_emits_open_session_command() {
+        let session_id = ozone_core::session::SessionId::parse(
+            "123e4567-e89b-12d3-a456-426614174000",
+        )
+        .unwrap();
+        let mut app = super::ShellState::new(super::SessionContext::new(
+            session_id,
+            "Original Session",
+        ));
+
+        // Populate session list and navigate to it.
+        app.session_list.entries = vec![
+            super::SessionListEntry {
+                session_id: "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee".into(),
+                name: "Test Session Alpha".into(),
+                character_name: None,
+                message_count: 5,
+                last_active: None,
+                folder: None,
+            },
+        ];
+        app.screen = super::ScreenState::SessionList;
+        app.session_list.selected = 0;
+
+        // Select the session.
+        app.apply_action(super::super::input::KeyAction::MenuSelect);
+
+        let cmds = app.take_runtime_commands();
+        assert_eq!(cmds.len(), 1);
+        match &cmds[0] {
+            super::RuntimeCommand::OpenSession {
+                session_id,
+                session_name,
+            } => {
+                assert_eq!(session_id, "aaaaaaaa-bbbb-cccc-dddd-eeeeeeeeeeee");
+                assert_eq!(session_name, "Test Session Alpha");
+            }
+            other => panic!("Expected OpenSession, got {:?}", other),
+        }
+        assert_eq!(app.screen, super::ScreenState::Conversation);
     }
 }

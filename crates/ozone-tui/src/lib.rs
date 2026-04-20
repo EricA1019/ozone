@@ -318,6 +318,27 @@ where
                                         app.session_list.entries = entries;
                                     }
                                 }
+                                app::RuntimeCommand::OpenSession { session_id, session_name } => {
+                                    match runtime.open_session(&session_id) {
+                                        Ok(Some(bootstrap)) => {
+                                            if let Ok(sid) = ozone_core::session::SessionId::parse(&session_id) {
+                                                app.session.context = app::SessionContext::new(sid, session_name);
+                                            }
+                                            app.hydrate(bootstrap);
+                                        }
+                                        Ok(None) => {
+                                            app.status_line = Some(format!(
+                                                "Session not found: {session_id}"
+                                            ));
+                                        }
+                                        Err(error) => {
+                                            app.status_line = Some(format!(
+                                                "Failed to open session: {:?}",
+                                                error
+                                            ));
+                                        }
+                                    }
+                                }
                         }
                         sync_draft(runtime, app)?;
                     }

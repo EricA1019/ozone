@@ -156,6 +156,16 @@ pub trait SessionRuntime {
     ) -> Result<(), Self::Error> {
         Ok(())
     }
+
+    /// Switch to a different session — release the current lock, open the new
+    /// session, and return its bootstrap data so the TUI can hydrate.
+    /// The default returns `None` (session switching not supported).
+    fn open_session(
+        &mut self,
+        _session_id: &str,
+    ) -> Result<Option<AppBootstrap>, Self::Error> {
+        Ok(None)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -179,6 +189,8 @@ pub struct MockRuntime {
     pub available_sessions: Vec<SessionListEntry>,
     pub available_characters: Vec<crate::app::CharacterEntry>,
     pub active_generation: Option<MockGeneration>,
+    /// Per-session bootstrap data for `open_session()` testing.
+    pub session_bootstraps: BTreeMap<String, AppBootstrap>,
     next_request_number: u64,
 }
 
@@ -197,6 +209,7 @@ impl Default for MockRuntime {
             available_sessions: Vec::new(),
             available_characters: Vec::new(),
             active_generation: None,
+            session_bootstraps: BTreeMap::new(),
             next_request_number: 1,
         }
     }
@@ -416,6 +429,17 @@ impl SessionRuntime for MockRuntime {
         self.available_characters.push(entry.clone());
         Ok(entry)
     }
+
+    fn open_session(
+        &mut self,
+        session_id: &str,
+    ) -> Result<Option<AppBootstrap>, Self::Error> {
+        if let Some(bootstrap) = self.session_bootstraps.get(session_id) {
+            Ok(Some(bootstrap.clone()))
+        } else {
+            Ok(None)
+        }
+    }
 }
 
 #[cfg(test)]
@@ -552,5 +576,34 @@ mod tests {
         let poll = runtime.poll_generation(&context).unwrap();
         assert!(poll.is_none());
         assert!(runtime.polled_requests.is_empty());
+    }
+
+    #[test]
+    fn open_session_returns_registered_bootstrap() {
+        use crate::app::{AppBootstrap, BranchItem};
+
+        let mut runtime = MockRuntime::seeded();
+        let other_bootstrap = AppBootstrap {
+            transcript: vec![
+                TranscriptItem::new("user", "hello from other session"),
+                TranscriptItem::new("assistant", "hi there"),
+            ],
+            branches: vec![BranchItem::new("main", "main", true)],
+            status_line: Some("other session ready".into()),
+            ..AppBootstrap::default()
+        };
+        runtime
+            .session_bootstraps
+            .insert("other-session-id".into(), other_bootstrap);
+
+        let result = runtime.open_session("other-session-id").unwrap();
+        assert!(result.is_some());
+        let bootstrap = result.unwrap();
+        assert_eq!(bootstrap.transcript.len(), 2);
+        assert_eq!(bootstrap.transcript[0].content, "hello from other session");
+
+        // Unknown session returns None.
+        let result = runtime.open_session("unknown-id").unwrap();
+        assert!(result.is_none());
     }
 }

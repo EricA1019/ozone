@@ -1757,6 +1757,40 @@ impl SessionRuntime for Phase1dRuntime {
             session_count: 0,
         })
     }
+
+    fn open_session(
+        &mut self,
+        session_id: &str,
+    ) -> Result<Option<TuiBootstrap>, Self::Error> {
+        let new_sid = SessionId::parse(session_id).map_err(|e| e.to_string())?;
+        if new_sid == self.session_id {
+            // Already on this session — just reload.
+            let ctx = TuiSessionContext::new(self.session_id.clone(), "");
+            return Ok(Some(self.load_bootstrap(&ctx)?));
+        }
+
+        // Release the lock on the current session.
+        let _ = self.release_lock();
+
+        // Acquire lock on the new session.
+        let instance_id = format!("ozone-plus-phase1d-{}", std::process::id());
+        self.repo
+            .acquire_session_lock(&new_sid, &instance_id)
+            .map_err(|error| format!("failed to lock session {new_sid}: {error}"))?;
+
+        self.session_id = new_sid.clone();
+        self.lock_instance_id = instance_id;
+        self.pending_generation = None;
+        self.context_bridge = AppContextBridge::default();
+
+        // Re-initialize the engine store for the new session.
+        self.engine = SingleWriterConversationEngine::new(crate::RepoConversationStore::new(
+            self.repo.clone(),
+        ));
+
+        let ctx = TuiSessionContext::new(new_sid, "");
+        Ok(Some(self.load_bootstrap(&ctx)?))
+    }
 }
 
 fn tui_branch_from_record(record: ConversationBranchRecord) -> TuiBranchItem {
