@@ -23,11 +23,11 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 pub use app::{
     AppBootstrap, BranchItem, CharacterEntry, CharacterListState, CommandEntry,
     CommandPaletteState, ContextDryRunPreview, ContextPreview, ContextTokenBudget, DraftState,
-    FocusTarget, GenerationPoll, MenuItem, MenuState, RecallBrowser, RuntimeCancellation,
-    RuntimeCompletion, RuntimeContextRefresh, RuntimeFailure, RuntimePhase, RuntimeProgress,
-    RuntimeSendReceipt, ScreenState, SessionContext, SessionListEntry, SessionListState,
-    SessionMetadata, SessionState, SessionStats, SettingsCategory, SettingsEntry, SettingsState,
-    ShellState, TranscriptItem,
+    EntryKind, FocusTarget, GenerationPoll, MenuItem, MenuState, RecallBrowser,
+    RuntimeCancellation, RuntimeCompletion, RuntimeContextRefresh, RuntimeFailure, RuntimePhase,
+    RuntimeProgress, RuntimeSendReceipt, ScreenState, SessionContext, SessionListEntry,
+    SessionListState, SessionMetadata, SessionState, SessionStats, SettingsCategory, SettingsEntry,
+    SettingsState, ShellState, TranscriptItem,
 };
 pub use input::{
     dispatch_command_palette_key, dispatch_key, dispatch_menu_key, InputMode, KeyAction,
@@ -37,6 +37,7 @@ pub use layout::{
 };
 pub use mock::{MockRuntime, SessionRuntime};
 pub use render::{build_render_model, render_shell, RenderModel};
+pub use theme::ThemePreset;
 
 #[derive(Debug, Clone)]
 pub struct RunSessionOutcome {
@@ -288,6 +289,9 @@ where
                                                 Some(format!("Import failed: {:?}", e));
                                         }
                                     }
+                                }
+                                app::RuntimeCommand::PrefChanged { pref_key, value } => {
+                                    let _ = runtime.save_pref(&pref_key, &value);
                                 }
                             }
                             sync_draft(runtime, app)?;

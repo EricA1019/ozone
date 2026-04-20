@@ -23,13 +23,13 @@ use ozone_persist::{
 use ozone_tui::{
     AppBootstrap as TuiBootstrap, BranchItem as TuiBranchItem,
     ContextDryRunPreview as TuiContextDryRunPreview, ContextPreview as TuiContextPreview,
-    ContextTokenBudget as TuiContextTokenBudget, DraftState as TuiDraftState, GenerationPoll,
-    RecallBrowser as TuiRecallBrowser, RuntimeCancellation as TuiRuntimeCancellation,
-    RuntimeCompletion as TuiRuntimeCompletion, RuntimeContextRefresh as TuiRuntimeContextRefresh,
-    RuntimeFailure as TuiRuntimeFailure, RuntimeProgress as TuiRuntimeProgress,
-    RuntimeSendReceipt as TuiRuntimeSendReceipt, SessionContext as TuiSessionContext,
-    SessionMetadata as TuiSessionMetadata, SessionRuntime, SessionStats as TuiSessionStats,
-    TranscriptItem as TuiTranscriptItem,
+    ContextTokenBudget as TuiContextTokenBudget, DraftState as TuiDraftState, EntryKind,
+    GenerationPoll, RecallBrowser as TuiRecallBrowser,
+    RuntimeCancellation as TuiRuntimeCancellation, RuntimeCompletion as TuiRuntimeCompletion,
+    RuntimeContextRefresh as TuiRuntimeContextRefresh, RuntimeFailure as TuiRuntimeFailure,
+    RuntimeProgress as TuiRuntimeProgress, RuntimeSendReceipt as TuiRuntimeSendReceipt,
+    SessionContext as TuiSessionContext, SessionMetadata as TuiSessionMetadata, SessionRuntime,
+    SessionStats as TuiSessionStats, TranscriptItem as TuiTranscriptItem,
 };
 use std::{
     collections::HashSet,
@@ -1528,54 +1528,163 @@ impl SessionRuntime for Phase1dRuntime {
                 name: s.name.clone(),
                 character_name: s.character_name.clone(),
                 message_count: s.message_count as usize,
-                last_active: Some(crate::format_timestamp(s.last_opened_at)),
+                last_active: Some(crate::format_timestamp_short(s.last_opened_at)),
             })
             .collect())
     }
 
     fn get_settings(&mut self) -> Result<Vec<ozone_tui::SettingsEntry>, Self::Error> {
         let config = self.inference.config();
+        let prefs = crate::load_prefs_sync();
         let mut entries = Vec::new();
 
+        // ── Session (read-only diagnostics) ───────────────────────────────
         entries.push(ozone_tui::SettingsEntry {
             category: "Session".into(),
             key: "Session ID".into(),
             value: self.session_id.to_string(),
+            kind: EntryKind::ReadOnly,
+            pref_key: String::new(),
         });
         entries.push(ozone_tui::SettingsEntry {
             category: "Session".into(),
             key: "Lock instance".into(),
             value: self.lock_instance_id.clone(),
+            kind: EntryKind::ReadOnly,
+            pref_key: String::new(),
         });
 
+        // ── Backend (read-only diagnostics) ───────────────────────────────
         entries.push(ozone_tui::SettingsEntry {
             category: "Backend".into(),
             key: "Type".into(),
             value: config.backend.r#type.clone(),
+            kind: EntryKind::ReadOnly,
+            pref_key: String::new(),
         });
         entries.push(ozone_tui::SettingsEntry {
             category: "Backend".into(),
             key: "URL".into(),
             value: config.backend.url.clone(),
+            kind: EntryKind::ReadOnly,
+            pref_key: String::new(),
         });
         entries.push(ozone_tui::SettingsEntry {
             category: "Backend".into(),
             key: "Prompt template".into(),
             value: self.inference.selected_template().to_string(),
+            kind: EntryKind::ReadOnly,
+            pref_key: String::new(),
         });
 
+        // ── Model (read-only diagnostics) ─────────────────────────────────
         entries.push(ozone_tui::SettingsEntry {
-            category: "Context".into(),
+            category: "Model".into(),
             key: "Max tokens".into(),
             value: config.context.max_tokens.to_string(),
+            kind: EntryKind::ReadOnly,
+            pref_key: String::new(),
         });
         entries.push(ozone_tui::SettingsEntry {
-            category: "Context".into(),
+            category: "Model".into(),
             key: "Safety margin".into(),
             value: format!("{}%", config.context.safety_margin_pct),
+            kind: EntryKind::ReadOnly,
+            pref_key: String::new(),
+        });
+
+        // ── Display (editable) ────────────────────────────────────────────
+        let ts_options = vec![
+            "relative".to_string(),
+            "absolute".to_string(),
+            "off".to_string(),
+        ];
+        let ts_cur = ts_options
+            .iter()
+            .position(|o| o == &prefs.timestamp_style)
+            .unwrap_or(0);
+        entries.push(ozone_tui::SettingsEntry {
+            category: "Display".into(),
+            key: "Timestamp style".into(),
+            value: String::new(),
+            kind: EntryKind::Cycle {
+                options: ts_options,
+                current: ts_cur,
+            },
+            pref_key: "timestamp_style".into(),
+        });
+
+        let density_options = vec!["comfortable".to_string(), "compact".to_string()];
+        let density_cur = density_options
+            .iter()
+            .position(|o| o == &prefs.message_density)
+            .unwrap_or(0);
+        entries.push(ozone_tui::SettingsEntry {
+            category: "Display".into(),
+            key: "Message density".into(),
+            value: String::new(),
+            kind: EntryKind::Cycle {
+                options: density_options,
+                current: density_cur,
+            },
+            pref_key: "message_density".into(),
+        });
+
+        // ── Appearance (editable) ─────────────────────────────────────────
+        let theme_options = vec![
+            "dark-mint".to_string(),
+            "ozone-dark".to_string(),
+            "high-contrast".to_string(),
+        ];
+        let theme_cur = theme_options
+            .iter()
+            .position(|o| o == &prefs.theme_preset)
+            .unwrap_or(0);
+        entries.push(ozone_tui::SettingsEntry {
+            category: "Appearance".into(),
+            key: "Theme".into(),
+            value: String::new(),
+            kind: EntryKind::Cycle {
+                options: theme_options,
+                current: theme_cur,
+            },
+            pref_key: "theme_preset".into(),
+        });
+
+        // ── Launch (editable) ─────────────────────────────────────────────
+        entries.push(ozone_tui::SettingsEntry {
+            category: "Launch".into(),
+            key: "Side-by-side monitor".into(),
+            value: String::new(),
+            kind: EntryKind::Toggle(prefs.side_by_side_monitor),
+            pref_key: "side_by_side_monitor".into(),
+        });
+        entries.push(ozone_tui::SettingsEntry {
+            category: "Launch".into(),
+            key: "Inspector on start".into(),
+            value: String::new(),
+            kind: EntryKind::Toggle(prefs.show_inspector),
+            pref_key: "show_inspector".into(),
         });
 
         Ok(entries)
+    }
+
+    fn save_pref(&mut self, pref_key: &str, value: &str) -> Result<(), Self::Error> {
+        let mut prefs = crate::load_prefs_sync();
+        match pref_key {
+            "theme_preset" => prefs.theme_preset = value.to_string(),
+            "timestamp_style" => prefs.timestamp_style = value.to_string(),
+            "message_density" => prefs.message_density = value.to_string(),
+            "side_by_side_monitor" => {
+                prefs.side_by_side_monitor = value.parse::<bool>().unwrap_or(false)
+            }
+            "show_inspector" => {
+                prefs.show_inspector = value.parse::<bool>().unwrap_or(false)
+            }
+            _ => {}
+        }
+        crate::save_prefs_sync(&prefs)
     }
 
     fn list_characters(&mut self) -> Result<Vec<ozone_tui::CharacterEntry>, Self::Error> {
@@ -1661,6 +1770,7 @@ fn tui_transcript_item_from_message(
         message.content,
         is_bookmarked,
     )
+    .with_timestamp(crate::format_message_time(message.created_at))
 }
 
 fn tui_context_preview_from_plan(preview: &ContextPlanPreview) -> TuiContextPreview {

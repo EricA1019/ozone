@@ -1,3 +1,5 @@
+use std::time::Instant;
+
 use crossterm::event::{KeyCode, KeyEvent};
 use ozone_core::{engine::CancelReason, session::SessionId};
 use ratatui::style::{Color, Modifier, Style};
@@ -13,7 +15,7 @@ pub(crate) fn new_themed_textarea() -> TextArea<'static> {
     let mut textarea = TextArea::default();
     textarea.set_cursor_line_style(Style::default());
     textarea.set_block(ratatui::widgets::Block::default());
-    textarea.set_style(Style::default().fg(crate::theme::CYAN));
+    textarea.set_style(Style::default().fg(crate::theme::cyan(crate::theme::active_preset())));
     textarea.set_cursor_style(
         Style::default()
             .fg(Color::White)
@@ -36,13 +38,16 @@ pub enum ScreenState {
     Quit,
 }
 
-/// The four top-level categories shown in the Settings menu.
+/// The top-level categories shown in the Settings menu.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SettingsCategory {
     Backend,
     Model,
     Display,
     Keybindings,
+    Session,
+    Appearance,
+    Launch,
 }
 
 impl SettingsCategory {
@@ -52,6 +57,53 @@ impl SettingsCategory {
             SettingsCategory::Model => "Model",
             SettingsCategory::Display => "Display",
             SettingsCategory::Keybindings => "Keybindings",
+            SettingsCategory::Session => "Session",
+            SettingsCategory::Appearance => "Appearance",
+            SettingsCategory::Launch => "Launch",
+        }
+    }
+}
+
+/// Describes how a settings entry behaves when the user presses Enter.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum EntryKind {
+    /// Read-only diagnostic value — no interaction.
+    ReadOnly,
+    /// Boolean toggle — Enter flips the value.
+    Toggle(bool),
+    /// Cycle through a list of options — Enter advances to the next.
+    Cycle { options: Vec<String>, current: usize },
+}
+
+impl EntryKind {
+    /// Returns the current human-readable value, or `None` for `ReadOnly`
+    /// (caller should use `SettingsEntry::value` instead).
+    pub fn current_value(&self) -> Option<String> {
+        match self {
+            EntryKind::ReadOnly => None,
+            EntryKind::Toggle(v) => Some(v.to_string()),
+            EntryKind::Cycle { options, current } => {
+                options.get(*current).cloned()
+            }
+        }
+    }
+
+    /// Advance to the next state and return the new value string.
+    /// Returns `None` for `ReadOnly` entries (no change).
+    pub fn activate(&mut self) -> Option<String> {
+        match self {
+            EntryKind::ReadOnly => None,
+            EntryKind::Toggle(v) => {
+                *v = !*v;
+                Some(v.to_string())
+            }
+            EntryKind::Cycle { options, current } => {
+                if options.is_empty() {
+                    return None;
+                }
+                *current = (*current + 1) % options.len();
+                options.get(*current).cloned()
+            }
         }
     }
 }
@@ -77,6 +129,9 @@ impl Default for SettingsState {
                 SettingsCategory::Model,
                 SettingsCategory::Display,
                 SettingsCategory::Keybindings,
+                SettingsCategory::Session,
+                SettingsCategory::Appearance,
+                SettingsCategory::Launch,
             ],
             selected_category: 0,
             selected_entry: 0,
@@ -99,30 +154,88 @@ impl SettingsState {
         self.loaded = true;
     }
 
-    /// Returns `(label, value)` pairs for the given category.
-    /// Display and Keybindings are built-in; Backend and Model come from loaded config.
-    pub fn entries_for_category(&self, cat: &SettingsCategory) -> Vec<(String, String)> {
+    /// Returns `(label, value, kind)` triples for the given category.
+    /// Display and Keybindings have built-in read-only entries; the editable
+    /// Display rows and the Appearance / Launch / Backend / Model / Session
+    /// entries come from `raw_entries`.
+    pub fn entries_for_category(
+        &self,
+        cat: &SettingsCategory,
+    ) -> Vec<(String, String, EntryKind)> {
         match cat {
-            SettingsCategory::Display => vec![
-                ("Color theme".into(), "ozone-dark".into()),
-                ("Wide mode threshold".into(), "120 cols".into()),
-            ],
+            SettingsCategory::Display => {
+                let mut entries: Vec<(String, String, EntryKind)> = vec![
+                    (
+                        "Color theme".into(),
+                        "ozone-dark".into(),
+                        EntryKind::ReadOnly,
+                    ),
+                    (
+                        "Wide mode threshold".into(),
+                        "120 cols".into(),
+                        EntryKind::ReadOnly,
+                    ),
+                ];
+                for e in &self.raw_entries {
+                    if e.category == "Display" {
+                        let val = e.kind.current_value().unwrap_or_else(|| e.value.clone());
+                        entries.push((e.key.clone(), val, e.kind.clone()));
+                    }
+                }
+                entries
+            }
             SettingsCategory::Keybindings => vec![
-                ("Move up".into(), "↑ / k".into()),
-                ("Move down".into(), "↓ / j".into()),
-                ("Select / open".into(), "Enter".into()),
-                ("Back / cancel".into(), "Esc / q".into()),
-                ("Insert mode".into(), "i".into()),
-                ("Send message".into(), "Enter (insert)".into()),
-                ("Command palette".into(), "/ or :".into()),
-                ("Toggle inspector".into(), "Ctrl+I".into()),
+                (
+                    "Move up".into(),
+                    "↑ / k".into(),
+                    EntryKind::ReadOnly,
+                ),
+                (
+                    "Move down".into(),
+                    "↓ / j".into(),
+                    EntryKind::ReadOnly,
+                ),
+                (
+                    "Select / open".into(),
+                    "Enter".into(),
+                    EntryKind::ReadOnly,
+                ),
+                (
+                    "Back / cancel".into(),
+                    "Esc / q".into(),
+                    EntryKind::ReadOnly,
+                ),
+                (
+                    "Insert mode".into(),
+                    "i".into(),
+                    EntryKind::ReadOnly,
+                ),
+                (
+                    "Send message".into(),
+                    "Enter (insert)".into(),
+                    EntryKind::ReadOnly,
+                ),
+                (
+                    "Command palette".into(),
+                    "/ or :".into(),
+                    EntryKind::ReadOnly,
+                ),
+                (
+                    "Toggle inspector".into(),
+                    "Ctrl+I".into(),
+                    EntryKind::ReadOnly,
+                ),
             ],
             other => {
                 let cat_name = other.label();
                 self.raw_entries
                     .iter()
                     .filter(|e| e.category == cat_name)
-                    .map(|e| (e.key.clone(), e.value.clone()))
+                    .map(|e| {
+                        let val =
+                            e.kind.current_value().unwrap_or_else(|| e.value.clone());
+                        (e.key.clone(), val, e.kind.clone())
+                    })
                     .collect()
             }
         }
@@ -130,7 +243,9 @@ impl SettingsState {
 
     /// Reference to the currently selected category.
     pub fn current_category(&self) -> &SettingsCategory {
-        &self.categories[self.selected_category]
+        self.categories
+            .get(self.selected_category)
+            .unwrap_or_else(|| &self.categories[0])
     }
 
     /// Move selection down (wraps). Operates at the current navigation level.
@@ -165,12 +280,47 @@ impl SettingsState {
         }
     }
 
-    /// Drill into the selected category (Enter).
-    pub fn enter(&mut self) {
-        if !self.drill_down {
+    /// Drill into the selected category (Enter at category level) OR activate the
+    /// selected entry when already drilled in.  Returns a `RuntimeCommand` when
+    /// an editable entry was toggled/cycled so the caller can persist the change.
+    pub fn enter(&mut self) -> Option<RuntimeCommand> {
+        if self.drill_down {
+            self.activate_entry()
+        } else {
             self.drill_down = true;
             self.selected_entry = 0;
+            None
         }
+    }
+
+    /// Activate the currently selected entry if it is editable.
+    /// Mutates the entry's kind in `raw_entries` and returns a `PrefChanged`
+    /// command when the value changed, or `None` for read-only entries.
+    pub fn activate_entry(&mut self) -> Option<RuntimeCommand> {
+        if !self.drill_down {
+            return None;
+        }
+        let cat_name = self.categories[self.selected_category].label();
+        let idx = self.selected_entry;
+
+        // Keybindings and static Display rows (the first 2) are always read-only.
+        // Find the idx-th raw_entry for this category and activate it.
+        let mut pos = 0usize;
+        for entry in &mut self.raw_entries {
+            if entry.category == cat_name {
+                if pos == idx {
+                    if let Some(new_val) = entry.kind.activate() {
+                        return Some(RuntimeCommand::PrefChanged {
+                            pref_key: entry.pref_key.clone(),
+                            value: new_val,
+                        });
+                    }
+                    return None;
+                }
+                pos += 1;
+            }
+        }
+        None
     }
 
     /// Go back one level.  Returns `true` if handled (was in entry list);
@@ -189,8 +339,16 @@ impl SettingsState {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SettingsEntry {
     pub category: String,
+    /// Display label shown in the settings entry list.
     pub key: String,
+    /// Display value for `ReadOnly` entries. For `Toggle`/`Cycle`, the value is
+    /// derived from `kind` at render time; this field can be left empty.
     pub value: String,
+    /// Interaction kind — controls rendering and Enter-key behaviour.
+    pub kind: EntryKind,
+    /// JSON field name in the preferences file (e.g. `"theme_preset"`).
+    /// Empty string means the entry is not persisted.
+    pub pref_key: String,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -676,6 +834,8 @@ pub struct TranscriptItem {
     pub author: String,
     pub content: String,
     pub is_bookmarked: bool,
+    /// Pre-formatted display timestamp, e.g. "2:15 PM".
+    pub timestamp: Option<String>,
 }
 
 impl TranscriptItem {
@@ -685,6 +845,7 @@ impl TranscriptItem {
             author: author.into(),
             content: content.into(),
             is_bookmarked: false,
+            timestamp: None,
         }
     }
 
@@ -699,7 +860,14 @@ impl TranscriptItem {
             author: author.into(),
             content: content.into(),
             is_bookmarked,
+            timestamp: None,
         }
+    }
+
+    /// Set a pre-formatted display timestamp on this item.
+    pub fn with_timestamp(mut self, ts: impl Into<String>) -> Self {
+        self.timestamp = Some(ts.into());
+        self
     }
 }
 
@@ -843,6 +1011,9 @@ pub enum RuntimeCommand {
     RunCommand { input: String },
     CreateCharacter { name: String, system_prompt: String },
     ImportCharacter { path: String },
+    /// A user-editable preference was changed from the settings screen.
+    /// `pref_key` is the JSON field name; `value` is the new serialised value.
+    PrefChanged { pref_key: String, value: String },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1104,6 +1275,8 @@ pub struct ShellState {
     pub slash_dismissed: bool,
     /// Monotonically increasing counter incremented each event-loop tick for animations.
     pub tick_count: u64,
+    /// Ephemeral toast notification: (message, created_at).
+    pub toast: Option<(String, Instant)>,
 }
 
 impl ShellState {
@@ -1137,6 +1310,7 @@ impl ShellState {
             slash_selected: None,
             slash_dismissed: false,
             tick_count: 0,
+            toast: None,
         }
     }
 
@@ -1201,6 +1375,21 @@ impl ShellState {
         self.screen = ScreenState::Conversation;
         self.focus = FocusTarget::Draft;
         self.input_mode = InputMode::Normal;
+    }
+
+    /// Show an ephemeral toast notification that auto-expires after 3 seconds.
+    pub fn show_toast(&mut self, msg: impl Into<String>) {
+        self.toast = Some((msg.into(), Instant::now()));
+    }
+
+    /// Return the toast message if it is still within its display window.
+    pub fn active_toast(&self) -> Option<&str> {
+        if let Some((msg, created)) = &self.toast {
+            if created.elapsed().as_secs() < 3 {
+                return Some(msg.as_str());
+            }
+        }
+        None
     }
 
     /// Return to the main menu from any screen.
@@ -1571,7 +1760,9 @@ impl ShellState {
             },
             KeyAction::MenuSelect => match self.screen {
                 ScreenState::Settings => {
-                    self.settings.enter();
+                    if let Some(cmd) = self.settings.enter() {
+                        self.runtime_commands.push(cmd);
+                    }
                 }
                 ScreenState::MainMenu => {
                     if let Some(item) = self.menu.selected_item() {
@@ -2036,6 +2227,7 @@ impl ShellState {
         self.runtime_commands
             .push(RuntimeCommand::ToggleBookmark { message_id });
         self.status_line = Some("Updating bookmark…".into());
+        self.show_toast("★ Bookmark toggled");
         self.inspector.focus = InspectorFocus::Message;
     }
 
@@ -2057,6 +2249,7 @@ impl ShellState {
         self.runtime_commands
             .push(RuntimeCommand::TogglePinnedMemory { message_id });
         self.status_line = Some("Updating pinned memory…".into());
+        self.show_toast("📌 Pinned to memory");
         self.inspector.focus = InspectorFocus::Recall;
     }
 
@@ -3476,11 +3669,15 @@ mod tests {
                 category: "Backend".into(),
                 key: "Type".into(),
                 value: "koboldcpp".into(),
+                kind: super::EntryKind::ReadOnly,
+                pref_key: String::new(),
             },
             super::SettingsEntry {
                 category: "Backend".into(),
                 key: "URL".into(),
                 value: "http://localhost:5001".into(),
+                kind: super::EntryKind::ReadOnly,
+                pref_key: String::new(),
             },
         ]);
         assert!(s.is_loaded());
@@ -3625,5 +3822,234 @@ mod tests {
         let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
         let model = build_render_model(&state, &layout);
         assert!(!model.model_intelligence.has_plan);
+    }
+
+    // ── Settings crash regression tests ──────────────────────────────
+
+    #[test]
+    fn settings_category_navigation_never_panics_on_oob_index() {
+        use super::{SettingsCategory, SettingsState};
+
+        let mut state = SettingsState::default();
+        // Force selected_category out of bounds
+        state.selected_category = 999;
+        // Must not panic — falls back to categories[0]
+        let cat = state.current_category();
+        assert_eq!(cat, &SettingsCategory::Backend);
+    }
+
+    #[test]
+    fn settings_category_navigation_never_panics_on_empty_entries() {
+        use super::{SettingsCategory, SettingsState};
+
+        let mut state = SettingsState::default();
+        // Navigate to Backend category (no entries loaded)
+        state.selected_category = 0;
+        state.drill_down = true;
+        let entries = state.entries_for_category(&SettingsCategory::Backend);
+        assert!(entries.is_empty());
+        // nav_down / nav_up with empty entry list must not panic
+        state.nav_down();
+        state.nav_up();
+        assert_eq!(state.selected_entry, 0);
+    }
+
+    #[test]
+    fn settings_session_and_model_categories_visible() {
+        use super::{EntryKind, SettingsCategory, SettingsEntry, SettingsState};
+
+        let mut state = SettingsState::default();
+        // Session and Model categories should be in the list
+        assert!(state.categories.contains(&SettingsCategory::Session));
+        assert!(state.categories.contains(&SettingsCategory::Model));
+
+        // Load entries as runtime would provide them
+        state.load(vec![
+            SettingsEntry {
+                category: "Session".into(),
+                key: "Session ID".into(),
+                value: "abc-123".into(),
+                kind: EntryKind::ReadOnly,
+                pref_key: String::new(),
+            },
+            SettingsEntry {
+                category: "Model".into(),
+                key: "Max tokens".into(),
+                value: "4096".into(),
+                kind: EntryKind::ReadOnly,
+                pref_key: String::new(),
+            },
+        ]);
+
+        let session_entries = state.entries_for_category(&SettingsCategory::Session);
+        assert_eq!(session_entries.len(), 1);
+        assert_eq!(session_entries[0].0, "Session ID");
+
+        let model_entries = state.entries_for_category(&SettingsCategory::Model);
+        assert_eq!(model_entries.len(), 1);
+        assert_eq!(model_entries[0].0, "Max tokens");
+    }
+
+    // ── New category tests ────────────────────────────────────────────────
+
+    #[test]
+    fn settings_appearance_and_launch_categories_present() {
+        let s = super::SettingsState::default();
+        assert!(s.categories.contains(&super::SettingsCategory::Appearance));
+        assert!(s.categories.contains(&super::SettingsCategory::Launch));
+    }
+
+    #[test]
+    fn settings_entry_kind_toggle_activates() {
+        let mut kind = super::EntryKind::Toggle(false);
+        let new_val = kind.activate();
+        assert_eq!(new_val, Some("true".to_string()));
+        assert_eq!(kind, super::EntryKind::Toggle(true));
+
+        let new_val2 = kind.activate();
+        assert_eq!(new_val2, Some("false".to_string()));
+        assert_eq!(kind, super::EntryKind::Toggle(false));
+    }
+
+    #[test]
+    fn settings_entry_kind_cycle_advances_and_wraps() {
+        let mut kind = super::EntryKind::Cycle {
+            options: vec!["a".into(), "b".into(), "c".into()],
+            current: 0,
+        };
+        let v1 = kind.activate();
+        assert_eq!(v1, Some("b".to_string()));
+        let v2 = kind.activate();
+        assert_eq!(v2, Some("c".to_string()));
+        let v3 = kind.activate();
+        assert_eq!(v3, Some("a".to_string())); // wraps
+    }
+
+    #[test]
+    fn settings_entry_kind_readonly_does_not_activate() {
+        let mut kind = super::EntryKind::ReadOnly;
+        assert_eq!(kind.activate(), None);
+    }
+
+    #[test]
+    fn settings_activate_entry_on_editable_raw_entry_emits_pref_changed() {
+        let mut s = super::SettingsState::default();
+        // Add a Toggle entry in Appearance category
+        s.load(vec![super::SettingsEntry {
+            category: "Appearance".into(),
+            key: "Theme".into(),
+            value: String::new(),
+            kind: super::EntryKind::Cycle {
+                options: vec!["dark-mint".into(), "ozone-dark".into()],
+                current: 0,
+            },
+            pref_key: "theme_preset".into(),
+        }]);
+
+        // Navigate to Appearance (index 5) and drill in
+        let appearance_idx = s
+            .categories
+            .iter()
+            .position(|c| *c == super::SettingsCategory::Appearance)
+            .unwrap();
+        s.selected_category = appearance_idx;
+        s.selected_entry = 0;
+        s.drill_down = true;
+
+        let cmd = s.activate_entry();
+        assert!(cmd.is_some());
+        if let Some(super::RuntimeCommand::PrefChanged { pref_key, value }) = cmd {
+            assert_eq!(pref_key, "theme_preset");
+            assert_eq!(value, "ozone-dark");
+        } else {
+            panic!("expected PrefChanged");
+        }
+    }
+
+    #[test]
+    fn settings_activate_entry_on_readonly_returns_none() {
+        let mut s = super::SettingsState::default();
+        s.load(vec![super::SettingsEntry {
+            category: "Backend".into(),
+            key: "Type".into(),
+            value: "koboldcpp".into(),
+            kind: super::EntryKind::ReadOnly,
+            pref_key: String::new(),
+        }]);
+        // Navigate to Backend and drill in
+        s.selected_category = 0; // Backend
+        s.selected_entry = 0;
+        s.drill_down = true;
+        assert!(s.activate_entry().is_none());
+    }
+
+    #[test]
+    fn settings_enter_drills_in_at_category_level() {
+        let mut s = super::SettingsState::default();
+        assert!(!s.drill_down);
+        let cmd = s.enter();
+        assert!(s.drill_down);
+        assert!(cmd.is_none()); // no pref change on drill-in
+    }
+
+    #[test]
+    fn settings_enter_activates_when_drilled_into_editable_category() {
+        let mut s = super::SettingsState::default();
+        s.load(vec![super::SettingsEntry {
+            category: "Launch".into(),
+            key: "Side-by-side monitor".into(),
+            value: String::new(),
+            kind: super::EntryKind::Toggle(false),
+            pref_key: "side_by_side_monitor".into(),
+        }]);
+        let launch_idx = s
+            .categories
+            .iter()
+            .position(|c| *c == super::SettingsCategory::Launch)
+            .unwrap();
+        s.selected_category = launch_idx;
+        s.selected_entry = 0;
+        s.enter(); // drill in
+        let cmd = s.enter(); // activate
+        assert!(matches!(
+            cmd,
+            Some(super::RuntimeCommand::PrefChanged { .. })
+        ));
+    }
+
+    #[test]
+    fn display_category_has_editable_entries_when_loaded() {
+        let mut s = super::SettingsState::default();
+        s.load(vec![
+            super::SettingsEntry {
+                category: "Display".into(),
+                key: "Timestamp style".into(),
+                value: String::new(),
+                kind: super::EntryKind::Cycle {
+                    options: vec!["relative".into(), "absolute".into(), "off".into()],
+                    current: 0,
+                },
+                pref_key: "timestamp_style".into(),
+            },
+            super::SettingsEntry {
+                category: "Display".into(),
+                key: "Message density".into(),
+                value: String::new(),
+                kind: super::EntryKind::Cycle {
+                    options: vec!["comfortable".into(), "compact".into()],
+                    current: 0,
+                },
+                pref_key: "message_density".into(),
+            },
+        ]);
+        let entries = s.entries_for_category(&super::SettingsCategory::Display);
+        // 2 static + 2 editable
+        assert_eq!(entries.len(), 4);
+        // Static entries are ReadOnly
+        assert_eq!(entries[0].2, super::EntryKind::ReadOnly);
+        assert_eq!(entries[1].2, super::EntryKind::ReadOnly);
+        // Editable entries are Cycle
+        assert!(matches!(entries[2].2, super::EntryKind::Cycle { .. }));
+        assert!(matches!(entries[3].2, super::EntryKind::Cycle { .. }));
     }
 }

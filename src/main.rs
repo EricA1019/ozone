@@ -1,15 +1,21 @@
+#[cfg(feature = "analyze")]
 mod analyze;
+#[cfg(feature = "bench")]
 mod bench;
 mod catalog;
+#[cfg(any(feature = "bench", feature = "analyze", feature = "profiling-ui"))]
 mod db;
 mod gguf;
 mod hardware;
 mod llama;
+#[cfg(feature = "model-mgmt")]
 mod model;
 mod planner;
 mod prefs;
 mod processes;
+#[cfg(feature = "profiling-ui")]
 mod profiling;
+#[cfg(feature = "sweep")]
 mod sweep;
 mod theme;
 mod ui;
@@ -89,6 +95,7 @@ enum Commands {
     /// Live monitor dashboard
     Monitor,
     /// Benchmark a model with specific settings
+    #[cfg(feature = "bench")]
     Bench {
         /// Model filename (e.g. mn-12b-mag-mell-r1.gguf)
         model: String,
@@ -107,6 +114,7 @@ enum Commands {
         threads: Option<u32>,
     },
     /// Analyze benchmark results and generate profiles
+    #[cfg(feature = "analyze")]
     Analyze {
         /// Model name (omit for summary of all models)
         model: Option<String>,
@@ -120,6 +128,7 @@ enum Commands {
         export: bool,
     },
     /// Smart parameter sweep to find optimal settings
+    #[cfg(feature = "sweep")]
     Sweep {
         /// Model filename
         model: String,
@@ -129,6 +138,7 @@ enum Commands {
         quick: bool,
     },
     /// Manage local model files (list, add, remove, info)
+    #[cfg(feature = "model-mgmt")]
     Model {
         #[command(subcommand)]
         command: model::ModelCommand,
@@ -168,8 +178,7 @@ async fn main() -> Result<()> {
             Ok(())
         }
         Some(Commands::Monitor) => ui::run_monitor().await,
-        Some(Commands::List { json }) => {
-            if !json {
+        Some(Commands::List { json }) => {            if !json {
                 eprintln!("  hint: `ozone list` is deprecated — use `ozone model list` instead.");
                 eprintln!();
             }
@@ -209,6 +218,7 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
+        #[cfg(feature = "bench")]
         Some(Commands::Bench {
             model,
             gpu_layers,
@@ -270,6 +280,7 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
+        #[cfg(feature = "sweep")]
         Some(Commands::Sweep {
             model,
             max_context,
@@ -325,6 +336,7 @@ async fn main() -> Result<()> {
             sweep::run_sweep(sweep_config).await?;
             Ok(())
         }
+        #[cfg(feature = "analyze")]
         Some(Commands::Analyze {
             model,
             all,
@@ -359,6 +371,7 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
+        #[cfg(feature = "model-mgmt")]
         Some(Commands::Model { command }) => match model::run(command).await {
             Ok(()) => Ok(()),
             Err(e) => {

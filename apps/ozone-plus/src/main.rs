@@ -131,7 +131,7 @@ struct OpenArgs {
     #[arg(long)]
     metadata: bool,
     /// Force open even if session is locked (clears stale locks)
-    #[arg(long)]
+    #[arg(long, short = 'f')]
     force: bool,
 }
 
@@ -1296,7 +1296,7 @@ fn open_session(args: OpenArgs) -> Result<(), String> {
     let session_id = parse_session_id(&args.session_id)?;
 
     if args.force {
-        eprintln!("Clearing existing locks for session {session_id}");
+        eprintln!("Force-clearing session lock for {session_id}...");
         repo.force_clear_session_lock(&session_id)
             .map_err(|error| error.to_string())?;
     }
@@ -1351,6 +1351,9 @@ fn run_session_shell(
     session_id: SessionId,
     session_name: String,
 ) -> Result<(), String> {
+    // Initialise the TUI theme from the shared preferences file.
+    ozone_tui::theme::set_preset(load_theme_preset());
+
     let mut runtime = Phase1dRuntime::open(repo.clone(), session_id.clone())?;
     if let Err(error) = repo
         .update_session_metadata(&session_id, UpdateSessionRequest::default())
@@ -1382,6 +1385,105 @@ fn run_session_shell(
 
 fn is_session_locked_error(error: &str) -> bool {
     error.contains("is locked by instance")
+}
+
+/// Read `theme_preset` from the shared ozone preferences JSON file and
+/// return the corresponding `ThemePreset`.  Falls back to `DarkMint` on any
+/// I/O or parse error so the TUI always starts in a valid state.
+fn load_theme_preset() -> ozone_tui::ThemePreset {
+    let Some(path) = ozone_core::paths::preferences_path() else {
+        return ozone_tui::ThemePreset::default();
+    };
+    let text = match std::fs::read_to_string(&path) {
+        Ok(t) => t,
+        Err(_) => return ozone_tui::ThemePreset::default(),
+    };
+    let value: serde_json::Value = match serde_json::from_str(&text) {
+        Ok(v) => v,
+        Err(_) => return ozone_tui::ThemePreset::default(),
+    };
+    value
+        .get("theme_preset")
+        .and_then(|v| v.as_str())
+        .map(ozone_tui::ThemePreset::from_pref_str)
+        .unwrap_or_default()
+}
+
+/// Minimal snapshot of the ozone preferences that ozone+ reads and writes.
+/// Fields unknown to this struct are preserved in the JSON file when saving.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
+pub(crate) struct OzonePlusPrefs {
+    #[serde(default = "default_theme_preset_str")]
+    pub theme_preset: String,
+    #[serde(default)]
+    pub side_by_side_monitor: bool,
+    #[serde(default)]
+    pub show_inspector: bool,
+    #[serde(default = "default_timestamp_style_str")]
+    pub timestamp_style: String,
+    #[serde(default = "default_message_density_str")]
+    pub message_density: String,
+}
+
+fn default_theme_preset_str() -> String {
+    "dark-mint".to_string()
+}
+fn default_timestamp_style_str() -> String {
+    "relative".to_string()
+}
+fn default_message_density_str() -> String {
+    "comfortable".to_string()
+}
+
+impl Default for OzonePlusPrefs {
+    fn default() -> Self {
+        Self {
+            theme_preset: default_theme_preset_str(),
+            side_by_side_monitor: false,
+            show_inspector: false,
+            timestamp_style: default_timestamp_style_str(),
+            message_density: default_message_density_str(),
+        }
+    }
+}
+
+/// Load the ozone preferences from disk synchronously.  Returns default values
+/// on any I/O or parse error so ozone+ always starts in a valid state.
+pub(crate) fn load_prefs_sync() -> OzonePlusPrefs {
+    let Some(path) = ozone_core::paths::preferences_path() else {
+        return OzonePlusPrefs::default();
+    };
+    match std::fs::read_to_string(&path) {
+        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
+        Err(_) => OzonePlusPrefs::default(),
+    }
+}
+
+/// Persist a changed ozone preference field without discarding other JSON keys.
+/// Reads the existing JSON, updates (or inserts) `pref_key`, then writes back.
+pub(crate) fn save_prefs_sync(prefs: &OzonePlusPrefs) -> Result<(), String> {
+    let Some(path) = ozone_core::paths::preferences_path() else {
+        return Ok(());
+    };
+    // Round-trip through serde_json::Value so we preserve unknown fields.
+    let existing_text = std::fs::read_to_string(&path).unwrap_or_default();
+    let mut existing: serde_json::Value =
+        serde_json::from_str(&existing_text).unwrap_or(serde_json::json!({}));
+    // Merge our known fields into the existing object.
+    if let Some(obj) = existing.as_object_mut() {
+        let new_val = serde_json::to_value(prefs).map_err(|e| e.to_string())?;
+        if let Some(new_obj) = new_val.as_object() {
+            for (k, v) in new_obj {
+                obj.insert(k.clone(), v.clone());
+            }
+        }
+    }
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let text = serde_json::to_string_pretty(&existing).map_err(|e| e.to_string())?;
+    std::fs::write(&path, format!("{text}\n")).map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 fn open_session_metadata(
@@ -2936,6 +3038,43 @@ fn format_timestamp(timestamp: i64) -> String {
         format!("{}mo ago", diff.num_days() / 30)
     };
     format!("{formatted} ({ago})")
+}
+
+/// Compact timestamp for the session list — fits in ~12 chars.
+fn format_timestamp_short(timestamp: i64) -> String {
+    use chrono::{Datelike, Local, TimeZone, Utc};
+    let secs = timestamp / 1000;
+    let Some(dt) = Utc.timestamp_opt(secs, 0).single() else {
+        return "—".to_owned();
+    };
+    let local = dt.with_timezone(&Local);
+    let now_local = Utc::now().with_timezone(&Local);
+    let diff = now_local.signed_duration_since(local);
+
+    if diff.num_seconds() < 60 {
+        "just now".to_owned()
+    } else if diff.num_minutes() < 60 {
+        format!("{}m ago", diff.num_minutes())
+    } else if diff.num_hours() < 24 && local.date_naive() == now_local.date_naive() {
+        format!("{}h ago", diff.num_hours())
+    } else if diff.num_days() < 7 {
+        local.format("%a %H:%M").to_string()
+    } else if local.year() == now_local.year() {
+        local.format("%b %d").to_string()
+    } else {
+        local.format("%Y-%m-%d").to_string()
+    }
+}
+
+/// Time-only timestamp for inline message display, e.g. "2:15 PM".
+fn format_message_time(timestamp: i64) -> String {
+    use chrono::{Local, TimeZone, Utc};
+    let secs = timestamp / 1000;
+    let Some(dt) = Utc.timestamp_opt(secs, 0).single() else {
+        return String::new();
+    };
+    let local = dt.with_timezone(&Local);
+    local.format("%-I:%M %p").to_string()
 }
 
 fn format_author_id(author: &AuthorId) -> String {

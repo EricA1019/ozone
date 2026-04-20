@@ -9,23 +9,26 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, widgets::Clear, Terminal};
 use serde::{Deserialize, Serialize};
+#[cfg(feature = "profiling-ui")]
 use tokio::sync::mpsc::{error::TryRecvError, UnboundedReceiver};
-
 use crate::catalog::CatalogRecord;
 use crate::hardware::HardwareProfile;
 use crate::planner::LaunchPlan;
 use crate::prefs::Preferences;
 use crate::processes::{DiskSnapshot, ServiceStatus};
+#[cfg(feature = "profiling-ui")]
 use crate::profiling::{
     self, ProfilingAction, ProfilingAdvisory, ProfilingFailureReport, ProfilingSuccessReport,
     WorkflowEvent, WorkflowRequest,
 };
+#[cfg(feature = "profiling-ui")]
 use tokio_util::sync::CancellationToken;
 
 pub mod launcher;
 pub mod monitor;
 pub mod splash;
 pub mod tier_picker;
+pub mod tier_install;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
@@ -37,10 +40,15 @@ pub enum Screen {
     Confirm,
     FrontendChoice,
     Launching,
+    #[cfg(feature = "profiling-ui")]
     ProfileAdvisory,
+    #[cfg(feature = "profiling-ui")]
     ProfileConfirm,
+    #[cfg(feature = "profiling-ui")]
     ProfileRunning,
+    #[cfg(feature = "profiling-ui")]
     ProfileSuccess,
+    #[cfg(feature = "profiling-ui")]
     ProfileFailure,
     Settings,
     Monitor,
@@ -49,6 +57,7 @@ pub enum Screen {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModelPickerMode {
     Launch,
+    #[cfg(feature = "profiling-ui")]
     Profile,
 }
 
@@ -113,17 +122,28 @@ pub struct App {
     pub settings_section: usize,        // 0=backend, 1=frontend
     pub settings_backend_index: usize,  // 0=KoboldCpp, 1=LlamaCpp, 2=Ollama
     pub settings_frontend_index: usize, // 0=SillyTavern, 1=OzonePlus
-    // Profiling flow state
+    // Profiling flow state (gated — only present with profiling-ui feature)
+    #[cfg(feature = "profiling-ui")]
     pub profiling_advisory: Option<ProfilingAdvisory>,
+    #[cfg(feature = "profiling-ui")]
     pub profiling_pending_action: Option<ProfilingAction>,
+    #[cfg(feature = "profiling-ui")]
     pub profiling_progress_title: String,
+    #[cfg(feature = "profiling-ui")]
     pub profiling_progress_current: u32,
+    #[cfg(feature = "profiling-ui")]
     pub profiling_progress_total: u32,
+    #[cfg(feature = "profiling-ui")]
     pub profiling_progress: Vec<String>,
+    #[cfg(feature = "profiling-ui")]
     pub profiling_choice_index: usize,
+    #[cfg(feature = "profiling-ui")]
     pub profiling_success: Option<ProfilingSuccessReport>,
+    #[cfg(feature = "profiling-ui")]
     pub profiling_failure: Option<ProfilingFailureReport>,
+    #[cfg(feature = "profiling-ui")]
     pub profiling_event_rx: Option<UnboundedReceiver<WorkflowEvent>>,
+    #[cfg(feature = "profiling-ui")]
     pub profiling_cancel: Option<CancellationToken>,
     // Tier picker state
     pub tier_picker: tier_picker::TierPickerState,
@@ -132,6 +152,54 @@ pub struct App {
 impl App {
     pub fn new(prefs: Preferences) -> Self {
         let disk_name = crate::processes::get_root_disk_name();
+        // In lite mode (no profiling-ui feature), return without profiling fields.
+        #[cfg(not(feature = "profiling-ui"))]
+        return App {
+            screen: Screen::Splash,
+            hardware: None,
+            catalog: Vec::new(),
+            selected_model: 0,
+            selected_action: 0,
+            model_picker_mode: ModelPickerMode::Launch,
+            current_plan: None,
+            prefs,
+            services: ServiceStatus {
+                kobold_running: false,
+                kobold_model: None,
+                llamacpp_running: false,
+                llamacpp_model: None,
+                ollama_running: false,
+                st_running: false,
+            },
+            splash_pulse: false,
+            splash_ready: false,
+            disk_name,
+            disk_prev: None,
+            disk_prev_time: Instant::now(),
+            disk_read_history: vec![0u64; 30],
+            disk_write_history: vec![0u64; 30],
+            disk_read_mbs: 0.0,
+            disk_write_mbs: 0.0,
+            tokens_per_sec: None,
+            launch_start: None,
+            last_refresh: Instant::now(),
+            ticker: 0,
+            error_msg: None,
+            status_msg: None,
+            status_set_at: None,
+            model_filter: String::new(),
+            preferred_frontend: None,
+            frontend_choice_index: 0,
+            ozone_plus_handoff: false,
+            pending_launch_choice: None,
+            exit_confirm_index: 1,
+            settings_section: 0,
+            settings_backend_index: 0,
+            settings_frontend_index: 0,
+            tier_picker: tier_picker::TierPickerState::default(),
+        };
+        // Full mode (profiling-ui feature enabled) — includes profiling fields.
+        #[cfg(feature = "profiling-ui")]
         App {
             screen: Screen::Splash,
             hardware: None,
@@ -237,6 +305,7 @@ impl App {
         }
     }
 
+    #[cfg(feature = "profiling-ui")]
     pub fn reset_profile_flow(&mut self) {
         self.profiling_advisory = None;
         self.profiling_pending_action = None;
@@ -251,6 +320,7 @@ impl App {
         self.profiling_cancel = None;
     }
 
+    #[cfg(feature = "profiling-ui")]
     pub fn push_profile_progress(&mut self, line: String) {
         self.profiling_progress.push(line);
         if self.profiling_progress.len() > 20 {
@@ -416,16 +486,19 @@ fn open_exit_confirm(app: &mut App) {
     app.screen = Screen::ExitConfirm;
 }
 
-fn back_from_confirm(app: &App) -> Screen {
-    if app.profiling_success.is_some() {
-        Screen::ProfileSuccess
-    } else if app.profiling_failure.is_some() {
-        Screen::ProfileFailure
-    } else if app.profiling_advisory.is_some() {
-        Screen::ProfileAdvisory
-    } else {
-        Screen::ModelPicker
+fn back_from_confirm(_app: &App) -> Screen {
+    #[cfg(feature = "profiling-ui")]
+    {
+        let app = _app;
+        if app.profiling_success.is_some() {
+            return Screen::ProfileSuccess;
+        } else if app.profiling_failure.is_some() {
+            return Screen::ProfileFailure;
+        } else if app.profiling_advisory.is_some() {
+            return Screen::ProfileAdvisory;
+        }
     }
+    Screen::ModelPicker
 }
 
 pub async fn run_launcher(
@@ -518,6 +591,32 @@ pub async fn run_launcher(
             app.splash_ready = true;
         }
 
+        // Poll tier install result from background thread
+        if app.screen == Screen::TierPicker {
+            let install_result = app
+                .tier_picker
+                .install_rx
+                .as_ref()
+                .and_then(|rx| rx.try_recv().ok());
+            if let Some(result) = install_result {
+                app.tier_picker.install_rx = None;
+                if let tier_picker::TierPickerPhase::Installing { tier, .. } =
+                    &app.tier_picker.phase
+                {
+                    let tier = *tier;
+                    app.tier_picker.phase = match result {
+                        Ok(path) => tier_picker::TierPickerPhase::InstallDone {
+                            tier,
+                            path,
+                        },
+                        Err(msg) => tier_picker::TierPickerPhase::InstallError { tier, msg },
+                    };
+                }
+            }
+        }
+
+        // Drain profiling workflow events (only compiled when profiling-ui is enabled).
+        #[cfg(feature = "profiling-ui")]
         loop {
             let event = match app.profiling_event_rx.as_mut() {
                 Some(rx) => match rx.try_recv() {
@@ -731,7 +830,7 @@ pub async fn run_launcher(
             match app.screen {
                 Screen::Splash => splash::render(f, &app),
                 Screen::TierPicker => {
-                    tier_picker::render_tier_picker(f, f.area(), &app.tier_picker)
+                    tier_picker::render_tier_picker(f, f.area(), &app.tier_picker, app.ticker)
                 }
                 Screen::Launcher => launcher::render(f, &app),
                 Screen::ExitConfirm => launcher::render_exit_confirm(f, &app),
@@ -739,10 +838,15 @@ pub async fn run_launcher(
                 Screen::Confirm => launcher::render_confirm(f, &app),
                 Screen::FrontendChoice => launcher::render_frontend_choice(f, &app),
                 Screen::Launching => launcher::render_launching(f, &app),
+                #[cfg(feature = "profiling-ui")]
                 Screen::ProfileAdvisory => launcher::render_profile_advisory(f, &app),
+                #[cfg(feature = "profiling-ui")]
                 Screen::ProfileConfirm => launcher::render_profile_confirm(f, &app),
+                #[cfg(feature = "profiling-ui")]
                 Screen::ProfileRunning => launcher::render_profile_running(f, &app),
+                #[cfg(feature = "profiling-ui")]
                 Screen::ProfileSuccess => launcher::render_profile_success(f, &app),
+                #[cfg(feature = "profiling-ui")]
                 Screen::ProfileFailure => launcher::render_profile_failure(f, &app),
                 Screen::Settings => launcher::render_settings(f, &app),
                 Screen::Monitor => monitor::render(f, &app),
@@ -759,32 +863,133 @@ pub async fn run_launcher(
                     Screen::Splash if app.splash_ready => {
                         app.screen = next_screen_after_splash(&app);
                     }
-                    Screen::TierPicker => match key.code {
-                        KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
-                        KeyCode::Up => app.tier_picker.up(),
-                        KeyCode::Down => app.tier_picker.down(),
-                        KeyCode::Enter => {
-                            let tier = app.tier_picker.selected_tier();
-                            app.prefs.preferred_tier = Some(tier);
-                            // Save preference
-                            let prefs_clone = app.prefs.clone();
-                            tokio::spawn(async move {
-                                let _ = crate::prefs::save_prefs(&prefs_clone).await;
-                            });
-                            app.screen = Screen::Launcher;
+                    Screen::TierPicker => {
+                        let phase = app.tier_picker.phase.clone();
+                        match phase {
+                            tier_picker::TierPickerPhase::Picking => match key.code {
+                                KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
+                                KeyCode::Up => app.tier_picker.up(),
+                                KeyCode::Down => app.tier_picker.down(),
+                                KeyCode::Enter => {
+                                    let tier = app.tier_picker.selected_tier();
+                                    let binary =
+                                        tier_install::binary_name_for_tier(tier).to_string();
+                                    match tier {
+                                        crate::prefs::Tier::Lite => {
+                                            app.prefs.preferred_tier = Some(tier);
+                                            let prefs_clone = app.prefs.clone();
+                                            tokio::spawn(async move {
+                                                let _ =
+                                                    crate::prefs::save_prefs(&prefs_clone).await;
+                                            });
+                                            app.screen = Screen::Launcher;
+                                        }
+                                        crate::prefs::Tier::Base | crate::prefs::Tier::Plus => {
+                                            if tier_install::is_tier_installed(&binary) {
+                                                app.prefs.preferred_tier = Some(tier);
+                                                let prefs_clone = app.prefs.clone();
+                                                tokio::spawn(async move {
+                                                    let _ = crate::prefs::save_prefs(&prefs_clone)
+                                                        .await;
+                                                });
+                                                app.screen = Screen::Launcher;
+                                            } else {
+                                                app.tier_picker.phase = tier_picker::TierPickerPhase::ConfirmingDownload {
+                                                    tier,
+                                                    binary,
+                                                };
+                                            }
+                                        }
+                                    }
+                                }
+                                _ => {}
+                            },
+                            tier_picker::TierPickerPhase::ConfirmingDownload { tier, binary } => {
+                                match key.code {
+                                    KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
+                                        let bin = binary.clone();
+                                        let (tx, rx) = std::sync::mpsc::channel();
+                                        std::thread::spawn(move || {
+                                            let result =
+                                                tier_install::install_tier_from_github(&bin);
+                                            let _ = tx.send(result);
+                                        });
+                                        app.tier_picker.install_rx = Some(rx);
+                                        app.tier_picker.phase =
+                                            tier_picker::TierPickerPhase::Installing {
+                                                tier,
+                                                binary,
+                                            };
+                                    }
+                                    KeyCode::Char('n')
+                                    | KeyCode::Char('N')
+                                    | KeyCode::Char('q')
+                                    | KeyCode::Esc => {
+                                        app.prefs.preferred_tier = Some(crate::prefs::Tier::Lite);
+                                        let prefs_clone = app.prefs.clone();
+                                        tokio::spawn(async move {
+                                            let _ = crate::prefs::save_prefs(&prefs_clone).await;
+                                        });
+                                        app.tier_picker.phase =
+                                            tier_picker::TierPickerPhase::Picking;
+                                        app.screen = Screen::Launcher;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            tier_picker::TierPickerPhase::Installing { .. } => {
+                                // No input during install — spinner only
+                            }
+                            tier_picker::TierPickerPhase::InstallDone { tier, .. } => {
+                                match key.code {
+                                    KeyCode::Enter | KeyCode::Char(' ') => {
+                                        app.prefs.preferred_tier = Some(tier);
+                                        let prefs_clone = app.prefs.clone();
+                                        tokio::spawn(async move {
+                                            let _ = crate::prefs::save_prefs(&prefs_clone).await;
+                                        });
+                                        app.tier_picker.phase =
+                                            tier_picker::TierPickerPhase::Picking;
+                                        app.screen = Screen::Launcher;
+                                    }
+                                    _ => {}
+                                }
+                            }
+                            tier_picker::TierPickerPhase::InstallError { .. } => match key.code {
+                                KeyCode::Enter | KeyCode::Esc | KeyCode::Char(' ') => {
+                                    app.prefs.preferred_tier = Some(crate::prefs::Tier::Lite);
+                                    let prefs_clone = app.prefs.clone();
+                                    tokio::spawn(async move {
+                                        let _ = crate::prefs::save_prefs(&prefs_clone).await;
+                                    });
+                                    app.tier_picker.phase = tier_picker::TierPickerPhase::Picking;
+                                    app.screen = Screen::Launcher;
+                                }
+                                _ => {}
+                            },
                         }
-                        _ => {}
-                    },
+                    }
                     Screen::Launcher => match key.code {
                         KeyCode::Char('q') => break Ok(()),
                         KeyCode::Esc => open_exit_confirm(&mut app),
                         KeyCode::Up if app.selected_action > 0 => {
                             app.selected_action -= 1;
                         }
-                        KeyCode::Down if app.selected_action < 7 => {
+                        KeyCode::Down if app.selected_action < if cfg!(feature = "profiling-ui") { 7 } else { 6 } => {
                             app.selected_action += 1;
                         }
-                        KeyCode::Enter => match app.selected_action {
+                        KeyCode::Enter => {
+                            // In lite mode (no profiling-ui), the Profile action at slot 1 is
+                            // absent, so actions 1-6 in lite map to full-mode slots 2-7.
+                            #[cfg(not(feature = "profiling-ui"))]
+                            let action_slot = if app.selected_action > 0 {
+                                app.selected_action + 1
+                            } else {
+                                0
+                            };
+                            #[cfg(feature = "profiling-ui")]
+                            let action_slot = app.selected_action;
+                            match action_slot {
                             0 => {
                                 // Launch configured stack
                                 match app.prefs.preferred_backend {
@@ -793,6 +998,7 @@ pub async fn run_launcher(
                                     }
                                     Some(BackendMode::KoboldCpp) => {
                                         if !app.catalog.is_empty() {
+                                            #[cfg(feature = "profiling-ui")]
                                             app.reset_profile_flow();
                                             app.model_picker_mode = ModelPickerMode::Launch;
                                             app.screen = Screen::ModelPicker;
@@ -800,6 +1006,7 @@ pub async fn run_launcher(
                                     }
                                     Some(BackendMode::LlamaCpp) => {
                                         if !app.catalog.is_empty() {
+                                            #[cfg(feature = "profiling-ui")]
                                             app.reset_profile_flow();
                                             app.model_picker_mode = ModelPickerMode::Launch;
                                             app.screen = Screen::ModelPicker;
@@ -819,6 +1026,7 @@ pub async fn run_launcher(
                                     }
                                 }
                             }
+                            #[cfg(feature = "profiling-ui")]
                             1
                                 // Profile / recommend model
                                 if !app.catalog.is_empty() => {
@@ -827,12 +1035,44 @@ pub async fn run_launcher(
                                     app.screen = Screen::ModelPicker;
                                 }
                             2 => {
-                                // Open ozone+ shell (direct handoff — replaces this process)
-                                app.ozone_plus_handoff = true;
-                                break Ok(());
+                                // Open ozone+: respect the side_by_side_monitor preference.
+                                // When enabled, spawn in a new terminal and stay in Monitor;
+                                // otherwise exec() into ozone+ (replaces this process).
+                                if app.prefs.side_by_side_monitor {
+                                    let ozone_plus_bin = std::env::current_exe()
+                                        .ok()
+                                        .and_then(|p| {
+                                            p.parent().map(|dir| dir.join("ozone-plus"))
+                                        })
+                                        .filter(|p| p.exists())
+                                        .unwrap_or_else(|| {
+                                            std::path::PathBuf::from("ozone-plus")
+                                        });
+                                    match spawn_in_terminal(
+                                        &ozone_plus_bin,
+                                        app.prefs.preferred_backend.as_ref(),
+                                    ) {
+                                        Ok(_child) => {
+                                            app.screen = Screen::Monitor;
+                                            app.set_status(
+                                                "ozone+ launched in new terminal window.".into(),
+                                            );
+                                        }
+                                        Err(e) => {
+                                            app.set_error(format!(
+                                                "Side-by-side failed: {e}. Disable the pref or check your terminal."
+                                            ));
+                                        }
+                                    }
+                                } else {
+                                    app.ozone_plus_handoff = true;
+                                    break Ok(());
+                                }
                             }
                             3 => {
-                                // Launch ozone+ side-by-side (spawn new terminal, stay in Monitor)
+                                // Launch ozone+ side-by-side: spawn new terminal, stay in Monitor,
+                                // and persist side_by_side_monitor = true so future "Open ozone+"
+                                // uses the same mode.
                                 let ozone_plus_bin = std::env::current_exe()
                                     .ok()
                                     .and_then(|p| p.parent().map(|dir| dir.join("ozone-plus")))
@@ -843,6 +1083,12 @@ pub async fn run_launcher(
                                     app.prefs.preferred_backend.as_ref(),
                                 ) {
                                     Ok(_child) => {
+                                        app.prefs.side_by_side_monitor = true;
+                                        let prefs_clone = app.prefs.clone();
+                                        tokio::spawn(async move {
+                                            let _ =
+                                                crate::prefs::save_prefs(&prefs_clone).await;
+                                        });
                                         app.screen = Screen::Monitor;
                                         app.set_status(
                                             "ozone+ launched in new terminal window.".into(),
@@ -873,7 +1119,7 @@ pub async fn run_launcher(
                             }
                             7 => open_exit_confirm(&mut app),
                             _ => {}
-                        },
+                        }},
                         _ => {}
                     },
                     Screen::ExitConfirm => match key.code {
@@ -982,6 +1228,7 @@ pub async fn run_launcher(
                                             app.screen = Screen::Confirm;
                                         }
                                     }
+                                    #[cfg(feature = "profiling-ui")]
                                     ModelPickerMode::Profile => {
                                         match profiling::build_advisory(
                                             &record,
@@ -1034,6 +1281,7 @@ pub async fn run_launcher(
                         }
                         _ => {}
                     },
+                    #[cfg(feature = "profiling-ui")]
                     Screen::ProfileAdvisory => match key.code {
                         KeyCode::Esc => app.screen = Screen::ModelPicker,
                         KeyCode::Up if app.profiling_choice_index > 0 => {
@@ -1097,6 +1345,7 @@ pub async fn run_launcher(
                         }
                         _ => {}
                     },
+                    #[cfg(feature = "profiling-ui")]
                     Screen::ProfileConfirm => match key.code {
                         KeyCode::Esc => app.screen = Screen::ProfileAdvisory,
                         KeyCode::Enter => {
@@ -1130,6 +1379,7 @@ pub async fn run_launcher(
                         }
                         _ => {}
                     },
+                    #[cfg(feature = "profiling-ui")]
                     Screen::ProfileRunning => match key.code {
                         KeyCode::Esc | KeyCode::Char('q') => {
                             if let Some(token) = &app.profiling_cancel {
@@ -1139,6 +1389,7 @@ pub async fn run_launcher(
                         }
                         _ => {}
                     },
+                    #[cfg(feature = "profiling-ui")]
                     Screen::ProfileSuccess => match key.code {
                         KeyCode::Esc => {
                             // Back to advisory — re-run build_advisory to refresh state
@@ -1220,6 +1471,7 @@ pub async fn run_launcher(
                         }
                         _ => {}
                     },
+                    #[cfg(feature = "profiling-ui")]
                     Screen::ProfileFailure => match key.code {
                         KeyCode::Esc => {
                             // Back to advisory
@@ -1328,7 +1580,7 @@ pub async fn run_launcher(
                 app.update_disk();
             }
 
-            if matches!(
+            let need_catalog_refresh = matches!(
                 app.screen,
                 Screen::Launcher
                     | Screen::ModelPicker
@@ -1336,11 +1588,23 @@ pub async fn run_launcher(
                     | Screen::FrontendChoice
                     | Screen::Settings
                     | Screen::ExitConfirm
-                    | Screen::ProfileAdvisory
-                    | Screen::ProfileConfirm
-                    | Screen::ProfileSuccess
-                    | Screen::ProfileFailure
-            ) {
+            ) || {
+                #[cfg(feature = "profiling-ui")]
+                {
+                    matches!(
+                        app.screen,
+                        Screen::ProfileAdvisory
+                            | Screen::ProfileConfirm
+                            | Screen::ProfileSuccess
+                            | Screen::ProfileFailure
+                    )
+                }
+                #[cfg(not(feature = "profiling-ui"))]
+                {
+                    false
+                }
+            };
+            if need_catalog_refresh {
                 let signature =
                     crate::catalog::catalog_signature(&model_dir, &preset_file, &bench_file)
                         .await
@@ -1581,6 +1845,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "profiling-ui")]
     fn confirm_back_returns_to_last_relevant_screen() {
         let mut app = App::new(Preferences::default());
         assert_eq!(back_from_confirm(&app), Screen::ModelPicker);

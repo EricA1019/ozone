@@ -201,6 +201,7 @@ pub fn resolved_llamacpp_server_path() -> Result<PathBuf> {
 /// Resolves which backend to use for profiling. Prefers KoboldCpp if available,
 /// falls back to llama.cpp if the kobold launcher is not found but llama-server is.
 /// Returns None if neither is available.
+#[cfg(feature = "bench")]
 pub fn resolved_backend_for_profiling() -> Option<crate::bench::BenchBackend> {
     let p = resolved_kobold_launcher_path();
     if p.exists() {

@@ -3,20 +3,112 @@
 //! These mirror the base ozone palette from `src/theme.rs` so the product
 //! family feels cohesive while ozone+ retains its own accent (VIOLET).
 
+use std::sync::OnceLock;
+
 use ratatui::style::{Color, Modifier, Style};
+use serde::{Deserialize, Serialize};
 
-// ── Brand palette ────────────────────────────────────────────────────────
+// ── Theme preset ─────────────────────────────────────────────────────────
 
-/// Primary teal accent shared across the ozone family.
+/// Selectable palette preset for the ozone+ TUI.
+///
+/// Serializes as a kebab-case string (e.g. `"dark-mint"`) so it can be
+/// round-tripped through a plain-text prefs file without depending on
+/// non-TUI crates.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
+#[serde(rename_all = "kebab-case")]
+pub enum ThemePreset {
+    /// Green-forward mint palette — default since 0.4.4.
+    #[default]
+    DarkMint,
+    /// Original blue-green palette shipped before 0.4.4.
+    OzoneDark,
+    /// Maximum contrast for accessibility or bright ambient light.
+    HighContrast,
+}
+
+impl ThemePreset {
+    /// Parse the kebab-case string stored in prefs (e.g. `"dark-mint"`).
+    /// Returns `DarkMint` for any unrecognised value.
+    pub fn from_pref_str(s: &str) -> Self {
+        match s {
+            "dark-mint" => Self::DarkMint,
+            "ozone-dark" => Self::OzoneDark,
+            "high-contrast" => Self::HighContrast,
+            _ => Self::default(),
+        }
+    }
+}
+
+// ── Active-preset singleton ───────────────────────────────────────────────
+
+static ACTIVE_PRESET: OnceLock<ThemePreset> = OnceLock::new();
+
+/// Set the active preset once at startup (subsequent calls are ignored).
+pub fn set_preset(preset: ThemePreset) {
+    let _ = ACTIVE_PRESET.set(preset);
+}
+
+/// Return the active preset, defaulting to `DarkMint` if never set.
+pub fn active_preset() -> ThemePreset {
+    *ACTIVE_PRESET.get().unwrap_or(&ThemePreset::DarkMint)
+}
+
+// ── Preset-aware color getters ────────────────────────────────────────────
+
+/// Primary teal accent for the given preset.
+pub fn teal(preset: ThemePreset) -> Color {
+    match preset {
+        ThemePreset::DarkMint => Color::Rgb(45, 175, 130),
+        ThemePreset::OzoneDark => TEAL,
+        ThemePreset::HighContrast => Color::Rgb(0, 255, 180),
+    }
+}
+
+/// Lighter teal / highlight accent for the given preset.
+pub fn cyan(preset: ThemePreset) -> Color {
+    match preset {
+        ThemePreset::DarkMint => Color::Rgb(78, 210, 165),
+        ThemePreset::OzoneDark => CYAN,
+        ThemePreset::HighContrast => Color::Rgb(100, 255, 200),
+    }
+}
+
+/// Violet accent for the given preset.
+pub fn violet(preset: ThemePreset) -> Color {
+    match preset {
+        ThemePreset::DarkMint => Color::Rgb(100, 58, 200),
+        ThemePreset::OzoneDark => VIOLET,
+        ThemePreset::HighContrast => Color::Rgb(180, 100, 255),
+    }
+}
+
+/// Brighter violet for selected / high-contrast states.
+pub fn violet_bright(preset: ThemePreset) -> Color {
+    match preset {
+        ThemePreset::DarkMint => Color::Rgb(180, 165, 240),
+        ThemePreset::OzoneDark => VIOLET_BRIGHT,
+        ThemePreset::HighContrast => Color::Rgb(220, 200, 255),
+    }
+}
+
+/// Convenience alias — the primary accent colour for the active preset.
+pub fn accent_color(preset: ThemePreset) -> Color {
+    teal(preset)
+}
+
+// ── Brand palette (OzoneDark values — kept as consts) ────────────────────
+
+/// Primary teal accent — OzoneDark preset reference value.
 pub const TEAL: Color = Color::Rgb(118, 183, 178); // #76b7b2
 
-/// Lighter teal for highlights and secondary accents.
+/// Lighter teal for highlights — OzoneDark preset reference value.
 pub const CYAN: Color = Color::Rgb(141, 214, 209); // #8dd6d1
 
-/// ozone+ accent — violet for differentiation within the family.
+/// ozone+ accent violet — OzoneDark preset reference value.
 pub const VIOLET: Color = Color::Rgb(124, 58, 237); // #7c3aed
 
-/// Brighter violet for selected/high-contrast states.
+/// Brighter violet for selected states — OzoneDark preset reference value.
 pub const VIOLET_BRIGHT: Color = Color::Rgb(196, 181, 253); // #c4b5fd
 
 /// Success / positive states.
@@ -80,7 +172,7 @@ pub fn muted_style() -> Style {
 
 /// Focused pane border.
 pub fn focus_border_style() -> Style {
-    Style::default().fg(BORDER_FOCUS)
+    Style::default().fg(teal(active_preset()))
 }
 
 /// Unfocused pane border.
@@ -90,7 +182,7 @@ pub fn border_style() -> Style {
 
 /// Title in a focused pane.
 pub fn title_focused_style() -> Style {
-    Style::default().fg(TEAL).add_modifier(Modifier::BOLD)
+    Style::default().fg(teal(active_preset())).add_modifier(Modifier::BOLD)
 }
 
 /// Title in an unfocused pane.
@@ -100,24 +192,24 @@ pub fn title_style() -> Style {
 
 /// Primary highlight — teal with bold.
 pub fn highlight_style() -> Style {
-    Style::default().fg(TEAL).add_modifier(Modifier::BOLD)
+    Style::default().fg(teal(active_preset())).add_modifier(Modifier::BOLD)
 }
 
 /// Selected conversation entry author — violet accent.
 pub fn author_selected_style() -> Style {
     Style::default()
-        .fg(VIOLET_BRIGHT)
+        .fg(violet_bright(active_preset()))
         .add_modifier(Modifier::BOLD)
 }
 
 /// Normal author label.
 pub fn author_style() -> Style {
-    Style::default().fg(CYAN)
+    Style::default().fg(cyan(active_preset()))
 }
 
 /// User author label — slightly different shade for self-identification.
 pub fn author_user_style() -> Style {
-    Style::default().fg(TEAL)
+    Style::default().fg(teal(active_preset()))
 }
 
 /// Bookmark star.
@@ -143,21 +235,75 @@ pub fn success_style() -> Style {
 /// Mode badge (INSERT, COMMAND, etc.).
 pub fn mode_badge_style() -> Style {
     Style::default()
-        .fg(VIOLET_BRIGHT)
+        .fg(violet_bright(active_preset()))
         .add_modifier(Modifier::BOLD)
 }
 
 /// Accent style for hint keys and breadcrumb text.
 pub fn accent_style() -> Style {
-    Style::default().fg(TEAL).add_modifier(Modifier::BOLD)
+    Style::default().fg(teal(active_preset())).add_modifier(Modifier::BOLD)
 }
 
 /// Streaming cursor / generation-in-progress indicator.
 pub fn streaming_style() -> Style {
-    Style::default().fg(TEAL).add_modifier(Modifier::BOLD)
+    Style::default().fg(teal(active_preset())).add_modifier(Modifier::BOLD)
 }
 
 /// The hex prefix for the ozone+ title.
 pub fn brand_hex_style() -> Style {
-    Style::default().fg(TEAL)
+    Style::default().fg(teal(active_preset()))
+}
+
+// ── Tests ─────────────────────────────────────────────────────────────────
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn theme_preset_default_is_dark_mint() {
+        assert_eq!(ThemePreset::default(), ThemePreset::DarkMint);
+    }
+
+    #[test]
+    fn theme_preset_from_pref_str() {
+        assert_eq!(ThemePreset::from_pref_str("dark-mint"), ThemePreset::DarkMint);
+        assert_eq!(ThemePreset::from_pref_str("ozone-dark"), ThemePreset::OzoneDark);
+        assert_eq!(ThemePreset::from_pref_str("high-contrast"), ThemePreset::HighContrast);
+        assert_eq!(ThemePreset::from_pref_str("unknown"), ThemePreset::DarkMint);
+        assert_eq!(ThemePreset::from_pref_str(""), ThemePreset::DarkMint);
+    }
+
+    #[test]
+    fn theme_preset_serde_roundtrip() {
+        for preset in [ThemePreset::DarkMint, ThemePreset::OzoneDark, ThemePreset::HighContrast] {
+            let json = serde_json::to_string(&preset).unwrap();
+            let back: ThemePreset = serde_json::from_str(&json).unwrap();
+            assert_eq!(back, preset);
+        }
+    }
+
+    #[test]
+    fn teal_dark_mint_is_green_leaning() {
+        // DarkMint teal should have more green than blue.
+        match teal(ThemePreset::DarkMint) {
+            Color::Rgb(_r, g, b) => assert!(g > b, "DarkMint teal: g={g} should exceed b={b}"),
+            _ => panic!("expected Rgb"),
+        }
+    }
+
+    #[test]
+    fn ozone_dark_values_match_consts() {
+        assert_eq!(teal(ThemePreset::OzoneDark), TEAL);
+        assert_eq!(cyan(ThemePreset::OzoneDark), CYAN);
+        assert_eq!(violet(ThemePreset::OzoneDark), VIOLET);
+        assert_eq!(violet_bright(ThemePreset::OzoneDark), VIOLET_BRIGHT);
+    }
+
+    #[test]
+    fn accent_color_matches_teal() {
+        for preset in [ThemePreset::DarkMint, ThemePreset::OzoneDark, ThemePreset::HighContrast] {
+            assert_eq!(accent_color(preset), teal(preset));
+        }
+    }
 }

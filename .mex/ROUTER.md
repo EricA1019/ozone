@@ -14,7 +14,7 @@ edges:
     condition: when setting up the dev environment or running the project for the first time
   - target: patterns/INDEX.md
     condition: when starting a task — check the pattern index for a matching pattern file
-last_updated: 2026-04-17
+last_updated: 2026-04-19
 ---
 
 # Session Bootstrap
@@ -26,6 +26,8 @@ Then read this file fully before doing anything else in this session.
 ## Current Project State
 
 **Working:**
+- **v0.4.5-alpha shipped**: Settings crash fixes (usize underflow, out-of-bounds category index, `"Context"` → Model mapping, missing `Session` variant), side-by-side launch preference persists and drives launcher label, theme preset system (`DarkMint`/`OzoneDark`/`HighContrast`, default `#2DAF82`), and fully interactive editable settings (Toggle + Cycle entries for Appearance, Launch, Display categories) — 18 new tests; ozone-tui total now 143
+- **Current version**: `0.4.5-alpha`
 - TUI QOL upgrade shipped: scrollable lists with `PgUp`/`PgDn` (ratatui `ListState` + `Scrollbar`), slash autocomplete popup, settings drill-down, 1-row footer, braille spinner during generation, message separators, colored INS/CMD mode badges, Model Intelligence screen, and side-by-side monitor mode
 - llama.cpp native profiler support shipped: full QuickSweep/FullSweep/SingleBenchmark/GenerateProfiles parity with KoboldCpp, token rate from `/completion` timings, profile export to `~/.local/share/ozone/`, auto backend detection, structured launcher args saved to prefs, and classified startup diagnostics (`GgmlAbort`, `CudaOom`, `CudaError`, `ModelLoadFailed`, `MissingSharedLibrary`, `RuntimeCrash`, `Timeout`)
 - Launcher dashboard, model picker, launch confirm flow, and live monitor all work in the ratatui TUI
@@ -95,6 +97,8 @@ Then read this file fully before doing anything else in this session.
 - Phase 4 (scene foundation: multi-actor scenes, speaker routing, group-chat model)
 
 **Known issues:**
+- ~~Settings crashes in ozone+ (usize underflow, out-of-bounds index, missing Session variant)~~ — **resolved in v0.4.5-alpha**
+- Theme preset system is now live (`ThemePreset` enum, `ACTIVE_PRESET` OnceLock); runtime hot-swap via `Settings > Appearance` cycle entry
 - Broken `.gguf` symlinks can still appear in the catalog/list, but base CLI list views now mark them as `⚠ broken` and the picker still routes them into issue reports when selected
 - Hardware guidance is still NVIDIA-centric because GPU memory detection depends on `nvidia-smi`
 - Focused ozone+ tests now cover core, engine, persistence, TUI, and app-level draft restore; the older root `ozone` app still has intentionally light test coverage outside profiling helpers
@@ -127,6 +131,23 @@ Load the relevant file based on the current task. Always load `context/architect
 | Making a design decision | `context/decisions.md` |
 | Setting up or running the project | `context/setup.md` |
 | Any specific task | Check `patterns/INDEX.md` for a matching pattern |
+
+## Versioning
+
+See [`.mex/conventions/versioning.md`](.mex/conventions/versioning.md) for full rules.
+
+**TL;DR:** Bump PATCH at named feature-set sprints. Small changes use git hash only. `0.5.x` = first beta. PATCH can exceed 9.
+
+## Branch Workflow
+
+| Branch | Purpose |
+|--------|---------|
+| `main` | Stable releases — tagged, installable, always green |
+| `dev` | Integration — all feature branches merge here first |
+| `feature/*` | Individual feature work — branch off `dev`, PR back to `dev` |
+| `hotfix/*` | Urgent fixes — branch off `main`, merge to both `main` and `dev` |
+
+**Rule:** `main` only receives merges from `dev` (via PR at release time) or hotfix branches. Feature work always goes through `dev`.
 
 ## Commands
 

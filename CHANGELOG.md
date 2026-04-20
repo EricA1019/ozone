@@ -1,3 +1,5 @@
+<!-- Versioning: bump PATCH at named sprints; git hash covers small changes; 0.5.x = beta. See .mex/conventions/versioning.md -->
+
 # Changelog
 
 All notable changes to Ozone are documented here.
@@ -6,7 +8,53 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ---
 
+## [0.4.7-alpha] — ozone-lite Kernel + Branch Setup
+
+### Added
+- Cargo feature flags: `default=[]` (lite), `full` (base), with `bench`, `sweep`, `analyze`, `profiling-ui`, `model-mgmt` sub-features
+- Heavy modules (`bench`, `sweep`, `analyze`, `profiling`, `model`, `db`) gated behind feature flags — ozone-lite builds lean by default
+- `make install-lite` / `make install-base` / `make install-plus` Makefile targets
+- GitHub-fetch install flow: tier picker now offers to download ozone-base/ozone-plus from GitHub releases on demand
+- `[profile.release-lite]` Cargo profile: `opt-level="z"`, `lto="fat"`, `codegen-units=1`, `strip="symbols"`, `panic="abort"`
+- `dev` integration branch created and pushed to origin
+- `.mex/conventions/versioning.md` — versioning rules and bump checklist
+- Branch workflow table in `.mex/ROUTER.md`
+
+### Changed
+- Version skips 0.4.6 (never shipped) — goes directly 0.4.5 → 0.4.7
+- `rusqlite` is now an optional dependency, only compiled when `bench`, `analyze`, or `profiling-ui` features are enabled
+- Lite build: 23/23 tests pass; Full build: 37/37 tests pass
+
+### Rules
+See `.mex/conventions/versioning.md` for when to bump vs. rely on git hash.
+
+---
+
 ## [Unreleased]
+
+---
+
+## [0.4.5-alpha] — 2026-04-19
+
+### Fixed
+- Settings crash in ozone+: usize underflow when entry list is empty (render.rs)
+- Settings crash: out-of-bounds category index (app.rs `current_category()`)
+- Settings silent data loss: `"Context"` entries were dropped — now mapped to Model tab
+- Session category entries now visible in settings (was missing from enum)
+
+### Changed
+- Default theme shifted to **Dark Mint** (`#2DAF82`) — away from blue-leaning teal
+- "Open ozone+" launcher action now uses saved side-by-side preference
+- Launcher label adapts: shows `[new window]` when side-by-side pref is on
+
+### Added
+- **Theme presets**: Dark Mint (default), Ozone Dark, High Contrast — selectable in Settings > Appearance
+- **Editable settings**: Settings screen now has interactive Toggle and Cycle entries
+  - Appearance: Theme preset cycle
+  - Launch: Side-by-side monitor toggle, Inspector-on-start toggle
+  - Display: Timestamp style (Relative/Absolute/Off), Message density (Compact/Comfortable)
+- New prefs fields: `theme_preset`, `show_inspector`, `timestamp_style`, `message_density`
+- `[✓]`/`[ ]` toggle indicators and `< val >` cycle indicators in settings render
 
 ---
 

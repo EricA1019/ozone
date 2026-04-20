@@ -40,6 +40,31 @@ pub struct Preferences {
     pub llamacpp_context_size: Option<u32>,
     #[serde(default)]
     pub llamacpp_threads: Option<u32>,
+    /// Serialised `ThemePreset` string (e.g. `"dark-mint"`, `"ozone-dark"`, `"high-contrast"`).
+    /// Converted to the TUI enum at startup; unknown values fall back to `DarkMint`.
+    #[serde(default = "default_theme_preset")]
+    pub theme_preset: String,
+    /// Whether the inspector pane is shown when ozone+ first opens.
+    #[serde(default)]
+    pub show_inspector: bool,
+    /// How message timestamps are displayed: `"relative"`, `"absolute"`, or `"off"`.
+    #[serde(default = "default_timestamp_style")]
+    pub timestamp_style: String,
+    /// Message list density: `"comfortable"` or `"compact"`.
+    #[serde(default = "default_message_density")]
+    pub message_density: String,
+}
+
+fn default_theme_preset() -> String {
+    "dark-mint".to_string()
+}
+
+fn default_timestamp_style() -> String {
+    "relative".to_string()
+}
+
+fn default_message_density() -> String {
+    "comfortable".to_string()
 }
 
 impl Default for Preferences {
@@ -60,6 +85,10 @@ impl Default for Preferences {
             llamacpp_gpu_layers: None,
             llamacpp_context_size: None,
             llamacpp_threads: None,
+            theme_preset: default_theme_preset(),
+            show_inspector: false,
+            timestamp_style: default_timestamp_style(),
+            message_density: default_message_density(),
         }
     }
 }
@@ -89,5 +118,19 @@ pub async fn save_prefs(prefs: &Preferences) -> Result<()> {
     }
     let text = serde_json::to_string_pretty(prefs)?;
     fs::write(&path, format!("{text}\n")).await?;
+    Ok(())
+}
+
+/// Synchronous equivalent of `save_prefs` — suitable for use in non-async
+/// contexts such as the TUI event loop.
+pub fn save_prefs_sync(prefs: &Preferences) -> Result<()> {
+    let Some(path) = paths::preferences_path() else {
+        return Ok(());
+    };
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let text = serde_json::to_string_pretty(prefs)?;
+    std::fs::write(&path, format!("{text}\n"))?;
     Ok(())
 }

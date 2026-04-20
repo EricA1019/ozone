@@ -9,6 +9,7 @@ use ratatui::{
 use ratatui_braille_bar::BrailleBar;
 
 use super::{App, BackendMode, FrontendMode, ModelPickerMode};
+#[cfg(feature = "profiling-ui")]
 use crate::profiling::{ProfilingAction, WarningSeverity};
 use crate::theme::*;
 
@@ -206,16 +207,32 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let actions = [
+    // Action 2 label/desc adapts to the side_by_side_monitor preference.
+    let (open_ozone_label, open_ozone_desc) = if app.prefs.side_by_side_monitor {
+        (
+            "Open ozone+ [new window]",
+            "New terminal (side-by-side on)",
+        )
+    } else {
+        ("Open ozone+", "Direct shell (no model needed)")
+    };
+
+    let mut actions: Vec<(&str, &str)> = vec![
         ("Launch", "Start configured backend & frontend"),
-        ("Profile", "Auto-tune GPU layers for a model"),
-        ("Open ozone+", "Direct shell (no model needed)"),
-        ("Launch ozone+ (side-by-side)", "Spawn ozone+ in new terminal, stay in Monitor"),
+    ];
+    #[cfg(feature = "profiling-ui")]
+    actions.push(("Profile", "Auto-tune GPU layers for a model"));
+    actions.push((open_ozone_label, open_ozone_desc));
+    actions.extend([
+        (
+            "Launch ozone+ (side-by-side)",
+            "Spawn new window, save preference",
+        ),
         ("Settings", "Configure backend & frontend"),
         ("Clear GPU", "Kill running backends"),
         ("Monitor", "View system resources"),
         ("Exit", "Quit launcher"),
-    ];
+    ]);
 
     let items: Vec<ListItem> = actions
         .iter()
@@ -271,6 +288,7 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
             "Model Picker · Launch",
             " ↑↓ scroll · Enter launch plan · Esc back · type to filter",
         ),
+        #[cfg(feature = "profiling-ui")]
         ModelPickerMode::Profile => (
             "Model Picker · Profile",
             " ↑↓ scroll · Enter advisory · Esc back · type to filter",
@@ -645,6 +663,7 @@ pub fn render_exit_confirm(f: &mut Frame, app: &App) {
     f.render_widget(Paragraph::new(lines).block(block), center_h);
 }
 
+#[cfg(feature = "profiling-ui")]
 fn warning_style(severity: &WarningSeverity) -> Style {
     match severity {
         WarningSeverity::Info => style_gray(),
@@ -653,6 +672,7 @@ fn warning_style(severity: &WarningSeverity) -> Style {
     }
 }
 
+#[cfg(feature = "profiling-ui")]
 fn action_items(actions: &[ProfilingAction], selected: usize) -> (Vec<ListItem<'_>>, ListState) {
     let items: Vec<ListItem> = actions
         .iter()
@@ -681,6 +701,7 @@ fn action_items(actions: &[ProfilingAction], selected: usize) -> (Vec<ListItem<'
     (items, state)
 }
 
+#[cfg(feature = "profiling-ui")]
 pub fn render_profile_advisory(f: &mut Frame, app: &App) {
     let Some(advisory) = app.profiling_advisory.as_ref() else {
         return;
@@ -844,6 +865,7 @@ pub fn render_profile_advisory(f: &mut Frame, app: &App) {
     f.render_stateful_widget(List::new(items), inner, &mut state);
 }
 
+#[cfg(feature = "profiling-ui")]
 pub fn render_profile_confirm(f: &mut Frame, app: &App) {
     let Some(action) = app.profiling_pending_action.as_ref() else {
         return;
@@ -928,6 +950,7 @@ pub fn render_profile_confirm(f: &mut Frame, app: &App) {
     f.render_widget(Paragraph::new(lines).block(block), center_h);
 }
 
+#[cfg(feature = "profiling-ui")]
 pub fn render_profile_running(f: &mut Frame, app: &App) {
     let area = f.area();
     let center = Layout::default()
@@ -1020,6 +1043,7 @@ pub fn render_profile_running(f: &mut Frame, app: &App) {
     f.render_widget(Paragraph::new(lines).scroll((scroll_offset, 0)), chunks[2]);
 }
 
+#[cfg(feature = "profiling-ui")]
 pub fn render_profile_success(f: &mut Frame, app: &App) {
     let Some(report) = app.profiling_success.as_ref() else {
         return;
@@ -1148,6 +1172,7 @@ pub fn render_profile_success(f: &mut Frame, app: &App) {
     }
 }
 
+#[cfg(feature = "profiling-ui")]
 pub fn render_profile_failure(f: &mut Frame, app: &App) {
     let Some(report) = app.profiling_failure.as_ref() else {
         return;

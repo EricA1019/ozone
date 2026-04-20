@@ -8,7 +8,7 @@
 
 **⬡ Use AI smarter. Not bigger.**
 
-![Version](https://img.shields.io/badge/v0.4.3--alpha-76b7b2?style=for-the-badge)
+![Version](https://img.shields.io/badge/v0.4.5--alpha-2daf82?style=for-the-badge)
 ![License](https://img.shields.io/badge/MIT-7c3aed?style=for-the-badge)
 ![Local-first](https://img.shields.io/badge/local--first-06b6d4?style=for-the-badge)
 
@@ -348,6 +348,16 @@ The character card is attached to the session and injected into context. Session
 ozone-plus export <session-id>            # JSON export
 ozone-plus export <session-id> --format markdown   # Markdown transcript
 ```
+
+### Settings
+
+The in-TUI Settings screen (accessible from the ozone launcher main menu) has **interactive entries** as of v0.4.5-alpha:
+
+- **Appearance** — cycle through theme presets: *Dark Mint* (default, `#2DAF82`), *Ozone Dark*, *High Contrast*
+- **Launch** — toggle side-by-side monitor mode; toggle inspector-on-start
+- **Display** — cycle timestamp style (Relative / Absolute / Off) and message density (Compact / Comfortable)
+
+Press `Enter` on any editable entry to advance its value. Changes persist to `~/.local/share/ozone/prefs.json` immediately.
 
 ---
 

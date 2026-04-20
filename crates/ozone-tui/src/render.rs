@@ -12,8 +12,8 @@ use tui_textarea::TextArea;
 
 use crate::{
     app::{
-        CommandEntry, ContextPreview, FocusTarget, InspectorFocus, RuntimePhase, ScreenState,
-        ShellState,
+        CommandEntry, ContextPreview, EntryKind, FocusTarget, InspectorFocus, RuntimePhase,
+        ScreenState, ShellState,
     },
     input::InputMode,
     layout::{LayoutMode, LayoutModel, PaneId, PaneLayout},
@@ -27,6 +27,8 @@ pub struct ConversationEntryModel {
     pub is_bookmarked: bool,
     pub selected: bool,
     pub is_streaming: bool,
+    /// Pre-formatted display timestamp, e.g. "2:15 PM".
+    pub timestamp: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -70,6 +72,7 @@ pub struct StatusPaneModel {
     pub mode_badge: Option<String>,
     pub session_title: String,
     pub message_count: usize,
+    pub selected_index: Option<usize>,
     /// Compact-mode VRAM usage hint shown at right edge of the footer bar.
     pub vram_hint: Option<String>,
 }
@@ -196,6 +199,7 @@ pub struct SettingsCategoryRenderItem {
 pub struct SettingsEntryRenderItem {
     pub label: String,
     pub value: String,
+    pub kind: EntryKind,
     pub selected: bool,
 }
 
@@ -286,6 +290,7 @@ pub struct RenderModel {
     pub hints: Vec<HintItem>,
     pub breadcrumb: String,
     pub command_palette: Option<CommandPaletteRenderModel>,
+    pub toast_message: Option<String>,
 }
 
 pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderModel {
@@ -307,8 +312,17 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         indicators.input_mode, indicators.focus, shell_label
     );
 
+    let conv_entry_count = state.session.transcript.len();
     let conversation = ConversationPaneModel {
-        title: "Conversation".into(),
+        title: if conv_entry_count > 0 {
+            if let Some(sel) = state.session.selected_message {
+                format!("Conversation [{}/{}]", sel + 1, conv_entry_count)
+            } else {
+                "Conversation".into()
+            }
+        } else {
+            "Conversation".into()
+        },
         subtitle: format!("{} · {}", indicators.selection, indicators.branch),
         entries: {
             let mut entries: Vec<ConversationEntryModel> = state
@@ -322,6 +336,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
                     is_bookmarked: item.is_bookmarked,
                     selected: state.session.selected_message == Some(index),
                     is_streaming: false,
+                    timestamp: item.timestamp.clone(),
                 })
                 .collect();
             // Show streamed partial content as a transient entry while generating.
@@ -332,12 +347,13 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
                     is_bookmarked: false,
                     selected: false,
                     is_streaming: true,
+                    timestamp: None,
                 });
             }
             entries
         },
         empty_state: "⬡ Start a conversation — press i to enter insert mode".into(),
-        hint: "j/k navigate · b bookmark · Ctrl+K pin · Tab focus · i insert · ? help".into(),
+        hint: "j/k navigate · b bookmark · Ctrl+K pin · Tab focus · i insert · I inspector · ? help".into(),
         tick_count: state.tick_count,
     };
 
@@ -418,6 +434,11 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         mode_badge,
         session_title: state.session.context.title.clone(),
         message_count: state.session.transcript.len(),
+        selected_index: if state.session.transcript.is_empty() {
+            None
+        } else {
+            state.session.selected_message
+        },
         vram_hint,
     };
 
@@ -539,9 +560,10 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
             .entries_for_category(&current_cat)
             .into_iter()
             .enumerate()
-            .map(|(i, (label, value))| SettingsEntryRenderItem {
+            .map(|(i, (label, value, kind))| SettingsEntryRenderItem {
                 label,
                 value,
+                kind,
                 selected: i == state.settings.selected_entry,
             })
             .collect();
@@ -639,6 +661,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         } else {
             None
         },
+        toast_message: state.active_toast().map(str::to_owned),
     }
 }
 
@@ -919,8 +942,17 @@ pub fn render_shell(
         render_inspector(frame, pane, model, layout.focused == PaneId::Inspector);
     }
 
-    if let (Some(pane), Some(model)) = (layout.overlay.as_ref(), model.overlay.as_ref()) {
-        render_overlay(frame, pane, model);
+    if let (Some(pane), Some(overlay_model)) = (layout.overlay.as_ref(), model.overlay.as_ref()) {
+        if pane.pane == PaneId::HelpOverlay {
+            render_help_overlay(frame, pane.area);
+        } else {
+            render_overlay(frame, pane, overlay_model);
+        }
+    }
+
+    // Toast notification (above conversation, below help overlay)
+    if let Some(toast_msg) = model.toast_message.as_deref() {
+        render_toast(frame, frame.area(), toast_msg);
     }
 
     // Render hints and breadcrumb last (on top)
@@ -1120,6 +1152,16 @@ fn render_conversation(frame: &mut Frame, pane: &PaneLayout, model: &RenderModel
                 Span::styled("  ", theme::muted_style())
             };
 
+            // Colored left-border gutter per author role
+            let gutter_color = if entry.author == "user" {
+                theme::TEAL
+            } else if entry.author == "system" {
+                theme::TEXT_DIM
+            } else {
+                theme::VIOLET
+            };
+            let gutter = Span::styled("│ ", Style::default().fg(gutter_color));
+
             let author_display = if entry.is_streaming {
                 let frame_str = SPINNER_FRAMES
                     [(model.conversation.tick_count / 3) as usize % SPINNER_FRAMES.len()];
@@ -1128,17 +1170,31 @@ fn render_conversation(frame: &mut Frame, pane: &PaneLayout, model: &RenderModel
                 format!("{:<10}", entry.author)
             };
 
-            lines.push(Line::from(vec![
+            // Build the author line spans with optional dim timestamp
+            let mut msg_spans = vec![
                 Span::styled(marker, marker_style),
                 bookmark_indicator,
+                gutter,
                 Span::styled(author_display, author_style),
-                Span::raw(" "),
-                Span::styled(entry.content.clone(), theme::text_style()),
-            ]));
+            ];
+            if let Some(ts) = &entry.timestamp {
+                msg_spans.push(Span::styled(format!(" {ts}"), theme::dim_style()));
+            }
+            msg_spans.push(Span::raw(" "));
+            msg_spans.push(Span::styled(entry.content.clone(), theme::text_style()));
 
-            if i < entry_count - 1 {
+            lines.push(Line::from(msg_spans));
+
+            // Author-aware separator between messages
+            if i + 1 < entry_count {
+                let next_author = &model.conversation.entries[i + 1].author;
+                let sep = if next_author != &entry.author {
+                    format!("     │ ─── {} ───", next_author)
+                } else {
+                    "     │ · · ·".to_string()
+                };
                 lines.push(Line::from(Span::styled(
-                    "  ─────────────────────────────────",
+                    sep,
                     Style::default().fg(Color::Rgb(50, 50, 50)),
                 )));
             }
@@ -1305,7 +1361,15 @@ fn render_status(frame: &mut Frame, pane: &PaneLayout, model: &StatusPaneModel, 
     };
 
     let title = truncate_str(&model.session_title, 30);
-    let msgs = format!("{} msgs", model.message_count);
+    let msgs = if let Some(idx) = model.selected_index {
+        if model.message_count > 1 {
+            format!("{}/{} msgs", idx + 1, model.message_count)
+        } else {
+            format!("{} msgs", model.message_count)
+        }
+    } else {
+        format!("{} msgs", model.message_count)
+    };
     let sep = || Span::styled("  │  ", theme::muted_style());
 
     let mut spans = vec![
@@ -1432,6 +1496,89 @@ fn render_overlay(frame: &mut Frame, pane: &PaneLayout, model: &OverlayRenderMod
             .wrap(Wrap { trim: false }),
         pane.area,
     );
+}
+
+fn render_help_overlay(frame: &mut Frame, area: Rect) {
+    let overlay = Block::default().style(Style::default().bg(Color::Black));
+    frame.render_widget(Clear, area);
+    frame.render_widget(overlay, area);
+
+    let width = 60_u16.min(area.width.saturating_sub(4));
+    let height = 22_u16.min(area.height.saturating_sub(4));
+    let x = area.x + (area.width.saturating_sub(width)) / 2;
+    let y = area.y + (area.height.saturating_sub(height)) / 2;
+    let help_area = Rect::new(x, y, width, height);
+
+    let help_text = vec![
+        Line::from(Span::styled(
+            "⬡ Keybindings",
+            Style::default()
+                .fg(Color::Rgb(118, 183, 178))
+                .add_modifier(Modifier::BOLD),
+        )),
+        Line::from(""),
+        Line::from(Span::styled(
+            "── Normal Mode ──",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from("  j/k      Navigate messages"),
+        Line::from("  i        Enter Insert mode"),
+        Line::from("  I        Toggle Inspector"),
+        Line::from("  b        Toggle bookmark"),
+        Line::from("  p        Pin to memory"),
+        Line::from("  /        Slash commands"),
+        Line::from("  ?        This help"),
+        Line::from("  Esc      Back / Close"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "── Insert Mode ──",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from("  Enter    Send message"),
+        Line::from("  Esc      Normal mode"),
+        Line::from("  Tab      Autocomplete"),
+        Line::from("  F2       Toggle Inspector"),
+        Line::from(""),
+        Line::from(Span::styled(
+            "── Global ──",
+            Style::default().fg(Color::DarkGray),
+        )),
+        Line::from("  Ctrl+C   Quit"),
+        Line::from("  Ctrl+D   Context dry-run"),
+        Line::from("  Ctrl+K   Pin to memory"),
+    ];
+
+    let help = Paragraph::new(help_text).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(Style::default().fg(Color::Rgb(118, 183, 178)))
+            .title(" Help (? to close) ")
+            .title_style(
+                Style::default()
+                    .fg(Color::Rgb(118, 183, 178))
+                    .add_modifier(Modifier::BOLD),
+            ),
+    );
+
+    frame.render_widget(help, help_area);
+}
+
+fn render_toast(frame: &mut Frame, area: Rect, message: &str) {
+    let msg_width = (message.len() as u16 + 4).min(area.width);
+    let x = area.x + area.width.saturating_sub(msg_width).saturating_sub(1);
+    let y = area.y + area.height.saturating_sub(3);
+    let toast_area = Rect::new(x, y, msg_width, 1);
+
+    let toast = Paragraph::new(Line::from(Span::styled(
+        format!(" {} ", message),
+        Style::default()
+            .fg(Color::Rgb(141, 214, 209))
+            .bg(Color::Rgb(30, 30, 30))
+            .add_modifier(Modifier::BOLD),
+    )));
+
+    frame.render_widget(Clear, toast_area);
+    frame.render_widget(toast, toast_area);
 }
 
 fn render_main_menu(frame: &mut Frame, pane: &PaneLayout, model: &MainMenuRenderModel) {
@@ -1684,10 +1831,10 @@ fn render_session_list(frame: &mut Frame, pane: &PaneLayout, model: &SessionList
     )));
     header_lines.push(Line::from(vec![
         Span::styled("      ", theme::dim_style()),
-        Span::styled(format!("{:<30}", "Name"), theme::dim_style()),
+        Span::styled(format!("{:<24}", "Name"), theme::dim_style()),
         Span::styled(format!("{:<16}", "Character"), theme::dim_style()),
         Span::styled(format!("{:<10}", "Messages"), theme::dim_style()),
-        Span::styled("Last Active", theme::dim_style()),
+        Span::styled(format!("{:<14}", "Last Active"), theme::dim_style()),
     ]));
     header_lines.push(Line::from(Span::styled(
         "  \u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
@@ -1742,7 +1889,7 @@ fn render_session_list(frame: &mut Frame, pane: &PaneLayout, model: &SessionList
                     },
                 ),
                 Span::styled(
-                    format!("{:<30}", truncate_str(&entry.name, 28)),
+                    format!("{:<24}", truncate_str(&entry.name, 22)),
                     if entry.selected {
                         theme::highlight_style()
                     } else {
@@ -1766,7 +1913,7 @@ fn render_session_list(frame: &mut Frame, pane: &PaneLayout, model: &SessionList
                     },
                 ),
                 Span::styled(
-                    entry.last_active.clone(),
+                    format!("{:<14}", truncate_str(&entry.last_active, 12)),
                     if entry.selected {
                         theme::text_style()
                     } else {
@@ -2148,19 +2295,44 @@ fn render_settings(frame: &mut Frame, pane: &PaneLayout, model: &SettingsRenderM
             )));
         } else {
             for entry in &model.entries {
-                let (label_style, value_style, marker) = if entry.selected {
+                let (label_style, marker) = if entry.selected {
                     (
                         theme::highlight_style(),
-                        theme::text_style(),
                         format!("  {} ", theme::HEX_FILLED),
                     )
                 } else {
                     (
                         theme::dim_style(),
-                        theme::text_style(),
                         format!("  {} ", theme::HEX),
                     )
                 };
+
+                // Right-side indicator depends on entry kind
+                let right_span = match &entry.kind {
+                    EntryKind::ReadOnly => {
+                        Span::styled(entry.value.clone(), theme::text_style())
+                    }
+                    EntryKind::Toggle(v) => {
+                        let indicator = if *v { "[✓]" } else { "[ ]" };
+                        let style = if *v {
+                            theme::accent_style()
+                        } else {
+                            theme::dim_style()
+                        };
+                        Span::styled(indicator, style)
+                    }
+                    EntryKind::Cycle { options, current } => {
+                        let cur = options
+                            .get(*current)
+                            .map(|s| s.as_str())
+                            .unwrap_or("—");
+                        Span::styled(
+                            format!("< {cur} >"),
+                            theme::accent_style(),
+                        )
+                    }
+                };
+
                 lines.push(Line::from(vec![
                     Span::styled(marker, if entry.selected {
                         theme::highlight_style()
@@ -2168,7 +2340,7 @@ fn render_settings(frame: &mut Frame, pane: &PaneLayout, model: &SettingsRenderM
                         theme::muted_style()
                     }),
                     Span::styled(format!("{:<22}", entry.label), label_style),
-                    Span::styled(entry.value.clone(), value_style),
+                    right_span,
                 ]));
             }
         }
@@ -2179,7 +2351,7 @@ fn render_settings(frame: &mut Frame, pane: &PaneLayout, model: &SettingsRenderM
             theme::muted_style(),
         )));
         lines.push(Line::from(Span::styled(
-            "  [Esc] back to categories · read-only",
+            "  [Enter] toggle/cycle · [Esc] back to categories",
             theme::dim_style(),
         )));
 
@@ -2647,7 +2819,7 @@ fn composer_hint(input_mode: InputMode) -> &'static str {
             "i insert · b bookmark · Ctrl+K pin · Tab conversation · Ctrl+D dry-run · ? help"
         }
         InputMode::Insert => {
-            "Enter send · Esc normal · Ctrl+C cancel · Ctrl+D dry-run · Ctrl+I inspector"
+            "Enter send · Esc normal · Ctrl+C cancel · Ctrl+D dry-run · F2 inspector"
         }
         InputMode::Command => "Enter send · Esc normal · Ctrl+C cancel · Ctrl+D dry-run",
     }

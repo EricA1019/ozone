@@ -77,6 +77,10 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
         return KeyAction::ToggleInspector;
     }
 
+    if key.code == KeyCode::F(2) {
+        return KeyAction::ToggleInspector;
+    }
+
     if is_ctrl_d(key) {
         return KeyAction::TriggerContextDryRun;
     }
@@ -90,6 +94,7 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
             KeyCode::Up | KeyCode::Char('k') => KeyAction::MoveSelectionUp,
             KeyCode::Down | KeyCode::Char('j') => KeyAction::MoveSelectionDown,
             KeyCode::Char('i') => KeyAction::EnterInsert,
+            KeyCode::Char('I') => KeyAction::ToggleInspector,
             KeyCode::Tab => KeyAction::FocusDraft,
             KeyCode::Char('t') => KeyAction::FocusTranscript,
             KeyCode::Char('b') => KeyAction::ToggleBookmark,
@@ -303,6 +308,35 @@ mod tests {
                 KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT)
             ),
             KeyAction::DraftInsertChar('?')
+        );
+    }
+
+    #[test]
+    fn f2_toggles_inspector_in_normal_and_insert() {
+        assert_eq!(
+            dispatch_key(
+                InputMode::Normal,
+                KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE)
+            ),
+            KeyAction::ToggleInspector
+        );
+        assert_eq!(
+            dispatch_key(
+                InputMode::Insert,
+                KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE)
+            ),
+            KeyAction::ToggleInspector
+        );
+    }
+
+    #[test]
+    fn shift_i_toggles_inspector_in_normal_mode() {
+        assert_eq!(
+            dispatch_key(
+                InputMode::Normal,
+                KeyEvent::new(KeyCode::Char('I'), KeyModifiers::SHIFT)
+            ),
+            KeyAction::ToggleInspector
         );
     }
 

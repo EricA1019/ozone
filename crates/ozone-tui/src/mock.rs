@@ -138,6 +138,14 @@ pub trait SessionRuntime {
         &mut self,
         _path: String,
     ) -> Result<crate::app::CharacterEntry, Self::Error>;
+
+    /// Persist a changed preference value.
+    /// `pref_key` is the JSON field name (e.g. `"theme_preset"`); `value` is
+    /// the new serialised string value.  The default implementation is a no-op
+    /// so that runtimes that don't manage prefs don't need to implement this.
+    fn save_pref(&mut self, _pref_key: &str, _value: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
