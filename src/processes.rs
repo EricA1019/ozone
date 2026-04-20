@@ -33,8 +33,6 @@ pub enum LlamaCppStartupFailure {
     RuntimeCrash { exit_code: Option<i32> },
     /// Health endpoint never responded within timeout
     Timeout,
-    /// Unknown failure
-    Unknown,
 }
 
 pub async fn is_url_ready(url: &str) -> bool {
@@ -456,9 +454,6 @@ pub fn llamacpp_failure_suggestion(failure: &LlamaCppStartupFailure) -> &'static
         }
         LlamaCppStartupFailure::Timeout => {
             "llama-server did not become ready within the timeout. It may still be loading a large model — try again or reduce context size."
-        }
-        LlamaCppStartupFailure::Unknown => {
-            "llama-server failed for an unknown reason. Check the log file for details."
         }
     }
 }

@@ -8,7 +8,7 @@
 
 **⬡ Use AI smarter. Not bigger.**
 
-![Version](https://img.shields.io/badge/v0.4.5--alpha-2daf82?style=for-the-badge)
+![Version](https://img.shields.io/badge/v0.4.7--alpha-2daf82?style=for-the-badge)
 ![License](https://img.shields.io/badge/MIT-7c3aed?style=for-the-badge)
 ![Local-first](https://img.shields.io/badge/local--first-06b6d4?style=for-the-badge)
 
@@ -209,6 +209,48 @@ The server prefers direct crate APIs for persistence-heavy session work and uses
 
 ---
 
+## ⬡ ozonelite — Backend Control
+
+ozonelite is the leanest tier: a purpose-built backend manager for users who want direct control without profiling suites or conversation UX. It starts fast, runs light, and is comfortable over SSH, tmux, and constrained Linux boxes.
+
+### What it does
+
+- **Launch** a KoboldCpp or llama.cpp backend with saved or one-shot settings
+- **Monitor** backend health, resource usage, and service status
+- **Stop/restart** backends cleanly
+- **Model selection** — pick from discovered models in `~/models/`
+
+### What it doesn't do
+
+ozonelite intentionally excludes:
+- Benchmarking, sweep, and autoprofiling workflows (use **ozone** for those)
+- Sessions, memory, character cards, and conversation UX (use **ozone+** for those)
+- Anything that adds overhead for features a backend operator doesn't need
+
+### Install
+
+```bash
+make install-lite    # stripped, LTO'd, panic=abort — smallest possible binary
+```
+
+The `release-lite` profile applies `opt-level="z"`, fat LTO, single codegen unit, symbol stripping, and `panic=abort` for a minimal footprint.
+
+### Run
+
+```bash
+ozone --mode=lite    # explicit mode flag
+ozone-lite           # symlink detection (create: ln -s ozone ozone-lite)
+```
+
+### When to choose ozonelite
+
+- You're on an SSH box or Raspberry Pi and want to manage a backend remotely
+- You already know your model and settings — you just need to launch and monitor
+- You want the smallest binary and fastest startup possible
+- You're scripting backend lifecycle and don't need interactive tuning
+
+---
+
 ## ⬡ ozone — Autoprofiling
 
 Autoprofiling is the key feature that separates ozone base from just launching a backend manually. It reads your model, your hardware, and produces a concrete starting point for manual tuning. Both **KoboldCpp** and **llama.cpp** backends are fully supported — ozone auto-detects which backend to use, preferring KoboldCpp when both are available.
@@ -351,7 +393,7 @@ ozone-plus export <session-id> --format markdown   # Markdown transcript
 
 ### Settings
 
-The in-TUI Settings screen (accessible from the ozone launcher main menu) has **interactive entries** as of v0.4.5-alpha:
+The in-TUI Settings screen (accessible from the ozone launcher main menu) has **interactive entries** as of v0.4.7-alpha:
 
 - **Appearance** — cycle through theme presets: *Dark Mint* (default, `#2DAF82`), *Ozone Dark*, *High Contrast*
 - **Launch** — toggle side-by-side monitor mode; toggle inspector-on-start

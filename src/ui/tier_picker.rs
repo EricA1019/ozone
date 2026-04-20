@@ -1,6 +1,6 @@
 //! Tier picker screen for first-run or --pick flag
 
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
@@ -28,7 +28,7 @@ pub enum TierPickerPhase {
     /// Download succeeded
     InstallDone { tier: Tier, path: PathBuf },
     /// Download failed
-    InstallError { tier: Tier, msg: String },
+    InstallError { _tier: Tier, msg: String },
 }
 
 /// State for the tier picker
@@ -386,7 +386,7 @@ fn render_installing(f: &mut Frame, area: Rect, binary: &str, ticker: u64) {
     );
 }
 
-fn render_install_done(f: &mut Frame, area: Rect, binary: &str, path: &PathBuf) {
+fn render_install_done(f: &mut Frame, area: Rect, binary: &str, path: &Path) {
     let (outer, inner) = centered_dialog(area, 60, 16);
     render_dialog_frame(f, outer);
 
@@ -426,7 +426,7 @@ fn render_install_done(f: &mut Frame, area: Rect, binary: &str, path: &PathBuf) 
 
     let success = Line::from(vec![
         Span::styled("  ✓ ", style_green()),
-        Span::styled(format!("{binary}"), style_bold_lime()),
+        Span::styled(binary.to_string(), style_bold_lime()),
         Span::styled(" installed successfully.", style_gray()),
     ]);
     f.render_widget(Paragraph::new(success), chunks[5]);

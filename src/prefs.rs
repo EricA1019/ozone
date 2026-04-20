@@ -121,16 +121,4 @@ pub async fn save_prefs(prefs: &Preferences) -> Result<()> {
     Ok(())
 }
 
-/// Synchronous equivalent of `save_prefs` — suitable for use in non-async
-/// contexts such as the TUI event loop.
-pub fn save_prefs_sync(prefs: &Preferences) -> Result<()> {
-    let Some(path) = paths::preferences_path() else {
-        return Ok(());
-    };
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let text = serde_json::to_string_pretty(prefs)?;
-    std::fs::write(&path, format!("{text}\n"))?;
-    Ok(())
-}
+

@@ -27,7 +27,11 @@ Then read this file fully before doing anything else in this session.
 
 **Working:**
 - **v0.4.5-alpha shipped**: Settings crash fixes (usize underflow, out-of-bounds category index, `"Context"` → Model mapping, missing `Session` variant), side-by-side launch preference persists and drives launcher label, theme preset system (`DarkMint`/`OzoneDark`/`HighContrast`, default `#2DAF82`), and fully interactive editable settings (Toggle + Cycle entries for Appearance, Launch, Display categories) — 18 new tests; ozone-tui total now 143
-- **Current version**: `0.4.5-alpha`
+- **Current version**: `0.4.7-alpha`
+- **Hardening sprint shipped**: all version strings aligned to `0.4.7-alpha` (README badge, ozone+/README, CHANGELOG), all clippy warnings resolved (zero-warning workspace), `make lint` / `make preflight` targets added, AGENTS.md filled with real project identity, CONTRIBUTING.md and versioning checklist updated to enforce preflight before commits
+- **Session folders shipped and live-tested**: ozone+ session browsing now groups by `folder:*` tags, shows folder headers, supports `f` inline assignment + `F` unfile, and includes a runtime-loop fix so folder-picker actions execute even though the picker returns `KeyAction::Noop`
+- **Build-artifact hygiene is now explicit**: `./contrib/prune-build-artifacts.sh` prunes rebuildable Cargo outputs (`deps`, `incremental`, `build`, `.fingerprint`, docs, `release-lite`) while keeping current top-level debug/release binaries by default, and `make prune-artifacts` / `make prune-artifacts-dry-run` wrap it
+- **Post-cleanup smoke is complete**: after pruning old artifacts, the kept `target/debug` binaries still launch and MCP screenshot captures still reach the base launcher plus ozone+ main menu, sessions, and settings surfaces; no cleanup-specific runtime regression was observed in those front-door screens
 - TUI QOL upgrade shipped: scrollable lists with `PgUp`/`PgDn` (ratatui `ListState` + `Scrollbar`), slash autocomplete popup, settings drill-down, 1-row footer, braille spinner during generation, message separators, colored INS/CMD mode badges, Model Intelligence screen, and side-by-side monitor mode
 - llama.cpp native profiler support shipped: full QuickSweep/FullSweep/SingleBenchmark/GenerateProfiles parity with KoboldCpp, token rate from `/completion` timings, profile export to `~/.local/share/ozone/`, auto backend detection, structured launcher args saved to prefs, and classified startup diagnostics (`GgmlAbort`, `CudaOom`, `CudaError`, `ModelLoadFailed`, `MissingSharedLibrary`, `RuntimeCrash`, `Timeout`)
 - Launcher dashboard, model picker, launch confirm flow, and live monitor all work in the ratatui TUI
@@ -115,9 +119,10 @@ Then read this file fully before doing anything else in this session.
 - llama.cpp support assumes `llama-server` and `llama-cli` are installed or exposed through `OZONE_LLAMACPP_SERVER` / `OZONE_LLAMACPP_CLI`; this environment currently does not have either binary on `PATH`, so live launch/import smokes need explicit overrides or a local install first
 - First-cut `ozone-mcp` still shells out through `ozone-plus` for runtime-backed `send`, `search`, and `index rebuild`, and its launcher smoke tool relies on PTY automation; no external editor/client integration test has been run yet.
 - `mock_user_tool` is intentionally terminal-only and marker-based: it can prove front-door launcher/ozone+ flows reached expected recent-screen text, but PTY captures are still noisy and not suitable for pixel-perfect assertions.
+- `target/` directory regrows to ~3GB after normal test/lint cycles; run `make prune-artifacts` periodically or after big build sessions to reclaim disk; this is expected Cargo behavior with multiple profiles and is not a bug
 - Temp-XDG screenshot runs can lose user-site Python modules like `pyte` because the capture helper inherits the sandbox HOME; export a real-site `PYTHONPATH` or install the dependency system-wide before assuming the Rust MCP layer is broken.
 - Repeated `ozone-plus handoff --launcher-session` invocations inside the same temp-XDG sandbox currently create duplicate `Launcher Session` rows instead of reusing one dedicated launcher session.
-- The sandboxed MCP `base_ozone_plus_shell` / `launcher_to_ozone_plus` path still fails to hand off from base Ozone into ozone+; captures stay on the base launcher with `Backend: —  Frontend: —`, and no ozone+ session is created in that sandbox.
+- The sandboxed MCP launcher handoff helpers remain unreliable in temp-XDG smokes: `base_ozone_plus_shell` / `launcher_to_ozone_plus` still stay on the base launcher with `Backend: —  Frontend: —`, and the dedicated `launcher_smoke` helper can also end on a blank final capture without ever invoking the launcher session. Treat those as automation-path issues unless a normal interactive launch reproduces them.
 
 ## Routing Table
 
@@ -153,9 +158,12 @@ See [`.mex/conventions/versioning.md`](.mex/conventions/versioning.md) for full 
 
 - **Dev build**: `cargo build`
 - **Release build + install both binaries**: `make install` (always run after any code change)
-- **Tests**: `make test` or `cargo test`
+- **Tests**: `make test` or `cargo test --workspace`
+- **Lint**: `make lint` or `cargo clippy --workspace --all-targets -- -D warnings`
+- **Preflight check**: `make preflight` (runs lint + test — **run before every commit**)
+- **Prune artifacts**: `make prune-artifacts` (reclaim disk when `target/` grows large)
 
-> **Rule**: After any code change, always run `make install` to update both `ozone` and `ozone-plus` locally. Never leave the installed binaries out of sync with the codebase.
+> **Rule**: After any code change, always run `make preflight` before committing. Never push code with clippy warnings or failing tests.
 
 ## Behavioural Contract
 

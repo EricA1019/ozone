@@ -34,9 +34,10 @@
 
 ## Version Bump Checklist
 Before bumping the version in any Cargo.toml:
-- [ ] `cargo test` passes (all crates, 0 failures)
+- [ ] `make preflight` passes (lint + test, 0 warnings, 0 failures)
 - [ ] `make install` succeeds and both binaries run
 - [ ] CHANGELOG entry written for this sprint/feature-set
+- [ ] All version strings updated: Cargo.toml, README badge, ozone+/README status, CHANGELOG header
 - [ ] All related PRs/branches merged to `dev` first
 
 ## Example Timeline

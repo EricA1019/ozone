@@ -1,42 +1,32 @@
 ---
 name: agents
 description: Always-loaded project anchor. Read this first. Contains project identity, non-negotiables, commands, and pointer to ROUTER.md for full context.
-last_updated: [YYYY-MM-DD]
+last_updated: 2025-07-14
 ---
 
-# [Project Name]
+# Ozone
 
 ## What This Is
-<!-- One sentence. What does this project do?
-     Length: 1 sentence maximum.
-     Not a tagline — a factual description of what the software does.
-     Example: "A REST API for managing inventory across multiple warehouse locations." -->
+A local-first AI backend management and conversation toolkit for llama.cpp and KoboldCpp, shipping as three tiers: ozonelite (lean backend control), ozone (profiling and tuning), and ozone+ (full conversation UX with sessions, memory, and roleplay).
 
 ## Non-Negotiables
-<!-- Hard rules the agent must never violate. Not preferences — rules.
-     These are the things that, if broken, cause real damage to the codebase.
-     Length: 3-5 items. More than 5 means the list has not been prioritised.
-     Example:
-     - Never write database queries outside of the repository layer
-     - Never commit secrets or API keys
-     - Always handle errors explicitly — no silent failures -->
+- Never commit secrets or API keys
+- All code changes must pass `cargo clippy --workspace --all-targets -- -D warnings` (zero warnings)
+- No `unwrap()` in runtime code paths — use `?` or log and continue
+- Persistence schema changes require a migration path — never break existing user data
+- Feature gating: lite ⊂ base ⊂ full — higher tiers include all lower-tier features
 
 ## Commands
-<!-- The exact commands needed to work on this project.
-     Include: run dev server, run tests, run linter, build.
-     Use the actual commands from this codebase — not placeholders.
-     For monorepos or projects with separate frontend/backend, group by area.
-     Target: keep this entire file under 150 tokens. For full-stack projects
-     with separate command sets, up to 200 tokens is acceptable.
-     Example:
-     - Dev: `npm run dev`
-     - Test: `npm test`
-     - Lint: `npm run lint`
-     - Build: `npm run build` -->
+- Test: `make test` or `cargo test --workspace`
+- Lint: `make lint` or `cargo clippy --workspace --all-targets -- -D warnings`
+- Preflight: `make preflight` (lint + test — run before every commit)
+- Build: `cargo build` (debug) or `cargo build --release`
+- Install: `make install` (both binaries) / `make install-lite` / `make install-base` / `make install-plus`
+- Prune: `make prune-artifacts` (clean up target/ bloat)
 
-## Scaffold Growth
-After every task: if no pattern exists for the task type you just completed, create one. If a pattern or context file is now out of date, update it. The scaffold grows from real work, not just setup. See the GROW step in `ROUTER.md` for details.
+## After Every Task
+After completing any task: update `.mex/ROUTER.md` project state and any `.mex/` files that are now out of date. If no pattern existed for the task you just completed, create one in `.mex/patterns/`.
 
 ## Navigation
-At the start of every session, read `ROUTER.md` before doing anything else.
+At the start of every session, read `.mex/ROUTER.md` before doing anything else.
 For full project context, patterns, and task guidance — everything is there.

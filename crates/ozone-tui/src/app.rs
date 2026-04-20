@@ -613,7 +613,7 @@ impl SessionListState {
         }
 
         let mut ordered: Vec<&SessionListEntry> = Vec::new();
-        for (_, entries) in &folders {
+        for entries in folders.values() {
             for entry in entries {
                 ordered.push(entry);
             }
@@ -3795,17 +3795,14 @@ mod tests {
 
     #[test]
     fn settings_state_nav_up_wraps_category_list() {
-        let mut s = super::SettingsState::default();
-        s.selected_category = 0;
+        let mut s = super::SettingsState { selected_category: 0, ..Default::default() };
         s.nav_up();
         assert_eq!(s.selected_category, s.categories.len() - 1);
     }
 
     #[test]
     fn settings_state_nav_down_wraps_entry_list() {
-        let mut s = super::SettingsState::default();
-        // Keybindings (index 3) always has static entries
-        s.selected_category = 3;
+        let mut s = super::SettingsState { selected_category: 3, ..Default::default() };
         s.enter();
         let count = s
             .entries_for_category(&super::SettingsCategory::Keybindings)
@@ -3817,8 +3814,7 @@ mod tests {
 
     #[test]
     fn settings_state_nav_up_wraps_entry_list() {
-        let mut s = super::SettingsState::default();
-        s.selected_category = 3; // Keybindings
+        let mut s = super::SettingsState { selected_category: 3, ..Default::default() };
         s.enter();
         s.selected_entry = 0;
         s.nav_up();
@@ -4053,9 +4049,7 @@ mod tests {
     fn settings_category_navigation_never_panics_on_oob_index() {
         use super::{SettingsCategory, SettingsState};
 
-        let mut state = SettingsState::default();
-        // Force selected_category out of bounds
-        state.selected_category = 999;
+        let state = SettingsState { selected_category: 999, ..Default::default() };
         // Must not panic — falls back to categories[0]
         let cat = state.current_category();
         assert_eq!(cat, &SettingsCategory::Backend);
@@ -4065,10 +4059,11 @@ mod tests {
     fn settings_category_navigation_never_panics_on_empty_entries() {
         use super::{SettingsCategory, SettingsState};
 
-        let mut state = SettingsState::default();
-        // Navigate to Backend category (no entries loaded)
-        state.selected_category = 0;
-        state.drill_down = true;
+        let mut state = SettingsState {
+            selected_category: 0,
+            drill_down: true,
+            ..Default::default()
+        };
         let entries = state.entries_for_category(&SettingsCategory::Backend);
         assert!(entries.is_empty());
         // nav_down / nav_up with empty entry list must not panic

@@ -1,4 +1,4 @@
-.PHONY: install install-lite install-base install-plus build test
+.PHONY: install install-lite install-base install-plus build test lint preflight prune-artifacts prune-artifacts-dry-run
 
 # Install both binaries locally after any code change
 install:
@@ -18,4 +18,17 @@ build:
 	cargo build --release
 
 test:
-	cargo test
+	cargo test --workspace
+
+lint:
+	cargo clippy --workspace --all-targets -- -D warnings
+
+# Run lint + test before committing
+preflight: lint test
+	@echo "✅ Preflight passed — safe to commit"
+
+prune-artifacts:
+	./contrib/prune-build-artifacts.sh
+
+prune-artifacts-dry-run:
+	./contrib/prune-build-artifacts.sh --dry-run

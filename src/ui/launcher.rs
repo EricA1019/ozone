@@ -46,8 +46,13 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Length(1), Constraint::Length(1)])
         .split(inner);
 
+    let tier_name = match app.prefs.preferred_tier {
+        Some(crate::prefs::Tier::Lite) => "ozonelite",
+        _ => "Ozone",
+    };
+
     let title = Line::from(vec![
-        Span::styled(format!(" {} Ozone ", HEX_CURSOR), style_bold_lime()),
+        Span::styled(format!(" {} {} ", HEX_CURSOR, tier_name), style_bold_lime()),
         Span::styled(format!("v{} ", VERSION), style_gray()),
         Span::styled("— ", style_gray()),
         Span::styled(format!("{model_count} models"), style_cyan()),
@@ -222,12 +227,17 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
     ];
     #[cfg(feature = "profiling-ui")]
     actions.push(("Profile", "Auto-tune GPU layers for a model"));
-    actions.push((open_ozone_label, open_ozone_desc));
-    actions.extend([
-        (
+
+    let is_lite = matches!(app.prefs.preferred_tier, Some(crate::prefs::Tier::Lite));
+
+    if !is_lite {
+        actions.push((open_ozone_label, open_ozone_desc));
+        actions.push((
             "Launch ozone+ (side-by-side)",
             "Spawn new window, save preference",
-        ),
+        ));
+    }
+    actions.extend([
         ("Settings", "Configure backend & frontend"),
         ("Clear GPU", "Kill running backends"),
         ("Monitor", "View system resources"),
@@ -274,7 +284,15 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
     } else {
         style_gray()
     };
-    let bar = Paragraph::new(Line::from(Span::styled(format!("  {msg}"), style)));
+    let tier_badge = match app.prefs.preferred_tier {
+        Some(crate::prefs::Tier::Lite) => Span::styled(" [lite] ", style_cyan()),
+        Some(crate::prefs::Tier::Plus) => Span::styled(" [ozone+] ", style_cyan()),
+        _ => Span::raw(" "),
+    };
+    let bar = Paragraph::new(Line::from(vec![
+        tier_badge,
+        Span::styled(format!(" {msg}"), style),
+    ]));
     f.render_widget(bar, area);
 }
 

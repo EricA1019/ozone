@@ -1,6 +1,20 @@
 use crate::catalog::CatalogRecord;
-use crate::gguf;
 use crate::hardware::HardwareProfile;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TopologySource {
+    GgufMetadata,
+    SizeHeuristic,
+}
+
+impl TopologySource {
+    pub fn label(self) -> &'static str {
+        match self {
+            TopologySource::GgufMetadata => "GGUF metadata",
+            TopologySource::SizeHeuristic => "Size heuristic",
+        }
+    }
+}
 
 const MIB_PER_GIB: f64 = 1024.0;
 const VRAM_HEADROOM_RATIO: f64 = 0.9;
@@ -149,7 +163,7 @@ pub fn recommend_threads(
 
 pub fn plan_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
     let total_layers = estimate_total_layers(record.model_size_gb.max(0.1));
-    let layer_source_label = gguf::TopologySource::SizeHeuristic.label().to_string();
+    let layer_source_label = TopologySource::SizeHeuristic.label().to_string();
     let layer_source_note = Some(
         "Fast launch still uses the size-based layer estimate; the enhanced layer-aware heuristic is currently scoped to profiling."
             .to_string(),
@@ -164,22 +178,10 @@ pub fn plan_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
     )
 }
 
+#[cfg(feature = "profiling-ui")]
 pub fn plan_profiling_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
     let fallback_layers = estimate_total_layers(record.model_size_gb.max(0.1));
-    let topology = gguf::inspect_model_topology(&record.model_path, fallback_layers);
-    plan_launch_with_layers(
-        record,
-        hw,
-        topology.total_layers,
-        topology.source.label().to_string(),
-        topology.note,
-        true,
-    )
-}
-
-pub fn plan_llamacpp_profiling_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
-    let fallback_layers = estimate_total_layers(record.model_size_gb.max(0.1));
-    let topology = gguf::inspect_model_topology(&record.model_path, fallback_layers);
+    let topology = crate::gguf::inspect_model_topology(&record.model_path, fallback_layers);
     plan_launch_with_layers(
         record,
         hw,
@@ -232,7 +234,7 @@ fn plan_launch_with_layers(
         gpu_layers
     };
 
-    let layer_prefix = if layer_source_label == gguf::TopologySource::GgufMetadata.label() {
+    let layer_prefix = if layer_source_label == TopologySource::GgufMetadata.label() {
         format!("GGUF metadata reports {total_layers} layers. ")
     } else {
         format!("Ozone estimated {total_layers} total layers from model size. ")
@@ -335,6 +337,7 @@ fn plan_launch_with_layers(
 }
 
 #[cfg(test)]
+#[cfg(feature = "profiling-ui")]
 mod tests {
     use super::*;
     use crate::catalog::{RecSource, Recommendation};

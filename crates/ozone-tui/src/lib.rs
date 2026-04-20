@@ -209,9 +209,10 @@ where
                             .dispatch(&app.session.context, action)
                             .map_err(RunSessionError::Runtime)?;
                         sync_draft(runtime, app)?;
+                    }
 
-                        for command in app.take_runtime_commands() {
-                            match command {
+                    for command in app.take_runtime_commands() {
+                        match command {
                                 app::RuntimeCommand::SendDraft { prompt } => {
                                     if let Some(receipt) = runtime
                                         .send_draft(&app.session.context, &prompt)
@@ -294,14 +295,31 @@ where
                                     let _ = runtime.save_pref(&pref_key, &value);
                                 }
                                 app::RuntimeCommand::SetSessionFolder { session_id, folder } => {
-                                    let _ = runtime.set_session_folder(&session_id, folder.as_deref());
+                                    match runtime
+                                        .set_session_folder(&session_id, folder.as_deref())
+                                    {
+                                        Ok(()) => {
+                                            let status = match folder.as_deref() {
+                                                Some(name) => {
+                                                    format!("Moved session into folder: {name}")
+                                                }
+                                                None => "Removed session from folder".to_owned(),
+                                            };
+                                            app.status_line = Some(status);
+                                        }
+                                        Err(error) => {
+                                            app.status_line = Some(format!(
+                                                "Folder update failed: {:?}",
+                                                error
+                                            ));
+                                        }
+                                    }
                                     if let Ok(entries) = runtime.list_sessions() {
                                         app.session_list.entries = entries;
                                     }
                                 }
-                            }
-                            sync_draft(runtime, app)?;
                         }
+                        sync_draft(runtime, app)?;
                     }
                 }
                 Event::Resize(_, _) => {}

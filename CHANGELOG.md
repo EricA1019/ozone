@@ -19,11 +19,19 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 - `dev` integration branch created and pushed to origin
 - `.mex/conventions/versioning.md` — versioning rules and bump checklist
 - Branch workflow table in `.mex/ROUTER.md`
+- Session folders: organize sessions into named folders via `folder:<name>` tags; `f` key opens folder picker, `F` removes from folder; grouped rendering with folder headers in session list
+- `make lint` and `make preflight` targets for pre-commit quality checks
+- Dedicated ozonelite section in README.md with install/run/when-to-choose guidance
+- ozonelite launcher UX: header shows "ozonelite", ozone+ actions hidden, `[lite]` badge in status bar
+- Tier badge in launcher status bar for all tiers (`[lite]`, `[ozone+]`)
 
 ### Changed
 - Version skips 0.4.6 (never shipped) — goes directly 0.4.5 → 0.4.7
 - `rusqlite` is now an optional dependency, only compiled when `bench`, `analyze`, or `profiling-ui` features are enabled
 - Lite build: 23/23 tests pass; Full build: 37/37 tests pass
+- Dead code removed from base app: unused GGUF parser, stale llama.cpp helpers, unused planner/prefs/processes functions
+- All clippy warnings resolved — workspace is now warning-free
+- `.mex/AGENTS.md` filled in with real project identity, non-negotiables, and commands
 
 ### Rules
 See `.mex/conventions/versioning.md` for when to bump vs. rely on git hash.

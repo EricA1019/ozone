@@ -592,7 +592,7 @@ pub fn build_advisory(
                 ),
             });
         }
-        if plan.layer_source_label != crate::gguf::TopologySource::GgufMetadata.label() {
+        if plan.layer_source_label != crate::planner::TopologySource::GgufMetadata.label() {
             warnings.push(ProfilingWarning {
                 severity: WarningSeverity::Info,
                 message: plan

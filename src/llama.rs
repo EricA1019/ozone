@@ -1,11 +1,17 @@
 use anyhow::{bail, Context, Result};
+#[cfg(feature = "model-mgmt")]
 use directories::BaseDirs;
 use std::env;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
+#[cfg(feature = "model-mgmt")]
+use std::path::Path;
+
+#[cfg(feature = "model-mgmt")]
 pub const ENV_LLAMACPP_CLI: &str = "OZONE_LLAMACPP_CLI";
 pub const ENV_LLAMACPP_SERVER: &str = "OZONE_LLAMACPP_SERVER";
 
+#[cfg(feature = "model-mgmt")]
 pub fn discover_llama_cli_binary() -> Result<PathBuf> {
     discover_binary(ENV_LLAMACPP_CLI, &["llama-cli"])
 }
@@ -59,6 +65,7 @@ fn resolve_binary(candidate: &str) -> Result<PathBuf> {
     bail!("'{candidate}' was not found on PATH");
 }
 
+#[cfg(feature = "model-mgmt")]
 pub fn hugging_face_cache_root() -> PathBuf {
     if let Some(path) = env_path("HF_HUB_CACHE") {
         return path;
@@ -74,11 +81,13 @@ pub fn hugging_face_cache_root() -> PathBuf {
         .unwrap_or_else(|| PathBuf::from(".cache/huggingface/hub"))
 }
 
+#[cfg(feature = "model-mgmt")]
 pub fn hugging_face_repo_cache_dir(repo: &str) -> PathBuf {
     let repo_slug = repo.replace('/', "--");
     hugging_face_cache_root().join(format!("models--{repo_slug}"))
 }
 
+#[cfg(feature = "model-mgmt")]
 pub fn model_library_target(source: &Path, preferred_name: Option<&str>) -> Result<PathBuf> {
     let filename = match preferred_name {
         Some(name) => PathBuf::from(name),
@@ -90,6 +99,7 @@ pub fn model_library_target(source: &Path, preferred_name: Option<&str>) -> Resu
     Ok(ozone_core::paths::models_dir().join(filename))
 }
 
+#[cfg(feature = "model-mgmt")]
 fn env_path(name: &str) -> Option<PathBuf> {
     let value = env::var_os(name)?;
     if value.is_empty() {
@@ -99,6 +109,7 @@ fn env_path(name: &str) -> Option<PathBuf> {
 }
 
 #[cfg(test)]
+#[cfg(feature = "model-mgmt")]
 mod tests {
     use super::*;
 

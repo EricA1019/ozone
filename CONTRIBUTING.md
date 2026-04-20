@@ -47,6 +47,7 @@ crates/
 cargo build                            # debug build (all crates)
 cargo build --workspace --release      # release build
 ./contrib/sync-local-install.sh        # release build + checksum-aware local install sync
+./contrib/prune-build-artifacts.sh     # prune rebuildable build outputs, keep current binaries
 cargo clippy --workspace --all-targets # lints
 cargo test --workspace                 # all tests
 ```
@@ -60,9 +61,25 @@ cargo build -p ozone-plus       # ozone+ binary only
 
 The project uses stable Rust. No nightly features.
 
+## Build artifact hygiene
+
+Cargo outputs in this repo can grow quickly, especially when switching profiles
+or using alternate `RUSTFLAGS` for linker workarounds. Do not keep every old
+artifact forever.
+
+- Use `./contrib/prune-build-artifacts.sh` after big live-test / build sessions
+  or whenever `target/` grows unexpectedly.
+- Default pruning keeps the current top-level binaries in `target/debug` and
+  `target/release`, but removes heavyweight rebuildable state like `deps`,
+  `incremental`, `build`, `.fingerprint`, docs, and `release-lite`.
+- Use `./contrib/prune-build-artifacts.sh --dry-run` first when you want to see
+  what would be reclaimed.
+- Use `--full` only when you intentionally want a near-`cargo clean` reset.
+
 ## Code style
 
-- Run `cargo clippy` before submitting. Fix all warnings.
+- Run `make lint` (or `cargo clippy --workspace --all-targets -- -D warnings`) before submitting. Fix all warnings — **zero warnings is enforced**.
+- Run `make preflight` before every commit — it runs lint + test in sequence and confirms everything passes.
 - No `unwrap()` in paths that can fail at runtime — use `?` or log and continue.
 - Keep `unsafe` out unless there's a real reason.
 - Comments only where the code doesn't speak for itself.
@@ -93,8 +110,7 @@ docs(readme): document CPU-only mode and OZONE_KOBOLDCPP_LAUNCHER
 
 Before marking a PR ready for review:
 
-- [ ] `cargo clippy --workspace` passes with no warnings
-- [ ] `cargo test --workspace` passes
+- [ ] `make preflight` passes (runs lint + test in one command)
 - [ ] Tested against a real model on real hardware (for anything touching planner/hardware/processes/inference)
 - [ ] Commit messages follow the format above
 - [ ] PR description explains what changed and why

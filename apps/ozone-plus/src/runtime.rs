@@ -1693,9 +1693,10 @@ impl SessionRuntime for Phase1dRuntime {
         session_id: &str,
         folder: Option<&str>,
     ) -> Result<(), Self::Error> {
-        if let Ok(sid) = SessionId::parse(session_id) {
-            let _ = self.repo.set_session_folder(&sid, folder);
-        }
+        let sid = SessionId::parse(session_id).map_err(|e| e.to_string())?;
+        self.repo
+            .set_session_folder(&sid, folder)
+            .map_err(|e| e.to_string())?;
         Ok(())
     }
 

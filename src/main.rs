@@ -5,6 +5,7 @@ mod bench;
 mod catalog;
 #[cfg(any(feature = "bench", feature = "analyze", feature = "profiling-ui"))]
 mod db;
+#[cfg(any(feature = "profiling-ui", feature = "sweep"))]
 mod gguf;
 mod hardware;
 mod llama;

@@ -609,7 +609,7 @@ pub async fn run_launcher(
                             tier,
                             path,
                         },
-                        Err(msg) => tier_picker::TierPickerPhase::InstallError { tier, msg },
+                        Err(msg) => tier_picker::TierPickerPhase::InstallError { _tier: tier, msg },
                     };
                 }
             }
@@ -975,20 +975,32 @@ pub async fn run_launcher(
                         KeyCode::Up if app.selected_action > 0 => {
                             app.selected_action -= 1;
                         }
-                        KeyCode::Down if app.selected_action < if cfg!(feature = "profiling-ui") { 7 } else { 6 } => {
-                            app.selected_action += 1;
+                        KeyCode::Down => {
+                            // Build the same action list the renderer builds so
+                            // max_index stays in sync with what is on screen.
+                            let is_lite = matches!(app.prefs.preferred_tier, Some(crate::prefs::Tier::Lite));
+                            let mut count: usize = 1; // Launch
+                            #[cfg(feature = "profiling-ui")]
+                            { count += 1; } // Profile
+                            if !is_lite { count += 2; } // Open ozone+, Launch ozone+ sbs
+                            count += 4; // Settings, Clear GPU, Monitor, Exit
+                            if app.selected_action < count - 1 {
+                                app.selected_action += 1;
+                            }
                         }
                         KeyCode::Enter => {
-                            // In lite mode (no profiling-ui), the Profile action at slot 1 is
-                            // absent, so actions 1-6 in lite map to full-mode slots 2-7.
-                            #[cfg(not(feature = "profiling-ui"))]
-                            let action_slot = if app.selected_action > 0 {
-                                app.selected_action + 1
-                            } else {
-                                0
-                            };
+                            // Build a slot-lookup that maps the visible action
+                            // index to the canonical action_slot used below.
+                            let is_lite = matches!(app.prefs.preferred_tier, Some(crate::prefs::Tier::Lite));
+                            let mut slots: Vec<usize> = vec![0]; // Launch
                             #[cfg(feature = "profiling-ui")]
-                            let action_slot = app.selected_action;
+                            slots.push(1); // Profile
+                            if !is_lite {
+                                slots.push(2); // Open ozone+
+                                slots.push(3); // Launch ozone+ (side-by-side)
+                            }
+                            slots.extend([4, 5, 6, 7]); // Settings, Clear GPU, Monitor, Exit
+                            let action_slot = slots.get(app.selected_action).copied().unwrap_or(0);
                             match action_slot {
                             0 => {
                                 // Launch configured stack
