@@ -1884,6 +1884,7 @@ dependencies = [
  "libc",
  "ozone-core",
  "ratatui",
+ "ratatui-braille-bar",
  "reqwest",
  "rusqlite",
  "serde",
@@ -2004,6 +2005,7 @@ dependencies = [
  "crossterm",
  "ozone-core",
  "ratatui",
+ "tui-textarea",
 ]
 
 [[package]]
@@ -2232,6 +2234,16 @@ dependencies = [
  "unicode-segmentation",
  "unicode-truncate",
  "unicode-width 0.2.0",
+]
+
+[[package]]
+name = "ratatui-braille-bar"
+version = "0.2.2"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "4102f73f09a91cd9f05d82cf82337ff5240cdaf582975ed7543d519651af309e"
+dependencies = [
+ "rand",
+ "ratatui",
 ]
 
 [[package]]
@@ -3131,6 +3143,17 @@ name = "try-lock"
 version = "0.2.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "e421abadd41a4225275504ea4d6566923418b7f05506fbc9c0fe86ba7396114b"
+
+[[package]]
+name = "tui-textarea"
+version = "0.7.0"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "0a5318dd619ed73c52a9417ad19046724effc1287fb75cdcc4eca1d6ac1acbae"
+dependencies = [
+ "crossterm",
+ "ratatui",
+ "unicode-width 0.2.0",
+]
 
 [[package]]
 name = "typenum"

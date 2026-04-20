@@ -31,6 +31,8 @@ pub enum KeyAction {
     MoveCursorRight,
     MoveCursorHome,
     MoveCursorEnd,
+    /// Forward raw key event to the TextArea widget (Insert mode).
+    TextAreaInput(KeyEvent),
     ToggleHelp,
     ConfirmQuit,
     MenuUp,
@@ -102,16 +104,7 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
             KeyCode::Tab => KeyAction::FocusTranscript,
             KeyCode::Up => KeyAction::HistoryPrevious,
             KeyCode::Down => KeyAction::HistoryNext,
-            KeyCode::Backspace => KeyAction::DraftBackspace,
-            KeyCode::Delete => KeyAction::DraftDelete,
-            KeyCode::Left => KeyAction::MoveCursorLeft,
-            KeyCode::Right => KeyAction::MoveCursorRight,
-            KeyCode::Home => KeyAction::MoveCursorHome,
-            KeyCode::End => KeyAction::MoveCursorEnd,
-            KeyCode::Char(ch) if allows_text_insertion(key.modifiers) => {
-                KeyAction::DraftInsertChar(ch)
-            }
-            _ => KeyAction::Noop,
+            _ => KeyAction::TextAreaInput(key),
         },
         InputMode::Command => match key.code {
             KeyCode::Esc => KeyAction::LeaveInputMode,
@@ -278,19 +271,15 @@ mod tests {
 
     #[test]
     fn insert_mode_maps_editing_and_history_keys() {
+        let key_x = KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE);
         assert_eq!(
-            dispatch_key(
-                InputMode::Insert,
-                KeyEvent::new(KeyCode::Char('x'), KeyModifiers::NONE)
-            ),
-            KeyAction::DraftInsertChar('x')
+            dispatch_key(InputMode::Insert, key_x),
+            KeyAction::TextAreaInput(key_x)
         );
+        let key_bs = KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
         assert_eq!(
-            dispatch_key(
-                InputMode::Insert,
-                KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE)
-            ),
-            KeyAction::DraftBackspace
+            dispatch_key(InputMode::Insert, key_bs),
+            KeyAction::TextAreaInput(key_bs)
         );
         assert_eq!(
             dispatch_key(
@@ -299,12 +288,10 @@ mod tests {
             ),
             KeyAction::HistoryPrevious
         );
+        let key_q = KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT);
         assert_eq!(
-            dispatch_key(
-                InputMode::Insert,
-                KeyEvent::new(KeyCode::Char('?'), KeyModifiers::SHIFT)
-            ),
-            KeyAction::DraftInsertChar('?')
+            dispatch_key(InputMode::Insert, key_q),
+            KeyAction::TextAreaInput(key_q)
         );
     }
 

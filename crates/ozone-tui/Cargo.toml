@@ -10,3 +10,4 @@ license = "MIT"
 crossterm = "0.28"
 ozone-core = { path = "../ozone-core" }
 ratatui = { version = "0.29", features = ["crossterm"] }
+tui-textarea = { version = "0.7.0", features = ["crossterm"] }

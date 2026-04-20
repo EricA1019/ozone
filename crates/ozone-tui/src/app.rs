@@ -1,10 +1,26 @@
 use crossterm::event::{KeyCode, KeyEvent};
 use ozone_core::{engine::CancelReason, session::SessionId};
+use ratatui::style::{Color, Modifier, Style};
+use tui_textarea::TextArea;
 
 use crate::input::{
     dispatch_command_palette_key, dispatch_form_key, dispatch_key, dispatch_menu_key, InputMode,
     KeyAction,
 };
+
+/// Create a fresh TextArea with ozone+ theme styling.
+pub(crate) fn new_themed_textarea() -> TextArea<'static> {
+    let mut textarea = TextArea::default();
+    textarea.set_cursor_line_style(Style::default());
+    textarea.set_block(ratatui::widgets::Block::default());
+    textarea.set_style(Style::default().fg(crate::theme::CYAN));
+    textarea.set_cursor_style(
+        Style::default()
+            .fg(Color::White)
+            .add_modifier(Modifier::REVERSED),
+    );
+    textarea
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScreenState {
@@ -1054,7 +1070,7 @@ impl CommandPaletteState {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct ShellState {
     pub screen: ScreenState,
     pub input_mode: InputMode,
@@ -1068,6 +1084,7 @@ pub struct ShellState {
     pub settings: SettingsState,
     pub session: SessionState,
     pub draft: DraftState,
+    pub textarea: TextArea<'static>,
     pub history: InputHistoryState,
     pub status_line: Option<String>,
     pub session_metadata: Option<SessionMetadata>,
@@ -1104,6 +1121,7 @@ impl ShellState {
             settings: SettingsState::default(),
             session: SessionState::new(context),
             draft: DraftState::default(),
+            textarea: new_themed_textarea(),
             history: InputHistoryState::default(),
             status_line: Some("ozone+ TUI shell skeleton ready".into()),
             session_metadata: None,
@@ -1143,6 +1161,23 @@ impl ShellState {
             if !draft.text.is_empty() {
                 self.focus = FocusTarget::Draft;
                 self.input_mode = InputMode::Insert;
+                self.textarea = new_themed_textarea();
+                let lines: Vec<String> = draft.text.lines().map(str::to_owned).collect();
+                self.textarea = TextArea::new(if lines.is_empty() {
+                    vec![String::new()]
+                } else {
+                    lines
+                });
+                self.textarea.set_cursor_line_style(Style::default());
+                self.textarea
+                    .set_block(ratatui::widgets::Block::default());
+                self.textarea
+                    .set_style(Style::default().fg(crate::theme::CYAN));
+                self.textarea.set_cursor_style(
+                    Style::default()
+                        .fg(Color::White)
+                        .add_modifier(Modifier::REVERSED),
+                );
             }
             self.draft = draft;
         }
@@ -1173,6 +1208,26 @@ impl ShellState {
         self.screen = ScreenState::MainMenu;
         self.input_mode = InputMode::Normal;
         self.focus = FocusTarget::Transcript;
+    }
+
+    /// Replace textarea contents from a DraftState (for history navigation).
+    fn sync_textarea_from_draft(&mut self, draft: &DraftState) {
+        let lines: Vec<String> = if draft.text.is_empty() {
+            vec![String::new()]
+        } else {
+            draft.text.lines().map(str::to_owned).collect()
+        };
+        self.textarea = TextArea::new(lines);
+        self.textarea.set_cursor_line_style(Style::default());
+        self.textarea
+            .set_block(ratatui::widgets::Block::default());
+        self.textarea
+            .set_style(Style::default().fg(crate::theme::CYAN));
+        self.textarea.set_cursor_style(
+            Style::default()
+                .fg(Color::White)
+                .add_modifier(Modifier::REVERSED),
+        );
     }
 
     // ── Slash-popup helpers ─────────────────────────────────────────────────
@@ -1416,6 +1471,7 @@ impl ShellState {
                     self.slash_dismissed = false;
                     self.focus = FocusTarget::Draft;
                     self.input_mode = InputMode::Insert;
+                    self.sync_textarea_from_draft(&draft);
                     self.draft = draft;
                 }
             }
@@ -1424,8 +1480,20 @@ impl ShellState {
                     self.slash_dismissed = false;
                     self.focus = FocusTarget::Draft;
                     self.input_mode = InputMode::Insert;
+                    self.sync_textarea_from_draft(&draft);
                     self.draft = draft;
                 }
+            }
+            KeyAction::TextAreaInput(key_event) => {
+                self.slash_dismissed = false;
+                self.focus = FocusTarget::Draft;
+                self.input_mode = InputMode::Insert;
+                self.history.reset_navigation();
+                self.textarea.input(key_event);
+                let text = self.textarea.lines().join("\n");
+                self.draft.text = text;
+                self.draft.cursor = self.textarea.cursor().1;
+                self.draft.dirty = true;
             }
             KeyAction::DraftInsertChar(ch) => {
                 self.slash_dismissed = false;
@@ -1899,7 +1967,7 @@ impl ShellState {
     }
 
     fn submit_draft(&mut self) {
-        let prompt = self.draft.text.clone();
+        let prompt = self.textarea.lines().join("\n");
         if prompt.trim().is_empty() {
             self.status_line = Some("Draft is empty".into());
             return;
@@ -1910,6 +1978,7 @@ impl ShellState {
             self.runtime_commands
                 .push(RuntimeCommand::RunCommand { input: prompt });
             self.draft = DraftState::default();
+            self.textarea = new_themed_textarea();
             self.focus = FocusTarget::Draft;
             self.input_mode = InputMode::Insert;
             self.status_line = Some("Running shell command…".into());
@@ -1923,6 +1992,7 @@ impl ShellState {
         self.runtime_commands
             .push(RuntimeCommand::SendDraft { prompt });
         self.draft = DraftState::default();
+        self.textarea = new_themed_textarea();
         self.focus = FocusTarget::Draft;
         self.input_mode = InputMode::Insert;
         self.status_line = Some("Sending prompt…".into());
@@ -2846,8 +2916,9 @@ mod tests {
         state.apply_action(KeyAction::EnterInsert);
         assert_eq!(state.input_mode, InputMode::Insert);
 
-        let action = state.handle_key_event(KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE));
-        assert_eq!(action, KeyAction::DraftInsertChar('/'));
+        let key = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
+        let action = state.handle_key_event(key);
+        assert_eq!(action, KeyAction::TextAreaInput(key));
         assert!(!state.command_palette.open);
     }
 

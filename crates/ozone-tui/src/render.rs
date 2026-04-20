@@ -8,6 +8,7 @@ use ratatui::{
     },
     Frame,
 };
+use tui_textarea::TextArea;
 
 use crate::{
     app::{
@@ -829,7 +830,12 @@ fn build_breadcrumb(state: &ShellState) -> String {
     }
 }
 
-pub fn render_shell(frame: &mut Frame, layout: &LayoutModel, model: &RenderModel) {
+pub fn render_shell(
+    frame: &mut Frame,
+    layout: &LayoutModel,
+    model: &RenderModel,
+    textarea: Option<&TextArea<'static>>,
+) {
     let full_area = frame.area();
 
     // Reserve bottom row for hints — skip when the 1-row status footer occupies that row,
@@ -900,6 +906,7 @@ pub fn render_shell(frame: &mut Frame, layout: &LayoutModel, model: &RenderModel
         &layout.composer,
         &model.composer,
         layout.focused == PaneId::Composer,
+        textarea,
     );
     render_status(
         frame,
@@ -1152,7 +1159,53 @@ fn render_conversation(frame: &mut Frame, pane: &PaneLayout, model: &RenderModel
     );
 }
 
-fn render_composer(frame: &mut Frame, pane: &PaneLayout, model: &ComposerPaneModel, focused: bool) {
+fn render_composer(
+    frame: &mut Frame,
+    pane: &PaneLayout,
+    model: &ComposerPaneModel,
+    focused: bool,
+    textarea: Option<&TextArea<'static>>,
+) {
+    // When a TextArea is available and focused, render it directly.
+    if let Some(ta) = textarea {
+        if model.show_cursor && focused {
+            let block = pane_block(&model.title, focused);
+            let inner = block.inner(pane.area);
+            frame.render_widget(block, pane.area);
+
+            // Render hint line below the textarea content
+            let hint_height: u16 = 2; // blank line + hint
+            let ta_height = inner.height.saturating_sub(hint_height);
+            if ta_height > 0 {
+                let ta_area =
+                    Rect::new(inner.x, inner.y, inner.width, ta_height);
+                frame.render_widget(ta, ta_area);
+
+                // Hint line
+                if inner.height > ta_height {
+                    let hint_area = Rect::new(
+                        inner.x,
+                        inner.y + ta_height,
+                        inner.width,
+                        hint_height,
+                    );
+                    let hint_lines = vec![
+                        Line::default(),
+                        Line::from(Span::styled(model.hint.clone(), theme::dim_style())),
+                    ];
+                    frame.render_widget(
+                        Paragraph::new(hint_lines).wrap(Wrap { trim: false }),
+                        hint_area,
+                    );
+                }
+            } else {
+                frame.render_widget(ta, inner);
+            }
+            return;
+        }
+    }
+
+    // Fallback: render with manual Paragraph + cursor (unfocused / no textarea).
     let mut lines: Vec<Line> = if model.lines.is_empty() {
         vec![Line::from(Span::styled(
             model.placeholder.clone(),
@@ -2935,7 +2988,7 @@ mod tests {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_shell(frame, layout, model))
+            .draw(|frame| render_shell(frame, layout, model, None))
             .unwrap();
 
         buffer_to_string(terminal.backend().buffer(), width, height)
@@ -3036,7 +3089,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
-                render_shell(frame, &layout, &model);
+                render_shell(frame, &layout, &model, None);
             })
             .unwrap();
     }
@@ -3060,7 +3113,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
-                render_shell(frame, &layout, &model);
+                render_shell(frame, &layout, &model, None);
             })
             .unwrap();
     }
@@ -3077,7 +3130,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
-                render_shell(frame, &layout, &model);
+                render_shell(frame, &layout, &model, None);
             })
             .unwrap();
     }

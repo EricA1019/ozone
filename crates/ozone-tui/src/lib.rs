@@ -38,7 +38,7 @@ pub use layout::{
 pub use mock::{MockRuntime, SessionRuntime};
 pub use render::{build_render_model, render_shell, RenderModel};
 
-#[derive(Debug, Clone, PartialEq)]
+#[derive(Debug, Clone)]
 pub struct RunSessionOutcome {
     pub app: ShellState,
     pub layout: LayoutModel,
@@ -152,7 +152,7 @@ where
                 .draw(|frame| {
                     let layout = build_layout_for_area(app, frame.area());
                     let render = build_render_model(app, &layout);
-                    render_shell(frame, &layout, &render);
+                    render_shell(frame, &layout, &render, Some(&app.textarea));
                     drawn_layout = Some(layout);
                     drawn_render = Some(render);
                 })

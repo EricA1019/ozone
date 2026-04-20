@@ -1,3 +1,5 @@
+use ratatui_braille_bar::BrailleBar;
+
 use super::App;
 use crate::theme::*;
 use chrono::Local;
@@ -5,7 +7,7 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::Style,
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, Paragraph, Sparkline},
+    widgets::{Block, Borders, Paragraph, Sparkline},
     Frame,
 };
 
@@ -15,7 +17,7 @@ pub fn render(f: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // header
-            Constraint::Length(4), // VRAM + RAM bars
+            Constraint::Length(6), // VRAM + RAM bars
             Constraint::Length(3), // CPU + disk info
             Constraint::Length(3), // disk sparkline
             Constraint::Length(6), // services
@@ -59,7 +61,12 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(1), // GPU label
+            Constraint::Length(1), // GPU braille bar
+            Constraint::Length(1), // RAM label
+            Constraint::Length(1), // RAM braille bar
+        ])
         .split(inner);
 
     if let Some(hw) = &app.hardware {
@@ -72,28 +79,35 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 VIOLET
             };
-            let gauge = Gauge::default()
-                .label(format!(
-                    "GPU  {}/{} MB  ({:.0}%)",
+            let label = Line::from(vec![Span::styled(
+                format!(
+                    "  GPU  {}/{} MB  ({:.0}%)",
                     gpu.used_mb,
                     gpu.total_mb,
                     ratio * 100.0
-                ))
-                .ratio(ratio)
-                .gauge_style(Style::default().fg(color));
-            f.render_widget(gauge, rows[0]);
+                ),
+                Style::default().fg(color),
+            )]);
+            f.render_widget(Paragraph::new(label), rows[0]);
+
+            let bar = BrailleBar::new(gpu.used_mb as f64, gpu.total_mb as f64).fill_color(color);
+            f.render_widget(bar, rows[1]);
         }
         let ram_ratio = (hw.ram_used_mb as f64 / hw.ram_total_mb as f64).clamp(0.0, 1.0);
-        let ram_gauge = Gauge::default()
-            .label(format!(
-                " RAM  {}/{} MB  ({:.0}%)",
+        let ram_label = Line::from(vec![Span::styled(
+            format!(
+                "  RAM  {}/{} MB  ({:.0}%)",
                 hw.ram_used_mb,
                 hw.ram_total_mb,
                 ram_ratio * 100.0
-            ))
-            .ratio(ram_ratio)
-            .gauge_style(style_cyan());
-        f.render_widget(ram_gauge, rows[1]);
+            ),
+            style_cyan(),
+        )]);
+        f.render_widget(Paragraph::new(ram_label), rows[2]);
+
+        let ram_bar =
+            BrailleBar::new(hw.ram_used_mb as f64, hw.ram_total_mb as f64).fill_color(CYAN);
+        f.render_widget(ram_bar, rows[3]);
     }
 }
 

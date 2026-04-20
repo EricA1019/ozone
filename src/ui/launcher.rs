@@ -2,9 +2,11 @@ use ratatui::{
     layout::{Constraint, Direction, Layout, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Gauge, List, ListItem, ListState, Paragraph},
+    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
     Frame,
 };
+
+use ratatui_braille_bar::BrailleBar;
 
 use super::{App, BackendMode, FrontendMode, ModelPickerMode};
 use crate::profiling::{ProfilingAction, WarningSeverity};
@@ -16,7 +18,7 @@ pub fn render(f: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(4), // header (increased for badge line)
-            Constraint::Length(4), // resources
+            Constraint::Length(6), // resources
             Constraint::Length(6), // services
             Constraint::Fill(1),   // actions
             Constraint::Length(2), // status bar
@@ -83,7 +85,12 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
 
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(1), Constraint::Length(1)])
+        .constraints([
+            Constraint::Length(1), // GPU label
+            Constraint::Length(1), // GPU braille bar
+            Constraint::Length(1), // RAM label
+            Constraint::Length(1), // RAM braille bar
+        ])
         .split(inner);
 
     if let Some(hw) = &app.hardware {
@@ -96,28 +103,35 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 LIME
             };
-            let gauge = Gauge::default()
-                .label(format!(
-                    "GPU VRAM  {}/{} MB  ({:.0}%)",
+            let label = Line::from(vec![Span::styled(
+                format!(
+                    "  GPU VRAM  {}/{} MB  ({:.0}%)",
                     gpu.used_mb,
                     gpu.total_mb,
                     ratio * 100.0
-                ))
-                .ratio(ratio)
-                .gauge_style(Style::default().fg(color));
-            f.render_widget(gauge, rows[0]);
+                ),
+                Style::default().fg(color),
+            )]);
+            f.render_widget(Paragraph::new(label), rows[0]);
+
+            let bar = BrailleBar::new(gpu.used_mb as f64, gpu.total_mb as f64).fill_color(color);
+            f.render_widget(bar, rows[1]);
         }
         let ram_ratio = (hw.ram_used_mb as f64 / hw.ram_total_mb as f64).clamp(0.0, 1.0);
-        let ram_gauge = Gauge::default()
-            .label(format!(
-                " System RAM  {}/{} MB  ({:.0}%)",
+        let ram_label = Line::from(vec![Span::styled(
+            format!(
+                "  System RAM  {}/{} MB  ({:.0}%)",
                 hw.ram_used_mb,
                 hw.ram_total_mb,
                 ram_ratio * 100.0
-            ))
-            .ratio(ram_ratio)
-            .gauge_style(style_cyan());
-        f.render_widget(ram_gauge, rows[1]);
+            ),
+            style_cyan(),
+        )]);
+        f.render_widget(Paragraph::new(ram_label), rows[2]);
+
+        let ram_bar =
+            BrailleBar::new(hw.ram_used_mb as f64, hw.ram_total_mb as f64).fill_color(CYAN);
+        f.render_widget(ram_bar, rows[3]);
     } else {
         f.render_widget(
             Paragraph::new(Span::styled("  Loading hardware…", style_gray())),
@@ -950,7 +964,7 @@ pub fn render_profile_running(f: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(2),
-            Constraint::Length(3),
+            Constraint::Length(4),
             Constraint::Fill(1),
         ])
         .split(inner);
@@ -962,16 +976,22 @@ pub fn render_profile_running(f: &mut Frame, app: &App) {
     f.render_widget(title, chunks[0]);
 
     if app.profiling_progress_total > 0 {
-        let ratio = (app.profiling_progress_current as f64 / app.profiling_progress_total as f64)
-            .clamp(0.0, 1.0);
-        let gauge = Gauge::default()
-            .label(format!(
-                "{}/{}",
-                app.profiling_progress_current, app.profiling_progress_total
-            ))
-            .ratio(ratio)
-            .gauge_style(style_cyan());
-        f.render_widget(gauge, chunks[1]);
+        let current = app.profiling_progress_current;
+        let total = app.profiling_progress_total;
+
+        let bar_rows = Layout::default()
+            .direction(Direction::Vertical)
+            .constraints([Constraint::Length(1), Constraint::Length(1)])
+            .split(chunks[1]);
+
+        let label = Paragraph::new(Line::from(vec![Span::styled(
+            format!("  {}/{}", current, total),
+            style_cyan(),
+        )]));
+        f.render_widget(label, bar_rows[0]);
+
+        let bar = BrailleBar::new(current as f64, total as f64).fill_color(CYAN);
+        f.render_widget(bar, bar_rows[1]);
     } else {
         f.render_widget(
             Paragraph::new(Span::styled("  Preparing…", style_gray())),
