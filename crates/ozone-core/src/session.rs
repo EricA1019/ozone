@@ -97,6 +97,25 @@ impl SessionSummary {
             tags: Vec::new(),
         }
     }
+
+    /// Returns the folder this session belongs to, if any.
+    /// Folder membership is stored as a `folder:<name>` tag.
+    pub fn folder(&self) -> Option<&str> {
+        self.tags.iter()
+            .find_map(|tag| tag.strip_prefix("folder:"))
+    }
+
+    /// Set or remove the folder for this session.
+    /// Removes any existing `folder:*` tag before inserting the new one.
+    pub fn set_folder(&mut self, folder: Option<&str>) {
+        self.tags.retain(|tag| !tag.starts_with("folder:"));
+        if let Some(name) = folder {
+            let name = name.trim();
+            if !name.is_empty() {
+                self.tags.push(format!("folder:{name}"));
+            }
+        }
+    }
 }
 
 pub type SessionRecord = SessionSummary;
@@ -180,5 +199,30 @@ mod tests {
         assert_eq!(request.name, None);
         assert_eq!(request.character_name, None);
         assert_eq!(request.tags, None);
+    }
+
+    #[test]
+    fn folder_returns_none_when_no_folder_tag() {
+        let s = SessionSummary::new(SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap(), "test", 0);
+        assert_eq!(s.folder(), None);
+    }
+
+    #[test]
+    fn set_folder_adds_and_replaces_folder_tag() {
+        let mut s = SessionSummary::new(SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap(), "test", 0);
+        s.set_folder(Some("Work"));
+        assert_eq!(s.folder(), Some("Work"));
+        s.set_folder(Some("Personal"));
+        assert_eq!(s.folder(), Some("Personal"));
+        assert_eq!(s.tags.iter().filter(|t| t.starts_with("folder:")).count(), 1);
+    }
+
+    #[test]
+    fn set_folder_none_removes_folder_tag() {
+        let mut s = SessionSummary::new(SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap(), "test", 0);
+        s.set_folder(Some("Work"));
+        s.set_folder(None);
+        assert_eq!(s.folder(), None);
+        assert!(s.tags.iter().all(|t| !t.starts_with("folder:")));
     }
 }

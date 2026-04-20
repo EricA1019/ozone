@@ -156,6 +156,26 @@ impl SqliteRepository {
         Ok(summary)
     }
 
+    /// Assign or remove the folder for a session.
+    /// Folder membership is stored as a `folder:<name>` tag on the session.
+    /// Pass `None` to remove from any folder.
+    pub fn set_session_folder(
+        &self,
+        session_id: &SessionId,
+        folder: Option<&str>,
+    ) -> Result<SessionRecord> {
+        let mut summary = self
+            .get_session(session_id)?
+            .ok_or_else(|| PersistError::SessionNotFound(session_id.to_string()))?;
+        summary.set_folder(folder);
+        let request = UpdateSessionRequest {
+            name: None,
+            character_name: None,
+            tags: Some(summary.tags),
+        };
+        self.update_session_metadata(session_id, request)
+    }
+
     pub fn acquire_session_lock(
         &self,
         session_id: &SessionId,

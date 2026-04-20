@@ -23,11 +23,11 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 pub use app::{
     AppBootstrap, BranchItem, CharacterEntry, CharacterListState, CommandEntry,
     CommandPaletteState, ContextDryRunPreview, ContextPreview, ContextTokenBudget, DraftState,
-    EntryKind, FocusTarget, GenerationPoll, MenuItem, MenuState, RecallBrowser,
+    EntryKind, FocusTarget, FolderPickerState, GenerationPoll, MenuItem, MenuState, RecallBrowser,
     RuntimeCancellation, RuntimeCompletion, RuntimeContextRefresh, RuntimeFailure, RuntimePhase,
     RuntimeProgress, RuntimeSendReceipt, ScreenState, SessionContext, SessionListEntry,
     SessionListState, SessionMetadata, SessionState, SessionStats, SettingsCategory, SettingsEntry,
-    SettingsState, ShellState, TranscriptItem,
+    SettingsState, ShellState, TranscriptItem, VisibleSessionItem,
 };
 pub use input::{
     dispatch_command_palette_key, dispatch_key, dispatch_menu_key, InputMode, KeyAction,
@@ -36,7 +36,7 @@ pub use layout::{
     build_layout, build_layout_for_area, LayoutMode, LayoutModel, PaneId, PaneLayout,
 };
 pub use mock::{MockRuntime, SessionRuntime};
-pub use render::{build_render_model, render_shell, RenderModel};
+pub use render::{build_render_model, render_shell, FolderPickerRenderModel, RenderModel};
 pub use theme::ThemePreset;
 
 #[derive(Debug, Clone)]
@@ -292,6 +292,12 @@ where
                                 }
                                 app::RuntimeCommand::PrefChanged { pref_key, value } => {
                                     let _ = runtime.save_pref(&pref_key, &value);
+                                }
+                                app::RuntimeCommand::SetSessionFolder { session_id, folder } => {
+                                    let _ = runtime.set_session_folder(&session_id, folder.as_deref());
+                                    if let Ok(entries) = runtime.list_sessions() {
+                                        app.session_list.entries = entries;
+                                    }
                                 }
                             }
                             sync_draft(runtime, app)?;

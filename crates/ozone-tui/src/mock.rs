@@ -146,6 +146,16 @@ pub trait SessionRuntime {
     fn save_pref(&mut self, _pref_key: &str, _value: &str) -> Result<(), Self::Error> {
         Ok(())
     }
+
+    /// Assign or remove the folder for a session.
+    /// The default implementation is a no-op.
+    fn set_session_folder(
+        &mut self,
+        _session_id: &str,
+        _folder: Option<&str>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

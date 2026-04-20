@@ -1,6 +1,6 @@
 use std::time::Instant;
 
-use crossterm::event::{KeyCode, KeyEvent};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ozone_core::{engine::CancelReason, session::SessionId};
 use ratatui::style::{Color, Modifier, Style};
 use tui_textarea::TextArea;
@@ -475,6 +475,15 @@ pub struct SessionListEntry {
     pub character_name: Option<String>,
     pub message_count: usize,
     pub last_active: Option<String>,
+    pub folder: Option<String>,
+}
+
+/// An item in the visible session list — either a folder header row or a session entry.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum VisibleSessionItem {
+    FolderHeader { name: String },
+    /// `visual_index` counts only Entry items (headers skipped), mapping `selected` to entries.
+    Entry { entry: SessionListEntry, visual_index: usize },
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -548,9 +557,133 @@ impl SessionListState {
         }
     }
 
+    /// Returns items for rendering, grouped by folder with section headers.
+    /// Order: named folders alphabetically → [Unfiled] last.
+    /// Headers are not selectable; `visual_index` counts only Entry items.
+    pub fn grouped_visible_items(&self) -> Vec<VisibleSessionItem> {
+        let visible = self.visible_entries();
+
+        let mut folders: std::collections::BTreeMap<String, Vec<SessionListEntry>> =
+            std::collections::BTreeMap::new();
+        let mut unfiled: Vec<SessionListEntry> = Vec::new();
+
+        for entry in visible {
+            match &entry.folder {
+                Some(f) => folders.entry(f.clone()).or_default().push(entry.clone()),
+                None => unfiled.push(entry.clone()),
+            }
+        }
+
+        let mut items = Vec::new();
+        let mut visual_index = 0usize;
+
+        for (folder_name, entries) in &folders {
+            items.push(VisibleSessionItem::FolderHeader { name: folder_name.clone() });
+            for entry in entries {
+                items.push(VisibleSessionItem::Entry { entry: entry.clone(), visual_index });
+                visual_index += 1;
+            }
+        }
+
+        if !unfiled.is_empty() {
+            if !folders.is_empty() {
+                items.push(VisibleSessionItem::FolderHeader { name: "[Unfiled]".to_string() });
+            }
+            for entry in unfiled {
+                items.push(VisibleSessionItem::Entry { entry, visual_index });
+                visual_index += 1;
+            }
+        }
+
+        items
+    }
+
     pub fn selected_entry(&self) -> Option<&SessionListEntry> {
         let visible = self.visible_entries();
-        visible.get(self.selected).copied()
+
+        let mut folders: std::collections::BTreeMap<&str, Vec<&SessionListEntry>> =
+            std::collections::BTreeMap::new();
+        let mut unfiled: Vec<&SessionListEntry> = Vec::new();
+
+        for entry in &visible {
+            match &entry.folder {
+                Some(f) => folders.entry(f.as_str()).or_default().push(entry),
+                None => unfiled.push(entry),
+            }
+        }
+
+        let mut ordered: Vec<&SessionListEntry> = Vec::new();
+        for (_, entries) in &folders {
+            for entry in entries {
+                ordered.push(entry);
+            }
+        }
+        for entry in &unfiled {
+            ordered.push(entry);
+        }
+
+        ordered.get(self.selected).copied()
+    }
+}
+
+/// State for the inline folder assignment picker.
+#[derive(Debug, Clone, Default)]
+pub struct FolderPickerState {
+    /// Whether the picker is open.
+    pub visible: bool,
+    /// Existing folder names, alphabetically sorted.
+    pub folders: Vec<String>,
+    /// Index into `folders` (+ 1 for the "New folder" option at the end).
+    pub selected: usize,
+    /// When true, user is typing a new folder name.
+    pub creating: bool,
+    /// Input buffer for new folder name (only used when `creating` is true).
+    pub new_folder_input: String,
+}
+
+impl FolderPickerState {
+    /// Total number of options: existing folders + "[+ New folder]"
+    pub fn option_count(&self) -> usize {
+        self.folders.len() + 1
+    }
+
+    /// The index of the "[+ New folder]" option.
+    pub fn new_folder_index(&self) -> usize {
+        self.folders.len()
+    }
+
+    /// Returns the selected folder name, or None if "[+ New folder]" is selected.
+    pub fn selected_folder(&self) -> Option<&str> {
+        self.folders.get(self.selected).map(|s| s.as_str())
+    }
+
+    pub fn move_up(&mut self) {
+        if self.option_count() > 0 && self.selected > 0 {
+            self.selected -= 1;
+        }
+    }
+
+    pub fn move_down(&mut self) {
+        if self.selected + 1 < self.option_count() {
+            self.selected += 1;
+        }
+    }
+
+    /// Open the picker, populating folder list from existing session entries.
+    pub fn open(&mut self, current_folders: Vec<String>) {
+        self.folders = current_folders;
+        self.folders.sort();
+        self.folders.dedup();
+        self.selected = 0;
+        self.creating = false;
+        self.new_folder_input = String::new();
+        self.visible = true;
+    }
+
+    pub fn close(&mut self) {
+        self.visible = false;
+        self.creating = false;
+        self.new_folder_input = String::new();
     }
 }
 
@@ -1014,6 +1147,8 @@ pub enum RuntimeCommand {
     /// A user-editable preference was changed from the settings screen.
     /// `pref_key` is the JSON field name; `value` is the new serialised value.
     PrefChanged { pref_key: String, value: String },
+    /// Assign or remove the folder for a session.
+    SetSessionFolder { session_id: String, folder: Option<String> },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1249,6 +1384,7 @@ pub struct ShellState {
     pub inspector: InspectorState,
     pub menu: MenuState,
     pub session_list: SessionListState,
+    pub folder_picker: FolderPickerState,
     pub character_list: CharacterListState,
     pub character_create: CharacterCreateState,
     pub character_import: CharacterImportState,
@@ -1288,6 +1424,7 @@ impl ShellState {
             inspector: InspectorState::default(),
             menu: MenuState::default(),
             session_list: SessionListState::default(),
+            folder_picker: FolderPickerState::default(),
             character_list: CharacterListState::default(),
             character_create: CharacterCreateState::default(),
             character_import: CharacterImportState::default(),
@@ -1573,6 +1710,55 @@ impl ShellState {
             return action;
         }
 
+        // Folder picker intercept when picker is open (SessionList only)
+        if self.screen == ScreenState::SessionList && self.folder_picker.visible {
+            match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    self.folder_picker.close();
+                }
+                KeyCode::Up | KeyCode::Char('k') => self.folder_picker.move_up(),
+                KeyCode::Down | KeyCode::Char('j') => self.folder_picker.move_down(),
+                KeyCode::Enter => {
+                    if self.folder_picker.creating {
+                        let name = self.folder_picker.new_folder_input.trim().to_owned();
+                        self.folder_picker.close();
+                        if !name.is_empty() {
+                            let session_id_opt =
+                                self.session_list.selected_entry().map(|e| e.session_id.clone());
+                            if let Some(session_id) = session_id_opt {
+                                self.runtime_commands.push(RuntimeCommand::SetSessionFolder {
+                                    session_id,
+                                    folder: Some(name),
+                                });
+                            }
+                        }
+                    } else if self.folder_picker.selected == self.folder_picker.new_folder_index() {
+                        self.folder_picker.creating = true;
+                    } else {
+                        let folder =
+                            self.folder_picker.selected_folder().map(|s| s.to_owned());
+                        self.folder_picker.close();
+                        let session_id_opt =
+                            self.session_list.selected_entry().map(|e| e.session_id.clone());
+                        if let Some(session_id) = session_id_opt {
+                            self.runtime_commands.push(RuntimeCommand::SetSessionFolder {
+                                session_id,
+                                folder,
+                            });
+                        }
+                    }
+                }
+                KeyCode::Char(c) if self.folder_picker.creating => {
+                    self.folder_picker.new_folder_input.push(c);
+                }
+                KeyCode::Backspace if self.folder_picker.creating => {
+                    self.folder_picker.new_folder_input.pop();
+                }
+                _ => {}
+            }
+            return KeyAction::Noop; // consume the key — don't pass to session list
+        }
+
         let action = match self.screen {
             ScreenState::CharacterManager => {
                 // Intercept n/i for create/import before normal menu dispatch
@@ -1583,7 +1769,39 @@ impl ShellState {
                 }
             }
             ScreenState::CharacterCreate | ScreenState::CharacterImport => dispatch_form_key(key),
-            ScreenState::MainMenu | ScreenState::SessionList | ScreenState::Settings => {
+            ScreenState::SessionList => {
+                // Intercept f/F for folder management before normal menu dispatch
+                match key.code {
+                    KeyCode::Char('f')
+                        if !key.modifiers.contains(KeyModifiers::SHIFT) =>
+                    {
+                        if self.session_list.selected_entry().is_some() {
+                            let folders: Vec<String> = self
+                                .session_list
+                                .entries
+                                .iter()
+                                .filter_map(|e| e.folder.clone())
+                                .collect();
+                            self.folder_picker.open(folders);
+                        }
+                        KeyAction::Noop
+                    }
+                    KeyCode::Char('F') => {
+                        // Shift+F: immediately remove from folder
+                        let session_id_opt =
+                            self.session_list.selected_entry().map(|e| e.session_id.clone());
+                        if let Some(session_id) = session_id_opt {
+                            self.runtime_commands.push(RuntimeCommand::SetSessionFolder {
+                                session_id,
+                                folder: None,
+                            });
+                        }
+                        KeyAction::Noop
+                    }
+                    _ => dispatch_menu_key(key, false),
+                }
+            }
+            ScreenState::MainMenu | ScreenState::Settings => {
                 let is_root = self.screen == ScreenState::MainMenu;
                 dispatch_menu_key(key, is_root)
             }
@@ -2812,6 +3030,7 @@ mod tests {
             character_name: None,
             message_count: 5,
             last_active: None,
+            folder: None,
         }];
         state.session_list.selected = 0;
 
@@ -2948,6 +3167,7 @@ mod tests {
                 character_name: Some("Bot".into()),
                 message_count: 10,
                 last_active: None,
+                folder: None,
             },
             SessionListEntry {
                 session_id: "2".into(),
@@ -2955,6 +3175,7 @@ mod tests {
                 character_name: None,
                 message_count: 5,
                 last_active: None,
+                folder: None,
             },
         ];
 
@@ -2974,6 +3195,7 @@ mod tests {
                 character_name: None,
                 message_count: 0,
                 last_active: None,
+                folder: None,
             },
             SessionListEntry {
                 session_id: "2".into(),
@@ -2981,6 +3203,7 @@ mod tests {
                 character_name: None,
                 message_count: 0,
                 last_active: None,
+                folder: None,
             },
         ];
         state.session_list.selected = 1;

@@ -12,8 +12,8 @@ use tui_textarea::TextArea;
 
 use crate::{
     app::{
-        CommandEntry, ContextPreview, EntryKind, FocusTarget, InspectorFocus, RuntimePhase,
-        ScreenState, ShellState,
+        CommandEntry, ContextPreview, EntryKind, FocusTarget, FolderPickerState, InspectorFocus,
+        RuntimePhase, ScreenState, ShellState, VisibleSessionItem,
     },
     input::InputMode,
     layout::{LayoutMode, LayoutModel, PaneId, PaneLayout},
@@ -149,13 +149,29 @@ pub struct MenuItemRenderModel {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SessionListRenderModel {
-    pub entries: Vec<SessionListEntryRenderModel>,
+    pub items: Vec<SessionListItemRenderModel>,
     pub selected: usize,
     pub filter: String,
     pub total_count: usize,
     pub visible_count: usize,
     pub hint: String,
     pub loading: bool,
+    pub folder_picker: Option<FolderPickerRenderModel>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FolderPickerRenderModel {
+    pub folders: Vec<String>,
+    pub selected: usize,
+    pub creating: bool,
+    pub new_folder_input: String,
+    pub new_folder_index: usize,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum SessionListItemRenderModel {
+    Header { name: String },
+    Entry(SessionListEntryRenderModel),
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -165,6 +181,8 @@ pub struct SessionListEntryRenderModel {
     pub message_count: String,
     pub last_active: String,
     pub selected: bool,
+    /// True when entries should be indented under a folder header.
+    pub indented: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -291,6 +309,19 @@ pub struct RenderModel {
     pub breadcrumb: String,
     pub command_palette: Option<CommandPaletteRenderModel>,
     pub toast_message: Option<String>,
+}
+
+fn build_folder_picker_model(picker: &FolderPickerState) -> Option<FolderPickerRenderModel> {
+    if !picker.visible {
+        return None;
+    }
+    Some(FolderPickerRenderModel {
+        folders: picker.folders.clone(),
+        selected: picker.selected,
+        creating: picker.creating,
+        new_folder_input: picker.new_folder_input.clone(),
+        new_folder_index: picker.new_folder_index(),
+    })
 }
 
 pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderModel {
@@ -475,32 +506,42 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
     };
 
     let session_list = if state.screen == ScreenState::SessionList {
-        let visible = state.session_list.visible_entries();
+        let grouped = state.session_list.grouped_visible_items();
+        let has_headers = grouped.iter().any(|i| matches!(i, VisibleSessionItem::FolderHeader { .. }));
+        let items = grouped
+            .into_iter()
+            .map(|item| match item {
+                VisibleSessionItem::FolderHeader { name } => {
+                    SessionListItemRenderModel::Header { name }
+                }
+                VisibleSessionItem::Entry { entry, visual_index } => {
+                    SessionListItemRenderModel::Entry(SessionListEntryRenderModel {
+                        name: entry.name.clone(),
+                        character: entry
+                            .character_name
+                            .clone()
+                            .unwrap_or_else(|| "\u{2014}".into()),
+                        message_count: format!("{} msgs", entry.message_count),
+                        last_active: entry
+                            .last_active
+                            .clone()
+                            .unwrap_or_else(|| "\u{2014}".into()),
+                        selected: visual_index == state.session_list.selected,
+                        indented: has_headers,
+                    })
+                }
+            })
+            .collect();
         Some(SessionListRenderModel {
-            entries: visible
-                .iter()
-                .enumerate()
-                .map(|(i, entry)| SessionListEntryRenderModel {
-                    name: entry.name.clone(),
-                    character: entry
-                        .character_name
-                        .clone()
-                        .unwrap_or_else(|| "\u{2014}".into()),
-                    message_count: format!("{} msgs", entry.message_count),
-                    last_active: entry
-                        .last_active
-                        .clone()
-                        .unwrap_or_else(|| "\u{2014}".into()),
-                    selected: i == state.session_list.selected,
-                })
-                .collect(),
+            items,
             selected: state.session_list.selected,
             filter: state.session_list.filter.clone(),
             total_count: state.session_list.entries.len(),
             visible_count: state.session_list.visible_count(),
-            hint: "j/k navigate \u{00b7} Enter open \u{00b7} n new session \u{00b7} / filter \u{00b7} q/Esc back"
+            hint: "j/k navigate \u{00b7} Enter open \u{00b7} n new session \u{00b7} f folder \u{00b7} F unfile \u{00b7} / filter \u{00b7} q/Esc back"
                 .into(),
             loading: state.session_list.loading,
+            folder_picker: build_folder_picker_model(&state.folder_picker),
         })
     } else {
         None
@@ -697,6 +738,14 @@ fn build_hints(state: &ShellState) -> Vec<HintItem> {
             HintItem {
                 key: "Enter".into(),
                 action: "Open".into(),
+            },
+            HintItem {
+                key: "f".into(),
+                action: "Folder".into(),
+            },
+            HintItem {
+                key: "F".into(),
+                action: "Unfile".into(),
             },
             HintItem {
                 key: "/".into(),
@@ -1776,7 +1825,7 @@ fn render_session_list(frame: &mut Frame, pane: &PaneLayout, model: &SessionList
         return;
     }
 
-    if model.entries.is_empty() {
+    if model.items.is_empty() {
         let empty_text = if model.filter.is_empty() {
             "  No sessions yet \u{2014} press n to create one"
         } else {
@@ -1870,77 +1919,97 @@ fn render_session_list(frame: &mut Frame, pane: &PaneLayout, model: &SessionList
     frame.render_widget(block, area);
     frame.render_widget(Paragraph::new(header_lines), header_area);
 
-    // Build List items
-    let items: Vec<ListItem> = model
-        .entries
+    // Build List items — headers get a styled divider row; entries get the session row
+    let mut sel_list_idx: Option<usize> = None;
+    let list_items: Vec<ListItem> = model
+        .items
         .iter()
-        .map(|entry| {
-            let line = Line::from(vec![
-                Span::styled(
-                    if entry.selected {
-                        format!("{} ", theme::HEX_FILLED)
-                    } else {
-                        format!("{} ", theme::HEX)
-                    },
-                    if entry.selected {
-                        theme::highlight_style()
-                    } else {
-                        theme::muted_style()
-                    },
-                ),
-                Span::styled(
-                    format!("{:<24}", truncate_str(&entry.name, 22)),
-                    if entry.selected {
-                        theme::highlight_style()
-                    } else {
-                        theme::text_style()
-                    },
-                ),
-                Span::styled(
-                    format!("{:<16}", truncate_str(&entry.character, 14)),
-                    if entry.selected {
-                        theme::text_style()
-                    } else {
-                        theme::dim_style()
-                    },
-                ),
-                Span::styled(
-                    format!("{:<10}", entry.message_count),
-                    if entry.selected {
-                        theme::text_style()
-                    } else {
-                        theme::dim_style()
-                    },
-                ),
-                Span::styled(
-                    format!("{:<14}", truncate_str(&entry.last_active, 12)),
-                    if entry.selected {
-                        theme::text_style()
-                    } else {
-                        theme::dim_style()
-                    },
-                ),
-            ]);
-            ListItem::new(line)
+        .enumerate()
+        .map(|(list_idx, item)| match item {
+            SessionListItemRenderModel::Header { name } => {
+                let line = Line::from(vec![
+                    Span::styled(" \u{25b8} ", theme::accent_style()),
+                    Span::styled(
+                        format!("{} ", name),
+                        theme::accent_style().add_modifier(Modifier::BOLD),
+                    ),
+                    Span::styled(
+                        "\u{2500}".repeat(40),
+                        theme::muted_style(),
+                    ),
+                ]);
+                ListItem::new(line)
+            }
+            SessionListItemRenderModel::Entry(entry) => {
+                if entry.selected {
+                    sel_list_idx = Some(list_idx);
+                }
+                let indent = if entry.indented { "  " } else { "" };
+                let line = Line::from(vec![
+                    Span::styled(
+                        if entry.selected {
+                            format!("{}{} ", indent, theme::HEX_FILLED)
+                        } else {
+                            format!("{}{} ", indent, theme::HEX)
+                        },
+                        if entry.selected {
+                            theme::highlight_style()
+                        } else {
+                            theme::muted_style()
+                        },
+                    ),
+                    Span::styled(
+                        format!("{:<24}", truncate_str(&entry.name, 22)),
+                        if entry.selected {
+                            theme::highlight_style()
+                        } else {
+                            theme::text_style()
+                        },
+                    ),
+                    Span::styled(
+                        format!("{:<16}", truncate_str(&entry.character, 14)),
+                        if entry.selected {
+                            theme::text_style()
+                        } else {
+                            theme::dim_style()
+                        },
+                    ),
+                    Span::styled(
+                        format!("{:<10}", entry.message_count),
+                        if entry.selected {
+                            theme::text_style()
+                        } else {
+                            theme::dim_style()
+                        },
+                    ),
+                    Span::styled(
+                        format!("{:<14}", truncate_str(&entry.last_active, 12)),
+                        if entry.selected {
+                            theme::text_style()
+                        } else {
+                            theme::dim_style()
+                        },
+                    ),
+                ]);
+                ListItem::new(line)
+            }
         })
         .collect();
 
     let mut list_state = ListState::default();
-    if let Some(sel_idx) = model.entries.iter().position(|e| e.selected) {
-        list_state.select(Some(sel_idx));
-    }
+    list_state.select(sel_list_idx);
 
-    let list = List::new(items).highlight_style(theme::highlight_style());
+    let list = List::new(list_items).highlight_style(theme::highlight_style());
     frame.render_stateful_widget(list, list_area, &mut list_state);
 
-    // Scrollbar when there are more entries than visible rows
-    let total = model.entries.len();
+    // Scrollbar when there are more items than visible rows
+    let total = model.items.len();
     if total > list_area.height as usize {
         let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
             .begin_symbol(Some("↑"))
             .end_symbol(Some("↓"));
         let mut sb_state = ScrollbarState::new(total)
-            .position(list_state.selected().unwrap_or(0));
+            .position(sel_list_idx.unwrap_or(0));
         frame.render_stateful_widget(
             scrollbar,
             list_area.inner(Margin { vertical: 0, horizontal: 0 }),
@@ -1957,6 +2026,82 @@ fn render_session_list(frame: &mut Frame, pane: &PaneLayout, model: &SessionList
         )),
     ];
     frame.render_widget(Paragraph::new(hint_lines), hint_area);
+
+    // Folder picker overlay
+    if let Some(picker) = &model.folder_picker {
+        render_folder_picker(frame, area, picker);
+    }
+}
+
+fn centered_rect(width: u16, height: u16, area: Rect) -> Rect {
+    let x = area.x + area.width.saturating_sub(width) / 2;
+    let y = area.y + area.height.saturating_sub(height);
+    Rect::new(
+        x,
+        y.max(area.y),
+        width.min(area.width),
+        height.min(area.height),
+    )
+}
+
+fn render_folder_picker(frame: &mut Frame, area: Rect, model: &FolderPickerRenderModel) {
+    let popup_height = (model.folders.len() + 3).min(12) as u16;
+    let popup_width = 36u16;
+    let popup_area = centered_rect(popup_width, popup_height, area);
+
+    frame.render_widget(Clear, popup_area);
+
+    let block = Block::default()
+        .title(" Assign Folder ")
+        .borders(Borders::ALL)
+        .border_style(theme::accent_style());
+
+    let inner = block.inner(popup_area);
+    frame.render_widget(block, popup_area);
+
+    let mut lines: Vec<Line> = model
+        .folders
+        .iter()
+        .enumerate()
+        .map(|(i, name)| {
+            let prefix = if i == model.selected && !model.creating {
+                "● "
+            } else {
+                "  "
+            };
+            let style = if i == model.selected && !model.creating {
+                theme::accent_style().add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+            Line::from(vec![Span::styled(format!("{prefix}{name}"), style)])
+        })
+        .collect();
+
+    let new_idx = model.new_folder_index;
+    if model.creating {
+        lines.push(Line::from(vec![
+            Span::styled("  Name: ", theme::dim_style()),
+            Span::styled(
+                format!("{}▌", model.new_folder_input),
+                theme::accent_style(),
+            ),
+        ]));
+    } else {
+        let prefix = if model.selected == new_idx { "● " } else { "  " };
+        let sty = if model.selected == new_idx {
+            theme::accent_style()
+        } else {
+            theme::dim_style()
+        };
+        lines.push(Line::from(vec![Span::styled(
+            format!("{prefix}[+ New folder]"),
+            sty,
+        )]));
+    }
+
+    let para = Paragraph::new(lines).wrap(Wrap { trim: false });
+    frame.render_widget(para, inner);
 }
 
 fn render_character_list(frame: &mut Frame, pane: &PaneLayout, model: &CharacterListRenderModel) {
@@ -2946,7 +3091,7 @@ mod tests {
     use ozone_core::session::SessionId;
     use ratatui::{backend::TestBackend, buffer::Buffer, layout::Rect, Terminal};
 
-    use super::{build_render_model, render_shell};
+    use super::{build_render_model, render_shell, SessionListItemRenderModel};
     use crate::{
         app::{
             AppBootstrap, BranchItem, DraftState, ScreenState, SessionContext, ShellState,
@@ -3212,6 +3357,7 @@ mod tests {
                 character_name: Some("Aster".into()),
                 message_count: 42,
                 last_active: Some("2 hours ago".into()),
+                folder: None,
             },
             crate::app::SessionListEntry {
                 session_id: "test-2".into(),
@@ -3219,6 +3365,7 @@ mod tests {
                 character_name: None,
                 message_count: 7,
                 last_active: Some("yesterday".into()),
+                folder: None,
             },
         ];
 
@@ -3229,12 +3376,21 @@ mod tests {
         assert!(model.main_menu.is_none());
 
         let list = model.session_list.unwrap();
-        assert_eq!(list.entries.len(), 2);
-        assert!(list.entries[0].selected);
-        assert!(!list.entries[1].selected);
-        assert_eq!(list.entries[0].name, "My First Chat");
-        assert_eq!(list.entries[0].character, "Aster");
-        assert_eq!(list.entries[1].character, "—");
+        // Both entries have no folder, so items = [Entry, Entry] (no headers)
+        assert_eq!(list.items.len(), 2);
+        let entry0 = match &list.items[0] {
+            SessionListItemRenderModel::Entry(e) => e,
+            _ => panic!("expected Entry"),
+        };
+        let entry1 = match &list.items[1] {
+            SessionListItemRenderModel::Entry(e) => e,
+            _ => panic!("expected Entry"),
+        };
+        assert!(entry0.selected);
+        assert!(!entry1.selected);
+        assert_eq!(entry0.name, "My First Chat");
+        assert_eq!(entry0.character, "Aster");
+        assert_eq!(entry1.character, "—");
         assert_eq!(list.total_count, 2);
         assert_eq!(list.visible_count, 2);
     }
@@ -3276,6 +3432,7 @@ mod tests {
             character_name: None,
             message_count: 10,
             last_active: None,
+            folder: None,
         }];
 
         let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));

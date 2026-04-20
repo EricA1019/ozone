@@ -1529,6 +1529,7 @@ impl SessionRuntime for Phase1dRuntime {
                 character_name: s.character_name.clone(),
                 message_count: s.message_count as usize,
                 last_active: Some(crate::format_timestamp_short(s.last_opened_at)),
+                folder: s.folder().map(|f| f.to_owned()),
             })
             .collect())
     }
@@ -1685,6 +1686,17 @@ impl SessionRuntime for Phase1dRuntime {
             _ => {}
         }
         crate::save_prefs_sync(&prefs)
+    }
+
+    fn set_session_folder(
+        &mut self,
+        session_id: &str,
+        folder: Option<&str>,
+    ) -> Result<(), Self::Error> {
+        if let Ok(sid) = SessionId::parse(session_id) {
+            let _ = self.repo.set_session_folder(&sid, folder);
+        }
+        Ok(())
     }
 
     fn list_characters(&mut self) -> Result<Vec<ozone_tui::CharacterEntry>, Self::Error> {
