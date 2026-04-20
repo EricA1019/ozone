@@ -17,7 +17,7 @@
 ## When to Bump PATCH
 
 **DO bump** when:
-- A sprint lands a named, user-visible feature set (e.g., "session folders", "ozone-lite kernel")
+- A sprint lands a **new capability** users would strongly notice (e.g., "ozone-lite kernel", "general chat mode")
 - A breaking behavioral change lands, even if small
 - A significant refactor changes the public UX surface
 
@@ -25,6 +25,7 @@
 - Single bugfix, typo fix, or documentation change
 - CI/tooling changes or internal refactors with no UX impact
 - Mid-sprint incremental work — the `+GITHASH` suffix already differentiates these
+- An organizational/convenience layer is added on top of an existing system (e.g., grouping sessions into folders — the session system already existed; folders just organize it)
 
 ## When to Bump MINOR
 - **0.5.x is reserved exclusively for first public beta**
@@ -43,6 +44,6 @@ Before bumping the version in any Cargo.toml:
 |---------|---------|
 | `0.4.5-alpha` | Settings crash fix + theme presets + editable settings sprint |
 | `0.4.7-alpha` | ozone-lite kernel + branch setup + versioning rules sprint (skips 0.4.6 — never shipped) |
-| `0.4.8-alpha` | Session folders sprint (planned) |
-| `0.4.9-alpha` or `0.4.10-alpha` | ozone-note plugin sprint (planned) |
+| `0.4.7-alpha` | Session folders — organizational layer on existing sessions; git hash only, no bump |
+| `0.4.8-alpha` | ozone-note plugin sprint (general chat + RAG — new capability) |
 | `0.5.0-beta` | First public beta — feature-complete, polished, no known blockers |
