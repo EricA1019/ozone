@@ -5,7 +5,8 @@ use ozone_core::engine::CancelReason;
 use crate::{
     app::{
         AppBootstrap, BranchItem, DraftCheckpoint, DraftState, GenerationPoll, RuntimeCancellation,
-        RuntimeCompletion, RuntimeContextRefresh, RuntimeSendReceipt, SessionContext,
+        RuntimeCompletion, RuntimeContextRefresh, RuntimeSendReceipt, RuntimeSessionLoad,
+        SessionContext,
         SessionListEntry, TranscriptItem,
     },
     input::KeyAction,
@@ -168,10 +169,16 @@ pub trait SessionRuntime {
         Ok(())
     }
 
+    /// Create and switch into a fresh session.
+    fn create_session(&mut self) -> Result<RuntimeSessionLoad, Self::Error>;
+
     /// Switch to a different session — release the current lock, open the new
     /// session, and return its bootstrap data so the TUI can hydrate.
     /// The default returns `None` (session switching not supported).
-    fn open_session(&mut self, _session_id: &str) -> Result<Option<AppBootstrap>, Self::Error> {
+    fn open_session(
+        &mut self,
+        _session_id: &str,
+    ) -> Result<Option<RuntimeSessionLoad>, Self::Error> {
         Ok(None)
     }
 }
@@ -473,9 +480,47 @@ impl SessionRuntime for MockRuntime {
         Ok(entry)
     }
 
-    fn open_session(&mut self, session_id: &str) -> Result<Option<AppBootstrap>, Self::Error> {
+    fn create_session(&mut self) -> Result<RuntimeSessionLoad, Self::Error> {
+        let session_number = self.available_sessions.len() + self.session_bootstraps.len() + 1;
+        let session_id = format!("00000000-0000-0000-0000-{session_number:012}");
+        let session_name = format!("New Conversation {session_number}");
+        let bootstrap = AppBootstrap {
+            status_line: Some("New conversation started".into()),
+            ..AppBootstrap::default()
+        };
+        self.available_sessions.push(SessionListEntry {
+            session_id: session_id.clone(),
+            name: session_name.clone(),
+            character_name: None,
+            message_count: 0,
+            last_active: None,
+            folder: None,
+        });
+        self.session_bootstraps
+            .insert(session_id.clone(), bootstrap.clone());
+        Ok(RuntimeSessionLoad {
+            session_id,
+            session_name,
+            bootstrap,
+        })
+    }
+
+    fn open_session(
+        &mut self,
+        session_id: &str,
+    ) -> Result<Option<RuntimeSessionLoad>, Self::Error> {
         if let Some(bootstrap) = self.session_bootstraps.get(session_id) {
-            Ok(Some(bootstrap.clone()))
+            let session_name = self
+                .available_sessions
+                .iter()
+                .find(|entry| entry.session_id == session_id)
+                .map(|entry| entry.name.clone())
+                .unwrap_or_else(|| "Mock Session".into());
+            Ok(Some(RuntimeSessionLoad {
+                session_id: session_id.to_owned(),
+                session_name,
+                bootstrap: bootstrap.clone(),
+            }))
         } else {
             Ok(None)
         }
@@ -638,12 +683,31 @@ mod tests {
 
         let result = runtime.open_session("other-session-id").unwrap();
         assert!(result.is_some());
-        let bootstrap = result.unwrap();
-        assert_eq!(bootstrap.transcript.len(), 2);
-        assert_eq!(bootstrap.transcript[0].content, "hello from other session");
+        let session = result.unwrap();
+        assert_eq!(session.session_id, "other-session-id");
+        assert_eq!(session.bootstrap.transcript.len(), 2);
+        assert_eq!(
+            session.bootstrap.transcript[0].content,
+            "hello from other session"
+        );
 
         // Unknown session returns None.
         let result = runtime.open_session("unknown-id").unwrap();
         assert!(result.is_none());
+    }
+
+    #[test]
+    fn create_session_registers_a_fresh_empty_bootstrap() {
+        let mut runtime = MockRuntime::seeded();
+
+        let session = runtime.create_session().unwrap();
+
+        assert!(session.session_id.starts_with("00000000-0000-0000-0000-"));
+        assert_eq!(session.bootstrap.transcript.len(), 0);
+        assert_eq!(
+            runtime.available_sessions.last().map(|entry| entry.session_id.as_str()),
+            Some(session.session_id.as_str())
+        );
+        assert!(runtime.session_bootstraps.contains_key(&session.session_id));
     }
 }

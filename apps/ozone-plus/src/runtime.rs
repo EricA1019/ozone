@@ -17,8 +17,9 @@ use ozone_engine::{
 use ozone_inference::{InferenceError, MemoryConfig, StreamChunk};
 use ozone_memory::{ImportanceScorer, KeywordExtractor};
 use ozone_persist::{
-    AuthorId, CreateNoteMemoryRequest, MemoryArtifactId, PersistError, PinMessageMemoryRequest,
-    PinnedMemoryView, Provenance, SessionId, SqliteRepository, UpdateSessionRequest,
+    AuthorId, CreateNoteMemoryRequest, CreateSessionRequest, MemoryArtifactId, PersistError,
+    PinMessageMemoryRequest, PinnedMemoryView, Provenance, SessionId, SqliteRepository,
+    UpdateSessionRequest,
 };
 use ozone_tui::{
     AppBootstrap as TuiBootstrap, BranchItem as TuiBranchItem,
@@ -28,8 +29,9 @@ use ozone_tui::{
     RuntimeCancellation as TuiRuntimeCancellation, RuntimeCompletion as TuiRuntimeCompletion,
     RuntimeContextRefresh as TuiRuntimeContextRefresh, RuntimeFailure as TuiRuntimeFailure,
     RuntimeProgress as TuiRuntimeProgress, RuntimeSendReceipt as TuiRuntimeSendReceipt,
-    SessionContext as TuiSessionContext, SessionMetadata as TuiSessionMetadata, SessionRuntime,
-    SessionStats as TuiSessionStats, TranscriptItem as TuiTranscriptItem,
+    RuntimeSessionLoad as TuiRuntimeSessionLoad, SessionContext as TuiSessionContext,
+    SessionMetadata as TuiSessionMetadata, SessionRuntime, SessionStats as TuiSessionStats,
+    TranscriptItem as TuiTranscriptItem,
 };
 use std::{
     collections::HashSet,
@@ -195,14 +197,7 @@ impl Phase1dRuntime {
                 other => other.to_string(),
             })?;
 
-        let session_config_path = repo.paths().session_config_path(&session_id);
-        let custom_template_dir = repository_template_dir();
-        let inference = InferenceAdapter::load(InferenceAdapterInit {
-            session_config_path: Some(session_config_path),
-            custom_template_dir,
-            ..Default::default()
-        })
-        .map_err(|error| format!("failed to initialize inference adapter: {error}"))?;
+        let inference = Self::load_inference_for_session(&repo, &session_id)?;
 
         Ok(Self {
             engine: SingleWriterConversationEngine::new(crate::RepoConversationStore::new(
@@ -245,6 +240,63 @@ impl Phase1dRuntime {
         }
 
         Ok(())
+    }
+
+    fn load_inference_for_session(
+        repo: &SqliteRepository,
+        session_id: &SessionId,
+    ) -> Result<InferenceAdapter, String> {
+        let session_config_path = repo.paths().session_config_path(session_id);
+        let custom_template_dir = repository_template_dir();
+        InferenceAdapter::load(InferenceAdapterInit {
+            session_config_path: Some(session_config_path),
+            custom_template_dir,
+            ..Default::default()
+        })
+        .map_err(|error| format!("failed to initialize inference adapter: {error}"))
+    }
+
+    fn switch_to_session(&mut self, new_sid: SessionId) -> Result<(), String> {
+        if new_sid != self.session_id {
+            let _ = self.release_lock();
+
+            let instance_id = format!("ozone-plus-phase1d-{}", std::process::id());
+            self.repo
+                .acquire_session_lock(&new_sid, &instance_id)
+                .map_err(|error| format!("failed to lock session {new_sid}: {error}"))?;
+
+            self.session_id = new_sid.clone();
+            self.lock_instance_id = instance_id;
+        }
+
+        self.pending_generation = None;
+        self.context_bridge = AppContextBridge::default();
+        self.recent_search = None;
+        self.engine = SingleWriterConversationEngine::new(crate::RepoConversationStore::new(
+            self.repo.clone(),
+        ));
+        self.inference = Self::load_inference_for_session(&self.repo, &self.session_id)?;
+
+        Ok(())
+    }
+
+    fn load_session_into_tui(
+        &mut self,
+        session_id: SessionId,
+    ) -> Result<TuiRuntimeSessionLoad, String> {
+        self.switch_to_session(session_id.clone())?;
+        let session = self
+            .repo
+            .get_session(&session_id)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("session {session_id} was not found"))?;
+        let ctx = TuiSessionContext::new(session_id.clone(), session.name.clone());
+        let bootstrap = self.load_bootstrap(&ctx)?;
+        Ok(TuiRuntimeSessionLoad {
+            session_id: session_id.to_string(),
+            session_name: session.name,
+            bootstrap,
+        })
     }
 
     fn load_bootstrap(&mut self, context: &TuiSessionContext) -> Result<TuiBootstrap, String> {
@@ -1808,35 +1860,28 @@ impl SessionRuntime for Phase1dRuntime {
         })
     }
 
-    fn open_session(&mut self, session_id: &str) -> Result<Option<TuiBootstrap>, Self::Error> {
+    fn create_session(&mut self) -> Result<TuiRuntimeSessionLoad, Self::Error> {
+        let session = self
+            .repo
+            .create_session(CreateSessionRequest::new("New Conversation"))
+            .map_err(|error| error.to_string())?;
+        self.load_session_into_tui(session.session_id)
+    }
+
+    fn open_session(
+        &mut self,
+        session_id: &str,
+    ) -> Result<Option<TuiRuntimeSessionLoad>, Self::Error> {
         let new_sid = SessionId::parse(session_id).map_err(|e| e.to_string())?;
-        if new_sid == self.session_id {
-            // Already on this session — just reload.
-            let ctx = TuiSessionContext::new(self.session_id.clone(), "");
-            return Ok(Some(self.load_bootstrap(&ctx)?));
+        if self
+            .repo
+            .get_session(&new_sid)
+            .map_err(|error| error.to_string())?
+            .is_none()
+        {
+            return Ok(None);
         }
-
-        // Release the lock on the current session.
-        let _ = self.release_lock();
-
-        // Acquire lock on the new session.
-        let instance_id = format!("ozone-plus-phase1d-{}", std::process::id());
-        self.repo
-            .acquire_session_lock(&new_sid, &instance_id)
-            .map_err(|error| format!("failed to lock session {new_sid}: {error}"))?;
-
-        self.session_id = new_sid.clone();
-        self.lock_instance_id = instance_id;
-        self.pending_generation = None;
-        self.context_bridge = AppContextBridge::default();
-
-        // Re-initialize the engine store for the new session.
-        self.engine = SingleWriterConversationEngine::new(crate::RepoConversationStore::new(
-            self.repo.clone(),
-        ));
-
-        let ctx = TuiSessionContext::new(new_sid, "");
-        Ok(Some(self.load_bootstrap(&ctx)?))
+        Ok(Some(self.load_session_into_tui(new_sid)?))
     }
 }
 

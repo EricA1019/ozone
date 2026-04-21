@@ -25,7 +25,8 @@ pub use app::{
     CommandPaletteState, ContextDryRunPreview, ContextPreview, ContextTokenBudget, DraftState,
     EntryKind, FocusTarget, FolderPickerState, GenerationPoll, MenuItem, MenuState, RecallBrowser,
     RuntimeCancellation, RuntimeCompletion, RuntimeContextRefresh, RuntimeFailure, RuntimePhase,
-    RuntimeProgress, RuntimeSendReceipt, ScreenState, SessionContext, SessionListEntry,
+    RuntimeProgress, RuntimeSendReceipt, RuntimeSessionLoad, ScreenState, SessionContext,
+    SessionListEntry,
     SessionListState, SessionMetadata, SessionState, SessionStats, SettingsCategory, SettingsEntry,
     SettingsState, ShellState, TranscriptItem, VisibleSessionItem,
 };
@@ -213,6 +214,23 @@ where
 
                     for command in app.take_runtime_commands() {
                         match command {
+                            app::RuntimeCommand::CreateSession => match runtime.create_session() {
+                                Ok(session) => {
+                                    if let Ok(sid) =
+                                        ozone_core::session::SessionId::parse(&session.session_id)
+                                    {
+                                        app.session.context =
+                                            app::SessionContext::new(sid, session.session_name);
+                                    }
+                                    app.hydrate(session.bootstrap);
+                                    app.enter_conversation();
+                                    app.status_line = Some("New conversation started".into());
+                                }
+                                Err(error) => {
+                                    app.status_line =
+                                        Some(format!("Failed to create session: {:?}", error));
+                                }
+                            },
                             app::RuntimeCommand::SendDraft { prompt } => {
                                 if let Some(receipt) = runtime
                                     .send_draft(&app.session.context, &prompt)
@@ -379,16 +397,16 @@ where
                             }
                             app::RuntimeCommand::OpenSession {
                                 session_id,
-                                session_name,
+                                session_name: _,
                             } => match runtime.open_session(&session_id) {
-                                Ok(Some(bootstrap)) => {
+                                Ok(Some(session)) => {
                                     if let Ok(sid) =
-                                        ozone_core::session::SessionId::parse(&session_id)
+                                        ozone_core::session::SessionId::parse(&session.session_id)
                                     {
                                         app.session.context =
-                                            app::SessionContext::new(sid, session_name);
+                                            app::SessionContext::new(sid, session.session_name);
                                     }
-                                    app.hydrate(bootstrap);
+                                    app.hydrate(session.bootstrap);
                                 }
                                 Ok(None) => {
                                     app.status_line =
@@ -478,8 +496,8 @@ mod tests {
 
     use super::{
         run_session, AppBootstrap, BranchItem, GenerationPoll, MockRuntime, RuntimeCompletion,
-        RuntimeFailure, RuntimeProgress, RuntimeSendReceipt, SessionContext, SessionRuntime,
-        ShellState, TranscriptItem,
+        RuntimeFailure, RuntimeProgress, RuntimeSendReceipt, RuntimeSessionLoad, SessionContext,
+        SessionRuntime, ShellState, TranscriptItem,
     };
     use crate::app::RuntimePhase;
 
@@ -609,6 +627,10 @@ mod tests {
         ) -> Result<crate::app::CharacterEntry, Self::Error> {
             Err("not implemented in stub".into())
         }
+
+        fn create_session(&mut self) -> Result<RuntimeSessionLoad, Self::Error> {
+            Err("not implemented in stub".into())
+        }
     }
 
     /// A runtime stub that always returns `Failed` on the first poll.
@@ -669,6 +691,10 @@ mod tests {
             &mut self,
             _path: String,
         ) -> Result<crate::app::CharacterEntry, Self::Error> {
+            Err("not implemented in stub".into())
+        }
+
+        fn create_session(&mut self) -> Result<RuntimeSessionLoad, Self::Error> {
             Err("not implemented in stub".into())
         }
     }

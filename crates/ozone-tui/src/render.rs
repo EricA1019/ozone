@@ -984,6 +984,7 @@ pub fn render_shell(
     textarea: Option<&TextArea<'static>>,
 ) {
     let full_area = frame.area();
+    frame.render_widget(Clear, full_area);
 
     // Reserve bottom row for hints — skip when the 1-row status footer occupies that row,
     // so hints don't overwrite the footer content.
@@ -3372,6 +3373,34 @@ mod tests {
                 "
 ",
             )
+    }
+
+    #[test]
+    fn render_shell_clears_stale_conversation_rows_between_draws() {
+        let backend = TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        let state = seeded_state();
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
+        let model = build_render_model(&state, &layout);
+        terminal
+            .draw(|frame| render_shell(frame, &layout, &model, None))
+            .unwrap();
+
+        let mut cleared_state = state.clone();
+        cleared_state.session.transcript.clear();
+        cleared_state.session.selected_message = None;
+        let cleared_layout = build_layout_for_area(&cleared_state, Rect::new(0, 0, 80, 24));
+        let cleared_model = build_render_model(&cleared_state, &cleared_layout);
+        terminal
+            .draw(|frame| render_shell(frame, &cleared_layout, &cleared_model, None))
+            .unwrap();
+
+        let rendered = buffer_to_string(terminal.backend().buffer(), 80, 24);
+        assert!(rendered.contains("Start a conversation"));
+        assert!(!rendered.contains("hello skeleton"));
+        assert!(!rendered.contains("believable shell ready"));
+        assert!(!rendered.contains("assistant ───"));
     }
 
     #[test]

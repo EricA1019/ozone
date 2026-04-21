@@ -1236,6 +1236,7 @@ impl RuntimePhase {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeCommand {
+    CreateSession,
     SendDraft {
         prompt: String,
     },
@@ -1312,6 +1313,13 @@ pub struct RuntimeContextRefresh {
     pub context_preview: Option<ContextPreview>,
     pub context_dry_run: Option<ContextDryRunPreview>,
     pub recall_browser: Option<RecallBrowser>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RuntimeSessionLoad {
+    pub session_id: String,
+    pub session_name: String,
+    pub bootstrap: AppBootstrap,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1606,34 +1614,26 @@ impl ShellState {
             .iter()
             .position(|branch| branch.is_active)
             .or_else(|| (!self.session.branches.is_empty()).then_some(0));
+        self.session.runtime = RuntimePhase::Idle;
 
         if let Some(status_line) = bootstrap.status_line {
             self.status_line = Some(status_line);
         }
 
-        if let Some(draft) = bootstrap.draft {
-            if !draft.text.is_empty() {
-                self.focus = FocusTarget::Draft;
-                self.input_mode = InputMode::Insert;
-                self.textarea = new_themed_textarea();
-                let lines: Vec<String> = draft.text.lines().map(str::to_owned).collect();
-                self.textarea = TextArea::new(if lines.is_empty() {
-                    vec![String::new()]
-                } else {
-                    lines
-                });
-                self.textarea.set_cursor_line_style(Style::default());
-                self.textarea.set_block(ratatui::widgets::Block::default());
-                self.textarea
-                    .set_style(Style::default().fg(crate::theme::CYAN));
-                self.textarea.set_cursor_style(
-                    Style::default()
-                        .fg(Color::White)
-                        .add_modifier(Modifier::REVERSED),
-                );
-            }
-            self.draft = draft;
+        let draft = bootstrap.draft.unwrap_or_default();
+        if !draft.text.is_empty() {
+            self.focus = FocusTarget::Draft;
+            self.input_mode = InputMode::Insert;
+            self.sync_textarea_from_draft(&draft);
+        } else {
+            self.focus = FocusTarget::Draft;
+            self.input_mode = InputMode::Normal;
+            self.textarea = new_themed_textarea();
         }
+        self.draft = draft;
+        self.command_palette.close();
+        self.slash_selected = None;
+        self.slash_dismissed = false;
 
         if let Some(screen) = bootstrap.screen {
             self.screen = screen;
@@ -1654,6 +1654,24 @@ impl ShellState {
         self.screen = ScreenState::Conversation;
         self.focus = FocusTarget::Draft;
         self.input_mode = InputMode::Normal;
+    }
+
+    pub fn reset_for_new_conversation(&mut self) {
+        self.session.transcript.clear();
+        self.session.branches.clear();
+        self.session.selected_message = None;
+        self.session.selected_branch = None;
+        self.session.runtime = RuntimePhase::Idle;
+        self.draft = DraftState::default();
+        self.textarea = new_themed_textarea();
+        self.session_metadata = None;
+        self.session_stats = None;
+        self.context_preview = None;
+        self.context_dry_run = None;
+        self.recall_browser = None;
+        self.command_palette.close();
+        self.slash_selected = None;
+        self.slash_dismissed = false;
     }
 
     /// Show an ephemeral toast notification that auto-expires after 3 seconds.
@@ -2133,8 +2151,10 @@ impl ShellState {
                     if let Some(item) = self.menu.selected_item() {
                         match item.id {
                             "new-chat" => {
+                                self.reset_for_new_conversation();
+                                self.runtime_commands.push(RuntimeCommand::CreateSession);
                                 self.enter_conversation();
-                                self.status_line = Some("New conversation started".into());
+                                self.status_line = Some("Starting new conversation…".into());
                             }
                             "sessions" => {
                                 self.screen = ScreenState::SessionList;
@@ -2755,6 +2775,38 @@ mod tests {
     }
 
     #[test]
+    fn hydrate_without_draft_clears_existing_draft_and_runtime_state() {
+        let mut app = ShellState::new(session_context());
+        app.enter_conversation();
+        app.draft = DraftState::with_text("stale draft");
+        app.sync_textarea_from_draft(&app.draft.clone());
+        app.session.runtime = RuntimePhase::Generating {
+            request_id: "req-stale".into(),
+            prompt: "old prompt".into(),
+            partial_content: Some("partial".into()),
+        };
+
+        app.hydrate(AppBootstrap {
+            transcript: Vec::new(),
+            branches: Vec::new(),
+            status_line: Some("fresh session".into()),
+            draft: None,
+            screen: Some(ScreenState::Conversation),
+            session_metadata: None,
+            session_stats: None,
+            context_preview: None,
+            context_dry_run: None,
+            recall_browser: None,
+            active_launch_plan: None,
+        });
+
+        assert!(app.draft.text.is_empty());
+        assert_eq!(app.textarea.lines(), vec![String::new()]);
+        assert!(matches!(app.session.runtime, RuntimePhase::Idle));
+        assert_eq!(app.status_line.as_deref(), Some("fresh session"));
+    }
+
+    #[test]
     fn input_mode_transitions_follow_focus_changes() {
         let mut app = ShellState::new(session_context());
         app.enter_conversation();
@@ -3308,6 +3360,45 @@ mod tests {
         // "New Chat" is at index 0 (default selected)
         state.apply_action(KeyAction::MenuSelect);
         assert_eq!(state.screen, ScreenState::Conversation);
+        assert_eq!(state.status_line.as_deref(), Some("Starting new conversation…"));
+        assert_eq!(state.take_runtime_commands(), vec![RuntimeCommand::CreateSession]);
+    }
+
+    #[test]
+    fn new_chat_clears_existing_conversation_state() {
+        let mut state = ShellState::new(session_context());
+        state.enter_conversation();
+        state.session.transcript = vec![TranscriptItem::new("assistant", "stale message")];
+        state.session.selected_message = Some(0);
+        state.session.branches = vec![BranchItem::new("main", "main", true)];
+        state.session.selected_branch = Some(0);
+        state.session.runtime = RuntimePhase::Generating {
+            request_id: "req-old".into(),
+            prompt: "old prompt".into(),
+            partial_content: Some("still streaming".into()),
+        };
+        state.draft = DraftState::with_text("stale draft");
+        state.session_metadata = Some(SessionMetadata {
+            character_name: Some("Stale".into()),
+            tags: vec!["stale".into()],
+        });
+        state.session_stats = Some(SessionStats {
+            message_count: 1,
+            branch_count: 1,
+            bookmark_count: 0,
+        });
+
+        state.screen = ScreenState::MainMenu;
+        state.apply_action(KeyAction::MenuSelect);
+
+        assert!(state.session.transcript.is_empty());
+        assert!(state.session.branches.is_empty());
+        assert_eq!(state.session.selected_message, None);
+        assert_eq!(state.session.selected_branch, None);
+        assert!(matches!(state.session.runtime, RuntimePhase::Idle));
+        assert!(state.draft.text.is_empty());
+        assert!(state.session_metadata.is_none());
+        assert!(state.session_stats.is_none());
     }
 
     #[test]
