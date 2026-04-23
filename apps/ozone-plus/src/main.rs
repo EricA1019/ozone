@@ -22,6 +22,7 @@ mod hybrid_search;
 mod index_rebuild;
 mod inference_adapter;
 mod runtime;
+mod session_title;
 
 use hybrid_search::{load_memory_config, HybridSearchService};
 use index_rebuild::rebuild_index;

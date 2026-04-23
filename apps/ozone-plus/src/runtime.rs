@@ -4,6 +4,7 @@ use crate::{
     },
     hybrid_search::HybridSearchService,
     inference_adapter::{InferenceAdapter, InferenceAdapterInit},
+    session_title,
 };
 use ozone_core::engine::{
     BranchId, BranchState, CancelReason, CommitMessageCommand, ConversationMessage,
@@ -76,6 +77,7 @@ struct SessionSnapshot {
 enum SessionCommand {
     Show,
     Rename(String),
+    Retitle,
     Character(Option<String>),
     Tags(Vec<String>),
 }
@@ -863,11 +865,72 @@ impl Phase1dRuntime {
         let _ = self
             .hooks_config
             .run_post_generation(&session_id_str, &committed.content);
+        let session_title = self.maybe_auto_title_session(context)?;
 
         Ok(TuiRuntimeCompletion {
             request_id: pending.request_id.to_string(),
             assistant_message: tui_transcript_item_from_message(committed, false),
+            session_title,
         })
+    }
+
+    fn maybe_auto_title_session(
+        &mut self,
+        context: &TuiSessionContext,
+    ) -> Result<Option<String>, String> {
+        let session = self
+            .repo
+            .get_session(&context.session_id)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("session {} was not found", context.session_id))?;
+        if !session_title::should_auto_title(&session.name) {
+            return Ok(None);
+        }
+
+        let transcript = self
+            .engine
+            .store()
+            .get_active_branch_transcript(&context.session_id)
+            .map_err(|error| error.to_string())?;
+        let Some(title) =
+            session_title::generate_session_title(session.character_name.as_deref(), &transcript)
+        else {
+            return Ok(None);
+        };
+        if title == session.name {
+            return Ok(None);
+        }
+
+        self.repo
+            .update_session_metadata(
+                &context.session_id,
+                UpdateSessionRequest {
+                    name: Some(title.clone()),
+                    ..UpdateSessionRequest::default()
+                },
+            )
+            .map_err(|error| error.to_string())?;
+        Ok(Some(title))
+    }
+
+    fn generate_session_title_for_current_context(
+        &mut self,
+        context: &TuiSessionContext,
+    ) -> Result<Option<String>, String> {
+        let session = self
+            .repo
+            .get_session(&context.session_id)
+            .map_err(|error| error.to_string())?
+            .ok_or_else(|| format!("session {} was not found", context.session_id))?;
+        let transcript = self
+            .engine
+            .store()
+            .get_active_branch_transcript(&context.session_id)
+            .map_err(|error| error.to_string())?;
+        Ok(session_title::generate_session_title(
+            session.character_name.as_deref(),
+            &transcript,
+        ))
     }
 
     fn mark_generation_failure(
@@ -1255,6 +1318,46 @@ impl SessionRuntime for Phase1dRuntime {
             .map(Some)
     }
 
+    fn edit_message(
+        &mut self,
+        context: &TuiSessionContext,
+        message_id: &str,
+        content: &str,
+    ) -> Result<Option<TuiRuntimeContextRefresh>, Self::Error> {
+        if content.trim().is_empty() {
+            return Ok(Some(Self::status_only_refresh(
+                "Edited message cannot be empty",
+            )));
+        }
+
+        let message_id = match ozone_core::engine::MessageId::parse(message_id) {
+            Ok(message_id) => message_id,
+            Err(_) => {
+                return Ok(Some(Self::status_only_refresh(
+                    "Selected message has an invalid ID and could not be edited",
+                )))
+            }
+        };
+
+        match self
+            .engine
+            .process(EngineCommand::EditMessage(
+                ozone_engine::EditMessageCommand {
+                    session_id: context.session_id.clone(),
+                    message_id,
+                    content: content.to_owned(),
+                    edited_at: Some(crate::now_timestamp_ms()),
+                },
+            ))
+            .map_err(|error| error.to_string())?
+        {
+            EngineCommandResult::MessageEdited(_) => self
+                .build_session_refresh(context, "Updated selected message")
+                .map(Some),
+            other => Err(format!("unexpected engine result for edit: {other:?}")),
+        }
+    }
+
     fn run_command(
         &mut self,
         context: &TuiSessionContext,
@@ -1309,6 +1412,34 @@ impl SessionRuntime for Phase1dRuntime {
                     )
                     .map_err(|error| error.to_string())?;
                 self.build_session_refresh(context, format!("Session renamed to {name}"))
+                    .map(Some)
+            }
+            ShellCommand::Session(SessionCommand::Retitle) => {
+                let current = self
+                    .repo
+                    .get_session(&context.session_id)
+                    .map_err(|error| error.to_string())?
+                    .ok_or_else(|| format!("session {} was not found", context.session_id))?;
+                let Some(title) = self.generate_session_title_for_current_context(context)? else {
+                    return Ok(Some(Self::status_only_refresh(
+                        "Not enough transcript context to generate a title",
+                    )));
+                };
+                if title == current.name {
+                    return Ok(Some(Self::status_only_refresh(format!(
+                        "Session title already set to {title}"
+                    ))));
+                }
+                self.repo
+                    .update_session_metadata(
+                        &context.session_id,
+                        UpdateSessionRequest {
+                            name: Some(title.clone()),
+                            ..UpdateSessionRequest::default()
+                        },
+                    )
+                    .map_err(|error| error.to_string())?;
+                self.build_session_refresh(context, format!("Session retitled to {title}"))
                     .map(Some)
             }
             ShellCommand::Session(SessionCommand::Character(character_name)) => {
@@ -1860,10 +1991,18 @@ impl SessionRuntime for Phase1dRuntime {
         })
     }
 
-    fn create_session(&mut self) -> Result<TuiRuntimeSessionLoad, Self::Error> {
+    fn create_session(
+        &mut self,
+        character_name: Option<&str>,
+    ) -> Result<TuiRuntimeSessionLoad, Self::Error> {
+        let mut request = CreateSessionRequest::new(session_title::DEFAULT_SESSION_TITLE);
+        request.character_name = character_name
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(str::to_owned);
         let session = self
             .repo
-            .create_session(CreateSessionRequest::new("New Conversation"))
+            .create_session(request)
             .map_err(|error| error.to_string())?;
         self.load_session_into_tui(session.session_id)
     }
@@ -2230,6 +2369,7 @@ fn parse_session_subcommand(remainder: &str) -> Result<SessionCommand, String> {
             "session name",
             argument.to_owned(),
         )?)),
+        "retitle" => Ok(SessionCommand::Retitle),
         "character" => {
             if argument.eq_ignore_ascii_case("clear") || argument == "-" {
                 Ok(SessionCommand::Character(None))
@@ -2252,7 +2392,9 @@ fn parse_session_subcommand(remainder: &str) -> Result<SessionCommand, String> {
                 }
             }
         }
-        _ => Err("Unknown session command. Try show, rename, character, or tags".to_owned()),
+        _ => {
+            Err("Unknown session command. Try show, rename, retitle, character, or tags".to_owned())
+        }
     }
 }
 
@@ -2345,7 +2487,7 @@ fn parse_safemode_subcommand(remainder: &str) -> Result<SafeModeCommand, String>
 }
 
 fn unknown_shell_command_message() -> String {
-    "Unknown command. Try /session show|rename|character|tags | /memory list|note|unpin | \
+    "Unknown command. Try /session show|rename|retitle|character|tags | /memory list|note|unpin | \
 /search session|global | /summarize session | /thinking status|hidden|assisted|debug | \
 /tierb status|toggle | /hooks status|list | /safemode status|on|off|toggle | :memories"
         .to_owned()
@@ -2448,6 +2590,10 @@ mod tests {
 
     #[test]
     fn parses_memory_search_and_memories_commands() {
+        assert_eq!(
+            parse_shell_command("/session retitle"),
+            Ok(ShellCommand::Session(SessionCommand::Retitle))
+        );
         assert_eq!(
             parse_shell_command("/memory list"),
             Ok(ShellCommand::Memory(MemoryCommand::List))
@@ -2784,6 +2930,7 @@ mod tests {
     #[test]
     fn unknown_shell_command_message_lists_new_commands() {
         let msg = unknown_shell_command_message();
+        assert!(msg.contains("retitle"));
         assert!(msg.contains("/thinking"));
         assert!(msg.contains("/tierb"));
         assert!(msg.contains("/hooks"));

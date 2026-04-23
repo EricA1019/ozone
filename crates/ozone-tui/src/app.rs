@@ -1,19 +1,37 @@
 use std::time::Instant;
 
-use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ozone_core::{engine::CancelReason, session::SessionId};
-use ratatui::style::{Color, Modifier, Style};
+use ratatui::{
+    layout::Rect,
+    style::{Color, Modifier, Style},
+};
 use tui_textarea::TextArea;
 
 use crate::input::{
-    dispatch_command_palette_key, dispatch_form_key, dispatch_key, dispatch_menu_key, InputMode,
-    KeyAction,
+    dispatch_command_palette_key, dispatch_edit_key, dispatch_form_key, dispatch_key,
+    dispatch_menu_key, InputMode, KeyAction,
 };
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum TextAreaSurface {
+    Composer,
+    MessageEdit,
+    CommandPalette,
+}
 
 /// Create a fresh TextArea with ozone+ theme styling.
 pub(crate) fn new_themed_textarea() -> TextArea<'static> {
+    new_themed_textarea_for(TextAreaSurface::Composer)
+}
+
+pub(crate) fn new_themed_textarea_for(surface: TextAreaSurface) -> TextArea<'static> {
     let mut textarea = TextArea::default();
-    textarea.set_cursor_line_style(Style::default());
+    configure_themed_textarea(&mut textarea, surface);
+    textarea
+}
+
+fn configure_themed_textarea(textarea: &mut TextArea<'static>, surface: TextAreaSurface) {
     textarea.set_block(ratatui::widgets::Block::default());
     textarea.set_style(Style::default().fg(crate::theme::cyan(crate::theme::active_preset())));
     textarea.set_cursor_style(
@@ -21,6 +39,48 @@ pub(crate) fn new_themed_textarea() -> TextArea<'static> {
             .fg(Color::White)
             .add_modifier(Modifier::REVERSED),
     );
+    textarea.set_selection_style(crate::theme::textarea_selection_style());
+    textarea.set_placeholder_style(crate::theme::textarea_placeholder_style());
+
+    match surface {
+        TextAreaSurface::Composer => {
+            textarea.set_cursor_line_style(Style::default());
+            textarea.remove_line_number();
+            textarea.set_placeholder_text("Type a message · / or : for commands");
+            textarea.set_tab_length(4);
+            textarea.set_max_histories(256);
+        }
+        TextAreaSurface::MessageEdit => {
+            textarea.set_cursor_line_style(crate::theme::textarea_cursor_line_style());
+            textarea.set_placeholder_text("Edit selected transcript message");
+            textarea.set_tab_length(4);
+            textarea.set_max_histories(256);
+            if textarea.lines().len() > 1 {
+                textarea.set_line_number_style(crate::theme::textarea_line_number_style());
+            } else {
+                textarea.remove_line_number();
+            }
+        }
+        TextAreaSurface::CommandPalette => {
+            textarea.set_cursor_line_style(Style::default());
+            textarea.remove_line_number();
+            textarea.set_placeholder_text("Type a command");
+            textarea.set_tab_length(0);
+            textarea.set_max_histories(64);
+        }
+    }
+}
+
+fn themed_textarea_from_text(
+    surface: TextAreaSurface,
+    text: &str,
+    cursor: usize,
+) -> TextArea<'static> {
+    let lines = textarea_lines(text);
+    let mut textarea = TextArea::new(lines.clone());
+    configure_themed_textarea(&mut textarea, surface);
+    let (row, col) = textarea_cursor_position(&lines, cursor);
+    textarea.move_cursor(tui_textarea::CursorMove::Jump(row, col));
     textarea
 }
 
@@ -1236,9 +1296,15 @@ impl RuntimePhase {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum RuntimeCommand {
-    CreateSession,
+    CreateSession {
+        character_name: Option<String>,
+    },
     SendDraft {
         prompt: String,
+    },
+    EditMessage {
+        message_id: String,
+        content: String,
     },
     CancelGeneration,
     BuildContextDryRun,
@@ -1326,6 +1392,7 @@ pub struct RuntimeSessionLoad {
 pub struct RuntimeCompletion {
     pub request_id: String,
     pub assistant_message: TranscriptItem,
+    pub session_title: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1410,6 +1477,13 @@ pub struct CommandEntry {
     pub description: String,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommandExecution {
+    Ui,
+    RunShell,
+    FillShell,
+}
+
 impl CommandEntry {
     pub fn all() -> Vec<CommandEntry> {
         vec![
@@ -1442,6 +1516,11 @@ impl CommandEntry {
                 name: "session rename".into(),
                 alias: vec![],
                 description: "Rename current session".into(),
+            },
+            CommandEntry {
+                name: "session retitle".into(),
+                alias: vec![],
+                description: "Generate a title from the current chat".into(),
             },
             CommandEntry {
                 name: "session character".into(),
@@ -1485,35 +1564,104 @@ impl CommandEntry {
             },
         ]
     }
+
+    fn execution(&self) -> CommandExecution {
+        match self.name.as_str() {
+            "new" | "sessions" | "characters" | "settings" | "help" | "quit" | "menu" => {
+                CommandExecution::Ui
+            }
+            "session show" | "session retitle" | "memory list" => CommandExecution::RunShell,
+            "session rename" | "session character" | "memory note" | "search session"
+            | "search global" => CommandExecution::FillShell,
+            _ => CommandExecution::FillShell,
+        }
+    }
+
+    fn shell_text(&self) -> String {
+        format!("/{}", self.name)
+    }
 }
 
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct CommandPaletteState {
     pub open: bool,
-    pub input: String,
+    pub textarea: TextArea<'static>,
     pub selected: usize,
+}
+
+impl Default for CommandPaletteState {
+    fn default() -> Self {
+        Self {
+            open: false,
+            textarea: new_themed_textarea_for(TextAreaSurface::CommandPalette),
+            selected: 0,
+        }
+    }
 }
 
 impl CommandPaletteState {
     pub fn open(&mut self) {
         self.open = true;
-        self.input.clear();
+        self.textarea = new_themed_textarea_for(TextAreaSurface::CommandPalette);
         self.selected = 0;
     }
 
     pub fn close(&mut self) {
         self.open = false;
-        self.input.clear();
+        self.textarea = new_themed_textarea_for(TextAreaSurface::CommandPalette);
         self.selected = 0;
+    }
+
+    pub fn input_text(&self) -> String {
+        self.textarea.lines().join(" ")
+    }
+
+    pub(crate) fn restore_input_text(&mut self, text: &str, cursor: usize) {
+        self.textarea = themed_textarea_from_text(
+            TextAreaSurface::CommandPalette,
+            text,
+            cursor.min(text.chars().count()),
+        );
+    }
+
+    fn normalize_single_line(&mut self) {
+        let lines = self.textarea.lines();
+        if lines.len() <= 1 {
+            return;
+        }
+
+        let cursor = self.textarea.cursor();
+        let text_before_cursor = lines
+            .iter()
+            .take(cursor.0)
+            .map(|line| line.chars().count())
+            .sum::<usize>()
+            + cursor.0
+            + cursor.1;
+        let normalized = lines.join(" ");
+        self.restore_input_text(
+            &normalized,
+            text_before_cursor.min(normalized.chars().count()),
+        );
+    }
+
+    pub fn handle_textarea_input(&mut self, key: KeyEvent) -> bool {
+        let modified = self.textarea.input(key);
+        self.normalize_single_line();
+        if modified {
+            self.selected = 0;
+        }
+        modified
     }
 
     /// Return commands matching the current input prefix (case-insensitive).
     pub fn filtered_commands(&self) -> Vec<CommandEntry> {
         let all = CommandEntry::all();
-        if self.input.is_empty() {
+        let input = self.input_text();
+        if input.is_empty() {
             return all;
         }
-        let query = self.input.to_lowercase();
+        let query = input.to_lowercase();
         all.into_iter()
             .filter(|c| {
                 c.name.to_lowercase().contains(&query) || c.alias.iter().any(|a| a.contains(&query))
@@ -1525,6 +1673,17 @@ impl CommandPaletteState {
         let cmds = self.filtered_commands();
         cmds.into_iter().nth(self.selected)
     }
+}
+
+#[derive(Debug, Clone)]
+pub struct MessageEditState {
+    pub message_id: String,
+    pub previous_draft: DraftState,
+    pub previous_focus: FocusTarget,
+    pub previous_input_mode: InputMode,
+    pub previous_history: InputHistoryState,
+    pub previous_slash_selected: Option<usize>,
+    pub previous_slash_dismissed: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -1542,6 +1701,7 @@ pub struct ShellState {
     pub settings: SettingsState,
     pub session: SessionState,
     pub draft: DraftState,
+    pub message_edit: Option<MessageEditState>,
     pub textarea: TextArea<'static>,
     pub history: InputHistoryState,
     pub status_line: Option<String>,
@@ -1556,6 +1716,8 @@ pub struct ShellState {
     pub command_palette: CommandPaletteState,
     /// Active model's launch plan, populated from `OZONE__LAUNCH_PLAN` env var on handoff.
     pub active_launch_plan: Option<ozone_core::planner::LaunchPlan>,
+    /// Manual transcript viewport offset in visual rows; `None` follows selection.
+    pub conversation_scroll: Option<usize>,
     /// Index of the highlighted slash suggestion (`None` = popup not navigated).
     pub slash_selected: Option<usize>,
     /// True when the user explicitly dismissed the slash popup for the current query.
@@ -1582,6 +1744,7 @@ impl ShellState {
             settings: SettingsState::default(),
             session: SessionState::new(context),
             draft: DraftState::default(),
+            message_edit: None,
             textarea: new_themed_textarea(),
             history: InputHistoryState::default(),
             status_line: Some("ozone+ TUI shell skeleton ready".into()),
@@ -1595,6 +1758,7 @@ impl ShellState {
             should_quit: false,
             command_palette: CommandPaletteState::default(),
             active_launch_plan: None,
+            conversation_scroll: None,
             slash_selected: None,
             slash_dismissed: false,
             tick_count: 0,
@@ -1615,6 +1779,8 @@ impl ShellState {
             .position(|branch| branch.is_active)
             .or_else(|| (!self.session.branches.is_empty()).then_some(0));
         self.session.runtime = RuntimePhase::Idle;
+        self.message_edit = None;
+        self.conversation_scroll = None;
 
         if let Some(status_line) = bootstrap.status_line {
             self.status_line = Some(status_line);
@@ -1662,8 +1828,10 @@ impl ShellState {
         self.session.selected_message = None;
         self.session.selected_branch = None;
         self.session.runtime = RuntimePhase::Idle;
+        self.message_edit = None;
         self.draft = DraftState::default();
         self.textarea = new_themed_textarea();
+        self.conversation_scroll = None;
         self.session_metadata = None;
         self.session_stats = None;
         self.context_preview = None;
@@ -1696,30 +1864,41 @@ impl ShellState {
         self.focus = FocusTarget::Transcript;
     }
 
+    fn replace_draft(&mut self, draft: DraftState) {
+        self.sync_textarea_from_draft(&draft);
+        self.draft = draft;
+    }
+
+    fn active_textarea_surface(&self) -> TextAreaSurface {
+        if self.message_edit.is_some() {
+            TextAreaSurface::MessageEdit
+        } else {
+            TextAreaSurface::Composer
+        }
+    }
+
+    fn sync_draft_from_textarea(&mut self) {
+        let lines = self.textarea.lines();
+        let cursor = self.textarea.cursor();
+        self.draft.text = lines.join("\n");
+        self.draft.cursor = textarea_cursor_offset(lines, cursor.0, cursor.1);
+        self.draft.sync_dirty();
+    }
+
     /// Replace textarea contents from a DraftState (for history navigation).
     fn sync_textarea_from_draft(&mut self, draft: &DraftState) {
-        let lines: Vec<String> = if draft.text.is_empty() {
-            vec![String::new()]
-        } else {
-            draft.text.lines().map(str::to_owned).collect()
-        };
-        self.textarea = TextArea::new(lines);
-        self.textarea.set_cursor_line_style(Style::default());
-        self.textarea.set_block(ratatui::widgets::Block::default());
-        self.textarea
-            .set_style(Style::default().fg(crate::theme::CYAN));
-        self.textarea.set_cursor_style(
-            Style::default()
-                .fg(Color::White)
-                .add_modifier(Modifier::REVERSED),
-        );
+        self.textarea =
+            themed_textarea_from_text(self.active_textarea_surface(), &draft.text, draft.cursor);
     }
 
     // ── Slash-popup helpers ─────────────────────────────────────────────────
 
     /// Command names (with leading `/`) that match the current draft query.
     pub fn slash_completion_names(&self) -> Vec<String> {
-        if !self.draft.text.starts_with('/') || self.draft.text.contains(' ') {
+        if self.message_edit.is_some()
+            || !self.draft.text.starts_with('/')
+            || self.draft.text.contains(' ')
+        {
             return Vec::new();
         }
         let query = self
@@ -1744,7 +1923,8 @@ impl ShellState {
 
     /// True when the slash popup should be visible to the user.
     pub fn slash_popup_active(&self) -> bool {
-        self.input_mode == InputMode::Insert
+        self.message_edit.is_none()
+            && self.input_mode == InputMode::Insert
             && !self.command_palette.open
             && !self.slash_dismissed
             && !self.slash_completion_names().is_empty()
@@ -1781,10 +1961,9 @@ impl ShellState {
             let names = self.slash_completion_names();
             if let Some(name) = names.get(idx) {
                 let filled = name.clone() + " ";
-                let len = filled.len();
-                self.draft.text = filled;
-                self.draft.cursor = len;
-                self.draft.dirty = true;
+                self.replace_draft(DraftState::with_text(filled));
+                self.focus = FocusTarget::Draft;
+                self.input_mode = InputMode::Insert;
                 self.slash_selected = None;
                 self.slash_dismissed = false;
                 return true;
@@ -1824,17 +2003,27 @@ impl ShellState {
     }
 
     pub fn handle_key_event(&mut self, key: KeyEvent) -> KeyAction {
+        let layout = crate::layout::build_layout(self);
+        self.handle_key_event_with_layout(key, &layout)
+    }
+
+    pub(crate) fn handle_key_event_with_layout(
+        &mut self,
+        key: KeyEvent,
+        layout: &crate::layout::LayoutModel,
+    ) -> KeyAction {
         // Command palette takes priority when open
         if self.command_palette.open {
             if let Some(action) = dispatch_command_palette_key(key) {
-                self.apply_action(action);
+                self.apply_action_with_layout(action, layout);
                 return action;
             }
             return KeyAction::Noop;
         }
 
         // Slash-popup navigation: intercept arrow/Enter/Esc when popup is visible.
-        if self.slash_selected.is_some()
+        if self.message_edit.is_none()
+            && self.slash_selected.is_some()
             && matches!(
                 self.screen,
                 ScreenState::Conversation | ScreenState::Help | ScreenState::Quit
@@ -1848,13 +2037,14 @@ impl ShellState {
                 _ => None,
             };
             if let Some(action) = slash_action {
-                self.apply_action(action);
+                self.apply_action_with_layout(action, layout);
                 return action;
             }
         }
 
         // Tab in Insert mode: slash tab-completion when draft starts with '/'.
-        if self.input_mode == InputMode::Insert
+        if self.message_edit.is_none()
+            && self.input_mode == InputMode::Insert
             && !self.command_palette.open
             && key.code == KeyCode::Tab
             && key.modifiers.is_empty()
@@ -1865,7 +2055,7 @@ impl ShellState {
             } else {
                 KeyAction::SlashTabComplete
             };
-            self.apply_action(action);
+            self.apply_action_with_layout(action, layout);
             return action;
         }
 
@@ -1971,17 +2161,52 @@ impl ShellState {
                 dispatch_menu_key(key, is_root)
             }
             ScreenState::Conversation | ScreenState::Help | ScreenState::Quit => {
-                dispatch_key(self.input_mode, key)
+                if self.message_edit.is_some() {
+                    dispatch_edit_key(key)
+                } else {
+                    dispatch_key(self.input_mode, key)
+                }
             }
             ScreenState::ModelIntelligence => dispatch_menu_key(key, false),
         };
         if action != KeyAction::Noop {
-            self.apply_action(action);
+            self.apply_action_with_layout(action, layout);
         }
         action
     }
 
+    pub fn handle_mouse_event(
+        &mut self,
+        mouse: MouseEvent,
+        layout: &crate::layout::LayoutModel,
+    ) -> KeyAction {
+        if self.message_edit.is_some() {
+            return KeyAction::Noop;
+        }
+
+        let over_conversation = rect_contains(layout.conversation.area, mouse.column, mouse.row);
+        let action = match self.screen {
+            ScreenState::Conversation if over_conversation => match mouse.kind {
+                MouseEventKind::ScrollUp => KeyAction::ScrollConversationUp,
+                MouseEventKind::ScrollDown => KeyAction::ScrollConversationDown,
+                _ => KeyAction::Noop,
+            },
+            _ => KeyAction::Noop,
+        };
+
+        if action != KeyAction::Noop {
+            self.apply_action_with_layout(action, layout);
+        }
+
+        action
+    }
+
     pub fn apply_action(&mut self, action: KeyAction) {
+        let layout = crate::layout::build_layout(self);
+        self.apply_action_with_layout(action, &layout);
+    }
+
+    fn apply_action_with_layout(&mut self, action: KeyAction, layout: &crate::layout::LayoutModel) {
         self.pending_actions.push(action);
 
         match action {
@@ -1997,6 +2222,7 @@ impl ShellState {
                 } else if !self.session.transcript.is_empty() {
                     self.session.selected_message = Some(0);
                 }
+                self.conversation_scroll = None;
             }
             KeyAction::MoveSelectionDown => {
                 self.focus = FocusTarget::Transcript;
@@ -2011,6 +2237,19 @@ impl ShellState {
                     }
                     _ => {}
                 }
+                self.conversation_scroll = None;
+            }
+            KeyAction::ScrollConversationUp => {
+                self.focus = FocusTarget::Transcript;
+                self.input_mode = InputMode::Normal;
+                self.history.reset_navigation();
+                self.scroll_conversation(layout, -1);
+            }
+            KeyAction::ScrollConversationDown => {
+                self.focus = FocusTarget::Transcript;
+                self.input_mode = InputMode::Normal;
+                self.history.reset_navigation();
+                self.scroll_conversation(layout, 1);
             }
             KeyAction::FocusTranscript => {
                 self.focus = FocusTarget::Transcript;
@@ -2022,8 +2261,12 @@ impl ShellState {
                 self.input_mode = InputMode::Insert;
             }
             KeyAction::LeaveInputMode => {
-                self.input_mode = InputMode::Normal;
-                self.history.reset_navigation();
+                if self.message_edit.is_some() {
+                    self.cancel_message_edit();
+                } else {
+                    self.input_mode = InputMode::Normal;
+                    self.history.reset_navigation();
+                }
             }
             KeyAction::SubmitDraft => self.submit_draft(),
             KeyAction::CancelGeneration => self.cancel_generation(),
@@ -2038,22 +2281,29 @@ impl ShellState {
             KeyAction::TriggerContextDryRun => self.trigger_context_dry_run(),
             KeyAction::ToggleBookmark => self.trigger_bookmark_toggle(),
             KeyAction::TogglePinnedMemory => self.trigger_pinned_memory_toggle(),
+            KeyAction::EditSelectedMessage => self.begin_selected_message_edit(),
             KeyAction::HistoryPrevious => {
+                if self.message_edit.is_some() {
+                    self.status_line = Some("History navigation is disabled while editing".into());
+                    return;
+                }
                 if let Some(draft) = self.history.previous(&self.draft) {
                     self.slash_dismissed = false;
                     self.focus = FocusTarget::Draft;
                     self.input_mode = InputMode::Insert;
-                    self.sync_textarea_from_draft(&draft);
-                    self.draft = draft;
+                    self.replace_draft(draft);
                 }
             }
             KeyAction::HistoryNext => {
+                if self.message_edit.is_some() {
+                    self.status_line = Some("History navigation is disabled while editing".into());
+                    return;
+                }
                 if let Some(draft) = self.history.next_entry() {
                     self.slash_dismissed = false;
                     self.focus = FocusTarget::Draft;
                     self.input_mode = InputMode::Insert;
-                    self.sync_textarea_from_draft(&draft);
-                    self.draft = draft;
+                    self.replace_draft(draft);
                 }
             }
             KeyAction::TextAreaInput(key_event) => {
@@ -2062,10 +2312,7 @@ impl ShellState {
                 self.input_mode = InputMode::Insert;
                 self.history.reset_navigation();
                 self.textarea.input(key_event);
-                let text = self.textarea.lines().join("\n");
-                self.draft.text = text;
-                self.draft.cursor = self.textarea.cursor().1;
-                self.draft.dirty = true;
+                self.sync_draft_from_textarea();
             }
             KeyAction::DraftInsertChar(ch) => {
                 self.slash_dismissed = false;
@@ -2073,28 +2320,35 @@ impl ShellState {
                 self.input_mode = InputMode::Insert;
                 self.history.reset_navigation();
                 self.draft.insert_char(ch);
+                self.sync_textarea_from_draft(&self.draft.clone());
             }
             KeyAction::DraftBackspace => {
                 self.slash_dismissed = false;
                 self.history.reset_navigation();
                 self.draft.backspace();
+                self.sync_textarea_from_draft(&self.draft.clone());
             }
             KeyAction::DraftDelete => {
                 self.slash_dismissed = false;
                 self.history.reset_navigation();
                 self.draft.delete();
+                self.sync_textarea_from_draft(&self.draft.clone());
             }
             KeyAction::MoveCursorLeft => {
                 self.draft.move_cursor_left();
+                self.sync_textarea_from_draft(&self.draft.clone());
             }
             KeyAction::MoveCursorRight => {
                 self.draft.move_cursor_right();
+                self.sync_textarea_from_draft(&self.draft.clone());
             }
             KeyAction::MoveCursorHome => {
                 self.draft.move_cursor_home();
+                self.sync_textarea_from_draft(&self.draft.clone());
             }
             KeyAction::MoveCursorEnd => {
                 self.draft.move_cursor_end();
+                self.sync_textarea_from_draft(&self.draft.clone());
             }
             KeyAction::ToggleHelp => {
                 self.screen = match self.screen {
@@ -2152,7 +2406,9 @@ impl ShellState {
                         match item.id {
                             "new-chat" => {
                                 self.reset_for_new_conversation();
-                                self.runtime_commands.push(RuntimeCommand::CreateSession);
+                                self.runtime_commands.push(RuntimeCommand::CreateSession {
+                                    character_name: None,
+                                });
                                 self.enter_conversation();
                                 self.status_line = Some("Starting new conversation…".into());
                             }
@@ -2192,6 +2448,17 @@ impl ShellState {
                         self.enter_conversation();
                     }
                 }
+                ScreenState::CharacterManager => {
+                    if let Some(entry) = self.character_list.selected_entry() {
+                        let character_name = entry.name.clone();
+                        self.reset_for_new_conversation();
+                        self.runtime_commands.push(RuntimeCommand::CreateSession {
+                            character_name: Some(character_name.clone()),
+                        });
+                        self.enter_conversation();
+                        self.status_line = Some(format!("Starting chat with {character_name}…"));
+                    }
+                }
                 _ => {}
             },
             KeyAction::MenuBack => {
@@ -2223,18 +2490,17 @@ impl ShellState {
                 }
             }
             KeyAction::OpenCommandPalette => {
+                if self.message_edit.is_some() {
+                    self.status_line = Some("Command palette is disabled while editing".into());
+                    return;
+                }
                 self.command_palette.open();
             }
             KeyAction::CommandPaletteClose => {
                 self.command_palette.close();
             }
-            KeyAction::CommandPaletteInput(c) => {
-                self.command_palette.input.push(c);
-                self.command_palette.selected = 0;
-            }
-            KeyAction::CommandPaletteBackspace => {
-                self.command_palette.input.pop();
-                self.command_palette.selected = 0;
+            KeyAction::CommandPaletteTextAreaInput(key) => {
+                self.command_palette.handle_textarea_input(key);
             }
             KeyAction::CommandPaletteUp => {
                 if self.command_palette.selected > 0 {
@@ -2415,10 +2681,9 @@ impl ShellState {
                     0 => {}
                     1 => {
                         let filled = names[0].clone() + " ";
-                        let len = filled.len();
-                        self.draft.text = filled;
-                        self.draft.cursor = len;
-                        self.draft.dirty = true;
+                        self.replace_draft(DraftState::with_text(filled));
+                        self.focus = FocusTarget::Draft;
+                        self.input_mode = InputMode::Insert;
                         self.slash_selected = None;
                         self.slash_dismissed = false;
                     }
@@ -2435,19 +2700,46 @@ impl ShellState {
     }
 
     fn execute_command(&mut self, name: &str) {
+        let Some(entry) = CommandEntry::all()
+            .into_iter()
+            .find(|entry| entry.name == name)
+        else {
+            self.status_line = Some(format!("Unknown command: {}", name));
+            return;
+        };
+
+        match entry.execution() {
+            CommandExecution::RunShell => {
+                self.enqueue_shell_command(entry.shell_text());
+                return;
+            }
+            CommandExecution::FillShell => {
+                self.prefill_shell_command(format!("{} ", entry.shell_text()));
+                return;
+            }
+            CommandExecution::Ui => {}
+        }
+
         match name {
             "new" => {
+                self.reset_for_new_conversation();
+                self.runtime_commands.push(RuntimeCommand::CreateSession {
+                    character_name: None,
+                });
                 self.enter_conversation();
-                self.status_line = Some("New conversation".into());
+                self.status_line = Some("Starting new conversation…".into());
             }
             "sessions" => {
                 self.screen = ScreenState::SessionList;
+                self.status_line = Some("Loading sessions…".into());
             }
             "characters" => {
                 self.screen = ScreenState::CharacterManager;
+                self.status_line = Some("Browsing characters".into());
             }
             "settings" => {
                 self.screen = ScreenState::Settings;
+                self.status_line = Some("Viewing settings".into());
             }
             "help" => {
                 self.screen = ScreenState::Help;
@@ -2461,17 +2753,6 @@ impl ShellState {
             },
             "menu" => {
                 self.return_to_menu();
-            }
-            // Slash commands: inject into draft and submit
-            cmd if cmd.starts_with("session ")
-                || cmd.starts_with("memory ")
-                || cmd.starts_with("search ") =>
-            {
-                self.enter_conversation();
-                self.draft.text = format!("/{cmd}");
-                self.draft.cursor = self.draft.text.len();
-                self.draft.dirty = true;
-                self.status_line = Some(format!("/{cmd} — press Enter to run or keep typing"));
             }
             _ => {
                 self.status_line = Some(format!("Unknown command: {}", name));
@@ -2504,6 +2785,9 @@ impl ShellState {
 
     pub fn apply_runtime_completion(&mut self, completion: RuntimeCompletion) {
         self.push_transcript_item(completion.assistant_message);
+        if let Some(session_title) = completion.session_title {
+            self.session.context.title = session_title;
+        }
         self.session.runtime = RuntimePhase::Idle;
         self.inspector.focus = InspectorFocus::Message;
         self.status_line = Some("Generation completed".into());
@@ -2593,7 +2877,11 @@ impl ShellState {
     }
 
     pub fn persistable_draft(&self) -> Option<DraftCheckpoint> {
-        let checkpoint = self.draft.checkpoint();
+        let checkpoint = self
+            .message_edit
+            .as_ref()
+            .map(|edit_state| edit_state.previous_draft.checkpoint())
+            .unwrap_or_else(|| self.draft.checkpoint());
         (!checkpoint.text.is_empty() || self.draft.dirty).then_some(checkpoint)
     }
 
@@ -2605,22 +2893,60 @@ impl ShellState {
         std::mem::take(&mut self.runtime_commands)
     }
 
+    fn scroll_conversation(&mut self, layout: &crate::layout::LayoutModel, delta: isize) {
+        if self.screen != ScreenState::Conversation {
+            return;
+        }
+
+        let model = crate::render::build_render_model(self, layout);
+        let viewport = crate::render::conversation_viewport(
+            layout.conversation.area,
+            &model.title,
+            &model.conversation,
+        );
+        let current = model
+            .conversation
+            .scroll_offset
+            .unwrap_or(viewport.default_scroll_offset)
+            .min(viewport.max_scroll);
+        let next = current
+            .saturating_add_signed(delta)
+            .min(viewport.max_scroll);
+        self.conversation_scroll = Some(next);
+    }
+
     fn submit_draft(&mut self) {
         let prompt = self.textarea.lines().join("\n");
+        if let Some(edit_state) = self.message_edit.clone() {
+            if !self.draft.dirty {
+                self.message_edit = None;
+                self.restore_post_edit_state(edit_state);
+                self.status_line = Some("Selected message is unchanged".into());
+                return;
+            }
+        }
         if prompt.trim().is_empty() {
-            self.status_line = Some("Draft is empty".into());
+            self.status_line = Some(if self.message_edit.is_some() {
+                "Edited message cannot be empty".into()
+            } else {
+                "Draft is empty".into()
+            });
+            return;
+        }
+
+        if let Some(edit_state) = self.message_edit.take() {
+            self.runtime_commands.push(RuntimeCommand::EditMessage {
+                message_id: edit_state.message_id.clone(),
+                content: prompt,
+            });
+            self.restore_post_edit_state(edit_state);
+            self.status_line = Some("Saving selected message…".into());
+            self.show_toast("✎ Updating message");
             return;
         }
 
         if is_shell_command(&prompt) {
-            self.history.push(prompt.clone());
-            self.runtime_commands
-                .push(RuntimeCommand::RunCommand { input: prompt });
-            self.draft = DraftState::default();
-            self.textarea = new_themed_textarea();
-            self.focus = FocusTarget::Draft;
-            self.input_mode = InputMode::Insert;
-            self.status_line = Some("Running shell command…".into());
+            self.enqueue_shell_command(prompt);
             return;
         }
 
@@ -2637,6 +2963,27 @@ impl ShellState {
         self.status_line = Some("Sending prompt…".into());
     }
 
+    fn prefill_shell_command(&mut self, command: String) {
+        self.enter_conversation();
+        self.focus = FocusTarget::Draft;
+        self.input_mode = InputMode::Insert;
+        self.history.reset_navigation();
+        self.replace_draft(DraftState::with_text(command.clone()));
+        self.status_line = Some(format!("{command}— continue typing or press Enter"));
+    }
+
+    fn enqueue_shell_command(&mut self, prompt: String) {
+        self.enter_conversation();
+        self.history.push(prompt.clone());
+        self.runtime_commands
+            .push(RuntimeCommand::RunCommand { input: prompt });
+        self.draft = DraftState::default();
+        self.textarea = new_themed_textarea();
+        self.focus = FocusTarget::Draft;
+        self.input_mode = InputMode::Insert;
+        self.status_line = Some("Running shell command…".into());
+    }
+
     fn cancel_generation(&mut self) {
         if !self.session.runtime.is_inflight() {
             self.status_line = Some("No generation is active".into());
@@ -2649,6 +2996,65 @@ impl ShellState {
         self.session.runtime = RuntimePhase::Cancelling { request_id, prompt };
         self.runtime_commands.push(RuntimeCommand::CancelGeneration);
         self.status_line = Some("Cancelling generation…".into());
+    }
+
+    fn begin_selected_message_edit(&mut self) {
+        let Some(index) = self.session.selected_message else {
+            self.status_line = Some("No transcript message is selected".into());
+            return;
+        };
+        let Some(item) = self.session.transcript.get(index).cloned() else {
+            self.status_line = Some("Selected transcript entry is no longer available".into());
+            return;
+        };
+        let Some(message_id) = item.message_id else {
+            self.status_line = Some("Only persisted transcript messages can be edited".into());
+            return;
+        };
+
+        self.message_edit = Some(MessageEditState {
+            message_id,
+            previous_draft: self.draft.clone(),
+            previous_focus: self.focus,
+            previous_input_mode: self.input_mode,
+            previous_history: self.history.clone(),
+            previous_slash_selected: self.slash_selected,
+            previous_slash_dismissed: self.slash_dismissed,
+        });
+
+        let cursor = item.content.chars().count();
+        self.draft = DraftState::restore(DraftCheckpoint::new(item.content, cursor));
+        self.sync_textarea_from_draft(&self.draft.clone());
+        self.focus = FocusTarget::Draft;
+        self.input_mode = InputMode::Insert;
+        self.history.reset_navigation();
+        self.command_palette.close();
+        self.slash_selected = None;
+        self.slash_dismissed = false;
+        self.status_line = Some("Editing selected message…".into());
+    }
+
+    fn cancel_message_edit(&mut self) {
+        let Some(edit_state) = self.message_edit.take() else {
+            return;
+        };
+        self.restore_post_edit_state(edit_state);
+        self.status_line = Some("Message edit cancelled".into());
+    }
+
+    fn restore_post_edit_state(&mut self, edit_state: MessageEditState) {
+        let previous_draft = edit_state.previous_draft;
+        self.focus = edit_state.previous_focus;
+        self.input_mode = edit_state.previous_input_mode;
+        self.history = edit_state.previous_history;
+        self.slash_selected = edit_state.previous_slash_selected;
+        self.slash_dismissed = edit_state.previous_slash_dismissed;
+        self.draft = previous_draft.clone();
+        if previous_draft.text.is_empty() {
+            self.textarea = new_themed_textarea();
+        } else {
+            self.sync_textarea_from_draft(&previous_draft);
+        }
     }
 
     fn trigger_context_dry_run(&mut self) {
@@ -2711,6 +3117,52 @@ fn clamp_cursor(text: &str, cursor: usize) -> usize {
     cursor.min(text.chars().count())
 }
 
+fn rect_contains(area: Rect, column: u16, row: u16) -> bool {
+    let right = area.x.saturating_add(area.width);
+    let bottom = area.y.saturating_add(area.height);
+    column >= area.x && column < right && row >= area.y && row < bottom
+}
+
+fn textarea_cursor_position(lines: &[String], cursor: usize) -> (u16, u16) {
+    let mut remaining = cursor;
+    for (row, line) in lines.iter().enumerate() {
+        let line_len = line.chars().count();
+        if remaining <= line_len {
+            return (row as u16, remaining as u16);
+        }
+        remaining = remaining.saturating_sub(line_len + 1);
+    }
+
+    let row = lines.len().saturating_sub(1) as u16;
+    let col = lines
+        .last()
+        .map(|line| line.chars().count() as u16)
+        .unwrap_or(0);
+    (row, col)
+}
+
+fn textarea_lines(text: &str) -> Vec<String> {
+    if text.is_empty() {
+        vec![String::new()]
+    } else {
+        text.split('\n').map(str::to_owned).collect()
+    }
+}
+
+fn textarea_cursor_offset(lines: &[String], row: usize, col: usize) -> usize {
+    if lines.is_empty() {
+        return 0;
+    }
+
+    let row = row.min(lines.len().saturating_sub(1));
+    let mut offset = 0usize;
+    for line in lines.iter().take(row) {
+        offset += line.chars().count() + 1;
+    }
+
+    offset + col.min(lines[row].chars().count())
+}
+
 fn byte_index_for_char(text: &str, char_index: usize) -> usize {
     text.char_indices()
         .map(|(idx, _)| idx)
@@ -2737,6 +3189,7 @@ mod tests {
         SessionListEntry, SessionMetadata, SessionStats, ShellState, TranscriptItem,
     };
     use crate::input::{InputMode, KeyAction};
+    use crossterm::event::{MouseEvent, MouseEventKind};
 
     fn session_context() -> SessionContext {
         let session_id = SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap();
@@ -2829,6 +3282,67 @@ mod tests {
         );
         assert_eq!(app.input_mode, InputMode::Normal);
         assert_eq!(app.focus, FocusTarget::Transcript);
+    }
+
+    #[test]
+    fn jk_scrolls_transcript_without_changing_selected_message() {
+        use crate::layout::build_layout_for_area;
+        use ratatui::layout::Rect;
+
+        let mut app = ShellState::new(session_context());
+        app.enter_conversation();
+        app.session.transcript = (0..24)
+            .map(|index| {
+                TranscriptItem::persisted(
+                    format!("msg-{index}"),
+                    "assistant",
+                    format!("line {index}"),
+                    false,
+                )
+            })
+            .collect();
+        app.session.selected_message = Some(20);
+
+        let layout = build_layout_for_area(&app, Rect::new(0, 0, 80, 24));
+        let model = crate::render::build_render_model(&app, &layout);
+        let viewport = crate::render::conversation_viewport(
+            layout.conversation.area,
+            &model.title,
+            &model.conversation,
+        );
+        let initial_scroll = viewport.default_scroll_offset;
+        let action = app.handle_key_event_with_layout(
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
+            &layout,
+        );
+
+        assert_eq!(action, KeyAction::ScrollConversationUp);
+        assert_eq!(app.session.selected_message, Some(20));
+        assert_eq!(
+            app.conversation_scroll,
+            Some(initial_scroll.saturating_sub(1))
+        );
+        assert_eq!(app.focus, FocusTarget::Transcript);
+        assert_eq!(app.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn arrow_keys_keep_message_selection_navigation() {
+        let mut app = ShellState::new(session_context());
+        app.enter_conversation();
+        app.session.transcript = vec![
+            TranscriptItem::persisted("msg-1", "assistant", "one", false),
+            TranscriptItem::persisted("msg-2", "assistant", "two", false),
+            TranscriptItem::persisted("msg-3", "assistant", "three", false),
+        ];
+        app.session.selected_message = Some(1);
+        app.conversation_scroll = Some(4);
+
+        let action = app.handle_key_event(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE));
+
+        assert_eq!(action, KeyAction::MoveSelectionUp);
+        assert_eq!(app.session.selected_message, Some(0));
+        assert_eq!(app.conversation_scroll, None);
     }
 
     #[test]
@@ -2950,14 +3464,14 @@ mod tests {
     }
 
     #[test]
-    fn ctrl_i_toggles_inspector_and_runtime_updates_focus() {
+    fn f2_toggles_inspector_and_runtime_updates_focus() {
         let mut app = ShellState::new(session_context());
         app.enter_conversation();
 
         assert!(!app.inspector.visible);
         assert_eq!(app.inspector.focus, InspectorFocus::Summary);
 
-        app.handle_key_event(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::CONTROL));
+        app.handle_key_event(KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE));
         assert!(app.inspector.visible);
 
         app.apply_send_receipt(RuntimeSendReceipt {
@@ -3247,6 +3761,7 @@ mod tests {
         let completion = RuntimeCompletion {
             request_id: "r1".into(),
             assistant_message: TranscriptItem::new("assistant", "done"),
+            session_title: None,
         };
         let poll = GenerationPoll::Completed(completion.clone());
         assert_eq!(poll, GenerationPoll::Completed(completion));
@@ -3272,6 +3787,28 @@ mod tests {
                     partial_content: "so far".into(),
                 })
             }
+        );
+    }
+
+    #[test]
+    fn apply_runtime_completion_updates_session_title_when_present() {
+        use super::RuntimeCompletion;
+
+        let mut state = ShellState::new(session_context());
+        state.apply_runtime_completion(RuntimeCompletion {
+            request_id: "r1".into(),
+            assistant_message: TranscriptItem::new("assistant", "done"),
+            session_title: Some("Observatory Intake".into()),
+        });
+
+        assert_eq!(state.session.context.title, "Observatory Intake");
+        assert_eq!(
+            state
+                .session
+                .transcript
+                .last()
+                .map(|item| item.content.as_str()),
+            Some("done")
         );
     }
 
@@ -3360,8 +3897,16 @@ mod tests {
         // "New Chat" is at index 0 (default selected)
         state.apply_action(KeyAction::MenuSelect);
         assert_eq!(state.screen, ScreenState::Conversation);
-        assert_eq!(state.status_line.as_deref(), Some("Starting new conversation…"));
-        assert_eq!(state.take_runtime_commands(), vec![RuntimeCommand::CreateSession]);
+        assert_eq!(
+            state.status_line.as_deref(),
+            Some("Starting new conversation…")
+        );
+        assert_eq!(
+            state.take_runtime_commands(),
+            vec![RuntimeCommand::CreateSession {
+                character_name: None
+            }]
+        );
     }
 
     #[test]
@@ -3399,6 +3944,31 @@ mod tests {
         assert!(state.draft.text.is_empty());
         assert!(state.session_metadata.is_none());
         assert!(state.session_stats.is_none());
+    }
+
+    #[test]
+    fn character_manager_enter_starts_chat_with_selected_character() {
+        let mut state = ShellState::new(session_context());
+        state.screen = ScreenState::CharacterManager;
+        state.session.transcript = vec![TranscriptItem::new("assistant", "stale message")];
+        state.session.selected_message = Some(0);
+        state.character_list.entries = sample_characters();
+        state.character_list.selected = 1;
+
+        state.apply_action(KeyAction::MenuSelect);
+
+        assert_eq!(state.screen, ScreenState::Conversation);
+        assert!(state.session.transcript.is_empty());
+        assert_eq!(
+            state.take_runtime_commands(),
+            vec![RuntimeCommand::CreateSession {
+                character_name: Some("Bob".into())
+            }]
+        );
+        assert_eq!(
+            state.status_line.as_deref(),
+            Some("Starting chat with Bob…")
+        );
     }
 
     #[test]
@@ -3531,13 +4101,13 @@ mod tests {
     fn command_palette_filters_commands() {
         let mut state = ShellState::new(session_context());
         state.command_palette.open();
-        state.command_palette.input = "ses".into();
+        state.command_palette.restore_input_text("ses", 3);
         let filtered = state.command_palette.filtered_commands();
         assert!(!filtered.is_empty());
         assert!(filtered.iter().any(|c| c.name == "sessions"));
 
         // More specific filter
-        state.command_palette.input = "settings".into();
+        state.command_palette.restore_input_text("settings", 8);
         let filtered = state.command_palette.filtered_commands();
         assert_eq!(filtered.len(), 1);
         assert_eq!(filtered[0].name, "settings");
@@ -3547,12 +4117,62 @@ mod tests {
     fn command_palette_executes_command() {
         let mut state = ShellState::new(session_context());
         state.apply_action(KeyAction::OpenCommandPalette);
-        state.apply_action(KeyAction::CommandPaletteInput('n'));
-        state.apply_action(KeyAction::CommandPaletteInput('e'));
-        state.apply_action(KeyAction::CommandPaletteInput('w'));
+        state.apply_action(KeyAction::CommandPaletteTextAreaInput(KeyEvent::new(
+            KeyCode::Char('n'),
+            KeyModifiers::NONE,
+        )));
+        state.apply_action(KeyAction::CommandPaletteTextAreaInput(KeyEvent::new(
+            KeyCode::Char('e'),
+            KeyModifiers::NONE,
+        )));
+        state.apply_action(KeyAction::CommandPaletteTextAreaInput(KeyEvent::new(
+            KeyCode::Char('w'),
+            KeyModifiers::NONE,
+        )));
         state.apply_action(KeyAction::CommandPaletteSelect);
         assert!(!state.command_palette.open);
         assert_eq!(state.screen, ScreenState::Conversation);
+        assert_eq!(
+            state.take_runtime_commands(),
+            vec![RuntimeCommand::CreateSession {
+                character_name: None
+            }]
+        );
+    }
+
+    #[test]
+    fn command_palette_runs_zero_arg_shell_command_immediately() {
+        let mut state = ShellState::new(session_context());
+        state.apply_action(KeyAction::OpenCommandPalette);
+        state.command_palette.restore_input_text("session show", 12);
+
+        state.apply_action(KeyAction::CommandPaletteSelect);
+
+        assert_eq!(state.screen, ScreenState::Conversation);
+        assert_eq!(
+            state.take_runtime_commands(),
+            vec![RuntimeCommand::RunCommand {
+                input: "/session show".into()
+            }]
+        );
+        assert!(state.draft.text.is_empty());
+        assert_eq!(state.textarea.lines().join("\n"), "");
+    }
+
+    #[test]
+    fn command_palette_prefills_argument_shell_command_into_textarea() {
+        let mut state = ShellState::new(session_context());
+        state.apply_action(KeyAction::OpenCommandPalette);
+        state
+            .command_palette
+            .restore_input_text("session character", 17);
+
+        state.apply_action(KeyAction::CommandPaletteSelect);
+
+        assert_eq!(state.screen, ScreenState::Conversation);
+        assert!(state.take_runtime_commands().is_empty());
+        assert_eq!(state.draft.text, "/session character ");
+        assert_eq!(state.textarea.lines().join("\n"), "/session character ");
     }
 
     #[test]
@@ -3576,16 +4196,22 @@ mod tests {
     fn command_palette_backspace_resets_selection() {
         let mut state = ShellState::new(session_context());
         state.apply_action(KeyAction::OpenCommandPalette);
-        state.apply_action(KeyAction::CommandPaletteInput('s'));
+        state.apply_action(KeyAction::CommandPaletteTextAreaInput(KeyEvent::new(
+            KeyCode::Char('s'),
+            KeyModifiers::NONE,
+        )));
         state.apply_action(KeyAction::CommandPaletteDown);
         assert!(
             state.command_palette.selected > 0
                 || state.command_palette.filtered_commands().len() <= 1
         );
 
-        state.apply_action(KeyAction::CommandPaletteBackspace);
+        state.apply_action(KeyAction::CommandPaletteTextAreaInput(KeyEvent::new(
+            KeyCode::Backspace,
+            KeyModifiers::NONE,
+        )));
         assert_eq!(state.command_palette.selected, 0);
-        assert!(state.command_palette.input.is_empty());
+        assert!(state.command_palette.input_text().is_empty());
     }
 
     #[test]
@@ -3596,8 +4222,14 @@ mod tests {
 
         // Typing should go to palette, not menu
         let action = state.handle_key_event(KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE));
-        assert_eq!(action, KeyAction::CommandPaletteInput('h'));
-        assert_eq!(state.command_palette.input, "h");
+        assert_eq!(
+            action,
+            KeyAction::CommandPaletteTextAreaInput(KeyEvent::new(
+                KeyCode::Char('h'),
+                KeyModifiers::NONE,
+            ))
+        );
+        assert_eq!(state.command_palette.input_text(), "h");
 
         // Esc should close palette, not quit
         let action = state.handle_key_event(KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE));
@@ -3644,7 +4276,7 @@ mod tests {
         let mut state = ShellState::new(session_context());
         assert_eq!(state.screen, ScreenState::MainMenu);
         state.apply_action(KeyAction::OpenCommandPalette);
-        state.command_palette.input = "quit".into();
+        state.command_palette.restore_input_text("quit", 4);
         state.apply_action(KeyAction::CommandPaletteSelect);
         assert!(state.should_quit);
     }
@@ -3654,10 +4286,40 @@ mod tests {
         let mut state = ShellState::new(session_context());
         state.enter_conversation();
         state.apply_action(KeyAction::OpenCommandPalette);
-        state.command_palette.input = "quit".into();
+        state.command_palette.restore_input_text("quit", 4);
         state.apply_action(KeyAction::CommandPaletteSelect);
         assert!(!state.should_quit);
         assert_eq!(state.screen, ScreenState::MainMenu);
+    }
+
+    #[test]
+    fn command_palette_normalizes_multiline_input_to_single_line() {
+        let mut state = ShellState::new(session_context());
+        state.command_palette.open();
+        state
+            .command_palette
+            .restore_input_text("session\nrename", 14);
+        state.command_palette.normalize_single_line();
+
+        assert_eq!(state.command_palette.input_text(), "session rename");
+    }
+
+    #[test]
+    fn multiline_message_edit_enables_line_numbers() {
+        let mut state = ShellState::new(session_context());
+        state.enter_conversation();
+        state.session.transcript = vec![TranscriptItem::persisted(
+            "msg-1",
+            "assistant",
+            "first line\nsecond line",
+            false,
+        )];
+        state.session.selected_message = Some(0);
+
+        state.begin_selected_message_edit();
+
+        assert!(state.message_edit.is_some());
+        assert!(state.textarea.line_number_style().is_some());
     }
 
     // ── CharacterListState tests ──────────────────────────────────────
@@ -3877,6 +4539,70 @@ mod tests {
         let layout = build_layout(&state);
         let model = build_render_model(&state, &layout);
         assert!(!model.composer.show_cursor);
+    }
+
+    #[test]
+    fn mouse_wheel_over_conversation_scrolls_viewport_without_moving_selection() {
+        use crate::layout::build_layout;
+
+        let mut state = ShellState::new(session_context());
+        state.enter_conversation();
+        state.session.transcript = (0..24)
+            .map(|index| {
+                TranscriptItem::persisted(
+                    format!("msg-{index}"),
+                    "assistant",
+                    format!("line {index}"),
+                    false,
+                )
+            })
+            .collect();
+        state.session.selected_message = Some(1);
+
+        let layout = build_layout(&state);
+        let action = state.handle_mouse_event(
+            MouseEvent {
+                kind: MouseEventKind::ScrollDown,
+                column: layout.conversation.area.x.saturating_add(1),
+                row: layout.conversation.area.y.saturating_add(1),
+                modifiers: KeyModifiers::NONE,
+            },
+            &layout,
+        );
+
+        assert_eq!(action, KeyAction::ScrollConversationDown);
+        assert_eq!(state.session.selected_message, Some(1));
+        assert_eq!(state.conversation_scroll, Some(1));
+        assert_eq!(state.focus, FocusTarget::Transcript);
+        assert_eq!(state.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn mouse_wheel_outside_conversation_is_ignored() {
+        use crate::layout::build_layout;
+
+        let mut state = ShellState::new(session_context());
+        state.enter_conversation();
+        state.session.transcript = vec![
+            TranscriptItem::new("user", "one"),
+            TranscriptItem::new("assistant", "two"),
+        ];
+        state.session.selected_message = Some(1);
+
+        let layout = build_layout(&state);
+        let action = state.handle_mouse_event(
+            MouseEvent {
+                kind: MouseEventKind::ScrollUp,
+                column: layout.composer.area.x.saturating_add(1),
+                row: layout.composer.area.y.saturating_add(1),
+                modifiers: KeyModifiers::NONE,
+            },
+            &layout,
+        );
+
+        assert_eq!(action, KeyAction::Noop);
+        assert_eq!(state.session.selected_message, Some(1));
+        assert_eq!(state.focus, FocusTarget::Draft);
     }
 
     #[test]
@@ -4282,6 +5008,7 @@ mod tests {
         assert_eq!(state.draft.text, expected);
         assert_eq!(state.draft.cursor, expected.len());
         assert!(state.draft.dirty);
+        assert_eq!(state.textarea.lines().join("\n"), expected);
         assert_eq!(state.slash_selected, None, "selection cleared after accept");
     }
 
@@ -4314,6 +5041,7 @@ mod tests {
         state.slash_selected = None;
         state.apply_action(KeyAction::SlashTabComplete);
         assert_eq!(state.draft.text, expected);
+        assert_eq!(state.textarea.lines().join("\n"), expected);
     }
 
     #[test]

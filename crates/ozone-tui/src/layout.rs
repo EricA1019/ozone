@@ -143,6 +143,7 @@ fn is_menu_screen(screen: ScreenState) -> bool {
             | ScreenState::SessionList
             | ScreenState::CharacterManager
             | ScreenState::CharacterCreate
+            | ScreenState::CharacterEdit
             | ScreenState::CharacterImport
             | ScreenState::Settings
     )
@@ -316,6 +317,18 @@ mod tests {
         assert_eq!(overlay.pane, PaneId::HelpOverlay);
         assert_eq!(layout.composer.area.height, 5);
         assert_eq!(overlay.area, Rect::new(4, 6, 72, 12));
+    }
+
+    #[test]
+    fn character_edit_uses_menu_layout_instead_of_live_shell() {
+        let mut state = seeded_state();
+        state.screen = ScreenState::CharacterEdit;
+
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 120, 40));
+
+        assert!(layout.menu_area.is_some());
+        assert_eq!(layout.conversation.area.height, 0);
+        assert_eq!(layout.composer.area.height, 0);
     }
 
     #[test]

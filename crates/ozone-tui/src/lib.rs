@@ -14,7 +14,7 @@ pub mod theme;
 use std::{error::Error, fmt, io};
 
 use crossterm::{
-    event::{self, Event, KeyEventKind},
+    event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
@@ -26,12 +26,12 @@ pub use app::{
     EntryKind, FocusTarget, FolderPickerState, GenerationPoll, MenuItem, MenuState, RecallBrowser,
     RuntimeCancellation, RuntimeCompletion, RuntimeContextRefresh, RuntimeFailure, RuntimePhase,
     RuntimeProgress, RuntimeSendReceipt, RuntimeSessionLoad, ScreenState, SessionContext,
-    SessionListEntry,
-    SessionListState, SessionMetadata, SessionState, SessionStats, SettingsCategory, SettingsEntry,
-    SettingsState, ShellState, TranscriptItem, VisibleSessionItem,
+    SessionListEntry, SessionListState, SessionMetadata, SessionState, SessionStats,
+    SettingsCategory, SettingsEntry, SettingsState, ShellState, TranscriptItem, VisibleSessionItem,
 };
 pub use input::{
-    dispatch_command_palette_key, dispatch_key, dispatch_menu_key, InputMode, KeyAction,
+    dispatch_command_palette_key, dispatch_edit_key, dispatch_key, dispatch_menu_key, InputMode,
+    KeyAction,
 };
 pub use layout::{
     build_layout, build_layout_for_area, LayoutMode, LayoutModel, PaneId, PaneLayout,
@@ -117,7 +117,7 @@ where
     let original_hook = std::panic::take_hook();
     std::panic::set_hook(Box::new(move |info| {
         let _ = disable_raw_mode();
-        let _ = execute!(io::stdout(), LeaveAlternateScreen);
+        let _ = execute!(io::stdout(), DisableMouseCapture, LeaveAlternateScreen);
         original_hook(info);
     }));
 
@@ -154,7 +154,15 @@ where
                 .draw(|frame| {
                     let layout = build_layout_for_area(app, frame.area());
                     let render = build_render_model(app, &layout);
-                    render_shell(frame, &layout, &render, Some(&app.textarea));
+                    render_shell(
+                        frame,
+                        &layout,
+                        &render,
+                        Some(&app.textarea),
+                        app.command_palette
+                            .open
+                            .then_some(&app.command_palette.textarea),
+                    );
                     drawn_layout = Some(layout);
                     drawn_render = Some(render);
                 })
@@ -178,7 +186,7 @@ where
         if event::poll(INPUT_POLL_INTERVAL).map_err(RunSessionError::Io)? {
             match event::read().map_err(RunSessionError::Io)? {
                 Event::Key(key) if key.kind == KeyEventKind::Press => {
-                    let action = app.handle_key_event(key);
+                    let action = app.handle_key_event_with_layout(key, &layout);
 
                     // Populate session list when entering the SessionList screen
                     if app.screen == ScreenState::SessionList && app.session_list.entries.is_empty()
@@ -214,29 +222,42 @@ where
 
                     for command in app.take_runtime_commands() {
                         match command {
-                            app::RuntimeCommand::CreateSession => match runtime.create_session() {
-                                Ok(session) => {
-                                    if let Ok(sid) =
-                                        ozone_core::session::SessionId::parse(&session.session_id)
-                                    {
-                                        app.session.context =
-                                            app::SessionContext::new(sid, session.session_name);
+                            app::RuntimeCommand::CreateSession { character_name } => {
+                                match runtime.create_session(character_name.as_deref()) {
+                                    Ok(session) => {
+                                        if let Ok(sid) = ozone_core::session::SessionId::parse(
+                                            &session.session_id,
+                                        ) {
+                                            app.session.context =
+                                                app::SessionContext::new(sid, session.session_name);
+                                        }
+                                        app.hydrate(session.bootstrap);
+                                        app.enter_conversation();
+                                        app.status_line = Some("New conversation started".into());
                                     }
-                                    app.hydrate(session.bootstrap);
-                                    app.enter_conversation();
-                                    app.status_line = Some("New conversation started".into());
+                                    Err(error) => {
+                                        app.status_line =
+                                            Some(format!("Failed to create session: {:?}", error));
+                                    }
                                 }
-                                Err(error) => {
-                                    app.status_line =
-                                        Some(format!("Failed to create session: {:?}", error));
-                                }
-                            },
+                            }
                             app::RuntimeCommand::SendDraft { prompt } => {
                                 if let Some(receipt) = runtime
                                     .send_draft(&app.session.context, &prompt)
                                     .map_err(RunSessionError::Runtime)?
                                 {
                                     app.apply_send_receipt(receipt);
+                                }
+                            }
+                            app::RuntimeCommand::EditMessage {
+                                message_id,
+                                content,
+                            } => {
+                                if let Some(refresh) = runtime
+                                    .edit_message(&app.session.context, &message_id, &content)
+                                    .map_err(RunSessionError::Runtime)?
+                                {
+                                    app.apply_context_refresh(refresh);
                                 }
                             }
                             app::RuntimeCommand::CancelGeneration => {
@@ -421,6 +442,15 @@ where
                         sync_draft(runtime, app)?;
                     }
                 }
+                Event::Mouse(mouse) => {
+                    let action = app.handle_mouse_event(mouse, &layout);
+                    if action != KeyAction::Noop {
+                        runtime
+                            .dispatch(&app.session.context, action)
+                            .map_err(RunSessionError::Runtime)?;
+                        sync_draft(runtime, app)?;
+                    }
+                }
                 Event::Resize(_, _) => {}
                 _ => {}
             }
@@ -474,7 +504,7 @@ impl TerminalGuard {
     fn enter() -> io::Result<Self> {
         enable_raw_mode()?;
         let mut stdout = io::stdout();
-        execute!(stdout, EnterAlternateScreen)?;
+        execute!(stdout, EnterAlternateScreen, EnableMouseCapture)?;
         let backend = CrosstermBackend::new(stdout);
         let terminal = Terminal::new(backend)?;
 
@@ -485,7 +515,11 @@ impl TerminalGuard {
 impl Drop for TerminalGuard {
     fn drop(&mut self) {
         let _ = disable_raw_mode();
-        let _ = execute!(self.terminal.backend_mut(), LeaveAlternateScreen);
+        let _ = execute!(
+            self.terminal.backend_mut(),
+            DisableMouseCapture,
+            LeaveAlternateScreen
+        );
         let _ = self.terminal.show_cursor();
     }
 }
@@ -596,6 +630,7 @@ mod tests {
                 Ok(Some(GenerationPoll::Completed(RuntimeCompletion {
                     request_id: self.request_id.clone(),
                     assistant_message: TranscriptItem::new("assistant", self.final_content.clone()),
+                    session_title: None,
                 })))
             }
         }
@@ -628,7 +663,10 @@ mod tests {
             Err("not implemented in stub".into())
         }
 
-        fn create_session(&mut self) -> Result<RuntimeSessionLoad, Self::Error> {
+        fn create_session(
+            &mut self,
+            _character_name: Option<&str>,
+        ) -> Result<RuntimeSessionLoad, Self::Error> {
             Err("not implemented in stub".into())
         }
     }
@@ -694,7 +732,10 @@ mod tests {
             Err("not implemented in stub".into())
         }
 
-        fn create_session(&mut self) -> Result<RuntimeSessionLoad, Self::Error> {
+        fn create_session(
+            &mut self,
+            _character_name: Option<&str>,
+        ) -> Result<RuntimeSessionLoad, Self::Error> {
             Err("not implemented in stub".into())
         }
     }

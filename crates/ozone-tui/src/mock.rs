@@ -6,8 +6,7 @@ use crate::{
     app::{
         AppBootstrap, BranchItem, DraftCheckpoint, DraftState, GenerationPoll, RuntimeCancellation,
         RuntimeCompletion, RuntimeContextRefresh, RuntimeSendReceipt, RuntimeSessionLoad,
-        SessionContext,
-        SessionListEntry, TranscriptItem,
+        SessionContext, SessionListEntry, SessionMetadata, TranscriptItem,
     },
     input::KeyAction,
 };
@@ -101,6 +100,15 @@ pub trait SessionRuntime {
         Ok(None)
     }
 
+    fn edit_message(
+        &mut self,
+        _context: &SessionContext,
+        _message_id: &str,
+        _content: &str,
+    ) -> Result<Option<RuntimeContextRefresh>, Self::Error> {
+        Ok(None)
+    }
+
     fn persist_draft(
         &mut self,
         _context: &SessionContext,
@@ -170,7 +178,10 @@ pub trait SessionRuntime {
     }
 
     /// Create and switch into a fresh session.
-    fn create_session(&mut self) -> Result<RuntimeSessionLoad, Self::Error>;
+    fn create_session(
+        &mut self,
+        character_name: Option<&str>,
+    ) -> Result<RuntimeSessionLoad, Self::Error>;
 
     /// Switch to a different session — release the current lock, open the new
     /// session, and return its bootstrap data so the TUI can hydrate.
@@ -200,6 +211,7 @@ pub struct MockRuntime {
     pub cancelled_requests: Vec<String>,
     pub polled_requests: Vec<String>,
     pub persisted_drafts: BTreeMap<String, String>,
+    pub edited_messages: Vec<(String, String)>,
     pub toggled_pinned_messages: Vec<String>,
     pub available_sessions: Vec<SessionListEntry>,
     pub available_characters: Vec<crate::app::CharacterEntry>,
@@ -220,6 +232,7 @@ impl Default for MockRuntime {
             cancelled_requests: Vec::new(),
             polled_requests: Vec::new(),
             persisted_drafts: BTreeMap::new(),
+            edited_messages: Vec::new(),
             toggled_pinned_messages: Vec::new(),
             available_sessions: Vec::new(),
             available_characters: Vec::new(),
@@ -342,6 +355,7 @@ impl SessionRuntime for MockRuntime {
         Ok(Some(RuntimeCompletion {
             request_id: generation.request_id,
             assistant_message,
+            session_title: None,
         }))
     }
 
@@ -397,6 +411,29 @@ impl SessionRuntime for MockRuntime {
         }
 
         Ok(())
+    }
+
+    fn edit_message(
+        &mut self,
+        _context: &SessionContext,
+        message_id: &str,
+        content: &str,
+    ) -> Result<Option<RuntimeContextRefresh>, Self::Error> {
+        self.edited_messages
+            .push((message_id.to_owned(), content.to_owned()));
+        if let Some(item) = self
+            .bootstrap_state
+            .transcript
+            .iter_mut()
+            .find(|item| item.message_id.as_deref() == Some(message_id))
+        {
+            item.content = content.to_owned();
+        }
+        Ok(Some(RuntimeContextRefresh {
+            transcript: Some(self.bootstrap_state.transcript.clone()),
+            status_line: Some("Updated selected message".into()),
+            ..RuntimeContextRefresh::default()
+        }))
     }
 
     fn toggle_pinned_memory(
@@ -480,18 +517,26 @@ impl SessionRuntime for MockRuntime {
         Ok(entry)
     }
 
-    fn create_session(&mut self) -> Result<RuntimeSessionLoad, Self::Error> {
+    fn create_session(
+        &mut self,
+        character_name: Option<&str>,
+    ) -> Result<RuntimeSessionLoad, Self::Error> {
         let session_number = self.available_sessions.len() + self.session_bootstraps.len() + 1;
         let session_id = format!("00000000-0000-0000-0000-{session_number:012}");
         let session_name = format!("New Conversation {session_number}");
+        let character_name = character_name.map(str::to_owned);
         let bootstrap = AppBootstrap {
             status_line: Some("New conversation started".into()),
+            session_metadata: Some(SessionMetadata {
+                character_name: character_name.clone(),
+                tags: Vec::new(),
+            }),
             ..AppBootstrap::default()
         };
         self.available_sessions.push(SessionListEntry {
             session_id: session_id.clone(),
             name: session_name.clone(),
-            character_name: None,
+            character_name,
             message_count: 0,
             last_active: None,
             folder: None,
@@ -700,14 +745,40 @@ mod tests {
     fn create_session_registers_a_fresh_empty_bootstrap() {
         let mut runtime = MockRuntime::seeded();
 
-        let session = runtime.create_session().unwrap();
+        let session = runtime.create_session(None).unwrap();
 
         assert!(session.session_id.starts_with("00000000-0000-0000-0000-"));
         assert_eq!(session.bootstrap.transcript.len(), 0);
         assert_eq!(
-            runtime.available_sessions.last().map(|entry| entry.session_id.as_str()),
+            runtime
+                .available_sessions
+                .last()
+                .map(|entry| entry.session_id.as_str()),
             Some(session.session_id.as_str())
         );
         assert!(runtime.session_bootstraps.contains_key(&session.session_id));
+    }
+
+    #[test]
+    fn create_session_carries_requested_character_name() {
+        let mut runtime = MockRuntime::seeded();
+
+        let session = runtime.create_session(Some("Aster")).unwrap();
+
+        assert_eq!(
+            runtime
+                .available_sessions
+                .last()
+                .and_then(|entry| entry.character_name.as_deref()),
+            Some("Aster")
+        );
+        assert_eq!(
+            session
+                .bootstrap
+                .session_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.character_name.as_deref()),
+            Some("Aster")
+        );
     }
 }

@@ -264,6 +264,24 @@ pub fn accent_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+pub fn textarea_selection_style() -> Style {
+    Style::default()
+        .bg(violet(active_preset()))
+        .fg(Color::White)
+}
+
+pub fn textarea_placeholder_style() -> Style {
+    Style::default().fg(TEXT_DIM)
+}
+
+pub fn textarea_line_number_style() -> Style {
+    Style::default().fg(BORDER)
+}
+
+pub fn textarea_cursor_line_style() -> Style {
+    Style::default().bg(Color::Rgb(20, 28, 28))
+}
+
 /// Streaming cursor / generation-in-progress indicator.
 pub fn streaming_style() -> Style {
     Style::default()

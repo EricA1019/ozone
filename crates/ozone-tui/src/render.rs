@@ -39,6 +39,14 @@ pub struct ConversationPaneModel {
     pub empty_state: String,
     pub hint: String,
     pub tick_count: u64,
+    pub scroll_offset: Option<usize>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) struct ConversationViewport {
+    pub visible_height: usize,
+    pub max_scroll: usize,
+    pub default_scroll_offset: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -122,6 +130,7 @@ pub struct CommandPaletteRenderModel {
     pub input: String,
     pub entries: Vec<CommandPaletteEntry>,
     pub selected: usize,
+    pub hint: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -393,26 +402,48 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
             entries
         },
         empty_state: "⬡ Start a conversation — press i to enter insert mode".into(),
-        hint:
-            "j/k navigate · b bookmark · Ctrl+K pin · Tab focus · i insert · I inspector · ? help"
-                .into(),
+        hint: if state.message_edit.is_some() {
+            "Editing selected message · Enter save · Esc cancel · Ctrl+U undo · Ctrl+R redo · F2 inspector"
+                .into()
+        } else {
+            "j/k scroll · ↑↓ select · Ctrl+I edit · b bookmark · Ctrl+K pin · / commands · Tab focus · i insert · I inspector · ? help"
+                .into()
+        },
         tick_count: state.tick_count,
+        scroll_offset: state.conversation_scroll,
     };
 
     let composer = ComposerPaneModel {
-        title: "Composer".into(),
-        mode: indicators.input_mode.clone(),
+        title: if state.message_edit.is_some() {
+            "Edit Message".into()
+        } else {
+            "Composer".into()
+        },
+        mode: if state.message_edit.is_some() {
+            format!("edit · {}", indicators.input_mode)
+        } else {
+            indicators.input_mode.clone()
+        },
         lines: if state.draft.text.is_empty() {
             Vec::new()
         } else {
-            state.draft.text.lines().map(str::to_owned).collect()
+            state.draft.text.split('\n').map(str::to_owned).collect()
         },
-        placeholder: "Type a message · / for commands · Ctrl+P for palette".into(),
+        placeholder: if state.message_edit.is_some() {
+            "Edit selected transcript message".into()
+        } else {
+            "Type a message · / or : for commands".into()
+        },
         cursor: state.draft.cursor,
         dirty: state.draft.dirty,
-        hint: composer_hint(state.input_mode).into(),
+        hint: if state.message_edit.is_some() {
+            "Enter save edit · Esc cancel · Ctrl+U undo · Ctrl+R redo · arrows/tab stay in editor · F2 inspector"
+                .into()
+        } else {
+            composer_hint(state.input_mode).into()
+        },
         show_cursor: state.focus == FocusTarget::Draft && !state.command_palette.open,
-        slash_suggestions: if state.slash_dismissed {
+        slash_suggestions: if state.message_edit.is_some() || state.slash_dismissed {
             Vec::new()
         } else {
             build_slash_suggestions(&state.draft.text)
@@ -757,7 +788,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         command_palette: if state.command_palette.open {
             let filtered = state.command_palette.filtered_commands();
             Some(CommandPaletteRenderModel {
-                input: state.command_palette.input.clone(),
+                input: state.command_palette.input_text(),
                 entries: filtered
                     .iter()
                     .enumerate()
@@ -768,6 +799,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
                     })
                     .collect(),
                 selected: state.command_palette.selected,
+                hint: "Enter run/fill · Esc close · ↑↓ choose · Ctrl+U/Ctrl+R undo-redo".into(),
             })
         } else {
             None
@@ -834,6 +866,10 @@ fn build_hints(state: &ShellState) -> Vec<HintItem> {
             HintItem {
                 key: "↑↓".into(),
                 action: "Navigate".into(),
+            },
+            HintItem {
+                key: "Enter".into(),
+                action: "Chat".into(),
             },
             HintItem {
                 key: "n".into(),
@@ -982,6 +1018,7 @@ pub fn render_shell(
     layout: &LayoutModel,
     model: &RenderModel,
     textarea: Option<&TextArea<'static>>,
+    palette_textarea: Option<&TextArea<'static>>,
 ) {
     let full_area = frame.area();
     frame.render_widget(Clear, full_area);
@@ -1038,7 +1075,7 @@ pub fn render_shell(
 
         // Command palette overlay (on top of everything)
         if let Some(palette) = model.command_palette.as_ref() {
-            render_command_palette(frame, palette);
+            render_command_palette(frame, palette, palette_textarea);
         }
         return;
     }
@@ -1095,7 +1132,7 @@ pub fn render_shell(
 
     // Command palette overlay (on top of everything)
     if let Some(palette) = model.command_palette.as_ref() {
-        render_command_palette(frame, palette);
+        render_command_palette(frame, palette, palette_textarea);
     }
 }
 
@@ -1123,51 +1160,95 @@ fn render_hints(frame: &mut Frame, area: Rect, hints: &[HintItem]) {
     );
 }
 
-fn render_command_palette(frame: &mut Frame, model: &CommandPaletteRenderModel) {
+fn render_command_palette(
+    frame: &mut Frame,
+    model: &CommandPaletteRenderModel,
+    textarea: Option<&TextArea<'static>>,
+) {
     let area = frame.area();
     let width = 60u16.min(area.width.saturating_sub(4));
     let x = area.x + (area.width.saturating_sub(width)) / 2;
     let max_entries = 8usize.min(model.entries.len());
-    let height = (max_entries as u16) + 3; // input + separator + entries + border
+    let list_rows = max_entries.max(1);
+    let height = (list_rows as u16) + 5; // input + separator + entries + hint + border
     let palette_area = Rect::new(x, area.y + 2, width, height);
 
     frame.render_widget(Clear, palette_area);
-
-    let mut lines = vec![];
-
-    let input_line = Line::from(vec![
-        Span::styled(" / ", theme::accent_style()),
-        Span::styled(&model.input, theme::text_style()),
-        Span::styled("▌", theme::dim_style()),
-    ]);
-    lines.push(input_line);
-
-    lines.push(Line::from(Span::styled(
-        "─".repeat(width.saturating_sub(2) as usize),
-        theme::dim_style(),
-    )));
-
-    for entry in model.entries.iter().take(max_entries) {
-        let style = if entry.selected {
-            theme::highlight_style()
-        } else {
-            theme::text_style()
-        };
-        let marker = if entry.selected { "▸ " } else { "  " };
-        lines.push(Line::from(vec![
-            Span::styled(marker, style),
-            Span::styled(&entry.name, style),
-            Span::styled("  ", Style::default()),
-            Span::styled(&entry.description, theme::dim_style()),
-        ]));
-    }
 
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(theme::focus_border_style())
         .title(Span::styled(" Command Palette ", theme::accent_style()));
 
-    frame.render_widget(Paragraph::new(lines).block(block), palette_area);
+    let inner = block.inner(palette_area);
+    frame.render_widget(block, palette_area);
+    if inner.height == 0 {
+        return;
+    }
+
+    let input_area = Rect::new(inner.x, inner.y, inner.width, 1);
+    if let Some(textarea) = textarea {
+        frame.render_widget(textarea, input_area);
+    } else {
+        let input_line = Line::from(vec![
+            Span::styled(" / ", theme::accent_style()),
+            Span::styled(&model.input, theme::text_style()),
+            Span::styled("▌", theme::dim_style()),
+        ]);
+        frame.render_widget(Paragraph::new(input_line), input_area);
+    }
+
+    if inner.height <= 1 {
+        return;
+    }
+
+    let separator_area = Rect::new(inner.x, inner.y + 1, inner.width, 1);
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            "─".repeat(inner.width as usize),
+            theme::dim_style(),
+        ))),
+        separator_area,
+    );
+
+    let list_height = inner.height.saturating_sub(3);
+    if list_height > 0 {
+        let list_area = Rect::new(inner.x, inner.y + 2, inner.width, list_height);
+        let mut lines = vec![];
+        if model.entries.is_empty() {
+            lines.push(Line::from(Span::styled(
+                "  No commands match the current input",
+                theme::warning_style(),
+            )));
+        } else {
+            for entry in model.entries.iter().take(max_entries) {
+                let style = if entry.selected {
+                    theme::highlight_style()
+                } else {
+                    theme::text_style()
+                };
+                let marker = if entry.selected { "▸ " } else { "  " };
+                lines.push(Line::from(vec![
+                    Span::styled(marker, style),
+                    Span::styled(&entry.name, style),
+                    Span::styled("  ", Style::default()),
+                    Span::styled(&entry.description, theme::dim_style()),
+                ]));
+            }
+        }
+        frame.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), list_area);
+    }
+
+    let hint_area = Rect::new(
+        inner.x,
+        inner.y + inner.height.saturating_sub(1),
+        inner.width,
+        1,
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(&model.hint, theme::dim_style()))),
+        hint_area,
+    );
 }
 
 /// Floating autocomplete popup rendered ABOVE the composer pane.
@@ -1178,7 +1259,7 @@ fn render_slash_popup(frame: &mut Frame, composer_pane: &PaneLayout, model: &Com
     }
 
     let max_items = 5usize.min(model.slash_suggestions.len());
-    let popup_height = (max_items as u16) + 2; // items + top/bottom border
+    let popup_height = (max_items as u16) + 4; // items + spacer + hint + top/bottom border
     let popup_width = composer_pane.area.width;
     let popup_x = composer_pane.area.x;
     let popup_y = composer_pane.area.y.saturating_sub(popup_height);
@@ -1214,6 +1295,11 @@ fn render_slash_popup(frame: &mut Frame, composer_pane: &PaneLayout, model: &Com
             ]));
         }
     }
+    lines.push(Line::default());
+    lines.push(Line::from(Span::styled(
+        "Tab/Enter accept · Esc dismiss",
+        theme::dim_style(),
+    )));
 
     let block = Block::default()
         .borders(Borders::ALL)
@@ -1232,28 +1318,116 @@ fn render_breadcrumb(frame: &mut Frame, area: Rect, breadcrumb: &str) {
     frame.render_widget(Paragraph::new(line), area);
 }
 
+struct ConversationContent {
+    lines: Vec<Line<'static>>,
+    total_visual_lines: usize,
+    selected_range: Option<(usize, usize)>,
+}
+
 fn render_conversation(frame: &mut Frame, pane: &PaneLayout, model: &RenderModel, focused: bool) {
+    let viewport = conversation_viewport(pane.area, &model.title, &model.conversation);
+    let block = pane_block(&model.conversation.title, focused);
+    let inner = block.inner(pane.area);
+    let content_width = inner.width.saturating_sub(1).max(1);
+    let content = build_conversation_content(&model.title, &model.conversation, content_width);
+    let scroll_offset = model
+        .conversation
+        .scroll_offset
+        .unwrap_or(viewport.default_scroll_offset)
+        .min(viewport.max_scroll);
+
+    frame.render_widget(
+        Paragraph::new(content.lines)
+            .block(block)
+            .scroll((scroll_offset as u16, 0)),
+        pane.area,
+    );
+
+    if content.total_visual_lines > viewport.visible_height && viewport.visible_height > 0 {
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("↑"))
+            .end_symbol(Some("↓"));
+        let mut scrollbar_state =
+            ScrollbarState::new(content.total_visual_lines).position(scroll_offset);
+        frame.render_stateful_widget(scrollbar, inner, &mut scrollbar_state);
+    }
+}
+
+pub(crate) fn conversation_viewport(
+    area: Rect,
+    app_title: &str,
+    model: &ConversationPaneModel,
+) -> ConversationViewport {
+    let inner = area.inner(Margin {
+        vertical: 1,
+        horizontal: 1,
+    });
+    let content_width = inner.width.saturating_sub(1).max(1);
+    let content = build_conversation_content(app_title, model, content_width);
+    let visible_height = inner.height as usize;
+    let max_scroll = if visible_height == 0 {
+        0
+    } else {
+        content.total_visual_lines.saturating_sub(visible_height)
+    };
+    let default_scroll_offset = if visible_height == 0 {
+        0
+    } else {
+        auto_conversation_scroll_offset(content.selected_range, visible_height, max_scroll)
+    };
+
+    ConversationViewport {
+        visible_height,
+        max_scroll,
+        default_scroll_offset,
+    }
+}
+
+fn auto_conversation_scroll_offset(
+    selected_range: Option<(usize, usize)>,
+    visible_height: usize,
+    max_scroll: usize,
+) -> usize {
+    let Some((selected_start, selected_end)) = selected_range else {
+        return 0;
+    };
+
+    let mut scroll_offset = 0usize;
+    if selected_end > visible_height {
+        scroll_offset = selected_end.saturating_sub(visible_height);
+    }
+    if selected_start < scroll_offset {
+        scroll_offset = selected_start;
+    }
+    scroll_offset.min(max_scroll)
+}
+
+fn build_conversation_content(
+    app_title: &str,
+    model: &ConversationPaneModel,
+    content_width: u16,
+) -> ConversationContent {
     const SPINNER_FRAMES: &[&str] = &["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
 
     let mut lines = vec![
         Line::from(vec![
             Span::styled(format!("{} ", theme::HEX), theme::brand_hex_style()),
             Span::styled(
-                model.title.clone(),
+                app_title.to_owned(),
                 theme::text_style().add_modifier(Modifier::BOLD),
             ),
         ]),
         Line::default(),
     ];
+    let mut total_visual_lines = rewrap_lines(&mut lines, content_width);
+    let mut selected_range: Option<(usize, usize)> = None;
 
-    if model.conversation.entries.is_empty() {
-        lines.push(Line::from(Span::styled(
-            model.conversation.empty_state.clone(),
-            theme::dim_style(),
-        )));
+    if model.entries.is_empty() {
+        let line = Line::from(Span::styled(model.empty_state.clone(), theme::dim_style()));
+        total_visual_lines += push_wrapped_line(&mut lines, line, content_width);
     } else {
-        let entry_count = model.conversation.entries.len();
-        for (i, entry) in model.conversation.entries.iter().enumerate() {
+        let entry_count = model.entries.len();
+        for (i, entry) in model.entries.iter().enumerate() {
             let marker = if entry.selected {
                 format!("{} ", theme::HEX_FILLED)
             } else {
@@ -1288,8 +1462,8 @@ fn render_conversation(frame: &mut Frame, pane: &PaneLayout, model: &RenderModel
             let gutter = Span::styled("│ ", Style::default().fg(gutter_color));
 
             let author_display = if entry.is_streaming {
-                let frame_str = SPINNER_FRAMES
-                    [(model.conversation.tick_count / 3) as usize % SPINNER_FRAMES.len()];
+                let frame_str =
+                    SPINNER_FRAMES[(model.tick_count / 3) as usize % SPINNER_FRAMES.len()];
                 format!("{} {:<9}", frame_str, &entry.author)
             } else {
                 format!("{:<10}", entry.author)
@@ -1308,36 +1482,153 @@ fn render_conversation(frame: &mut Frame, pane: &PaneLayout, model: &RenderModel
             msg_spans.push(Span::raw(" "));
             msg_spans.push(Span::styled(entry.content.clone(), theme::text_style()));
 
-            lines.push(Line::from(msg_spans));
+            let line = Line::from(msg_spans);
+            let line_height = push_wrapped_line(&mut lines, line, content_width);
+            if entry.selected {
+                selected_range = Some((total_visual_lines, total_visual_lines + line_height));
+            }
+            total_visual_lines += line_height;
 
             // Author-aware separator between messages
             if i + 1 < entry_count {
-                let next_author = &model.conversation.entries[i + 1].author;
+                let next_author = &model.entries[i + 1].author;
                 let sep = if next_author != &entry.author {
                     format!("     │ ─── {} ───", next_author)
                 } else {
                     "     │ · · ·".to_string()
                 };
-                lines.push(Line::from(Span::styled(
+                let line = Line::from(Span::styled(
                     sep,
                     Style::default().fg(Color::Rgb(50, 50, 50)),
-                )));
+                ));
+                total_visual_lines += push_wrapped_line(&mut lines, line, content_width);
             }
         }
     }
 
-    lines.push(Line::default());
-    lines.push(Line::from(Span::styled(
-        model.conversation.hint.clone(),
-        theme::dim_style(),
-    )));
+    let spacer = Line::default();
+    total_visual_lines += push_wrapped_line(&mut lines, spacer, content_width);
+    let hint_line = Line::from(Span::styled(model.hint.clone(), theme::dim_style()));
+    total_visual_lines += push_wrapped_line(&mut lines, hint_line, content_width);
 
-    frame.render_widget(
-        Paragraph::new(lines)
-            .block(pane_block(&model.conversation.title, focused))
-            .wrap(Wrap { trim: false }),
-        pane.area,
+    ConversationContent {
+        lines,
+        total_visual_lines,
+        selected_range,
+    }
+}
+
+fn rewrap_lines(lines: &mut Vec<Line<'static>>, width: u16) -> usize {
+    let original = std::mem::take(lines);
+    for line in original {
+        push_wrapped_line(lines, line, width);
+    }
+    lines.len()
+}
+
+fn push_wrapped_line(target: &mut Vec<Line<'static>>, line: Line<'static>, width: u16) -> usize {
+    let wrapped = wrap_line(&line, width);
+    let added = wrapped.len();
+    target.extend(wrapped);
+    added
+}
+
+fn wrap_line(line: &Line, width: u16) -> Vec<Line<'static>> {
+    let width = width.max(1) as usize;
+    let mut wrapped = Vec::new();
+    let mut current_line: Vec<Span<'static>> = Vec::new();
+    let mut current_span_text = String::new();
+    let mut current_span_style: Option<Style> = None;
+    let mut current_width = 0usize;
+    let mut ended_with_newline = false;
+
+    let flush_span = |current_line: &mut Vec<Span<'static>>,
+                      current_span_text: &mut String,
+                      current_span_style: &mut Option<Style>| {
+        if !current_span_text.is_empty() {
+            current_line.push(Span::styled(
+                std::mem::take(current_span_text),
+                current_span_style.take().unwrap_or_default(),
+            ));
+        }
+    };
+    let flush_line = |wrapped: &mut Vec<Line<'static>>,
+                      current_line: &mut Vec<Span<'static>>,
+                      current_span_text: &mut String,
+                      current_span_style: &mut Option<Style>,
+                      current_width: &mut usize| {
+        flush_span(current_line, current_span_text, current_span_style);
+        wrapped.push(if current_line.is_empty() {
+            Line::default()
+        } else {
+            Line::from(std::mem::take(current_line))
+        });
+        *current_width = 0;
+    };
+
+    for span in &line.spans {
+        let style = span.style;
+        for ch in span.content.chars() {
+            if ch == '\n' {
+                ended_with_newline = true;
+                flush_line(
+                    &mut wrapped,
+                    &mut current_line,
+                    &mut current_span_text,
+                    &mut current_span_style,
+                    &mut current_width,
+                );
+                continue;
+            }
+
+            ended_with_newline = false;
+            if current_width >= width {
+                flush_line(
+                    &mut wrapped,
+                    &mut current_line,
+                    &mut current_span_text,
+                    &mut current_span_style,
+                    &mut current_width,
+                );
+            }
+
+            if current_span_style != Some(style) && !current_span_text.is_empty() {
+                flush_span(
+                    &mut current_line,
+                    &mut current_span_text,
+                    &mut current_span_style,
+                );
+            }
+            current_span_style = Some(style);
+            current_span_text.push(ch);
+            current_width += 1;
+
+            if current_width >= width {
+                flush_line(
+                    &mut wrapped,
+                    &mut current_line,
+                    &mut current_span_text,
+                    &mut current_span_style,
+                    &mut current_width,
+                );
+            }
+        }
+    }
+
+    flush_span(
+        &mut current_line,
+        &mut current_span_text,
+        &mut current_span_style,
     );
+    if !current_line.is_empty() || wrapped.is_empty() || ended_with_newline {
+        wrapped.push(if current_line.is_empty() {
+            Line::default()
+        } else {
+            Line::from(current_line)
+        });
+    }
+
+    wrapped
 }
 
 fn render_composer(
@@ -1347,6 +1638,8 @@ fn render_composer(
     focused: bool,
     textarea: Option<&TextArea<'static>>,
 ) {
+    let composer_text = model.lines.join("\n");
+
     // When a TextArea is available and focused, render it directly.
     if let Some(ta) = textarea {
         if model.show_cursor && focused {
@@ -1360,6 +1653,7 @@ fn render_composer(
             if ta_height > 0 {
                 let ta_area = Rect::new(inner.x, inner.y, inner.width, ta_height);
                 frame.render_widget(ta, ta_area);
+                render_composer_scrollbar(frame, ta_area, model, &composer_text);
 
                 // Hint line
                 if inner.height > ta_height {
@@ -1376,6 +1670,7 @@ fn render_composer(
                 }
             } else {
                 frame.render_widget(ta, inner);
+                render_composer_scrollbar(frame, inner, model, &composer_text);
             }
             return;
         }
@@ -1404,12 +1699,18 @@ fn render_composer(
         theme::dim_style(),
     )));
 
+    let block = pane_block(&model.title, focused);
+    let inner = block.inner(pane.area);
+    let scroll_offset = composer_scroll_offset(model, &composer_text, inner.width, inner.height);
+
     frame.render_widget(
         Paragraph::new(lines)
-            .block(pane_block(&model.title, focused))
-            .wrap(Wrap { trim: false }),
+            .block(block)
+            .wrap(Wrap { trim: false })
+            .scroll((scroll_offset as u16, 0)),
         pane.area,
     );
+    render_composer_scrollbar(frame, inner, model, &composer_text);
 
     // Place the terminal cursor in the composer when in insert mode.
     // Block border offsets: +1 for left border, +1 for top border.
@@ -1419,29 +1720,10 @@ fn render_composer(
         let inner_width = pane.area.width.saturating_sub(2) as usize;
 
         if inner_width > 0 {
-            // Walk through draft text to find cursor row/col with wrapping.
-            let text = model.lines.join("\n");
-            let mut row: u16 = 0;
-            let mut col: u16 = 0;
-
-            for (char_count, ch) in text.chars().enumerate() {
-                if char_count == model.cursor {
-                    break;
-                }
-                if ch == '\n' {
-                    row += 1;
-                    col = 0;
-                } else {
-                    col += 1;
-                    if col as usize >= inner_width {
-                        row += 1;
-                        col = 0;
-                    }
-                }
-            }
+            let (row, col) = visual_cursor_position(&composer_text, inner_width, model.cursor);
 
             let cursor_x = inner_x + col;
-            let cursor_y = inner_y + row;
+            let cursor_y = inner_y + row.saturating_sub(scroll_offset as u16);
 
             // Only set cursor if it fits within the pane.
             if cursor_x < pane.area.x + pane.area.width && cursor_y < pane.area.y + pane.area.height
@@ -1450,6 +1732,80 @@ fn render_composer(
             }
         }
     }
+}
+
+fn render_composer_scrollbar(frame: &mut Frame, area: Rect, model: &ComposerPaneModel, text: &str) {
+    let Some((total_visual_lines, scroll_offset)) = composer_scroll_metrics(model, text, area)
+    else {
+        return;
+    };
+
+    let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+        .begin_symbol(Some("↑"))
+        .end_symbol(Some("↓"));
+    let mut scrollbar_state = ScrollbarState::new(total_visual_lines).position(scroll_offset);
+    frame.render_stateful_widget(scrollbar, area, &mut scrollbar_state);
+}
+
+fn composer_scroll_offset(model: &ComposerPaneModel, text: &str, width: u16, height: u16) -> usize {
+    composer_scroll_metrics(model, text, Rect::new(0, 0, width, height))
+        .map(|(_, offset)| offset)
+        .unwrap_or(0)
+}
+
+fn composer_scroll_metrics(
+    model: &ComposerPaneModel,
+    text: &str,
+    area: Rect,
+) -> Option<(usize, usize)> {
+    if area.width == 0 || area.height == 0 || text.is_empty() {
+        return None;
+    }
+
+    let visible_height = area.height as usize;
+    let content_width = area.width as usize;
+    let total_visual_lines = visual_line_count(text, content_width);
+    if total_visual_lines <= visible_height {
+        return None;
+    }
+
+    let cursor_row = visual_cursor_position(text, content_width, model.cursor).0 as usize;
+    let scroll_offset = cursor_row
+        .saturating_sub(visible_height.saturating_sub(1))
+        .min(total_visual_lines.saturating_sub(visible_height));
+    Some((total_visual_lines, scroll_offset))
+}
+
+fn visual_line_count(text: &str, width: usize) -> usize {
+    visual_cursor_position(text, width, text.chars().count()).0 as usize + 1
+}
+
+fn visual_cursor_position(text: &str, width: usize, cursor: usize) -> (u16, u16) {
+    if width == 0 {
+        return (0, 0);
+    }
+
+    let mut row = 0usize;
+    let mut col = 0usize;
+    let target = cursor.min(text.chars().count());
+
+    for (char_count, ch) in text.chars().enumerate() {
+        if char_count == target {
+            break;
+        }
+        if ch == '\n' {
+            row += 1;
+            col = 0;
+        } else {
+            col += 1;
+            if col >= width {
+                row += 1;
+                col = 0;
+            }
+        }
+    }
+
+    (row as u16, col as u16)
 }
 
 fn render_status(frame: &mut Frame, pane: &PaneLayout, model: &StatusPaneModel, _focused: bool) {
@@ -1638,12 +1994,14 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
             "── Normal Mode ──",
             Style::default().fg(Color::DarkGray),
         )),
-        Line::from("  j/k      Navigate messages"),
+        Line::from("  j/k      Scroll transcript"),
+        Line::from("  ↑/↓      Move selected message"),
         Line::from("  i        Enter Insert mode"),
         Line::from("  I        Toggle Inspector"),
+        Line::from("  Ctrl+I   Edit selected message"),
         Line::from("  b        Toggle bookmark"),
-        Line::from("  p        Pin to memory"),
-        Line::from("  /        Slash commands"),
+        Line::from("  Ctrl+K   Pin to memory"),
+        Line::from("  /        Command palette"),
         Line::from("  ?        This help"),
         Line::from("  Esc      Back / Close"),
         Line::from(""),
@@ -1652,8 +2010,10 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
             Style::default().fg(Color::DarkGray),
         )),
         Line::from("  Enter    Send message"),
-        Line::from("  Esc      Normal mode"),
+        Line::from("  Esc      Normal / cancel edit"),
         Line::from("  Tab      Autocomplete"),
+        Line::from("  Ctrl+U   Undo"),
+        Line::from("  Ctrl+R   Redo"),
         Line::from("  F2       Toggle Inspector"),
         Line::from(""),
         Line::from(Span::styled(
@@ -3002,10 +3362,10 @@ fn inspector_focus_label(focus: InspectorFocus) -> &'static str {
 fn composer_hint(input_mode: InputMode) -> &'static str {
     match input_mode {
         InputMode::Normal => {
-            "i insert · b bookmark · Ctrl+K pin · Tab conversation · Ctrl+D dry-run · ? help"
+            "i insert · / commands · b bookmark · Ctrl+K pin · Tab conversation · Ctrl+D dry-run · ? help"
         }
         InputMode::Insert => {
-            "Enter send · Esc normal · Ctrl+C cancel · Ctrl+D dry-run · F2 inspector"
+            "Enter send · Esc normal · Ctrl+U undo · Ctrl+R redo · Ctrl+C cancel · Ctrl+D dry-run · F2 inspector"
         }
         InputMode::Command => "Enter send · Esc normal · Ctrl+C cancel · Ctrl+D dry-run",
     }
@@ -3062,7 +3422,8 @@ fn overlay_model(screen: ScreenState, input_mode: InputMode) -> Option<OverlayRe
                 ),
                 String::new(),
                 "Navigation".into(),
-                "  j / k          move selection up/down".into(),
+                "  j / k          scroll transcript".into(),
+                "  ↑ / ↓          move selected message".into(),
                 "  Tab            switch conversation ↔ composer focus".into(),
                 "  i              enter insert mode".into(),
                 "  Esc            return to normal mode".into(),
@@ -3073,12 +3434,14 @@ fn overlay_model(screen: ScreenState, input_mode: InputMode) -> Option<OverlayRe
                 "  Enter          send current draft".into(),
                 "  Ctrl+C         cancel active generation".into(),
                 "  Ctrl+D         build a context dry-run preview".into(),
-                "  Ctrl+I         toggle the inspector pane".into(),
+                "  Ctrl+I         edit the selected persisted message".into(),
+                "  I / F2         toggle the inspector pane".into(),
                 "  q              quit".into(),
                 String::new(),
                 "Slash Commands".into(),
                 "  /session show              session metadata".into(),
                 "  /session rename NAME       rename session".into(),
+                "  /session retitle           generate session title".into(),
                 "  /session character NAME     set character".into(),
                 "  /session tags a,b          set tags".into(),
                 "  /memory list               list pinned memories".into(),
@@ -3133,7 +3496,10 @@ mod tests {
     use ozone_core::session::SessionId;
     use ratatui::{backend::TestBackend, buffer::Buffer, layout::Rect, Terminal};
 
-    use super::{build_render_model, render_shell, SessionListItemRenderModel};
+    use super::{
+        build_conversation_content, build_render_model, pane_block, render_shell,
+        SessionListItemRenderModel,
+    };
     use crate::{
         app::{
             AppBootstrap, BranchItem, DraftState, ScreenState, SessionContext, ShellState,
@@ -3353,7 +3719,7 @@ mod tests {
         let backend = TestBackend::new(width, height);
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
-            .draw(|frame| render_shell(frame, layout, model, None))
+            .draw(|frame| render_shell(frame, layout, model, None, None))
             .unwrap();
 
         buffer_to_string(terminal.backend().buffer(), width, height)
@@ -3384,7 +3750,7 @@ mod tests {
         let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
         let model = build_render_model(&state, &layout);
         terminal
-            .draw(|frame| render_shell(frame, &layout, &model, None))
+            .draw(|frame| render_shell(frame, &layout, &model, None, None))
             .unwrap();
 
         let mut cleared_state = state.clone();
@@ -3393,7 +3759,7 @@ mod tests {
         let cleared_layout = build_layout_for_area(&cleared_state, Rect::new(0, 0, 80, 24));
         let cleared_model = build_render_model(&cleared_state, &cleared_layout);
         terminal
-            .draw(|frame| render_shell(frame, &cleared_layout, &cleared_model, None))
+            .draw(|frame| render_shell(frame, &cleared_layout, &cleared_model, None, None))
             .unwrap();
 
         let rendered = buffer_to_string(terminal.backend().buffer(), 80, 24);
@@ -3401,6 +3767,76 @@ mod tests {
         assert!(!rendered.contains("hello skeleton"));
         assert!(!rendered.contains("believable shell ready"));
         assert!(!rendered.contains("assistant ───"));
+    }
+
+    #[test]
+    fn render_conversation_shows_scrollbar_for_long_transcripts() {
+        let mut state = seeded_state();
+        state.enter_conversation();
+        state.session.transcript = (0..24)
+            .map(|index| {
+                crate::app::TranscriptItem::persisted(
+                    format!("msg-{index}"),
+                    "assistant",
+                    format!("line {index}"),
+                    false,
+                )
+            })
+            .collect();
+        state.session.selected_message = Some(20);
+
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
+        let model = build_render_model(&state, &layout);
+        let rendered = render_to_string(80, 24, &layout, &model);
+
+        assert!(rendered.contains("↑") || rendered.contains("↓"));
+    }
+
+    #[test]
+    fn render_conversation_respects_manual_scroll_offset() {
+        let mut state = seeded_state();
+        state.enter_conversation();
+        state.session.transcript = vec![crate::app::TranscriptItem::persisted(
+            "msg-0",
+            "assistant",
+            "AAA0 AAA1 AAA2 AAA3 AAA4 AAA5 AAA6 AAA7 AAA8 AAA9 AAA10 AAA11 AAA12 AAA13 AAA14 AAA15",
+            false,
+        )];
+        state.session.selected_message = Some(0);
+        state.conversation_scroll = Some(4);
+
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 40, 12));
+        let model = build_render_model(&state, &layout);
+        let block = pane_block(
+            &model.conversation.title,
+            layout.focused == crate::layout::PaneId::Conversation,
+        );
+        let inner = block.inner(layout.conversation.area);
+        let content = build_conversation_content(
+            &model.title,
+            &model.conversation,
+            inner.width.saturating_sub(1).max(1),
+        );
+        let wrapped_rows: Vec<String> = content
+            .lines
+            .iter()
+            .map(|line| {
+                line.spans
+                    .iter()
+                    .map(|span| span.content.as_ref())
+                    .collect::<Vec<_>>()
+                    .join("")
+            })
+            .filter(|line: &String| line.contains("AAA"))
+            .collect();
+        let rendered = render_to_string(40, 12, &layout, &model);
+
+        assert!(
+            wrapped_rows.len() >= 3,
+            "expected wrapped transcript rows, got {wrapped_rows:?}"
+        );
+        assert!(rendered.contains(&wrapped_rows[2]));
+        assert!(!rendered.contains(&wrapped_rows[0]));
     }
 
     #[test]
@@ -3493,7 +3929,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
-                render_shell(frame, &layout, &model, None);
+                render_shell(frame, &layout, &model, None, None);
             })
             .unwrap();
     }
@@ -3518,7 +3954,7 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
-                render_shell(frame, &layout, &model, None);
+                render_shell(frame, &layout, &model, None, None);
             })
             .unwrap();
     }
@@ -3535,9 +3971,37 @@ mod tests {
         let mut terminal = Terminal::new(backend).unwrap();
         terminal
             .draw(|frame| {
-                render_shell(frame, &layout, &model, None);
+                render_shell(frame, &layout, &model, None, None);
             })
             .unwrap();
+    }
+
+    #[test]
+    fn command_palette_render_shows_empty_match_copy() {
+        let mut state = seeded_state();
+        state.command_palette.open();
+        state.command_palette.restore_input_text("zzzzz", 5);
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
+        let model = build_render_model(&state, &layout);
+        let rendered = render_to_string(80, 24, &layout, &model);
+
+        assert!(rendered.contains("No commands match the current input"));
+        assert!(rendered.contains("Enter run"));
+    }
+
+    #[test]
+    fn slash_popup_render_shows_accept_hint() {
+        let mut state = seeded_state();
+        state.enter_conversation();
+        state.input_mode = InputMode::Insert;
+        state.draft.text = "/he".into();
+        state.draft.cursor = 3;
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
+        let model = build_render_model(&state, &layout);
+        let rendered = render_to_string(80, 24, &layout, &model);
+
+        assert!(rendered.contains("Tab/Enter accept"));
+        assert!(rendered.contains("/help"));
     }
 
     #[test]
@@ -3564,6 +4028,49 @@ mod tests {
             model.command_palette.is_some(),
             "command palette should be present when open"
         );
+    }
+
+    #[test]
+    fn message_edit_hides_slash_suggestions_and_updates_hint_copy() {
+        use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
+
+        let mut state = seeded_state();
+        state.handle_key_event(KeyEvent::new(KeyCode::Char('i'), KeyModifiers::CONTROL));
+        state.draft.text = "/he".into();
+        state.draft.cursor = 3;
+
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
+        let model = build_render_model(&state, &layout);
+
+        assert!(model.composer.slash_suggestions.is_empty());
+        assert!(model.composer.hint.contains("arrows/tab stay in editor"));
+        assert!(model.conversation.hint.contains("Enter save"));
+    }
+
+    #[test]
+    fn render_composer_shows_scrollbar_for_long_edit_buffers() {
+        use crate::app::DraftCheckpoint;
+
+        let mut state = seeded_state();
+        state.handle_key_event(crossterm::event::KeyEvent::new(
+            crossterm::event::KeyCode::Char('i'),
+            crossterm::event::KeyModifiers::CONTROL,
+        ));
+        state.draft = DraftState::restore(DraftCheckpoint::new(
+            (0..18)
+                .map(|index| format!("line {index}"))
+                .collect::<Vec<_>>()
+                .join("\n"),
+            0,
+        ));
+        state.focus = crate::app::FocusTarget::Draft;
+        state.input_mode = InputMode::Insert;
+
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
+        let model = build_render_model(&state, &layout);
+        let rendered = render_to_string(80, 24, &layout, &model);
+
+        assert!(rendered.contains("↑") || rendered.contains("↓"));
     }
 
     #[test]
