@@ -32,6 +32,14 @@ pub trait SessionRuntime {
         Ok(None)
     }
 
+    fn reroll_message(
+        &mut self,
+        _context: &SessionContext,
+        _message_id: &str,
+    ) -> Result<Option<RuntimeSendReceipt>, Self::Error> {
+        Ok(None)
+    }
+
     /// Poll the runtime for generation progress. Called on every event-loop
     /// tick while the shell is in `RuntimePhase::Generating`.
     ///
@@ -334,6 +342,46 @@ impl SessionRuntime for MockRuntime {
             user_message,
             context_preview: None,
             context_dry_run: None,
+            refresh: None,
+        }))
+    }
+
+    fn reroll_message(
+        &mut self,
+        _context: &SessionContext,
+        message_id: &str,
+    ) -> Result<Option<RuntimeSendReceipt>, Self::Error> {
+        let Some(index) = self
+            .bootstrap_state
+            .transcript
+            .iter()
+            .position(|item| item.message_id.as_deref() == Some(message_id))
+        else {
+            return Ok(None);
+        };
+        let Some(parent_user) = self.bootstrap_state.transcript[..index]
+            .iter()
+            .rev()
+            .find(|item| item.author == "user")
+            .cloned()
+        else {
+            return Ok(None);
+        };
+
+        let request_id = self.next_request_id();
+        self.sent_prompts.push(parent_user.content.clone());
+        self.active_generation = Some(MockGeneration {
+            request_id: request_id.clone(),
+            prompt: parent_user.content.clone(),
+            response: format!("Mock reroll to: {}", parent_user.content),
+        });
+
+        Ok(Some(RuntimeSendReceipt {
+            request_id,
+            user_message: parent_user,
+            context_preview: None,
+            context_dry_run: None,
+            refresh: None,
         }))
     }
 
@@ -356,6 +404,7 @@ impl SessionRuntime for MockRuntime {
             request_id: generation.request_id,
             assistant_message,
             session_title: None,
+            refresh: None,
         }))
     }
 

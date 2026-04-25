@@ -249,6 +249,14 @@ where
                                     app.apply_send_receipt(receipt);
                                 }
                             }
+                            app::RuntimeCommand::RerollMessage { message_id } => {
+                                if let Some(receipt) = runtime
+                                    .reroll_message(&app.session.context, &message_id)
+                                    .map_err(RunSessionError::Runtime)?
+                                {
+                                    app.apply_send_receipt(receipt);
+                                }
+                            }
                             app::RuntimeCommand::EditMessage {
                                 message_id,
                                 content,
@@ -610,6 +618,7 @@ mod tests {
                 user_message: TranscriptItem::new("user", "test prompt"),
                 context_preview: None,
                 context_dry_run: None,
+                refresh: None,
             }))
         }
 
@@ -631,6 +640,7 @@ mod tests {
                     request_id: self.request_id.clone(),
                     assistant_message: TranscriptItem::new("assistant", self.final_content.clone()),
                     session_title: None,
+                    refresh: None,
                 })))
             }
         }
@@ -691,6 +701,7 @@ mod tests {
                 user_message: TranscriptItem::new("user", "this will fail"),
                 context_preview: None,
                 context_dry_run: None,
+                refresh: None,
             }))
         }
 

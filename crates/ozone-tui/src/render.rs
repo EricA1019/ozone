@@ -406,7 +406,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
             "Editing selected message · Enter save · Esc cancel · Ctrl+U undo · Ctrl+R redo · F2 inspector"
                 .into()
         } else {
-            "j/k scroll · ↑↓ select · Ctrl+I edit · b bookmark · Ctrl+K pin · / commands · Tab focus · i insert · I inspector · ? help"
+            "j/k scroll · ↑↓ select · r reroll · Ctrl+I edit · b bookmark · Ctrl+K pin · / commands · Tab focus · i insert · I inspector · ? help"
                 .into()
         },
         tick_count: state.tick_count,
@@ -1998,6 +1998,7 @@ fn render_help_overlay(frame: &mut Frame, area: Rect) {
         Line::from("  ↑/↓      Move selected message"),
         Line::from("  i        Enter Insert mode"),
         Line::from("  I        Toggle Inspector"),
+        Line::from("  r        Reroll selected assistant reply"),
         Line::from("  Ctrl+I   Edit selected message"),
         Line::from("  b        Toggle bookmark"),
         Line::from("  Ctrl+K   Pin to memory"),
@@ -3362,7 +3363,7 @@ fn inspector_focus_label(focus: InspectorFocus) -> &'static str {
 fn composer_hint(input_mode: InputMode) -> &'static str {
     match input_mode {
         InputMode::Normal => {
-            "i insert · / commands · b bookmark · Ctrl+K pin · Tab conversation · Ctrl+D dry-run · ? help"
+            "i insert · r reroll · / commands · b bookmark · Ctrl+K pin · Tab conversation · Ctrl+D dry-run · ? help"
         }
         InputMode::Insert => {
             "Enter send · Esc normal · Ctrl+U undo · Ctrl+R redo · Ctrl+C cancel · Ctrl+D dry-run · F2 inspector"
@@ -3429,6 +3430,7 @@ fn overlay_model(screen: ScreenState, input_mode: InputMode) -> Option<OverlayRe
                 "  Esc            return to normal mode".into(),
                 String::new(),
                 "Actions".into(),
+                "  r              reroll the selected assistant reply".into(),
                 "  b              toggle bookmark on selected message".into(),
                 "  Ctrl+K         pin/unpin selected message to hard context".into(),
                 "  Enter          send current draft".into(),
@@ -3442,6 +3444,7 @@ fn overlay_model(screen: ScreenState, input_mode: InputMode) -> Option<OverlayRe
                 "  /session show              session metadata".into(),
                 "  /session rename NAME       rename session".into(),
                 "  /session retitle           generate session title".into(),
+                "  /session reroll            reroll selected assistant reply".into(),
                 "  /session character NAME     set character".into(),
                 "  /session tags a,b          set tags".into(),
                 "  /memory list               list pinned memories".into(),
@@ -3655,6 +3658,7 @@ mod tests {
             user_message: TranscriptItem::new("user", "stream test"),
             context_preview: None,
             context_dry_run: None,
+            refresh: None,
         });
         state.apply_runtime_progress(RuntimeProgress {
             request_id: "req-stream-1".into(),
@@ -3691,6 +3695,7 @@ mod tests {
             user_message: TranscriptItem::new("user", "fail test"),
             context_preview: None,
             context_dry_run: None,
+            refresh: None,
         });
         state.apply_runtime_failure(RuntimeFailure {
             request_id: "req-fail-1".into(),

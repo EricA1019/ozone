@@ -14,7 +14,7 @@ edges:
     condition: when setting up the dev environment or running the project for the first time
   - target: patterns/INDEX.md
     condition: when starting a task — check the pattern index for a matching pattern file
-last_updated: 2026-04-21
+last_updated: 2026-04-24
 ---
 
 # Session Bootstrap
@@ -26,10 +26,12 @@ Then read this file fully before doing anything else in this session.
 ## Current Project State
 
 **Working:**
+- **ozone+ reroll flow landed**: conversation normal mode now advertises plain `r`, command palette and exact `/session reroll` route through the selected assistant reply, the runtime rebuilds context from the parent user turn, reroll completions preserve swipe ordinal `0` for the original reply, tip rerolls stay on the current branch, historical rerolls activate a fresh branch on completion, and the TUI consumes refresh-aware completions so rerolls do not duplicate the parent prompt; `./contrib/sync-local-install.sh` also refreshed the installed `ozone-plus` binary after this pass — ozone-plus tests now total `51` and ozone-tui tests now total `175`
+- **Base ozone model picker scroll fix landed**: the launcher model picker now renders a real viewport window plus scrollbar, so models beyond the first screenful remain visible/selectable instead of disappearing below the fold — 1 new `ozone` test, total now `38`
 - **ozone+ slash-command surface + character chat entry landed**: slash-popup accept and single-match tab-complete now sync the real composer textarea, command-palette shell commands either run immediately or prefill editable slash text predictably, palette `new` now creates a real fresh session, and pressing **Enter** on a highlighted character starts a fresh chat already bound to that character — 4 new `ozone-tui` tests, totals now `172` for `ozone-tui` and `48` for `ozone-plus`
 - **ozone+ auto session titles landed**: new TUI-created chats still start as `New Conversation`, but the first completed assistant reply now auto-generates a deterministic title from character context plus early transcript keywords, `/session retitle` can regenerate one on demand, and the live TUI header updates immediately through the existing session refresh path — 1 new `ozone-memory` test, 2 new `ozone-plus` tests, and 1 new `ozone-tui` test
 - **ozone+ transcript viewport scrolling landed**: the TUI now enables terminal mouse capture, gives the conversation pane a real visual-row scroll offset, pre-wraps long transcript rows so scrolling works inside tall wrapped messages, maps mouse-wheel plus `j`/`k` to that viewport instead of transcript selection, and keeps `↑/↓` for message selection/edit targets — 5 new `ozone-tui` tests, total now 168
-- **Local installs resynced after the transcript fix**: `./contrib/sync-local-install.sh` rebuilt the current release artifacts and refreshed the installed `ozone`, `ozone-plus`, and `ozone-mcp` binaries; the installed `ozone-plus` now reports `0.4.8-alpha+67eff77` from both `~/.cargo/bin` and `~/.local/bin`
+- **Local installs resynced after the latest polish pass**: `./contrib/sync-local-install.sh` rebuilt the current release artifacts and refreshed the installed `ozone`, `ozone-plus`, and `ozone-mcp` binaries; installed `ozone` and `ozone-plus` now report `0.4.8-alpha+34aa439` from both `~/.cargo/bin` and `~/.local/bin`, and `ozone-mcp` was already current
 - **Textarea command-surface pass is mostly shipped**: ozone+ Phase 1 now uses surface-specific `tui-textarea` behavior for composer, transcript edit, and command palette flows, while base `ozone` now has a `/` quick-command overlay backed by `tui-textarea`, filtered from typed `LauncherAction` metadata, and executable from launcher-facing screens; focused regressions brought base `ozone` tests to 37 and ozone-tui remains green at 162, while full live smoke still needs a cleaner capture than raw PTY output
 - **v0.4.5-alpha shipped**: Settings crash fixes (usize underflow, out-of-bounds category index, `"Context"` → Model mapping, missing `Session` variant), side-by-side launch preference persists and drives launcher label, theme preset system (`DarkMint`/`OzoneDark`/`HighContrast`, default `#2DAF82`), and fully interactive editable settings (Toggle + Cycle entries for Appearance, Launch, Display categories) — 18 new tests; ozone-tui total now 143
 - **Current version**: `0.4.8-alpha`

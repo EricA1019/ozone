@@ -7,13 +7,15 @@ use crate::{
     session_title,
 };
 use ozone_core::engine::{
-    BranchId, BranchState, CancelReason, CommitMessageCommand, ConversationMessage,
-    GenerationState, RequestId, SetGenerationStateCommand,
+    ActivateSwipeCommand, BranchId, BranchState, CancelReason, CommitMessageCommand,
+    ConversationBranch, ConversationMessage, GenerationState, MessageId,
+    RecordSwipeCandidateCommand, RequestId, SetGenerationStateCommand, SwipeCandidate,
+    SwipeGroup,
 };
 use ozone_engine::{
-    ConversationBranchRecord, ConversationEngine, ConversationStore, EngineCommand,
-    EngineCommandResult, SingleWriterConversationEngine, ThinkingBlockDecoder, ThinkingDisplayMode,
-    ThinkingOutput,
+    ActivateSwipeRequest, ConversationBranchRecord, ConversationEngine, ConversationStore,
+    EngineCommand, EngineCommandResult, RecordSwipeCandidateRequest,
+    SingleWriterConversationEngine, ThinkingBlockDecoder, ThinkingDisplayMode, ThinkingOutput,
 };
 use ozone_inference::{InferenceError, MemoryConfig, StreamChunk};
 use ozone_memory::{ImportanceScorer, KeywordExtractor};
@@ -63,6 +65,34 @@ struct PendingGeneration {
     tokens_generated: u64,
     receiver: Receiver<WorkerEvent>,
     cancel_tx: Option<oneshot::Sender<()>>,
+    completion: PendingCompletion,
+}
+
+#[derive(Debug, Clone)]
+enum PendingCompletion {
+    Standard,
+    Reroll(PendingReroll),
+}
+
+#[derive(Debug, Clone)]
+struct PendingReroll {
+    source: RerollSource,
+    branch_mode: RerollBranchMode,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RerollBranchMode {
+    CurrentBranch,
+    NewBranch,
+}
+
+#[derive(Debug, Clone)]
+struct RerollSource {
+    active_branch_id: BranchId,
+    assistant_message: ConversationMessage,
+    parent_user_message: ConversationMessage,
+    parent_context_message_id: Option<MessageId>,
+    transcript_prefix: Vec<ConversationMessage>,
 }
 
 struct SessionSnapshot {
@@ -78,6 +108,7 @@ enum SessionCommand {
     Show,
     Rename(String),
     Retitle,
+    Reroll,
     Character(Option<String>),
     Tags(Vec<String>),
 }
@@ -159,6 +190,7 @@ impl PendingGeneration {
             tokens_generated: 0,
             receiver,
             cancel_tx: None,
+            completion: PendingCompletion::Standard,
         }
     }
 }
@@ -619,6 +651,7 @@ impl Phase1dRuntime {
             tokens_generated: 0,
             receiver: event_rx,
             cancel_tx: Some(cancel_tx),
+            completion: PendingCompletion::Standard,
         })
     }
 
@@ -631,6 +664,14 @@ impl Phase1dRuntime {
             .store()
             .get_active_branch_transcript(&context.session_id)
             .map_err(|error| error.to_string())?;
+        self.build_context_for_transcript(context, &transcript)
+    }
+
+    fn build_context_for_transcript(
+        &mut self,
+        context: &TuiSessionContext,
+        transcript: &[ConversationMessage],
+    ) -> Result<ContextBuildResult, String> {
         let pinned_memories = self
             .repo
             .list_pinned_memories(&context.session_id)
@@ -639,7 +680,7 @@ impl Phase1dRuntime {
             HybridSearchService::new(&self.repo, &self.inference.config().memory)
                 .context_retrieval(&context.session_id, &transcript, &pinned_memories, 3)?;
         self.context_bridge.build_from_transcript(
-            &transcript,
+            transcript,
             &pinned_memories,
             retrieved_memories.as_ref(),
             None,
@@ -676,6 +717,14 @@ impl Phase1dRuntime {
             .store()
             .get_active_branch_transcript(&context.session_id)
             .map_err(|error| error.to_string())?;
+        self.dry_run_context_build_for_transcript(context, &transcript)
+    }
+
+    fn dry_run_context_build_for_transcript(
+        &mut self,
+        context: &TuiSessionContext,
+        transcript: &[ConversationMessage],
+    ) -> Result<DryRunContextBuild, String> {
         let pinned_memories = self
             .repo
             .list_pinned_memories(&context.session_id)
@@ -684,7 +733,7 @@ impl Phase1dRuntime {
             HybridSearchService::new(&self.repo, &self.inference.config().memory)
                 .context_retrieval(&context.session_id, &transcript, &pinned_memories, 3)?;
         self.context_bridge.dry_run_from_transcript(
-            &transcript,
+            transcript,
             &pinned_memories,
             retrieved_memories.as_ref(),
             None,
@@ -742,6 +791,244 @@ impl Phase1dRuntime {
         let _ = self.dry_run_context_build(context);
     }
 
+    fn resolve_reroll_source(
+        &self,
+        context: &TuiSessionContext,
+        message_id: &str,
+    ) -> Result<RerollSource, String> {
+        let message_id = MessageId::parse(message_id).map_err(|error| error.to_string())?;
+        let active_branch = self.active_branch(&context.session_id)?;
+        let transcript = self
+            .engine
+            .store()
+            .get_active_branch_transcript(&context.session_id)
+            .map_err(|error| error.to_string())?;
+        let assistant_index = transcript
+            .iter()
+            .position(|message| message.message_id == message_id)
+            .ok_or_else(|| "Selected message is no longer on the active branch".to_owned())?;
+        let assistant_message = transcript[assistant_index].clone();
+        if assistant_message.author_kind != "assistant" {
+            return Err("Only assistant messages can be rerolled".to_owned());
+        }
+        let parent_message_id = assistant_message.parent_id.clone().ok_or_else(|| {
+            "Selected assistant message cannot be rerolled because it has no parent prompt"
+                .to_owned()
+        })?;
+        let parent_user_index = transcript
+            .iter()
+            .position(|message| message.message_id == parent_message_id)
+            .ok_or_else(|| {
+                "Selected assistant message is missing its parent prompt on the active branch"
+                    .to_owned()
+            })?;
+        let parent_user_message = transcript[parent_user_index].clone();
+        if parent_user_message.author_kind != "user" {
+            return Err(
+                "Selected assistant message cannot be rerolled because its parent is not a user message"
+                    .to_owned(),
+            );
+        }
+
+        Ok(RerollSource {
+            active_branch_id: active_branch.branch.branch_id,
+            assistant_message,
+            parent_user_message,
+            parent_context_message_id: parent_user_index
+                .checked_sub(1)
+                .map(|index| transcript[index].message_id.clone()),
+            transcript_prefix: transcript[..=parent_user_index].to_vec(),
+        })
+    }
+
+    fn ensure_reroll_swipe_group(
+        &mut self,
+        context: &TuiSessionContext,
+        reroll: &PendingReroll,
+        committed_message: &ConversationMessage,
+    ) -> Result<(), String> {
+        let existing_group = self
+            .engine
+            .store()
+            .list_swipe_groups(&context.session_id)
+            .map_err(|error| error.to_string())?
+            .into_iter()
+            .find(|group| group.parent_message_id == reroll.source.parent_user_message.message_id);
+
+        let (group, next_ordinal) = match existing_group {
+            Some(group) => {
+                let next_ordinal = self
+                    .engine
+                    .store()
+                    .list_swipe_candidates(&context.session_id, &group.swipe_group_id)
+                    .map_err(|error| error.to_string())?
+                    .iter()
+                    .map(|candidate| candidate.ordinal)
+                    .max()
+                    .unwrap_or(0)
+                    .saturating_add(1);
+                (group, next_ordinal)
+            }
+            None => {
+                let mut group = SwipeGroup::new(
+                    crate::generate_swipe_group_id()?,
+                    reroll.source.parent_user_message.message_id.clone(),
+                );
+                group.parent_context_message_id = reroll.source.parent_context_message_id.clone();
+                match self
+                    .engine
+                    .process(EngineCommand::RecordSwipeCandidate(RecordSwipeCandidateRequest {
+                        session_id: context.session_id.clone(),
+                        command: RecordSwipeCandidateCommand {
+                            group: group.clone(),
+                            candidate: SwipeCandidate::new(
+                                group.swipe_group_id.clone(),
+                                0,
+                                reroll.source.assistant_message.message_id.clone(),
+                            ),
+                        },
+                    }))
+                    .map_err(|error| error.to_string())?
+                {
+                    EngineCommandResult::SwipeCandidateRecorded(_) => {}
+                    other => {
+                        return Err(format!(
+                            "unexpected engine result for original reroll swipe record: {other:?}"
+                        ))
+                    }
+                }
+                (group, 1)
+            }
+        };
+
+        match self
+            .engine
+            .process(EngineCommand::RecordSwipeCandidate(RecordSwipeCandidateRequest {
+                session_id: context.session_id.clone(),
+                command: RecordSwipeCandidateCommand {
+                    group: group.clone(),
+                    candidate: SwipeCandidate::new(
+                        group.swipe_group_id.clone(),
+                        next_ordinal,
+                        committed_message.message_id.clone(),
+                    ),
+                },
+            }))
+            .map_err(|error| error.to_string())?
+        {
+            EngineCommandResult::SwipeCandidateRecorded(_) => {}
+            other => {
+                return Err(format!(
+                    "unexpected engine result for reroll swipe record: {other:?}"
+                ))
+            }
+        }
+
+        match self
+            .engine
+            .process(EngineCommand::ActivateSwipe(ActivateSwipeRequest {
+                session_id: context.session_id.clone(),
+                command: ActivateSwipeCommand {
+                    swipe_group_id: group.swipe_group_id,
+                    ordinal: next_ordinal,
+                },
+            }))
+            .map_err(|error| error.to_string())?
+        {
+            EngineCommandResult::SwipeActivated(_) => Ok(()),
+            other => Err(format!(
+                "unexpected engine result for reroll swipe activation: {other:?}"
+            )),
+        }
+    }
+
+    fn complete_reroll_generation(
+        &mut self,
+        context: &TuiSessionContext,
+        pending: &PendingGeneration,
+        reroll: &PendingReroll,
+    ) -> Result<(ConversationMessage, TuiRuntimeContextRefresh), String> {
+        let branch_id = match reroll.branch_mode {
+            RerollBranchMode::CurrentBranch => {
+                self.repo
+                    .set_branch_tip(
+                        &context.session_id,
+                        &reroll.source.active_branch_id,
+                        &reroll.source.parent_user_message.message_id,
+                    )
+                    .map_err(|error| error.to_string())?;
+                reroll.source.active_branch_id.clone()
+            }
+            RerollBranchMode::NewBranch => {
+                let mut branch = ConversationBranch::new(
+                    crate::generate_branch_id()?,
+                    context.session_id.clone(),
+                    "reroll".to_owned(),
+                    reroll.source.parent_user_message.message_id.clone(),
+                    crate::now_timestamp_ms(),
+                );
+                branch.state = BranchState::Active;
+                match self
+                    .engine
+                    .process(EngineCommand::CreateBranch(ozone_core::engine::CreateBranchCommand {
+                        branch,
+                        forked_from: reroll.source.parent_user_message.message_id.clone(),
+                    }))
+                    .map_err(|error| error.to_string())?
+                {
+                    EngineCommandResult::BranchCreated(record) => record.branch.branch_id,
+                    other => {
+                        return Err(format!(
+                            "unexpected engine result for reroll branch create: {other:?}"
+                        ))
+                    }
+                }
+            }
+        };
+
+        let mut assistant_message = ConversationMessage::new(
+            context.session_id.clone(),
+            crate::generate_message_id()?,
+            "assistant",
+            pending.partial_content.clone(),
+            crate::now_timestamp_ms(),
+        );
+        assistant_message.author_name = Some(format!(
+            "{} backend",
+            self.inference.config().backend.r#type
+        ));
+        assistant_message.parent_id = Some(reroll.source.parent_user_message.message_id.clone());
+
+        let committed = match self
+            .engine
+            .process(EngineCommand::CommitMessage(CommitMessageCommand {
+                branch_id: branch_id.clone(),
+                message: assistant_message,
+            }))
+            .map_err(|error| error.to_string())?
+        {
+            EngineCommandResult::MessageCommitted(message) => message,
+            other => {
+                return Err(format!(
+                    "unexpected engine result for reroll completion: {other:?}"
+                ))
+            }
+        };
+
+        self.ensure_reroll_swipe_group(context, reroll, &committed)?;
+        let session_title = self.maybe_auto_title_session(context)?;
+        self.refresh_context_cache(context);
+        let status = match reroll.branch_mode {
+            RerollBranchMode::CurrentBranch => "Rerolled reply on current branch",
+            RerollBranchMode::NewBranch => "Rerolled reply on new branch",
+        };
+        let mut refresh = self.build_session_refresh(context, status)?;
+        if let Some(session_title) = session_title {
+            refresh.session_title = Some(session_title);
+        }
+        Ok((committed, refresh))
+    }
+
     fn build_recall_browser(&self, session_id: &SessionId) -> Result<TuiRecallBrowser, String> {
         let pinned_memories = self
             .repo
@@ -786,35 +1073,46 @@ impl Phase1dRuntime {
         context: &TuiSessionContext,
         pending: PendingGeneration,
     ) -> Result<TuiRuntimeCompletion, String> {
-        let branch = self.branch_by_id(&context.session_id, &pending.branch_id)?;
         let thinking_content = pending.thinking_content.clone();
         let session_id_str = context.session_id.to_string();
-        let mut assistant_message = ConversationMessage::new(
-            context.session_id.clone(),
-            crate::generate_message_id()?,
-            "assistant",
-            pending.partial_content,
-            crate::now_timestamp_ms(),
-        );
-        assistant_message.author_name = Some(format!(
-            "{} backend",
-            self.inference.config().backend.r#type
-        ));
-        assistant_message.parent_id = Some(branch.branch.tip_message_id.clone());
+        let (committed, refresh, session_title) = match &pending.completion {
+            PendingCompletion::Standard => {
+                let branch = self.branch_by_id(&context.session_id, &pending.branch_id)?;
+                let mut assistant_message = ConversationMessage::new(
+                    context.session_id.clone(),
+                    crate::generate_message_id()?,
+                    "assistant",
+                    pending.partial_content.clone(),
+                    crate::now_timestamp_ms(),
+                );
+                assistant_message.author_name = Some(format!(
+                    "{} backend",
+                    self.inference.config().backend.r#type
+                ));
+                assistant_message.parent_id = Some(branch.branch.tip_message_id.clone());
 
-        let committed = match self
-            .engine
-            .process(EngineCommand::CommitMessage(CommitMessageCommand {
-                branch_id: pending.branch_id.clone(),
-                message: assistant_message,
-            }))
-            .map_err(|error| error.to_string())?
-        {
-            EngineCommandResult::MessageCommitted(message) => message,
-            other => {
-                return Err(format!(
-                    "unexpected engine result for assistant completion: {other:?}"
-                ))
+                let committed = match self
+                    .engine
+                    .process(EngineCommand::CommitMessage(CommitMessageCommand {
+                        branch_id: pending.branch_id.clone(),
+                        message: assistant_message,
+                    }))
+                    .map_err(|error| error.to_string())?
+                {
+                    EngineCommandResult::MessageCommitted(message) => message,
+                    other => {
+                        return Err(format!(
+                            "unexpected engine result for assistant completion: {other:?}"
+                        ))
+                    }
+                };
+                let session_title = self.maybe_auto_title_session(context)?;
+                (committed, None, session_title)
+            }
+            PendingCompletion::Reroll(reroll) => {
+                let (committed, refresh) =
+                    self.complete_reroll_generation(context, &pending, reroll)?;
+                (committed, Some(refresh), None)
             }
         };
 
@@ -865,12 +1163,12 @@ impl Phase1dRuntime {
         let _ = self
             .hooks_config
             .run_post_generation(&session_id_str, &committed.content);
-        let session_title = self.maybe_auto_title_session(context)?;
 
         Ok(TuiRuntimeCompletion {
             request_id: pending.request_id.to_string(),
             assistant_message: tui_transcript_item_from_message(committed, false),
             session_title,
+            refresh,
         })
     }
 
@@ -1030,6 +1328,7 @@ impl SessionRuntime for Phase1dRuntime {
             user_message: tui_transcript_item_from_message(committed, false),
             context_preview: None,
             context_dry_run: None,
+            refresh: None,
         };
 
         let context_build = match self.build_context_for_generation(context) {
@@ -1075,6 +1374,94 @@ impl SessionRuntime for Phase1dRuntime {
                 PendingGeneration::failed(active_branch.branch.branch_id.clone(), request_id, error)
             }),
         );
+
+        Ok(Some(TuiRuntimeSendReceipt {
+            context_preview,
+            context_dry_run,
+            refresh: None,
+            ..receipt
+        }))
+    }
+
+    fn reroll_message(
+        &mut self,
+        context: &TuiSessionContext,
+        message_id: &str,
+    ) -> Result<Option<TuiRuntimeSendReceipt>, Self::Error> {
+        if self.pending_generation.is_some() {
+            return Ok(None);
+        }
+
+        let source = self.resolve_reroll_source(context, message_id)?;
+        let request_id = crate::generate_request_id()?;
+        self.set_generation_state(
+            source.active_branch_id.clone(),
+            GenerationState::Queued {
+                request_id: request_id.clone(),
+            },
+        )?;
+
+        let receipt = TuiRuntimeSendReceipt {
+            request_id: request_id.to_string(),
+            user_message: tui_transcript_item_from_message(source.parent_user_message.clone(), false),
+            context_preview: None,
+            context_dry_run: None,
+            refresh: None,
+        };
+
+        let context_build = match self.build_context_for_transcript(context, &source.transcript_prefix) {
+            Ok(context_build) => context_build,
+            Err(error) => {
+                self.pending_generation = Some(PendingGeneration::failed(
+                    source.active_branch_id.clone(),
+                    request_id,
+                    error,
+                ));
+                return Ok(Some(TuiRuntimeSendReceipt {
+                    context_preview: self
+                        .context_bridge
+                        .latest_plan_preview()
+                        .map(tui_context_preview_from_plan),
+                    context_dry_run: self
+                        .context_bridge
+                        .latest_dry_run()
+                        .map(tui_context_dry_run_from_build),
+                    ..receipt
+                }));
+            }
+        };
+        let context_preview = Some(tui_context_preview_from_plan(&context_build.preview));
+        let context_dry_run = self
+            .context_bridge
+            .latest_dry_run()
+            .map(tui_context_dry_run_from_build);
+        let prompt = context_build.prompt;
+
+        let _ = self
+            .hooks_config
+            .run_pre_generation(context.session_id.as_ref());
+        let thinking_mode = self.thinking_display_mode;
+        let mut pending = self
+            .start_generation_task(
+                source.active_branch_id.clone(),
+                request_id.clone(),
+                prompt,
+                thinking_mode,
+            )
+            .unwrap_or_else(|error| {
+                PendingGeneration::failed(source.active_branch_id.clone(), request_id, error)
+            });
+        pending.completion = PendingCompletion::Reroll(PendingReroll {
+            branch_mode: if source.assistant_message.message_id
+                == self.active_branch(&context.session_id)?.branch.tip_message_id
+            {
+                RerollBranchMode::CurrentBranch
+            } else {
+                RerollBranchMode::NewBranch
+            },
+            source,
+        });
+        self.pending_generation = Some(pending);
 
         Ok(Some(TuiRuntimeSendReceipt {
             context_preview,
@@ -1442,6 +1829,10 @@ impl SessionRuntime for Phase1dRuntime {
                 self.build_session_refresh(context, format!("Session retitled to {title}"))
                     .map(Some)
             }
+            ShellCommand::Session(SessionCommand::Reroll) => Ok(Some(Self::status_only_refresh(
+                "`/session reroll` runs from the conversation screen using the selected assistant message"
+                    .to_owned(),
+            ))),
             ShellCommand::Session(SessionCommand::Character(character_name)) => {
                 self.repo
                     .update_session_metadata(
@@ -2370,6 +2761,7 @@ fn parse_session_subcommand(remainder: &str) -> Result<SessionCommand, String> {
             argument.to_owned(),
         )?)),
         "retitle" => Ok(SessionCommand::Retitle),
+        "reroll" if argument.is_empty() => Ok(SessionCommand::Reroll),
         "character" => {
             if argument.eq_ignore_ascii_case("clear") || argument == "-" {
                 Ok(SessionCommand::Character(None))
@@ -2393,7 +2785,10 @@ fn parse_session_subcommand(remainder: &str) -> Result<SessionCommand, String> {
             }
         }
         _ => {
-            Err("Unknown session command. Try show, rename, retitle, character, or tags".to_owned())
+            Err(
+                "Unknown session command. Try show, rename, retitle, reroll, character, or tags"
+                    .to_owned(),
+            )
         }
     }
 }
@@ -2487,7 +2882,7 @@ fn parse_safemode_subcommand(remainder: &str) -> Result<SafeModeCommand, String>
 }
 
 fn unknown_shell_command_message() -> String {
-    "Unknown command. Try /session show|rename|retitle|character|tags | /memory list|note|unpin | \
+    "Unknown command. Try /session show|rename|retitle|reroll|character|tags | /memory list|note|unpin | \
 /search session|global | /summarize session | /thinking status|hidden|assisted|debug | \
 /tierb status|toggle | /hooks status|list | /safemode status|on|off|toggle | :memories"
         .to_owned()
@@ -2536,8 +2931,169 @@ fn repository_template_dir() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ozone_core::{engine::MessageId, session::SessionId};
-    use ozone_persist::{MemoryArtifactId, PinnedMemoryContent, PinnedMemoryRecord};
+    use ozone_core::{
+        engine::{BranchState, ConversationBranch, CreateBranchCommand, MessageId},
+        session::SessionId,
+    };
+    use ozone_persist::{
+        CreateMessageRequest, CreateSessionRequest, MemoryArtifactId, PersistencePaths,
+        PinnedMemoryContent, PinnedMemoryRecord,
+    };
+    use std::{
+        fs,
+        path::{Path, PathBuf},
+        sync::atomic::{AtomicUsize, Ordering},
+    };
+
+    static TEST_COUNTER: AtomicUsize = AtomicUsize::new(1);
+
+    struct TestSandbox {
+        root: PathBuf,
+    }
+
+    impl TestSandbox {
+        fn new(prefix: &str) -> Self {
+            let root = Path::new(env!("CARGO_MANIFEST_DIR"))
+                .join("target")
+                .join("ozone-plus-runtime-tests")
+                .join(format!(
+                    "{prefix}-{}-{}",
+                    std::process::id(),
+                    TEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+                ));
+            if root.exists() {
+                fs::remove_dir_all(&root).unwrap();
+            }
+            fs::create_dir_all(&root).unwrap();
+            Self { root }
+        }
+
+        fn repo(&self) -> SqliteRepository {
+            SqliteRepository::new(PersistencePaths::from_data_dir(self.root.clone()))
+        }
+    }
+
+    impl Drop for TestSandbox {
+        fn drop(&mut self) {
+            let _ = fs::remove_dir_all(&self.root);
+        }
+    }
+
+    fn seed_reroll_runtime(
+        prefix: &str,
+    ) -> (
+        TestSandbox,
+        Phase1dRuntime,
+        TuiSessionContext,
+        BranchId,
+        MessageId,
+        MessageId,
+        MessageId,
+        MessageId,
+    ) {
+        let sandbox = TestSandbox::new(prefix);
+        let repo = sandbox.repo();
+        let session = repo
+            .create_session(CreateSessionRequest::new("Pinned Session Title"))
+            .unwrap();
+        let context = TuiSessionContext::new(session.session_id.clone(), session.name.clone());
+
+        let user_one = repo
+            .insert_message(
+                &session.session_id,
+                CreateMessageRequest::user("first user prompt".to_owned()),
+            )
+            .unwrap();
+        let user_one_id = MessageId::parse(user_one.message_id).unwrap();
+
+        let main_branch_id = crate::generate_branch_id().unwrap();
+        let mut main_branch = ConversationBranch::new(
+            main_branch_id.clone(),
+            session.session_id.clone(),
+            "main",
+            user_one_id.clone(),
+            user_one.created_at,
+        );
+        main_branch.state = BranchState::Active;
+        repo.create_branch(CreateBranchCommand {
+            branch: main_branch,
+            forked_from: user_one_id.clone(),
+        })
+        .unwrap();
+
+        let mut assistant_one = ConversationMessage::new(
+            session.session_id.clone(),
+            crate::generate_message_id().unwrap(),
+            "assistant",
+            "first assistant reply".to_owned(),
+            crate::now_timestamp_ms(),
+        );
+        assistant_one.parent_id = Some(user_one_id.clone());
+        let assistant_one = repo
+            .commit_message(CommitMessageCommand {
+                branch_id: main_branch_id.clone(),
+                message: assistant_one,
+            })
+            .unwrap();
+
+        let mut user_two = ConversationMessage::new(
+            session.session_id.clone(),
+            crate::generate_message_id().unwrap(),
+            "user",
+            "second user prompt".to_owned(),
+            crate::now_timestamp_ms(),
+        );
+        user_two.parent_id = Some(assistant_one.message_id.clone());
+        let user_two = repo
+            .commit_message(CommitMessageCommand {
+                branch_id: main_branch_id.clone(),
+                message: user_two,
+            })
+            .unwrap();
+
+        let mut assistant_two = ConversationMessage::new(
+            session.session_id.clone(),
+            crate::generate_message_id().unwrap(),
+            "assistant",
+            "second assistant reply".to_owned(),
+            crate::now_timestamp_ms(),
+        );
+        assistant_two.parent_id = Some(user_two.message_id.clone());
+        let assistant_two = repo
+            .commit_message(CommitMessageCommand {
+                branch_id: main_branch_id.clone(),
+                message: assistant_two,
+            })
+            .unwrap();
+
+        let runtime = Phase1dRuntime::open(repo, session.session_id.clone()).unwrap();
+        (
+            sandbox,
+            runtime,
+            context,
+            main_branch_id,
+            user_one_id,
+            assistant_one.message_id,
+            user_two.message_id,
+            assistant_two.message_id,
+        )
+    }
+
+    fn pending_generation(branch_id: BranchId, text: &str, completion: PendingCompletion) -> PendingGeneration {
+        let (_sender, receiver) = mpsc::channel();
+        PendingGeneration {
+            branch_id,
+            request_id: crate::generate_request_id().unwrap(),
+            started_at: Instant::now(),
+            partial_content: text.to_owned(),
+            thinking_content: String::new(),
+            thinking_decoder: ThinkingBlockDecoder::new(ThinkingDisplayMode::Hidden),
+            tokens_generated: 4,
+            receiver,
+            cancel_tx: None,
+            completion,
+        }
+    }
 
     fn pinned_memory(
         text: &str,
@@ -2593,6 +3149,10 @@ mod tests {
         assert_eq!(
             parse_shell_command("/session retitle"),
             Ok(ShellCommand::Session(SessionCommand::Retitle))
+        );
+        assert_eq!(
+            parse_shell_command("/session reroll"),
+            Ok(ShellCommand::Session(SessionCommand::Reroll))
         );
         assert_eq!(
             parse_shell_command("/memory list"),
@@ -2872,6 +3432,126 @@ mod tests {
             Ok(ShellCommand::SafeMode(SafeModeCommand::Toggle))
         );
         assert!(parse_shell_command("/safemode bogus").is_err());
+    }
+
+    #[test]
+    fn resolve_reroll_source_uses_selected_assistant_parent_prompt() {
+        let (_sandbox, runtime, context, main_branch_id, user_one_id, assistant_one_id, user_two_id, assistant_two_id) =
+            seed_reroll_runtime("resolve-reroll");
+
+        let tip = runtime
+            .resolve_reroll_source(&context, assistant_two_id.as_str())
+            .unwrap();
+        assert_eq!(tip.active_branch_id, main_branch_id);
+        assert_eq!(tip.parent_user_message.message_id, user_two_id);
+        assert_eq!(
+            tip.transcript_prefix
+                .iter()
+                .map(|message| message.message_id.clone())
+                .collect::<Vec<_>>(),
+            vec![user_one_id.clone(), assistant_one_id.clone(), user_two_id.clone()]
+        );
+
+        let historical = runtime
+            .resolve_reroll_source(&context, assistant_one_id.as_str())
+            .unwrap();
+        assert_eq!(historical.parent_user_message.message_id, user_one_id);
+        assert!(historical.parent_context_message_id.is_none());
+        assert_eq!(historical.transcript_prefix.len(), 1);
+    }
+
+    #[test]
+    fn complete_reroll_generation_on_current_branch_records_swipe_candidates() {
+        let (_sandbox, mut runtime, context, main_branch_id, _user_one_id, _assistant_one_id, _user_two_id, assistant_two_id) =
+            seed_reroll_runtime("reroll-current-branch");
+        let source = runtime
+            .resolve_reroll_source(&context, assistant_two_id.as_str())
+            .unwrap();
+        let pending = pending_generation(
+            main_branch_id.clone(),
+            "fresh current-branch reroll",
+            PendingCompletion::Reroll(PendingReroll {
+                source,
+                branch_mode: RerollBranchMode::CurrentBranch,
+            }),
+        );
+
+        let completion = runtime.complete_generation(&context, pending).unwrap();
+        let refresh = completion.refresh.expect("reroll completion refresh");
+        assert_eq!(refresh.status_line.as_deref(), Some("Rerolled reply on current branch"));
+
+        let active_branch = runtime
+            .repo
+            .get_active_branch(&context.session_id)
+            .unwrap()
+            .unwrap();
+        assert_eq!(active_branch.branch.branch_id, main_branch_id);
+        assert_eq!(
+            active_branch.branch.tip_message_id,
+            MessageId::parse(completion.assistant_message.message_id.unwrap()).unwrap()
+        );
+
+        let groups = runtime.repo.list_swipe_groups(&context.session_id).unwrap();
+        assert_eq!(groups.len(), 1);
+        let candidates = runtime
+            .repo
+            .list_swipe_candidates(&context.session_id, &groups[0].swipe_group_id)
+            .unwrap();
+        assert_eq!(
+            candidates.iter().map(|candidate| candidate.ordinal).collect::<Vec<_>>(),
+            vec![0, 1]
+        );
+        assert_eq!(groups[0].active_ordinal, 1);
+        assert_eq!(candidates[0].message_id, assistant_two_id);
+    }
+
+    #[test]
+    fn complete_reroll_generation_on_historical_message_creates_new_branch() {
+        let (_sandbox, mut runtime, context, main_branch_id, _user_one_id, assistant_one_id, _user_two_id, assistant_two_id) =
+            seed_reroll_runtime("reroll-new-branch");
+        let source = runtime
+            .resolve_reroll_source(&context, assistant_one_id.as_str())
+            .unwrap();
+        let pending = pending_generation(
+            main_branch_id.clone(),
+            "fresh historical reroll",
+            PendingCompletion::Reroll(PendingReroll {
+                source,
+                branch_mode: RerollBranchMode::NewBranch,
+            }),
+        );
+
+        let completion = runtime.complete_generation(&context, pending).unwrap();
+        let refresh = completion.refresh.expect("reroll completion refresh");
+        assert_eq!(refresh.status_line.as_deref(), Some("Rerolled reply on new branch"));
+
+        let active_branch = runtime
+            .repo
+            .get_active_branch(&context.session_id)
+            .unwrap()
+            .unwrap();
+        assert_ne!(active_branch.branch.branch_id, main_branch_id);
+        assert_eq!(
+            active_branch.branch.tip_message_id,
+            MessageId::parse(completion.assistant_message.message_id.unwrap()).unwrap()
+        );
+
+        let main_branch = runtime
+            .repo
+            .list_branches(&context.session_id)
+            .unwrap()
+            .into_iter()
+            .find(|record| record.branch.branch_id == main_branch_id)
+            .unwrap();
+        assert_eq!(main_branch.branch.tip_message_id, assistant_two_id);
+
+        let transcript = runtime
+            .repo
+            .get_active_branch_transcript(&context.session_id)
+            .unwrap();
+        assert_eq!(transcript.len(), 2);
+        assert_eq!(transcript[1].author_kind, "assistant");
+        assert_eq!(transcript[1].content, "fresh historical reroll");
     }
 
     #[test]

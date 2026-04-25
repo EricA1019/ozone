@@ -25,6 +25,7 @@ pub enum KeyAction {
     ToggleBookmark,
     TogglePinnedMemory,
     EditSelectedMessage,
+    RerollSelectedMessage,
     HistoryPrevious,
     HistoryNext,
     DraftInsertChar(char),
@@ -103,11 +104,13 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
             KeyCode::Tab => KeyAction::FocusDraft,
             KeyCode::Char('t') => KeyAction::FocusTranscript,
             KeyCode::Char('b') => KeyAction::ToggleBookmark,
+            KeyCode::Char('r') => KeyAction::RerollSelectedMessage,
             KeyCode::Char('?') => KeyAction::ToggleHelp,
             KeyCode::Char('/') | KeyCode::Char(':') => KeyAction::OpenCommandPalette,
             KeyCode::Esc | KeyCode::Char('q') => KeyAction::ConfirmQuit,
             _ => KeyAction::Noop,
         },
+
         InputMode::Insert => match key.code {
             KeyCode::Esc => KeyAction::LeaveInputMode,
             KeyCode::Enter => KeyAction::SubmitDraft,
@@ -277,6 +280,13 @@ mod tests {
                 KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE)
             ),
             KeyAction::ToggleBookmark
+        );
+        assert_eq!(
+            dispatch_key(
+                InputMode::Normal,
+                KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)
+            ),
+            KeyAction::RerollSelectedMessage
         );
     }
 

@@ -1302,6 +1302,12 @@ pub enum RuntimeCommand {
     SendDraft {
         prompt: String,
     },
+    /// Generate a new assistant message reusing the parent user prompt from
+    /// the specified persisted assistant message. The runtime is responsible
+    /// for branching/forking and swipe persistence rules.
+    RerollMessage {
+        message_id: String,
+    },
     EditMessage {
         message_id: String,
         content: String,
@@ -1367,6 +1373,7 @@ pub struct RuntimeSendReceipt {
     pub user_message: TranscriptItem,
     pub context_preview: Option<ContextPreview>,
     pub context_dry_run: Option<ContextDryRunPreview>,
+    pub refresh: Option<RuntimeContextRefresh>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -1393,6 +1400,7 @@ pub struct RuntimeCompletion {
     pub request_id: String,
     pub assistant_message: TranscriptItem,
     pub session_title: Option<String>,
+    pub refresh: Option<RuntimeContextRefresh>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1528,6 +1536,11 @@ impl CommandEntry {
                 description: "Set session character".into(),
             },
             CommandEntry {
+                name: "session reroll".into(),
+                alias: vec![],
+                description: "Reroll the selected assistant reply".into(),
+            },
+            CommandEntry {
                 name: "memory list".into(),
                 alias: vec![],
                 description: "List pinned memories".into(),
@@ -1567,7 +1580,14 @@ impl CommandEntry {
 
     fn execution(&self) -> CommandExecution {
         match self.name.as_str() {
-            "new" | "sessions" | "characters" | "settings" | "help" | "quit" | "menu" => {
+            "new"
+            | "sessions"
+            | "characters"
+            | "settings"
+            | "help"
+            | "quit"
+            | "menu"
+            | "session reroll" => {
                 CommandExecution::Ui
             }
             "session show" | "session retitle" | "memory list" => CommandExecution::RunShell,
@@ -2282,6 +2302,7 @@ impl ShellState {
             KeyAction::ToggleBookmark => self.trigger_bookmark_toggle(),
             KeyAction::TogglePinnedMemory => self.trigger_pinned_memory_toggle(),
             KeyAction::EditSelectedMessage => self.begin_selected_message_edit(),
+            KeyAction::RerollSelectedMessage => self.trigger_reroll_selected_message(),
             KeyAction::HistoryPrevious => {
                 if self.message_edit.is_some() {
                     self.status_line = Some("History navigation is disabled while editing".into());
@@ -2754,6 +2775,9 @@ impl ShellState {
             "menu" => {
                 self.return_to_menu();
             }
+            "session reroll" => {
+                self.trigger_reroll_selected_message();
+            }
             _ => {
                 self.status_line = Some(format!("Unknown command: {}", name));
             }
@@ -2761,6 +2785,9 @@ impl ShellState {
     }
 
     pub fn apply_send_receipt(&mut self, receipt: RuntimeSendReceipt) {
+        if let Some(refresh) = receipt.refresh {
+            self.apply_context_refresh(refresh);
+        }
         let prompt = receipt.user_message.content.clone();
         if let Some(context_preview) = receipt.context_preview {
             self.context_preview = Some(context_preview);
@@ -2768,7 +2795,7 @@ impl ShellState {
         if let Some(context_dry_run) = receipt.context_dry_run {
             self.context_dry_run = Some(context_dry_run);
         }
-        self.push_transcript_item(receipt.user_message);
+        self.sync_pending_user_message(receipt.user_message);
         self.session.runtime = RuntimePhase::Generating {
             request_id: receipt.request_id,
             prompt,
@@ -2784,13 +2811,24 @@ impl ShellState {
     }
 
     pub fn apply_runtime_completion(&mut self, completion: RuntimeCompletion) {
-        self.push_transcript_item(completion.assistant_message);
+        let refresh_status_present = completion
+            .refresh
+            .as_ref()
+            .and_then(|refresh| refresh.status_line.as_ref())
+            .is_some();
+        if let Some(refresh) = completion.refresh {
+            self.apply_context_refresh(refresh);
+        } else {
+            self.push_transcript_item(completion.assistant_message);
+        }
         if let Some(session_title) = completion.session_title {
             self.session.context.title = session_title;
         }
         self.session.runtime = RuntimePhase::Idle;
         self.inspector.focus = InspectorFocus::Message;
-        self.status_line = Some("Generation completed".into());
+        if !refresh_status_present {
+            self.status_line = Some("Generation completed".into());
+        }
     }
 
     pub fn apply_runtime_cancellation(&mut self, cancellation: RuntimeCancellation) {
@@ -2942,6 +2980,16 @@ impl ShellState {
             self.restore_post_edit_state(edit_state);
             self.status_line = Some("Saving selected message…".into());
             self.show_toast("✎ Updating message");
+            return;
+        }
+
+        if let Some(command_name) = parse_local_shell_command(&prompt) {
+            self.history.push(prompt);
+            self.draft = DraftState::default();
+            self.textarea = new_themed_textarea();
+            self.focus = FocusTarget::Draft;
+            self.input_mode = InputMode::Insert;
+            self.execute_command(command_name);
             return;
         }
 
@@ -3107,9 +3155,54 @@ impl ShellState {
         self.inspector.focus = InspectorFocus::Recall;
     }
 
+    fn trigger_reroll_selected_message(&mut self) {
+        let Some(index) = self.session.selected_message else {
+            self.status_line = Some("No transcript message is selected".into());
+            return;
+        };
+        let Some(item) = self.session.transcript.get(index).cloned() else {
+            self.status_line = Some("Selected transcript entry is no longer available".into());
+            return;
+        };
+        let Some(message_id) = item.message_id.clone() else {
+            self.status_line = Some("Only persisted transcript messages can be rerolled".into());
+            return;
+        };
+        if item.author != "assistant" {
+            self.status_line = Some("Only assistant messages can be rerolled".into());
+            return;
+        }
+        if self.session.runtime.is_inflight() {
+            self.status_line = Some("Cannot reroll while generation is active".into());
+            return;
+        }
+
+        self.runtime_commands
+            .push(RuntimeCommand::RerollMessage { message_id });
+        self.status_line = Some("Rerolling reply…".into());
+        self.show_toast("↺ Reroll started");
+        self.inspector.focus = InspectorFocus::Message;
+    }
+
     fn push_transcript_item(&mut self, item: TranscriptItem) {
         self.session.transcript.push(item);
         self.session.selected_message = Some(self.session.transcript.len() - 1);
+    }
+
+    fn sync_pending_user_message(&mut self, item: TranscriptItem) {
+        if let Some(message_id) = item.message_id.as_deref() {
+            if let Some(index) = self
+                .session
+                .transcript
+                .iter()
+                .position(|existing| existing.message_id.as_deref() == Some(message_id))
+            {
+                self.session.selected_message = Some(index);
+                return;
+            }
+        }
+
+        self.push_transcript_item(item);
     }
 }
 
@@ -3175,6 +3268,16 @@ fn is_shell_command(prompt: &str) -> bool {
     trimmed.starts_with('/') || trimmed.starts_with(':')
 }
 
+fn parse_local_shell_command(prompt: &str) -> Option<&'static str> {
+    let trimmed = prompt.trim();
+    let command = trimmed.strip_prefix('/').or_else(|| trimmed.strip_prefix(':'))?;
+    let mut parts = command.split_whitespace();
+    match (parts.next(), parts.next(), parts.next()) {
+        (Some("session"), Some("reroll"), None) => Some("session reroll"),
+        _ => None,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
@@ -3184,8 +3287,9 @@ mod tests {
     use super::{
         AppBootstrap, BranchItem, CharacterEntry, CharacterListState, ContextDryRunPreview,
         ContextPreview, DraftCheckpoint, DraftState, FocusTarget, GenerationPoll, InspectorFocus,
-        RecallBrowser, RuntimeCancellation, RuntimeCommand, RuntimeContextRefresh, RuntimeFailure,
-        RuntimePhase, RuntimeProgress, RuntimeSendReceipt, ScreenState, SessionContext,
+        RecallBrowser, RuntimeCancellation, RuntimeCommand, RuntimeCompletion,
+        RuntimeContextRefresh, RuntimeFailure, RuntimePhase, RuntimeProgress, RuntimeSendReceipt,
+        ScreenState, SessionContext,
         SessionListEntry, SessionMetadata, SessionStats, ShellState, TranscriptItem,
     };
     use crate::input::{InputMode, KeyAction};
@@ -3444,6 +3548,7 @@ mod tests {
             user_message: TranscriptItem::new("user", "hello"),
             context_preview: None,
             context_dry_run: None,
+            refresh: None,
         });
 
         assert_eq!(
@@ -3479,6 +3584,7 @@ mod tests {
             user_message: TranscriptItem::new("user", "inspect me"),
             context_preview: None,
             context_dry_run: None,
+            refresh: None,
         });
         assert_eq!(app.inspector.focus, InspectorFocus::Message);
 
@@ -3624,6 +3730,7 @@ mod tests {
             user_message: TranscriptItem::new("user", "stream this"),
             context_preview: None,
             context_dry_run: None,
+            refresh: None,
         });
 
         assert!(app.session.runtime.partial_content().is_none());
@@ -3668,6 +3775,7 @@ mod tests {
             user_message: TranscriptItem::new("user", "will fail"),
             context_preview: None,
             context_dry_run: None,
+            refresh: None,
         });
 
         app.apply_runtime_failure(RuntimeFailure {
@@ -3762,6 +3870,7 @@ mod tests {
             request_id: "r1".into(),
             assistant_message: TranscriptItem::new("assistant", "done"),
             session_title: None,
+            refresh: None,
         };
         let poll = GenerationPoll::Completed(completion.clone());
         assert_eq!(poll, GenerationPoll::Completed(completion));
@@ -3799,6 +3908,7 @@ mod tests {
             request_id: "r1".into(),
             assistant_message: TranscriptItem::new("assistant", "done"),
             session_title: Some("Observatory Intake".into()),
+            refresh: None,
         });
 
         assert_eq!(state.session.context.title, "Observatory Intake");
@@ -3809,6 +3919,101 @@ mod tests {
                 .last()
                 .map(|item| item.content.as_str()),
             Some("done")
+        );
+    }
+
+    #[test]
+    fn apply_send_receipt_does_not_duplicate_existing_reroll_parent_prompt() {
+        let mut state = ShellState::new(session_context());
+        state.hydrate(AppBootstrap {
+            transcript: vec![
+                TranscriptItem::persisted("user-1", "user", "same prompt", false),
+                TranscriptItem::persisted("assistant-1", "assistant", "old reply", false),
+            ],
+            branches: vec![BranchItem::new("branch-a", "main", true)],
+            status_line: None,
+            draft: None,
+            screen: None,
+            session_metadata: None,
+            session_stats: None,
+            context_preview: None,
+            context_dry_run: None,
+            recall_browser: None,
+            active_launch_plan: None,
+        });
+
+        state.apply_send_receipt(RuntimeSendReceipt {
+            request_id: "reroll-1".into(),
+            user_message: TranscriptItem::persisted("user-1", "user", "same prompt", false),
+            context_preview: None,
+            context_dry_run: None,
+            refresh: None,
+        });
+
+        assert_eq!(state.session.transcript.len(), 2);
+        assert!(matches!(
+            state.session.runtime,
+            RuntimePhase::Generating { ref prompt, .. } if prompt == "same prompt"
+        ));
+    }
+
+    #[test]
+    fn submit_draft_executes_local_session_reroll_command() {
+        let mut state = ShellState::new(session_context());
+        state.enter_conversation();
+        state.hydrate(AppBootstrap {
+            transcript: vec![
+                TranscriptItem::persisted("user-1", "user", "same prompt", false),
+                TranscriptItem::persisted("assistant-1", "assistant", "old reply", false),
+            ],
+            branches: vec![BranchItem::new("branch-a", "main", true)],
+            status_line: None,
+            draft: None,
+            screen: None,
+            session_metadata: None,
+            session_stats: None,
+            context_preview: None,
+            context_dry_run: None,
+            recall_browser: None,
+            active_launch_plan: None,
+        });
+        state.session.selected_message = Some(1);
+        state.replace_draft(DraftState::with_text("/session reroll"));
+
+        state.submit_draft();
+
+        assert_eq!(
+            state.take_runtime_commands(),
+            vec![RuntimeCommand::RerollMessage {
+                message_id: "assistant-1".into()
+            }]
+        );
+        assert_eq!(state.draft.text, "");
+        assert_eq!(state.status_line.as_deref(), Some("Rerolling reply…"));
+    }
+
+    #[test]
+    fn apply_runtime_completion_uses_refresh_when_present() {
+        let mut state = ShellState::new(session_context());
+        state.apply_runtime_completion(RuntimeCompletion {
+            request_id: "r2".into(),
+            assistant_message: TranscriptItem::new("assistant", "ignored"),
+            session_title: None,
+            refresh: Some(RuntimeContextRefresh {
+                status_line: Some("Rerolled reply on new branch".into()),
+                transcript: Some(vec![
+                    TranscriptItem::persisted("user-1", "user", "same prompt", false),
+                    TranscriptItem::persisted("assistant-2", "assistant", "new reply", false),
+                ]),
+                ..RuntimeContextRefresh::default()
+            }),
+        });
+
+        assert_eq!(state.status_line.as_deref(), Some("Rerolled reply on new branch"));
+        assert_eq!(state.session.transcript.len(), 2);
+        assert_eq!(
+            state.session.transcript.last().map(|item| item.content.as_str()),
+            Some("new reply")
         );
     }
 
