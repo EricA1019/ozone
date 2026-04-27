@@ -69,6 +69,7 @@ struct PendingGeneration {
 }
 
 #[derive(Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 enum PendingCompletion {
     Standard,
     Reroll(PendingReroll),
@@ -749,7 +750,7 @@ impl Phase1dRuntime {
             .map_err(|error| error.to_string())?;
         let retrieved_memories =
             HybridSearchService::new(&self.repo, &self.inference.config().memory)
-                .context_retrieval(&context.session_id, &transcript, &pinned_memories, 3)?;
+                .context_retrieval(&context.session_id, transcript, &pinned_memories, 3)?;
         self.context_bridge.build_from_transcript(
             transcript,
             &pinned_memories,
@@ -802,7 +803,7 @@ impl Phase1dRuntime {
             .map_err(|error| error.to_string())?;
         let retrieved_memories =
             HybridSearchService::new(&self.repo, &self.inference.config().memory)
-                .context_retrieval(&context.session_id, &transcript, &pinned_memories, 3)?;
+                .context_retrieval(&context.session_id, transcript, &pinned_memories, 3)?;
         self.context_bridge.dry_run_from_transcript(
             transcript,
             &pinned_memories,

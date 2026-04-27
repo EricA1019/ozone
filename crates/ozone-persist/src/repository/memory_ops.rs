@@ -258,6 +258,7 @@ impl SqliteRepository {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn insert_pinned_memory_artifact_in_tx(
     tx: &Transaction<'_>,
     session_id: &SessionId,

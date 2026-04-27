@@ -1482,6 +1482,7 @@ pub struct RuntimeFailure {
 /// tell the TUI shell whether generation is still in progress, completed, or
 /// failed — replacing the fixed-delay timer approach.
 #[derive(Debug, Clone, PartialEq, Eq)]
+#[allow(clippy::large_enum_variant)]
 pub enum GenerationPoll {
     /// Generation is still running. Optionally carries a partial-content update.
     Pending { partial: Option<RuntimeProgress> },
@@ -2356,7 +2357,7 @@ impl ShellState {
                 self.history.reset_navigation();
                 let count = self.normal_mode_count.unwrap_or(1) as isize;
                 self.normal_mode_count = None;
-                self.scroll_conversation(layout, count * -1);
+                self.scroll_conversation(layout, -count);
             }
             KeyAction::ScrollConversationDown => {
                 self.focus = FocusTarget::Transcript;
@@ -2918,12 +2919,10 @@ impl ShellState {
             }
             KeyAction::VisualYank => {
                 // Yank (copy) selected text to clipboard
-                // For now, just copy the current draft text
-                if let Some(ref text) = self.draft.text.is_empty().then_some(&self.draft.text) {
-                    if !text.is_empty() {
-                        // TODO: Implement actual clipboard integration
-                        self.status_line = Some(format!("Yanked {} chars", text.chars().count()));
-                    }
+                if !self.draft.text.is_empty() {
+                    // TODO: Implement actual clipboard integration
+                    self.status_line =
+                        Some(format!("Yanked {} chars", self.draft.text.chars().count()));
                 }
                 self.input_mode = InputMode::Normal;
             }
