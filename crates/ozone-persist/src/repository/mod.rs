@@ -2432,7 +2432,7 @@ mod tests {
         }
     }
 
-    fn test_repo(sandbox: &TestSandbox, initial_time: i64) -> (SqliteRepository, Arc<AtomicI64>) {
+    pub(super) fn test_repo(sandbox: &TestSandbox, initial_time: i64) -> (SqliteRepository, Arc<AtomicI64>) {
         let clock = Arc::new(AtomicI64::new(initial_time));
         let clock_for_repo = Arc::clone(&clock);
         let repo = SqliteRepository::with_clock(
@@ -2442,12 +2442,12 @@ mod tests {
         (repo, clock)
     }
 
-    struct TestSandbox {
+    pub(super) struct TestSandbox {
         root: PathBuf,
     }
 
     impl TestSandbox {
-        fn new(prefix: &str) -> Self {
+        pub(super) fn new(prefix: &str) -> Self {
             let root = Path::new(env!("CARGO_MANIFEST_DIR"))
                 .join("target")
                 .join("ozone-persist-tests")

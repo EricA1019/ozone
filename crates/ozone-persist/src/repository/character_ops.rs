@@ -152,6 +152,33 @@ impl SqliteRepository {
         Ok(result)
     }
 
+    pub fn get_character_by_name(&self, name: &str) -> Result<Option<StoredCharacter>> {
+        let conn = self.ensure_global_connection()?;
+        let result = conn
+            .query_row(
+                "SELECT card_id, name, description, system_prompt, personality, scenario, greeting, example_dialogue, created_at, updated_at
+                 FROM character_cards WHERE name = ?1",
+                params![name],
+                |row| {
+                    Ok(StoredCharacter {
+                        card_id: row.get(0)?,
+                        name: row.get(1)?,
+                        description: row.get(2)?,
+                        system_prompt: row.get(3)?,
+                        personality: row.get(4)?,
+                        scenario: row.get(5)?,
+                        greeting: row.get(6)?,
+                        example_dialogue: row.get(7)?,
+                        created_at: row.get(8)?,
+                        updated_at: row.get(9)?,
+                    })
+                },
+            )
+            .optional()?;
+
+        Ok(result)
+    }
+
     pub fn delete_character(&self, card_id: &str) -> Result<bool> {
         let conn = self.ensure_global_connection()?;
         let affected = conn.execute(
@@ -228,5 +255,35 @@ impl SqliteRepository {
             created_at,
             updated_at: now,
         })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+
+    #[test]
+    fn get_character_by_name_returns_none_when_not_found() {
+        let sandbox = super::super::tests::TestSandbox::new("get-character-by-name-not-found");
+        let (repo, _) = super::super::tests::test_repo(&sandbox, 1_725_647_200_000);
+        let result = repo
+            .get_character_by_name("NonExistent")
+            .expect("query should succeed");
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn get_character_by_name_returns_character_when_found() {
+        let sandbox = super::super::tests::TestSandbox::new("get-character-by-name-found");
+        let (repo, _) = super::super::tests::test_repo(&sandbox, 1_725_647_200_000);
+        let created = repo
+            .create_character("Alice", "A clever person", "Be helpful")
+            .expect("create should succeed");
+        let result = repo
+            .get_character_by_name("Alice")
+            .expect("query should succeed");
+        assert!(result.is_some());
+        let character = result.unwrap();
+        assert_eq!(character.name, "Alice");
+        assert_eq!(character.card_id, created.card_id);
     }
 }
