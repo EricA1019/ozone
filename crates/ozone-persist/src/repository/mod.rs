@@ -1247,7 +1247,7 @@ mod tests {
         assert_eq!(note.source_message_id, None);
         assert_eq!(note.snapshot_version, 0);
 
-        let listed = repo.list_pinned_memories(&session.session_id).unwrap();
+        let listed = repo.list_note_memories(&session.session_id).unwrap();
         assert_eq!(listed.len(), 1);
         assert_eq!(
             listed[0].record.content.text,
@@ -1274,8 +1274,7 @@ mod tests {
                 },
             )
             .unwrap();
-        assert_eq!(stored.0, "pinned_memory");
-        assert!(stored.1.contains("\"kind\":\"pinned_memory\""));
+        assert_eq!(stored.0, "note_memory");
         assert!(stored.1.contains("Pack the brass lantern"));
         assert_eq!(stored.2, None);
         assert_eq!(stored.3, None);
