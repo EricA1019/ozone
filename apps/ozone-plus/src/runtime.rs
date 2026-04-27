@@ -324,13 +324,81 @@ impl Phase1dRuntime {
             .get_session(&session_id)
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("session {session_id} was not found"))?;
+        let greeting = self.seed_greeting_if_present(&session)?;
         let ctx = TuiSessionContext::new(session_id.clone(), session.name.clone());
-        let bootstrap = self.load_bootstrap(&ctx)?;
+        let mut bootstrap = self.load_bootstrap(&ctx)?;
+        // Inject greeting into session metadata for the TUI to display
+        if let Some(ref mut metadata) = bootstrap.session_metadata {
+            metadata.greeting = greeting.clone();
+        }
         Ok(TuiRuntimeSessionLoad {
             session_id: session_id.to_string(),
             session_name: session.name,
             bootstrap,
         })
+    }
+
+    /// Seeds the character greeting as the first assistant message if:
+    /// - The session has a character name
+    /// - The character has a non-empty greeting field
+    /// - The transcript is currently empty (no prior messages)
+    ///
+    /// This is called every time a session is loaded. For sessions that existed
+    /// before this feature was added, the greeting will be injected on first load.
+    /// Sessions loaded multiple times are safe — if the transcript is non-empty,
+    /// the greeting has already been injected.
+    fn seed_greeting_if_present(
+        &mut self,
+        session: &ozone_persist::SessionRecord,
+    ) -> Result<Option<String>, String> {
+        let character_name = match session.character_name.as_deref() {
+            Some(name) if !name.is_empty() => name,
+            _ => return Ok(None),
+        };
+
+        let character = self
+            .repo
+            .get_character_by_name(character_name)
+            .map_err(|e| e.to_string())?
+            .ok_or_else(|| format!("character '{character_name}' not found"))?;
+
+        let greeting_text = character.greeting.trim();
+        if greeting_text.is_empty() {
+            return Ok(None);
+        }
+
+        // Check if the transcript is empty — only inject if this is a fresh session
+        // (or a session that existed before greetings were implemented)
+        let messages = self
+            .engine
+            .store()
+            .get_active_branch_transcript(&self.session_id)
+            .map_err(|e| e.to_string())?;
+        if !messages.is_empty() {
+            // Greeting already injected (or session had messages before character was set)
+            return Ok(None);
+        }
+
+        let message_id = crate::generate_message_id()?;
+        let now = crate::now_timestamp_ms();
+        let mut greeting_message = ConversationMessage::new(
+            self.session_id.clone(),
+            message_id,
+            "character",
+            greeting_text,
+            now,
+        );
+        greeting_message.author_name = Some(character_name.to_owned());
+
+        let active_branch = self.active_branch(&self.session_id)?;
+        self.engine
+            .process(EngineCommand::CommitMessage(CommitMessageCommand {
+                branch_id: active_branch.branch.branch_id.clone(),
+                message: greeting_message,
+            }))
+            .map_err(|e| format!("failed to inject greeting: {e}"))?;
+
+        Ok(Some(greeting_text.to_owned()))
     }
 
     fn load_bootstrap(&mut self, context: &TuiSessionContext) -> Result<TuiBootstrap, String> {
@@ -429,6 +497,7 @@ impl Phase1dRuntime {
                 character_name: session.character_name,
                 tags: session.tags,
                 pinned_count: None,
+                greeting: None,
             },
             stats: TuiSessionStats {
                 message_count,

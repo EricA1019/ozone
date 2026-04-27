@@ -1218,6 +1218,9 @@ pub struct SessionMetadata {
     pub character_name: Option<String>,
     pub tags: Vec<String>,
     pub pinned_count: Option<usize>,
+    /// The character's greeting message, if one is set and the session transcript is empty.
+    /// This field is populated at session load time so the TUI can display it.
+    pub greeting: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -3815,6 +3818,7 @@ mod tests {
             session_metadata: Some(SessionMetadata {
                 character_name: Some("Beatrice".into()),
                 tags: vec!["story".into()],
+                greeting: None,
             }),
             session_stats: Some(SessionStats {
                 message_count: 1,
@@ -4135,6 +4139,7 @@ mod tests {
         state.session_metadata = Some(SessionMetadata {
             character_name: Some("Stale".into()),
             tags: vec!["stale".into()],
+            greeting: None,
         });
         state.session_stats = Some(SessionStats {
             message_count: 1,

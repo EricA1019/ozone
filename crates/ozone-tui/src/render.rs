@@ -3549,6 +3549,7 @@ mod tests {
             session_metadata: Some(crate::app::SessionMetadata {
                 character_name: Some("Beatrice".into()),
                 tags: vec!["story".into()],
+                greeting: None,
             }),
             session_stats: Some(crate::app::SessionStats {
                 message_count: 2,
