@@ -579,6 +579,7 @@ impl SessionRuntime for MockRuntime {
             session_metadata: Some(SessionMetadata {
                 character_name: character_name.clone(),
                 tags: Vec::new(),
+                pinned_count: None,
             }),
             ..AppBootstrap::default()
         };

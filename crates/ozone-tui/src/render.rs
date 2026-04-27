@@ -458,9 +458,15 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
             .session_stats
             .as_ref()
             .map(|stats| {
+                let pinned_suffix = state
+                    .session_metadata
+                    .as_ref()
+                    .and_then(|m| m.pinned_count)
+                    .map(|c| format!(" · {} pinned", c))
+                    .unwrap_or_default();
                 format!(
-                    "{} messages · {} branches · {} bookmarks",
-                    stats.message_count, stats.branch_count, stats.bookmark_count
+                    "{} messages · {} branches · {} bookmarks{}",
+                    stats.message_count, stats.branch_count, stats.bookmark_count, pinned_suffix
                 )
             })
             .unwrap_or_else(|| "session stats pending".into()),
@@ -3282,9 +3288,15 @@ fn inspector_lines(state: &ShellState, indicators: &ShellIndicators) -> Vec<Stri
             .session_stats
             .as_ref()
             .map(|stats| {
+                let pinned_suffix = state
+                    .session_metadata
+                    .as_ref()
+                    .and_then(|m| m.pinned_count)
+                    .map(|c| format!(" · {} pinned", c))
+                    .unwrap_or_default();
                 format!(
-                    "stats {} messages · {} branches · {} bookmarks",
-                    stats.message_count, stats.branch_count, stats.bookmark_count
+                    "stats {} messages · {} branches · {} bookmarks{}",
+                    stats.message_count, stats.branch_count, stats.bookmark_count, pinned_suffix
                 )
             })
             .unwrap_or_else(|| "stats pending".into()),

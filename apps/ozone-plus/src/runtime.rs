@@ -428,6 +428,7 @@ impl Phase1dRuntime {
             metadata: TuiSessionMetadata {
                 character_name: session.character_name,
                 tags: session.tags,
+                pinned_count: None,
             },
             stats: TuiSessionStats {
                 message_count,

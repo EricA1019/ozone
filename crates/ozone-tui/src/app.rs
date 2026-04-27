@@ -1215,6 +1215,7 @@ pub struct RecallBrowser {
 pub struct SessionMetadata {
     pub character_name: Option<String>,
     pub tags: Vec<String>,
+    pub pinned_count: Option<usize>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
