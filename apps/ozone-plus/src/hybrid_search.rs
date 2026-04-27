@@ -534,7 +534,7 @@ impl<'a> HybridSearchService<'a> {
             .into_iter()
             .map(|message| (message.message_id.as_str().to_owned(), message))
             .collect();
-        let memories = self
+        let mut memories: BTreeMap<String, PinnedMemoryView> = self
             .repo
             .list_pinned_memories(session_id)
             .map_err(|error| error.to_string())?
@@ -548,6 +548,24 @@ impl<'a> HybridSearchService<'a> {
                 )
             })
             .collect();
+        // Also load note memories so they can be downranked when inactive
+        memories.extend(
+            self.repo
+                .list_note_memories(session_id)
+                .map_err(|error| error.to_string())?
+                .into_iter()
+                .map(|memory| {
+                    (
+                        memory_embedding_artifact_id(
+                            session_id,
+                            memory.record.artifact_id.as_str(),
+                        )
+                        .as_str()
+                        .to_owned(),
+                        memory,
+                    )
+                }),
+        );
         let state = CurrentSessionState {
             session,
             messages,
