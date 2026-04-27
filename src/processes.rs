@@ -558,25 +558,6 @@ fn describe_exit_status(status: std::process::ExitStatus) -> String {
     }
 }
 
-/// Build llama-server CLI args from a profiled launch plan.
-pub fn build_llamacpp_args(
-    gpu_layers: i32,
-    context_size: u32,
-    threads: Option<u32>,
-) -> Vec<String> {
-    let mut args = vec![
-        "--n-gpu-layers".into(),
-        gpu_layers.to_string(),
-        "--ctx-size".into(),
-        context_size.to_string(),
-    ];
-    if let Some(t) = threads {
-        args.push("--threads".into());
-        args.push(t.to_string());
-    }
-    args
-}
-
 pub fn open_browser_app(url: &str) {
     let candidates = [
         "chromium-browser",

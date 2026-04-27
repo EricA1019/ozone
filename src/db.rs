@@ -26,6 +26,7 @@ pub struct BenchmarkRow {
     pub ram_total_mb: u32,
     pub timestamp: String,
     pub notes: String,
+    pub launch_profile_name: Option<String>,
 }
 
 /// Auto-generated preset from benchmark data.
@@ -77,7 +78,8 @@ fn init_tables(conn: &Connection) -> Result<()> {
             gpu_vram_mb           INTEGER,
             ram_total_mb          INTEGER,
             timestamp             TEXT,
-            notes                 TEXT
+            notes                 TEXT,
+            launch_profile_name   TEXT
         );
 
         CREATE TABLE IF NOT EXISTS profiles (
@@ -91,8 +93,20 @@ fn init_tables(conn: &Connection) -> Result<()> {
             vram_mb       INTEGER,
             source        TEXT,
             created_at    TEXT
-        );",
+         );",
     )?;
+    if let Err(error) = conn.execute(
+        "ALTER TABLE benchmarks ADD COLUMN launch_profile_name TEXT",
+        [],
+    ) {
+        let duplicate_column = error
+            .to_string()
+            .to_lowercase()
+            .contains("duplicate column name");
+        if !duplicate_column {
+            return Err(error.into());
+        }
+    }
     Ok(())
 }
 
@@ -103,8 +117,8 @@ pub fn insert_benchmark(conn: &Connection, row: &BenchmarkRow) -> Result<i64> {
             model_name, model_size_gb, gpu_layers, context_size, quant_kv, threads,
             tokens_per_sec, time_to_first_token_ms, vram_peak_mb, ram_peak_mb,
             total_tokens, total_time_ms, status, gpu_name, gpu_vram_mb, ram_total_mb,
-            timestamp, notes
-        ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18)",
+            timestamp, notes, launch_profile_name
+        ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
         rusqlite::params![
             row.model_name,
             row.model_size_gb,
@@ -124,6 +138,7 @@ pub fn insert_benchmark(conn: &Connection, row: &BenchmarkRow) -> Result<i64> {
             row.ram_total_mb,
             row.timestamp,
             row.notes,
+            row.launch_profile_name,
         ],
     )?;
     Ok(conn.last_insert_rowid())
@@ -157,7 +172,7 @@ pub fn get_benchmarks(conn: &Connection, model_name: &str) -> Result<Vec<Benchma
         "SELECT id, model_name, model_size_gb, gpu_layers, context_size, quant_kv, threads,
                 tokens_per_sec, time_to_first_token_ms, vram_peak_mb, ram_peak_mb,
                 total_tokens, total_time_ms, status, gpu_name, gpu_vram_mb, ram_total_mb,
-                timestamp, notes
+                timestamp, notes, launch_profile_name
          FROM benchmarks WHERE model_name = ?1 ORDER BY timestamp DESC",
     )?;
     let rows = stmt.query_map([model_name], |r| {
@@ -181,6 +196,7 @@ pub fn get_benchmarks(conn: &Connection, model_name: &str) -> Result<Vec<Benchma
             ram_total_mb: r.get(16)?,
             timestamp: r.get(17)?,
             notes: r.get(18)?,
+            launch_profile_name: r.get(19)?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -192,7 +208,7 @@ pub fn get_all_benchmarks(conn: &Connection) -> Result<Vec<BenchmarkRow>> {
         "SELECT id, model_name, model_size_gb, gpu_layers, context_size, quant_kv, threads,
                 tokens_per_sec, time_to_first_token_ms, vram_peak_mb, ram_peak_mb,
                 total_tokens, total_time_ms, status, gpu_name, gpu_vram_mb, ram_total_mb,
-                timestamp, notes
+                timestamp, notes, launch_profile_name
          FROM benchmarks ORDER BY timestamp DESC",
     )?;
     let rows = stmt.query_map([], |r| {
@@ -216,6 +232,7 @@ pub fn get_all_benchmarks(conn: &Connection) -> Result<Vec<BenchmarkRow>> {
             ram_total_mb: r.get(16)?,
             timestamp: r.get(17)?,
             notes: r.get(18)?,
+            launch_profile_name: r.get(19)?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -249,4 +266,44 @@ pub fn get_profiles(conn: &Connection, model_name: &str) -> Result<Vec<ProfileRo
 pub fn clear_profiles(conn: &Connection, model_name: &str) -> Result<()> {
     conn.execute("DELETE FROM profiles WHERE model_name = ?1", [model_name])?;
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn benchmark_round_trip_preserves_launch_profile_name() {
+        let conn = Connection::open_in_memory().expect("in-memory sqlite");
+        init_tables(&conn).expect("init tables");
+
+        let row = BenchmarkRow {
+            id: None,
+            model_name: "sample.gguf".into(),
+            model_size_gb: 7.0,
+            gpu_layers: 20,
+            context_size: 16384,
+            quant_kv: 1,
+            threads: 8,
+            tokens_per_sec: 12.5,
+            time_to_first_token_ms: 420,
+            vram_peak_mb: 7800,
+            ram_peak_mb: 6200,
+            total_tokens: 100,
+            total_time_ms: 8000,
+            status: "ok".into(),
+            gpu_name: "Test GPU".into(),
+            gpu_vram_mb: 12000,
+            ram_total_mb: 32000,
+            timestamp: "2026-04-21T00:00:00+00:00".into(),
+            notes: String::new(),
+            launch_profile_name: Some("custom-1".into()),
+        };
+
+        insert_benchmark(&conn, &row).expect("insert benchmark");
+        let rows = get_benchmarks(&conn, "sample.gguf").expect("get benchmarks");
+
+        assert_eq!(rows.len(), 1);
+        assert_eq!(rows[0].launch_profile_name.as_deref(), Some("custom-1"));
+    }
 }

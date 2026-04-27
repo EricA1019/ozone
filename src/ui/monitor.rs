@@ -38,11 +38,12 @@ fn render_header(f: &mut Frame, area: Rect, _app: &App) {
     let now = Local::now().format("%H:%M:%S");
     let title = Line::from(vec![
         Span::styled(
-            format!(" {} Ozone Monitor ", crate::theme::HEX_CURSOR),
+            format!(" {} Ozone ", crate::theme::HEX_CURSOR),
             style_bold_lime(),
         ),
-        Span::styled("—", style_gray()),
-        Span::styled(" live ", style_green()),
+        Span::styled("Monitor", style_bold_cyan()),
+        Span::styled("  ·  ", style_muted()),
+        Span::styled("live", style_green()),
         Span::styled(format!("  {now}"), style_gray()),
     ]);
     let block = Block::default()
@@ -231,12 +232,12 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_hints(f: &mut Frame, area: Rect) {
     let hints = Paragraph::new(Line::from(vec![
-        Span::styled("  Esc/r", style_cyan()),
-        Span::styled(" back  ", style_gray()),
-        Span::styled("s", style_cyan()),
-        Span::styled(" stop all  ", style_gray()),
-        Span::styled("q", style_cyan()),
-        Span::styled(" exit", style_gray()),
+        Span::styled("  Esc/r", style_hint_key()),
+        Span::styled(" back  ", style_muted()),
+        Span::styled("s", style_hint_key()),
+        Span::styled(" stop all  ", style_muted()),
+        Span::styled("q", style_hint_key()),
+        Span::styled(" exit", style_muted()),
     ]));
     f.render_widget(hints, area);
 }

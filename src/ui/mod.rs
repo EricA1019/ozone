@@ -1,10 +1,14 @@
-use std::io;
-use std::time::{Duration, Instant};
+#[cfg(feature = "profiling-ui")]
+use std::collections::BTreeMap;
+use std::{
+    io,
+    time::{Duration, Instant},
+};
 
 use crate::catalog::CatalogRecord;
 use crate::hardware::HardwareProfile;
 use crate::planner::LaunchPlan;
-use crate::prefs::Preferences;
+use crate::prefs::{ModelLaunchOverride, Preferences, SavedLaunchProfile};
 use crate::processes::{DiskSnapshot, ServiceStatus};
 #[cfg(feature = "profiling-ui")]
 use crate::profiling::{
@@ -13,16 +17,22 @@ use crate::profiling::{
 };
 use anyhow::Result;
 use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-use ratatui::{backend::CrosstermBackend, widgets::Clear, Terminal};
+use ratatui::{
+    backend::CrosstermBackend,
+    style::{Color, Modifier, Style},
+    widgets::Clear,
+    Terminal,
+};
 use serde::{Deserialize, Serialize};
 #[cfg(feature = "profiling-ui")]
 use tokio::sync::mpsc::{error::TryRecvError, UnboundedReceiver};
 #[cfg(feature = "profiling-ui")]
 use tokio_util::sync::CancellationToken;
+use tui_textarea::TextArea;
 
 pub mod launcher;
 pub mod monitor;
@@ -37,6 +47,7 @@ pub enum Screen {
     Launcher,
     ExitConfirm,
     ModelPicker,
+    ConfigureHub,
     Confirm,
     FrontendChoice,
     Launching,
@@ -57,8 +68,31 @@ pub enum Screen {
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModelPickerMode {
     Launch,
+    Configure,
     #[cfg(feature = "profiling-ui")]
     Profile,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum LauncherActionId {
+    Launch,
+    ConfigureModel,
+    #[cfg(feature = "profiling-ui")]
+    ProfileModel,
+    OpenOzonePlus,
+    OpenOzonePlusSideBySide,
+    Settings,
+    ClearGpu,
+    Monitor,
+    Exit,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LauncherAction {
+    pub id: LauncherActionId,
+    pub label: String,
+    pub description: String,
+    pub command: &'static str,
 }
 
 /// Which frontend the user wants to launch (or `--frontend` CLI bypass).
@@ -88,6 +122,12 @@ pub struct App {
     pub selected_action: usize,
     pub model_picker_mode: ModelPickerMode,
     pub current_plan: Option<LaunchPlan>,
+    pub configure_recommended_plan: Option<LaunchPlan>,
+    pub configure_field_index: usize,
+    pub configure_profile_index: usize,
+    pub configure_saved_profiles: Vec<SavedLaunchProfile>,
+    #[cfg(feature = "profiling-ui")]
+    pub configure_profile_reports: BTreeMap<String, profiling::SavedProfileReport>,
     pub prefs: Preferences,
     pub services: ServiceStatus,
     pub splash_pulse: bool,
@@ -122,6 +162,9 @@ pub struct App {
     pub settings_section: usize,        // 0=backend, 1=frontend
     pub settings_backend_index: usize,  // 0=KoboldCpp, 1=LlamaCpp, 2=Ollama
     pub settings_frontend_index: usize, // 0=SillyTavern, 1=OzonePlus
+    pub command_overlay_open: bool,
+    pub command_overlay: TextArea<'static>,
+    pub command_overlay_selected: usize,
     // Profiling flow state (gated — only present with profiling-ui feature)
     #[cfg(feature = "profiling-ui")]
     pub profiling_advisory: Option<ProfilingAdvisory>,
@@ -162,6 +205,10 @@ impl App {
             selected_action: 0,
             model_picker_mode: ModelPickerMode::Launch,
             current_plan: None,
+            configure_recommended_plan: None,
+            configure_field_index: 0,
+            configure_profile_index: 0,
+            configure_saved_profiles: Vec::new(),
             prefs,
             services: ServiceStatus {
                 kobold_running: false,
@@ -196,6 +243,9 @@ impl App {
             settings_section: 0,
             settings_backend_index: 0,
             settings_frontend_index: 0,
+            command_overlay_open: false,
+            command_overlay: new_command_overlay(),
+            command_overlay_selected: 0,
             tier_picker: tier_picker::TierPickerState::default(),
         };
         // Full mode (profiling-ui feature enabled) — includes profiling fields.
@@ -208,6 +258,11 @@ impl App {
             selected_action: 0,
             model_picker_mode: ModelPickerMode::Launch,
             current_plan: None,
+            configure_recommended_plan: None,
+            configure_field_index: 0,
+            configure_profile_index: 0,
+            configure_saved_profiles: Vec::new(),
+            configure_profile_reports: BTreeMap::new(),
             prefs,
             services: ServiceStatus {
                 kobold_running: false,
@@ -242,6 +297,9 @@ impl App {
             settings_section: 0,
             settings_backend_index: 0,
             settings_frontend_index: 0,
+            command_overlay_open: false,
+            command_overlay: new_command_overlay(),
+            command_overlay_selected: 0,
             profiling_advisory: None,
             profiling_pending_action: None,
             profiling_progress_title: "Preparing".into(),
@@ -280,6 +338,16 @@ impl App {
         self.error_msg = Some(msg);
         self.status_msg = None;
         self.status_set_at = Some(Instant::now());
+    }
+
+    pub fn command_overlay_query(&self) -> String {
+        self.command_overlay
+            .lines()
+            .join(" ")
+            .trim()
+            .trim_start_matches('/')
+            .trim()
+            .to_string()
     }
 
     pub fn update_disk(&mut self) {
@@ -438,7 +506,11 @@ fn apply_catalog_refresh(app: &mut App, catalog: Vec<CatalogRecord>) {
     });
     if plan_missing {
         app.current_plan = None;
-        if matches!(app.screen, Screen::Confirm | Screen::FrontendChoice) {
+        app.configure_recommended_plan = None;
+        if matches!(
+            app.screen,
+            Screen::ConfigureHub | Screen::Confirm | Screen::FrontendChoice
+        ) {
             app.screen = Screen::ModelPicker;
             app.set_error("Selected model is no longer available.".into());
         }
@@ -461,6 +533,218 @@ fn queue_frontend_launch(app: &mut App) {
             app.screen = Screen::FrontendChoice;
         }
     }
+}
+
+fn new_command_overlay() -> TextArea<'static> {
+    let mut textarea = TextArea::default();
+    textarea.set_block(ratatui::widgets::Block::default());
+    textarea.set_cursor_style(
+        Style::default()
+            .fg(Color::Black)
+            .bg(crate::theme::LIME)
+            .add_modifier(Modifier::BOLD),
+    );
+    textarea.set_selection_style(Style::default().fg(Color::Black).bg(crate::theme::CYAN));
+    textarea.set_placeholder_text("Type a launcher command");
+    textarea.set_placeholder_style(crate::theme::style_muted());
+    textarea.set_style(crate::theme::style_cyan());
+    textarea.set_max_histories(64);
+    textarea.set_tab_length(0);
+    textarea
+}
+
+fn overlay_supported(screen: &Screen) -> bool {
+    matches!(
+        screen,
+        Screen::Launcher
+            | Screen::ModelPicker
+            | Screen::ConfigureHub
+            | Screen::Confirm
+            | Screen::Settings
+            | Screen::Monitor
+    )
+}
+
+fn open_command_overlay(app: &mut App) {
+    app.command_overlay_open = true;
+    app.command_overlay = new_command_overlay();
+    app.command_overlay_selected = 0;
+}
+
+fn close_command_overlay(app: &mut App) {
+    app.command_overlay_open = false;
+    app.command_overlay = new_command_overlay();
+    app.command_overlay_selected = 0;
+}
+
+fn sync_command_overlay_selection(app: &mut App) {
+    let count = launcher::filtered_launcher_actions(app).len();
+    if count == 0 {
+        app.command_overlay_selected = 0;
+    } else if app.command_overlay_selected >= count {
+        app.command_overlay_selected = count - 1;
+    }
+}
+
+fn normalize_command_overlay(app: &mut App) {
+    let normalized = app.command_overlay_query();
+    app.command_overlay = new_command_overlay();
+    if !normalized.is_empty() {
+        app.command_overlay.insert_str(normalized);
+    }
+    app.command_overlay_selected = 0;
+}
+
+enum LauncherActionOutcome {
+    Continue,
+    Exit,
+}
+
+async fn run_launcher_action(
+    app: &mut App,
+    action: LauncherActionId,
+    last_refresh: &mut Instant,
+) -> LauncherActionOutcome {
+    match action {
+        LauncherActionId::Launch => match app.prefs.preferred_backend {
+            None => {
+                app.set_error("Configure backend in Settings first".into());
+            }
+            Some(BackendMode::KoboldCpp) | Some(BackendMode::LlamaCpp) => {
+                if !app.catalog.is_empty() {
+                    #[cfg(feature = "profiling-ui")]
+                    app.reset_profile_flow();
+                    app.model_picker_mode = ModelPickerMode::Launch;
+                    app.screen = Screen::ModelPicker;
+                }
+            }
+            Some(BackendMode::Ollama) => {
+                if crate::processes::is_url_ready("http://127.0.0.1:11434/api/tags").await {
+                    app.set_status("Ollama backend ready.".into());
+                    queue_frontend_launch(app);
+                } else {
+                    app.set_error("Ollama not running on :11434".into());
+                }
+            }
+        },
+        LauncherActionId::ConfigureModel => {
+            if !app.catalog.is_empty() {
+                #[cfg(feature = "profiling-ui")]
+                app.reset_profile_flow();
+                app.model_picker_mode = ModelPickerMode::Configure;
+                app.screen = Screen::ModelPicker;
+            }
+        }
+        #[cfg(feature = "profiling-ui")]
+        LauncherActionId::ProfileModel => {
+            if !app.catalog.is_empty() {
+                app.reset_profile_flow();
+                app.model_picker_mode = ModelPickerMode::Profile;
+                app.screen = Screen::ModelPicker;
+            }
+        }
+        LauncherActionId::OpenOzonePlus => {
+            if app.prefs.side_by_side_monitor {
+                let ozone_plus_bin = std::env::current_exe()
+                    .ok()
+                    .and_then(|p| p.parent().map(|dir| dir.join("ozone-plus")))
+                    .filter(|p| p.exists())
+                    .unwrap_or_else(|| std::path::PathBuf::from("ozone-plus"));
+                match spawn_in_terminal(&ozone_plus_bin, app.prefs.preferred_backend.as_ref()) {
+                    Ok(_child) => {
+                        app.screen = Screen::Monitor;
+                        app.set_status("ozone+ launched in new terminal window.".into());
+                    }
+                    Err(e) => {
+                        app.set_error(format!(
+                            "Side-by-side failed: {e}. Disable the pref or check your terminal."
+                        ));
+                    }
+                }
+            } else {
+                app.ozone_plus_handoff = true;
+                return LauncherActionOutcome::Exit;
+            }
+        }
+        LauncherActionId::OpenOzonePlusSideBySide => {
+            let ozone_plus_bin = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(|dir| dir.join("ozone-plus")))
+                .filter(|p| p.exists())
+                .unwrap_or_else(|| std::path::PathBuf::from("ozone-plus"));
+            match spawn_in_terminal(&ozone_plus_bin, app.prefs.preferred_backend.as_ref()) {
+                Ok(_child) => {
+                    app.prefs.side_by_side_monitor = true;
+                    let prefs_clone = app.prefs.clone();
+                    tokio::spawn(async move {
+                        let _ = crate::prefs::save_prefs(&prefs_clone).await;
+                    });
+                    app.screen = Screen::Monitor;
+                    app.set_status("ozone+ launched in new terminal window.".into());
+                }
+                Err(e) => {
+                    app.set_error(format!(
+                        "Side-by-side failed: {e}. Use 'Open ozone+' instead."
+                    ));
+                }
+            }
+        }
+        LauncherActionId::Settings => {
+            open_settings(app);
+        }
+        LauncherActionId::ClearGpu => {
+            let _ = crate::processes::clear_gpu_backends().await;
+            app.services = crate::processes::get_service_status().await;
+            *last_refresh = Instant::now();
+            app.set_status("GPU backends cleared.".into());
+        }
+        LauncherActionId::Monitor => {
+            app.screen = Screen::Monitor;
+            app.launch_start = Some(Instant::now());
+        }
+        LauncherActionId::Exit => open_exit_confirm(app),
+    }
+
+    LauncherActionOutcome::Continue
+}
+
+async fn handle_command_overlay_key(
+    app: &mut App,
+    key: KeyEvent,
+    last_refresh: &mut Instant,
+) -> Result<LauncherActionOutcome> {
+    match key.code {
+        KeyCode::Esc => {
+            close_command_overlay(app);
+        }
+        KeyCode::Up => {
+            if app.command_overlay_selected > 0 {
+                app.command_overlay_selected -= 1;
+            }
+        }
+        KeyCode::Down => {
+            let count = launcher::filtered_launcher_actions(app).len();
+            if app.command_overlay_selected + 1 < count {
+                app.command_overlay_selected += 1;
+            }
+        }
+        KeyCode::Enter => {
+            let selected = launcher::filtered_launcher_actions(app)
+                .get(app.command_overlay_selected)
+                .map(|action| action.id);
+            close_command_overlay(app);
+            if let Some(action) = selected {
+                return Ok(run_launcher_action(app, action, last_refresh).await);
+            }
+        }
+        _ => {
+            app.command_overlay.input(key);
+            normalize_command_overlay(app);
+            sync_command_overlay_selection(app);
+        }
+    }
+
+    Ok(LauncherActionOutcome::Continue)
 }
 
 fn sync_settings_from_prefs(app: &mut App) {
@@ -487,6 +771,9 @@ fn open_exit_confirm(app: &mut App) {
 }
 
 fn back_from_confirm(_app: &App) -> Screen {
+    if _app.configure_recommended_plan.is_some() {
+        return Screen::ConfigureHub;
+    }
     #[cfg(feature = "profiling-ui")]
     {
         let app = _app;
@@ -499,6 +786,282 @@ fn back_from_confirm(_app: &App) -> Screen {
         }
     }
     Screen::ModelPicker
+}
+
+fn build_effective_plan(
+    app: &App,
+    record: &CatalogRecord,
+    recommended: &LaunchPlan,
+) -> Option<LaunchPlan> {
+    app.hardware.as_ref().map(|hw| {
+        if let Some(profile_name) = app
+            .prefs
+            .default_saved_launch_profile_name_for(&record.model_name)
+        {
+            if let Some(saved_profile) = app
+                .prefs
+                .saved_launch_profile(&record.model_name, profile_name)
+            {
+                return crate::planner::apply_saved_profile(
+                    recommended,
+                    record,
+                    hw,
+                    saved_profile.context_size,
+                    saved_profile.gpu_layers,
+                    saved_profile.quant_kv,
+                    saved_profile.threads,
+                );
+            }
+        }
+        let override_state = app
+            .prefs
+            .launch_override_for(&record.model_name)
+            .unwrap_or_default();
+        crate::planner::apply_launch_override(recommended, record, hw, &override_state)
+    })
+}
+
+fn selected_saved_profile(app: &App) -> Option<SavedLaunchProfile> {
+    app.configure_saved_profiles
+        .get(app.configure_profile_index)
+        .cloned()
+}
+
+#[cfg(feature = "profiling-ui")]
+fn refresh_configure_profile_reports(app: &mut App, model_name: &str) {
+    let reports = profiling::saved_profile_reports(model_name, &app.configure_saved_profiles)
+        .unwrap_or_default();
+    app.configure_profile_reports = reports;
+}
+
+#[cfg(not(feature = "profiling-ui"))]
+fn refresh_configure_profile_reports(_app: &mut App, _model_name: &str) {}
+
+fn refresh_configure_profiles(app: &mut App, model_name: &str) {
+    let profiles = app.prefs.saved_launch_profiles_for(model_name);
+    app.configure_saved_profiles = profiles;
+    if app.configure_saved_profiles.is_empty() {
+        app.configure_profile_index = 0;
+    } else if let Some(default_name) = app.prefs.default_saved_launch_profile_name_for(model_name) {
+        app.configure_profile_index = app
+            .configure_saved_profiles
+            .iter()
+            .position(|profile| profile.profile_name == default_name)
+            .unwrap_or(0);
+    } else {
+        app.configure_profile_index = app
+            .configure_profile_index
+            .min(app.configure_saved_profiles.len().saturating_sub(1));
+    }
+    refresh_configure_profile_reports(app, model_name);
+}
+
+fn next_saved_profile_name(profiles: &[SavedLaunchProfile]) -> String {
+    let mut index = 1usize;
+    loop {
+        let candidate = format!("custom-{index}");
+        if profiles
+            .iter()
+            .all(|profile| profile.profile_name != candidate)
+        {
+            return candidate;
+        }
+        index += 1;
+    }
+}
+
+fn save_current_plan_as_profile(app: &mut App) -> Option<String> {
+    let plan = app.current_plan.clone()?;
+    let profile_name = next_saved_profile_name(&app.configure_saved_profiles);
+    app.prefs.upsert_saved_launch_profile(
+        plan.model_name.clone(),
+        SavedLaunchProfile {
+            profile_name: profile_name.clone(),
+            context_size: plan.context_size,
+            gpu_layers: plan.gpu_layers,
+            quant_kv: plan.quant_kv,
+            threads: plan.threads,
+        },
+    );
+    if app
+        .prefs
+        .default_saved_launch_profile_name_for(&plan.model_name)
+        .is_none()
+    {
+        app.prefs
+            .set_default_saved_launch_profile(plan.model_name.clone(), profile_name.clone());
+    }
+    refresh_configure_profiles(app, &plan.model_name);
+    app.configure_profile_index = app
+        .configure_saved_profiles
+        .iter()
+        .position(|profile| profile.profile_name == profile_name)
+        .unwrap_or(0);
+    Some(profile_name)
+}
+
+fn update_selected_profile_from_current_plan(app: &mut App) -> Option<String> {
+    let plan = app.current_plan.clone()?;
+    let selected = selected_saved_profile(app)?;
+    app.prefs.upsert_saved_launch_profile(
+        plan.model_name.clone(),
+        SavedLaunchProfile {
+            profile_name: selected.profile_name.clone(),
+            context_size: plan.context_size,
+            gpu_layers: plan.gpu_layers,
+            quant_kv: plan.quant_kv,
+            threads: plan.threads,
+        },
+    );
+    refresh_configure_profiles(app, &plan.model_name);
+    app.configure_profile_index = app
+        .configure_saved_profiles
+        .iter()
+        .position(|profile| profile.profile_name == selected.profile_name)
+        .unwrap_or(0);
+    Some(selected.profile_name)
+}
+
+fn apply_selected_saved_profile(app: &mut App) -> Option<String> {
+    let record = selected_record(app)?;
+    let recommended = app.configure_recommended_plan.clone()?;
+    let hw = app.hardware.as_ref()?;
+    let profile = selected_saved_profile(app)?;
+    app.current_plan = Some(crate::planner::apply_saved_profile(
+        &recommended,
+        &record,
+        hw,
+        profile.context_size,
+        profile.gpu_layers,
+        profile.quant_kv,
+        profile.threads,
+    ));
+    Some(profile.profile_name)
+}
+
+fn cycle_saved_profile(app: &mut App, direction: i32) {
+    if app.configure_saved_profiles.is_empty() {
+        return;
+    }
+    let len = app.configure_saved_profiles.len() as i32;
+    let current = app.configure_profile_index as i32;
+    app.configure_profile_index = (current + direction).rem_euclid(len) as usize;
+}
+
+fn set_selected_profile_default(app: &mut App) -> Option<String> {
+    let model_name = app.current_plan.as_ref()?.model_name.clone();
+    let profile = selected_saved_profile(app)?;
+    app.prefs
+        .set_default_saved_launch_profile(model_name.clone(), profile.profile_name.clone());
+    refresh_configure_profiles(app, &model_name);
+    Some(profile.profile_name)
+}
+
+fn delete_selected_saved_profile(app: &mut App) -> Option<String> {
+    let model_name = app.current_plan.as_ref()?.model_name.clone();
+    let profile = selected_saved_profile(app)?;
+    if !app
+        .prefs
+        .remove_saved_launch_profile(&model_name, &profile.profile_name)
+    {
+        return None;
+    }
+    refresh_configure_profiles(app, &model_name);
+    Some(profile.profile_name)
+}
+
+fn build_override_from_plans(
+    recommended: &LaunchPlan,
+    effective: &LaunchPlan,
+) -> ModelLaunchOverride {
+    let recommended_gpu_layers = if recommended.gpu_layers < 0 {
+        recommended.total_layers as i32
+    } else {
+        recommended.gpu_layers
+    };
+    ModelLaunchOverride {
+        context_size: (effective.context_size != recommended.context_size)
+            .then_some(effective.context_size),
+        gpu_layers: (effective.gpu_layers != recommended_gpu_layers)
+            .then_some(effective.gpu_layers),
+        threads: (effective.threads != recommended.threads)
+            .then_some(effective.threads)
+            .flatten(),
+    }
+}
+
+fn selected_record(app: &App) -> Option<CatalogRecord> {
+    app.current_plan.as_ref().and_then(|plan| {
+        app.catalog
+            .iter()
+            .find(|record| record.model_name == plan.model_name)
+            .cloned()
+    })
+}
+
+fn adjust_configure_plan(app: &mut App, direction: i32) {
+    let Some(record) = selected_record(app) else {
+        return;
+    };
+    let Some(recommended) = app.configure_recommended_plan.clone() else {
+        return;
+    };
+    let Some(hw) = app.hardware.as_ref() else {
+        return;
+    };
+    let mut override_state = build_override_from_plans(
+        &recommended,
+        app.current_plan.as_ref().unwrap_or(&recommended),
+    );
+
+    match app.configure_field_index {
+        0 => {
+            let current = app
+                .current_plan
+                .as_ref()
+                .map(|plan| plan.context_size)
+                .unwrap_or(recommended.context_size);
+            override_state.context_size =
+                Some(crate::planner::step_context_size(current, direction));
+        }
+        _ => {
+            let current = app
+                .current_plan
+                .as_ref()
+                .map(|plan| plan.gpu_layers)
+                .unwrap_or_else(|| {
+                    if recommended.gpu_layers < 0 {
+                        recommended.total_layers as i32
+                    } else {
+                        recommended.gpu_layers
+                    }
+                });
+            override_state.gpu_layers =
+                Some((current + direction).clamp(0, recommended.total_layers as i32));
+        }
+    }
+
+    app.current_plan = Some(crate::planner::apply_launch_override(
+        &recommended,
+        &record,
+        hw,
+        &override_state,
+    ));
+}
+
+fn reset_configure_plan(app: &mut App) {
+    if let (Some(record), Some(recommended), Some(hw)) = (
+        selected_record(app),
+        app.configure_recommended_plan.clone(),
+        app.hardware.as_ref(),
+    ) {
+        app.current_plan = Some(crate::planner::apply_launch_override(
+            &recommended,
+            &record,
+            hw,
+            &ModelLaunchOverride::default(),
+        ));
+    }
 }
 
 pub async fn run_launcher(
@@ -749,23 +1312,7 @@ pub async fn run_launcher(
                         let model_path = std::path::PathBuf::from(&home)
                             .join("models")
                             .join(&plan.model_name);
-                        let llama_args = if app.prefs.has_llamacpp_profile() {
-                            let mut base_args = vec![
-                                "--host".into(),
-                                "127.0.0.1".into(),
-                                "--port".into(),
-                                "8080".into(),
-                                "--no-webui".into(),
-                            ];
-                            base_args.extend(crate::processes::build_llamacpp_args(
-                                app.prefs.llamacpp_gpu_layers.unwrap_or(plan.gpu_layers),
-                                app.prefs.llamacpp_context_size.unwrap_or(plan.context_size),
-                                app.prefs.llamacpp_threads.or(plan.threads),
-                            ));
-                            base_args
-                        } else {
-                            build_llama_args(&plan)
-                        };
+                        let llama_args = build_llama_args(&plan);
                         match crate::processes::start_llamacpp(
                             &server_path,
                             &model_path.to_string_lossy(),
@@ -832,6 +1379,7 @@ pub async fn run_launcher(
                 Screen::Launcher => launcher::render(f, &app),
                 Screen::ExitConfirm => launcher::render_exit_confirm(f, &app),
                 Screen::ModelPicker => launcher::render_model_picker(f, &app),
+                Screen::ConfigureHub => launcher::render_configure_hub(f, &app),
                 Screen::Confirm => launcher::render_confirm(f, &app),
                 Screen::FrontendChoice => launcher::render_frontend_choice(f, &app),
                 Screen::Launching => launcher::render_launching(f, &app),
@@ -848,12 +1396,25 @@ pub async fn run_launcher(
                 Screen::Settings => launcher::render_settings(f, &app),
                 Screen::Monitor => monitor::render(f, &app),
             }
+            if app.command_overlay_open {
+                launcher::render_command_overlay(f, &app);
+            }
         })?;
 
         // Handle events
         if event::poll(Duration::from_millis(50))? {
             if let Event::Key(key) = event::read()? {
                 if key.kind != KeyEventKind::Press {
+                    continue;
+                }
+                if app.command_overlay_open {
+                    match handle_command_overlay_key(&mut app, key, &mut last_refresh).await? {
+                        LauncherActionOutcome::Continue => continue,
+                        LauncherActionOutcome::Exit => break Ok(()),
+                    }
+                }
+                if matches!(key.code, KeyCode::Char('/')) && overlay_supported(&app.screen) {
+                    open_command_overlay(&mut app);
                     continue;
                 }
                 match app.screen {
@@ -973,168 +1534,21 @@ pub async fn run_launcher(
                             app.selected_action -= 1;
                         }
                         KeyCode::Down => {
-                            // Build the same action list the renderer builds so
-                            // max_index stays in sync with what is on screen.
-                            let is_lite =
-                                matches!(app.prefs.preferred_tier, Some(crate::prefs::Tier::Lite));
-                            let mut count: usize = 1; // Launch
-                            #[cfg(feature = "profiling-ui")]
-                            {
-                                count += 1;
-                            } // Profile
-                            if !is_lite {
-                                count += 2;
-                            } // Open ozone+, Launch ozone+ sbs
-                            count += 4; // Settings, Clear GPU, Monitor, Exit
+                            let count = launcher::visible_launcher_actions(&app).len();
                             if app.selected_action < count - 1 {
                                 app.selected_action += 1;
                             }
                         }
                         KeyCode::Enter => {
-                            // Build a slot-lookup that maps the visible action
-                            // index to the canonical action_slot used below.
-                            let is_lite =
-                                matches!(app.prefs.preferred_tier, Some(crate::prefs::Tier::Lite));
-                            let mut slots: Vec<usize> = vec![0]; // Launch
-                            #[cfg(feature = "profiling-ui")]
-                            slots.push(1); // Profile
-                            if !is_lite {
-                                slots.push(2); // Open ozone+
-                                slots.push(3); // Launch ozone+ (side-by-side)
+                            let actions = launcher::visible_launcher_actions(&app);
+                            let action = actions
+                                .get(app.selected_action)
+                                .map(|action| action.id)
+                                .unwrap_or(LauncherActionId::Launch);
+                            match run_launcher_action(&mut app, action, &mut last_refresh).await {
+                                LauncherActionOutcome::Continue => {}
+                                LauncherActionOutcome::Exit => break Ok(()),
                             }
-                            slots.extend([4, 5, 6, 7]); // Settings, Clear GPU, Monitor, Exit
-                            let action_slot = slots.get(app.selected_action).copied().unwrap_or(0);
-                            match action_slot {
-                            0 => {
-                                // Launch configured stack
-                                match app.prefs.preferred_backend {
-                                    None => {
-                                        app.set_error("Configure backend in Settings first".into());
-                                    }
-                                    Some(BackendMode::KoboldCpp) => {
-                                        if !app.catalog.is_empty() {
-                                            #[cfg(feature = "profiling-ui")]
-                                            app.reset_profile_flow();
-                                            app.model_picker_mode = ModelPickerMode::Launch;
-                                            app.screen = Screen::ModelPicker;
-                                        }
-                                    }
-                                    Some(BackendMode::LlamaCpp) => {
-                                        if !app.catalog.is_empty() {
-                                            #[cfg(feature = "profiling-ui")]
-                                            app.reset_profile_flow();
-                                            app.model_picker_mode = ModelPickerMode::Launch;
-                                            app.screen = Screen::ModelPicker;
-                                        }
-                                    }
-                                    Some(BackendMode::Ollama) => {
-                                        if crate::processes::is_url_ready(
-                                            "http://127.0.0.1:11434/api/tags",
-                                        )
-                                        .await
-                                        {
-                                            app.set_status("Ollama backend ready.".into());
-                                            queue_frontend_launch(&mut app);
-                                        } else {
-                                            app.set_error("Ollama not running on :11434".into());
-                                        }
-                                    }
-                                }
-                            }
-                            #[cfg(feature = "profiling-ui")]
-                            1
-                                // Profile / recommend model
-                                if !app.catalog.is_empty() => {
-                                    app.reset_profile_flow();
-                                    app.model_picker_mode = ModelPickerMode::Profile;
-                                    app.screen = Screen::ModelPicker;
-                                }
-                            2 => {
-                                // Open ozone+: respect the side_by_side_monitor preference.
-                                // When enabled, spawn in a new terminal and stay in Monitor;
-                                // otherwise exec() into ozone+ (replaces this process).
-                                if app.prefs.side_by_side_monitor {
-                                    let ozone_plus_bin = std::env::current_exe()
-                                        .ok()
-                                        .and_then(|p| {
-                                            p.parent().map(|dir| dir.join("ozone-plus"))
-                                        })
-                                        .filter(|p| p.exists())
-                                        .unwrap_or_else(|| {
-                                            std::path::PathBuf::from("ozone-plus")
-                                        });
-                                    match spawn_in_terminal(
-                                        &ozone_plus_bin,
-                                        app.prefs.preferred_backend.as_ref(),
-                                    ) {
-                                        Ok(_child) => {
-                                            app.screen = Screen::Monitor;
-                                            app.set_status(
-                                                "ozone+ launched in new terminal window.".into(),
-                                            );
-                                        }
-                                        Err(e) => {
-                                            app.set_error(format!(
-                                                "Side-by-side failed: {e}. Disable the pref or check your terminal."
-                                            ));
-                                        }
-                                    }
-                                } else {
-                                    app.ozone_plus_handoff = true;
-                                    break Ok(());
-                                }
-                            }
-                            3 => {
-                                // Launch ozone+ side-by-side: spawn new terminal, stay in Monitor,
-                                // and persist side_by_side_monitor = true so future "Open ozone+"
-                                // uses the same mode.
-                                let ozone_plus_bin = std::env::current_exe()
-                                    .ok()
-                                    .and_then(|p| p.parent().map(|dir| dir.join("ozone-plus")))
-                                    .filter(|p| p.exists())
-                                    .unwrap_or_else(|| std::path::PathBuf::from("ozone-plus"));
-                                match spawn_in_terminal(
-                                    &ozone_plus_bin,
-                                    app.prefs.preferred_backend.as_ref(),
-                                ) {
-                                    Ok(_child) => {
-                                        app.prefs.side_by_side_monitor = true;
-                                        let prefs_clone = app.prefs.clone();
-                                        tokio::spawn(async move {
-                                            let _ =
-                                                crate::prefs::save_prefs(&prefs_clone).await;
-                                        });
-                                        app.screen = Screen::Monitor;
-                                        app.set_status(
-                                            "ozone+ launched in new terminal window.".into(),
-                                        );
-                                    }
-                                    Err(e) => {
-                                        app.set_error(format!(
-                                            "Side-by-side failed: {e}. Use 'Open ozone+' instead."
-                                        ));
-                                    }
-                                }
-                            }
-                            4 => {
-                                // Settings
-                                open_settings(&mut app);
-                            }
-                            5 => {
-                                // Clear GPU backends
-                                let _ = crate::processes::clear_gpu_backends().await;
-                                app.services = crate::processes::get_service_status().await;
-                                last_refresh = Instant::now();
-                                app.set_status("GPU backends cleared.".into());
-                            }
-                            6 => {
-                                // Monitor
-                                app.screen = Screen::Monitor;
-                                app.launch_start = Some(Instant::now());
-                            }
-                            7 => open_exit_confirm(&mut app),
-                            _ => {}
-                        }
                         }
                         _ => {}
                     },
@@ -1159,7 +1573,7 @@ pub async fn run_launcher(
                             app.settings_section = (app.settings_section + 1) % 2;
                         }
                         KeyCode::BackTab | KeyCode::Left => {
-                            app.settings_section = (app.settings_section + 1) % 2;
+                            app.settings_section = if app.settings_section == 0 { 1 } else { 0 };
                         }
                         KeyCode::Up => match app.settings_section {
                             0 => {
@@ -1200,11 +1614,12 @@ pub async fn run_launcher(
                             let _ = crate::prefs::save_prefs(&app.prefs).await;
                             app.preferred_frontend =
                                 preferred_frontend.or(app.prefs.preferred_frontend);
-                            app.set_status("Settings saved.".into());
+                            app.set_status("Launcher defaults saved.".into());
                             app.screen = Screen::Launcher;
                         }
                         KeyCode::Esc => {
                             sync_settings_from_prefs(&mut app);
+                            app.set_status("Settings changes discarded.".into());
                             app.screen = Screen::Launcher;
                         }
                         _ => {}
@@ -1214,6 +1629,8 @@ pub async fn run_launcher(
                             if !app.model_filter.is_empty() {
                                 app.model_filter.clear();
                             } else {
+                                app.current_plan = None;
+                                app.configure_recommended_plan = None;
                                 app.screen = Screen::Launcher;
                             }
                         }
@@ -1237,11 +1654,20 @@ pub async fn run_launcher(
                         KeyCode::Enter => {
                             if let Some(record) = app.filtered_catalog_get(app.selected_model) {
                                 match app.model_picker_mode {
-                                    ModelPickerMode::Launch => {
+                                    ModelPickerMode::Launch | ModelPickerMode::Configure => {
                                         if let Some(hw) = &app.hardware {
-                                            let plan = crate::planner::plan_launch(&record, hw);
-                                            app.current_plan = Some(plan);
-                                            app.screen = Screen::Confirm;
+                                            let recommended =
+                                                crate::planner::plan_launch(&record, hw);
+                                            app.current_plan =
+                                                build_effective_plan(&app, &record, &recommended)
+                                                    .or_else(|| Some(recommended.clone()));
+                                            app.configure_recommended_plan = Some(recommended);
+                                            app.configure_field_index = 0;
+                                            refresh_configure_profiles(
+                                                &mut app,
+                                                &record.model_name,
+                                            );
+                                            app.screen = Screen::ConfigureHub;
                                         }
                                     }
                                     #[cfg(feature = "profiling-ui")]
@@ -1281,6 +1707,105 @@ pub async fn run_launcher(
                         KeyCode::Esc | KeyCode::Char('n') => app.screen = back_from_confirm(&app),
                         KeyCode::Enter | KeyCode::Char('y') if app.current_plan.is_some() => {
                             queue_frontend_launch(&mut app);
+                        }
+                        _ => {}
+                    },
+                    Screen::ConfigureHub => match key.code {
+                        KeyCode::Esc => {
+                            app.current_plan = None;
+                            app.configure_recommended_plan = None;
+                            app.configure_saved_profiles.clear();
+                            app.configure_profile_index = 0;
+                            #[cfg(feature = "profiling-ui")]
+                            app.configure_profile_reports.clear();
+                            app.screen = Screen::ModelPicker;
+                        }
+                        KeyCode::Up if app.configure_field_index > 0 => {
+                            app.configure_field_index -= 1;
+                        }
+                        KeyCode::Down if app.configure_field_index < 1 => {
+                            app.configure_field_index += 1;
+                        }
+                        KeyCode::Left => adjust_configure_plan(&mut app, -1),
+                        KeyCode::Right => adjust_configure_plan(&mut app, 1),
+                        KeyCode::Char('p') | KeyCode::Char('P') => {
+                            cycle_saved_profile(&mut app, -1)
+                        }
+                        KeyCode::Char('n') | KeyCode::Char('N') => cycle_saved_profile(&mut app, 1),
+                        KeyCode::Char('l') | KeyCode::Char('L') => {
+                            if let Some(profile_name) = apply_selected_saved_profile(&mut app) {
+                                app.set_status(format!(
+                                    "Loaded saved profile '{profile_name}' into Configure Hub."
+                                ));
+                            } else {
+                                app.set_error("No saved profile is selected.".into());
+                            }
+                        }
+                        KeyCode::Char('s') | KeyCode::Char('S') => {
+                            if let Some(profile_name) = save_current_plan_as_profile(&mut app) {
+                                let _ = crate::prefs::save_prefs(&app.prefs).await;
+                                app.set_status(format!("Saved profile '{profile_name}'."));
+                            } else {
+                                app.set_error("No launch plan is available to save.".into());
+                            }
+                        }
+                        KeyCode::Char('u') | KeyCode::Char('U') => {
+                            if let Some(profile_name) =
+                                update_selected_profile_from_current_plan(&mut app)
+                            {
+                                let _ = crate::prefs::save_prefs(&app.prefs).await;
+                                app.set_status(format!("Updated saved profile '{profile_name}'."));
+                            } else {
+                                app.set_error("Select a saved profile before updating it.".into());
+                            }
+                        }
+                        KeyCode::Char('d') | KeyCode::Char('D') => {
+                            if let Some(profile_name) = delete_selected_saved_profile(&mut app) {
+                                let _ = crate::prefs::save_prefs(&app.prefs).await;
+                                app.set_status(format!("Deleted saved profile '{profile_name}'."));
+                            } else {
+                                app.set_error("Select a saved profile before deleting it.".into());
+                            }
+                        }
+                        KeyCode::Char('f') | KeyCode::Char('F') => {
+                            if let Some(profile_name) = set_selected_profile_default(&mut app) {
+                                let _ = crate::prefs::save_prefs(&app.prefs).await;
+                                app.set_status(format!(
+                                    "Default launch profile set to '{profile_name}'."
+                                ));
+                            } else {
+                                app.set_error(
+                                    "Select a saved profile before marking it default.".into(),
+                                );
+                            }
+                        }
+                        #[cfg(feature = "profiling-ui")]
+                        KeyCode::Char('b') | KeyCode::Char('B') => {
+                            if selected_saved_profile(&app).is_some() {
+                                app.profiling_pending_action =
+                                    Some(ProfilingAction::BenchmarkSavedProfile);
+                                app.screen = Screen::ProfileConfirm;
+                            } else {
+                                app.set_error(
+                                    "Save and select a profile before benchmarking it.".into(),
+                                );
+                            }
+                        }
+                        KeyCode::Char('r') | KeyCode::Char('R') => reset_configure_plan(&mut app),
+                        KeyCode::Enter => {
+                            if let (Some(recommended), Some(effective)) = (
+                                app.configure_recommended_plan.clone(),
+                                app.current_plan.clone(),
+                            ) {
+                                let override_state =
+                                    build_override_from_plans(&recommended, &effective);
+                                app.prefs.set_model_launch_override(
+                                    effective.model_name.clone(),
+                                    override_state,
+                                );
+                                let _ = crate::prefs::save_prefs(&app.prefs).await;
+                                app.screen = Screen::Confirm;
+                            }
                         }
                         _ => {}
                     },
@@ -1330,6 +1855,7 @@ pub async fn run_launcher(
                                                 {
                                                     Ok(plan) => {
                                                         app.current_plan = Some(plan);
+                                                        app.configure_recommended_plan = None;
                                                         app.screen = Screen::Confirm;
                                                     }
                                                     Err(error) => {
@@ -1363,17 +1889,40 @@ pub async fn run_launcher(
                     },
                     #[cfg(feature = "profiling-ui")]
                     Screen::ProfileConfirm => match key.code {
-                        KeyCode::Esc => app.screen = Screen::ProfileAdvisory,
+                        KeyCode::Esc => {
+                            if matches!(
+                                app.profiling_pending_action,
+                                Some(ProfilingAction::BenchmarkSavedProfile)
+                            ) && app.configure_recommended_plan.is_some()
+                            {
+                                app.screen = Screen::ConfigureHub;
+                            } else {
+                                app.screen = Screen::ProfileAdvisory;
+                            }
+                        }
                         KeyCode::Enter => {
                             if let (Some(record), Some(action)) = (
                                 app.filtered_catalog_get(app.selected_model),
                                 app.profiling_pending_action.clone(),
                             ) {
+                                let launch_plan_override =
+                                    matches!(action, ProfilingAction::BenchmarkSavedProfile)
+                                        .then(|| app.current_plan.clone())
+                                        .flatten();
+                                let launch_profile_name =
+                                    matches!(action, ProfilingAction::BenchmarkSavedProfile)
+                                        .then(|| {
+                                            selected_saved_profile(&app)
+                                                .map(|profile| profile.profile_name)
+                                        })
+                                        .flatten();
                                 let request = WorkflowRequest {
                                     record,
                                     hardware: app.hardware.clone().unwrap_or_default(),
                                     action,
                                     profiling_backend: profiling::ProfilingBackend::default(),
+                                    launch_plan_override,
+                                    launch_profile_name,
                                 };
                                 let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
                                 let cancel = CancellationToken::new();
@@ -1408,6 +1957,20 @@ pub async fn run_launcher(
                     #[cfg(feature = "profiling-ui")]
                     Screen::ProfileSuccess => match key.code {
                         KeyCode::Esc => {
+                            if matches!(
+                                app.profiling_success.as_ref().map(|report| &report.action),
+                                Some(ProfilingAction::BenchmarkSavedProfile)
+                            ) && app.configure_recommended_plan.is_some()
+                            {
+                                if let Some(plan) = app.current_plan.as_ref() {
+                                    let model_name = plan.model_name.clone();
+                                    refresh_configure_profiles(&mut app, &model_name);
+                                }
+                                app.profiling_pending_action = None;
+                                app.profiling_success = None;
+                                app.screen = Screen::ConfigureHub;
+                                continue;
+                            }
                             // Back to advisory — re-run build_advisory to refresh state
                             if let Some(record) = app.filtered_catalog_get(app.selected_model) {
                                 match profiling::build_advisory(
@@ -1463,6 +2026,7 @@ pub async fn run_launcher(
                                                 {
                                                     Ok(plan) => {
                                                         app.current_plan = Some(plan);
+                                                        app.configure_recommended_plan = None;
                                                         app.screen = Screen::Confirm;
                                                     }
                                                     Err(error) => {
@@ -1490,6 +2054,20 @@ pub async fn run_launcher(
                     #[cfg(feature = "profiling-ui")]
                     Screen::ProfileFailure => match key.code {
                         KeyCode::Esc => {
+                            if matches!(
+                                app.profiling_pending_action,
+                                Some(ProfilingAction::BenchmarkSavedProfile)
+                            ) && app.configure_recommended_plan.is_some()
+                            {
+                                if let Some(plan) = app.current_plan.as_ref() {
+                                    let model_name = plan.model_name.clone();
+                                    refresh_configure_profiles(&mut app, &model_name);
+                                }
+                                app.profiling_pending_action = None;
+                                app.profiling_failure = None;
+                                app.screen = Screen::ConfigureHub;
+                                continue;
+                            }
                             // Back to advisory
                             if let Some(record) = app.filtered_catalog_get(app.selected_model) {
                                 match profiling::build_advisory(
@@ -1600,6 +2178,7 @@ pub async fn run_launcher(
                 app.screen,
                 Screen::Launcher
                     | Screen::ModelPicker
+                    | Screen::ConfigureHub
                     | Screen::Confirm
                     | Screen::FrontendChoice
                     | Screen::Settings
@@ -1861,6 +2440,31 @@ mod tests {
     }
 
     #[test]
+    fn confirm_back_returns_to_configure_hub_when_manual_plan_active() {
+        let mut app = App::new(Preferences::default());
+        app.configure_recommended_plan = Some(LaunchPlan {
+            model_name: "alpha.gguf".into(),
+            context_size: 4096,
+            gpu_layers: 24,
+            total_layers: 32,
+            cpu_layers: 8,
+            quant_kv: 1,
+            threads: None,
+            blas_threads: None,
+            mode: crate::planner::RecommendationMode::MixedMemory,
+            rationale: "test".into(),
+            estimated: false,
+            estimated_vram_mb: 0,
+            estimated_ram_mb: 0,
+            source: "test".into(),
+            layer_source_label: "heuristic".into(),
+            layer_source_note: None,
+        });
+
+        assert_eq!(back_from_confirm(&app), Screen::ConfigureHub);
+    }
+
+    #[test]
     #[cfg(feature = "profiling-ui")]
     fn confirm_back_returns_to_last_relevant_screen() {
         let mut app = App::new(Preferences::default());
@@ -1892,6 +2496,8 @@ mod tests {
             profile_count: 0,
             best_tokens_per_sec: None,
             recommended_profile: None,
+            launch_profile_name: None,
+            saved_profile_report: None,
             suggestions: Vec::new(),
             export_detail: None,
         });
@@ -1929,6 +2535,57 @@ mod tests {
             ..Preferences::default()
         });
         assert_eq!(next_screen_after_splash(&app), Screen::Launcher);
+    }
+
+    #[test]
+    fn launcher_actions_include_explicit_configure_entry() {
+        let app = App::new(Preferences {
+            preferred_tier: Some(crate::prefs::Tier::Base),
+            ..Preferences::default()
+        });
+
+        let actions = launcher::visible_launcher_actions(&app);
+        assert!(actions
+            .iter()
+            .any(|action| action.id == LauncherActionId::ConfigureModel));
+    }
+
+    #[test]
+    fn build_effective_plan_prefers_default_saved_profile() {
+        let mut prefs = Preferences::default();
+        prefs.upsert_saved_launch_profile(
+            "alpha.gguf",
+            SavedLaunchProfile {
+                profile_name: "custom-1".into(),
+                context_size: 16384,
+                gpu_layers: 12,
+                quant_kv: 1,
+                threads: Some(6),
+            },
+        );
+        prefs.set_default_saved_launch_profile("alpha.gguf", "custom-1");
+
+        let mut app = App::new(prefs);
+        app.hardware = Some(crate::hardware::HardwareProfile {
+            gpu: Some(crate::hardware::GpuMemory {
+                used_mb: 1000,
+                free_mb: 12000,
+                total_mb: 16000,
+            }),
+            ram_total_mb: 32000,
+            ram_free_mb: 20000,
+            ram_used_mb: 12000,
+            cpu_logical: 8,
+            cpu_physical: 4,
+        });
+
+        let record = test_record("alpha.gguf");
+        let recommended = crate::planner::plan_launch(&record, app.hardware.as_ref().unwrap());
+        let effective = build_effective_plan(&app, &record, &recommended).expect("effective plan");
+
+        assert_eq!(effective.context_size, 16384);
+        assert_eq!(effective.gpu_layers, 12);
+        assert_eq!(effective.threads, Some(6));
     }
 
     #[test]
@@ -1976,10 +2633,48 @@ mod tests {
         apply_catalog_refresh(&mut app, vec![test_record("beta.gguf")]);
 
         assert!(app.current_plan.is_none());
+        assert!(app.configure_recommended_plan.is_none());
         assert_eq!(app.screen, Screen::ModelPicker);
         assert_eq!(
             app.error_msg.as_deref(),
             Some("Selected model is no longer available.")
         );
+    }
+
+    #[test]
+    fn command_overlay_query_normalizes_prefix_and_newlines() {
+        let mut app = App::new(Preferences::default());
+        app.command_overlay.insert_str("/clear\ngpu  ");
+        normalize_command_overlay(&mut app);
+
+        assert_eq!(app.command_overlay_query(), "clear gpu");
+    }
+
+    #[test]
+    fn overlay_support_targets_launcher_facing_screens() {
+        assert!(overlay_supported(&Screen::Launcher));
+        assert!(overlay_supported(&Screen::Settings));
+        assert!(overlay_supported(&Screen::ConfigureHub));
+        assert!(overlay_supported(&Screen::Confirm));
+        assert!(overlay_supported(&Screen::Monitor));
+        assert!(!overlay_supported(&Screen::Splash));
+        assert!(!overlay_supported(&Screen::ExitConfirm));
+    }
+
+    #[test]
+    fn command_overlay_can_execute_settings_action() {
+        let mut app = App::new(Preferences::default());
+        let mut last_refresh = Instant::now();
+
+        let outcome = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(run_launcher_action(
+                &mut app,
+                LauncherActionId::Settings,
+                &mut last_refresh,
+            ));
+
+        assert!(matches!(outcome, LauncherActionOutcome::Continue));
+        assert_eq!(app.screen, Screen::Settings);
     }
 }

@@ -1892,6 +1892,7 @@ dependencies = [
  "sysinfo",
  "tokio",
  "tokio-util",
+ "tui-textarea",
  "ureq 2.12.1",
 ]
 

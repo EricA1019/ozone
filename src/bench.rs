@@ -406,6 +406,28 @@ pub fn store_result(
     threads: u32,
     result: &BenchResult,
 ) -> Result<i64> {
+    store_result_with_profile(
+        model_name,
+        model_size_gb,
+        gpu_layers,
+        context_size,
+        quant_kv,
+        threads,
+        result,
+        None,
+    )
+}
+
+pub fn store_result_with_profile(
+    model_name: &str,
+    model_size_gb: f64,
+    gpu_layers: i32,
+    context_size: u32,
+    quant_kv: u32,
+    threads: u32,
+    result: &BenchResult,
+    launch_profile_name: Option<&str>,
+) -> Result<i64> {
     let conn = db::open()?;
     let hw = hardware::load_hardware();
     let gpu_name = get_gpu_name().unwrap_or_else(|| "unknown".into());
@@ -431,6 +453,7 @@ pub fn store_result(
         ram_total_mb: hw.ram_total_mb as u32,
         timestamp: chrono::Local::now().to_rfc3339(),
         notes: String::new(),
+        launch_profile_name: launch_profile_name.map(str::to_string),
     };
     db::insert_benchmark(&conn, &row)
 }

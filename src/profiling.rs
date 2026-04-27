@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{anyhow, Result};
 use ozone_core::paths;
@@ -8,9 +11,10 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     analyze, bench,
     catalog::CatalogRecord,
-    db::{self, ProfileRow},
+    db::{self, BenchmarkRow, ProfileRow},
     hardware::HardwareProfile,
     planner::{self, LaunchPlan, RecommendationMode},
+    prefs::SavedLaunchProfile,
     processes::{self, ServiceStatus},
     sweep,
 };
@@ -36,6 +40,7 @@ pub enum ProfilingAction {
     QuickSweep,
     FullSweep,
     SingleBenchmark,
+    BenchmarkSavedProfile,
     GenerateProfiles,
     ExportPresets,
     LaunchRecommended,
@@ -48,6 +53,7 @@ impl ProfilingAction {
             ProfilingAction::QuickSweep => "Run quick sweep",
             ProfilingAction::FullSweep => "Run full sweep",
             ProfilingAction::SingleBenchmark => "Run single benchmark",
+            ProfilingAction::BenchmarkSavedProfile => "Benchmark saved profile",
             ProfilingAction::GenerateProfiles => "Generate profiles",
             ProfilingAction::ExportPresets => "Export presets",
             ProfilingAction::LaunchRecommended => "Launch recommended profile",
@@ -62,6 +68,9 @@ impl ProfilingAction {
                 "Explore a wider context/quant range for deeper coverage."
             }
             ProfilingAction::SingleBenchmark => "Validate one recommended configuration first.",
+            ProfilingAction::BenchmarkSavedProfile => {
+                "Benchmark the selected saved launch profile and keep its metrics attached."
+            }
             ProfilingAction::GenerateProfiles => {
                 "Create speed/context profiles from benchmark history."
             }
@@ -79,6 +88,7 @@ impl ProfilingAction {
             ProfilingAction::QuickSweep
                 | ProfilingAction::FullSweep
                 | ProfilingAction::SingleBenchmark
+                | ProfilingAction::BenchmarkSavedProfile
         )
     }
 }
@@ -168,6 +178,8 @@ pub struct ProfilingSuccessReport {
     pub profile_count: usize,
     pub best_tokens_per_sec: Option<f64>,
     pub recommended_profile: Option<RecommendedProfile>,
+    pub launch_profile_name: Option<String>,
+    pub saved_profile_report: Option<SavedProfileReport>,
     pub suggestions: Vec<String>,
     pub export_detail: Option<String>,
 }
@@ -228,6 +240,8 @@ pub struct WorkflowRequest {
     pub hardware: HardwareProfile,
     pub action: ProfilingAction,
     pub profiling_backend: ProfilingBackend,
+    pub launch_plan_override: Option<LaunchPlan>,
+    pub launch_profile_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -238,6 +252,19 @@ struct ModelHistory {
     best_tokens_per_sec: Option<f64>,
     profiles: Vec<ProfileRow>,
     newest_benchmark_ts: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct SavedProfileReport {
+    pub profile_name: String,
+    pub benchmark_count: usize,
+    pub ok_benchmark_count: usize,
+    pub latest_tokens_per_sec: Option<f64>,
+    pub best_tokens_per_sec: Option<f64>,
+    pub latest_time_to_first_token_ms: Option<u32>,
+    pub latest_vram_peak_mb: Option<u32>,
+    pub latest_ram_peak_mb: Option<u32>,
+    pub latest_timestamp: Option<String>,
 }
 
 pub fn launcher_path() -> PathBuf {
@@ -389,6 +416,56 @@ fn load_history(model_name: &str) -> Result<ModelHistory> {
     })
 }
 
+fn build_saved_profile_report(
+    profile_name: &str,
+    benchmarks: &[BenchmarkRow],
+) -> Option<SavedProfileReport> {
+    let rows: Vec<&BenchmarkRow> = benchmarks
+        .iter()
+        .filter(|row| row.launch_profile_name.as_deref() == Some(profile_name))
+        .collect();
+    if rows.is_empty() {
+        return None;
+    }
+
+    let latest = rows
+        .iter()
+        .max_by(|left, right| left.timestamp.cmp(&right.timestamp))?;
+    let best_tokens_per_sec = rows
+        .iter()
+        .filter(|row| row.status == "ok")
+        .map(|row| row.tokens_per_sec)
+        .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    Some(SavedProfileReport {
+        profile_name: profile_name.to_string(),
+        benchmark_count: rows.len(),
+        ok_benchmark_count: rows.iter().filter(|row| row.status == "ok").count(),
+        latest_tokens_per_sec: (latest.status == "ok").then_some(latest.tokens_per_sec),
+        best_tokens_per_sec,
+        latest_time_to_first_token_ms: (latest.status == "ok")
+            .then_some(latest.time_to_first_token_ms),
+        latest_vram_peak_mb: Some(latest.vram_peak_mb),
+        latest_ram_peak_mb: Some(latest.ram_peak_mb),
+        latest_timestamp: Some(latest.timestamp.clone()),
+    })
+}
+
+pub fn saved_profile_reports(
+    model_name: &str,
+    profiles: &[SavedLaunchProfile],
+) -> Result<BTreeMap<String, SavedProfileReport>> {
+    let conn = db::open()?;
+    let benchmarks = db::get_benchmarks(&conn, model_name)?;
+    let mut reports = BTreeMap::new();
+    for profile in profiles {
+        if let Some(report) = build_saved_profile_report(&profile.profile_name, &benchmarks) {
+            reports.insert(profile.profile_name.clone(), report);
+        }
+    }
+    Ok(reports)
+}
+
 fn profile_rank(name: &str) -> u8 {
     match name {
         "speed" => 0,
@@ -514,6 +591,7 @@ pub fn build_advisory(
             ProfilingAction::QuickSweep
             | ProfilingAction::FullSweep
             | ProfilingAction::SingleBenchmark => model_ok && launcher_ok,
+            ProfilingAction::BenchmarkSavedProfile => false,
             ProfilingAction::ReviewIssue => false,
         };
         if allowed && !available_actions.contains(&action) {
@@ -632,6 +710,9 @@ pub fn build_advisory(
         ProfilingAction::GenerateProfiles => "You already have enough successful benchmarks to generate speed/context profiles without another sweep.".into(),
         ProfilingAction::QuickSweep => "A quick sweep is the fastest way to discover a safe speed/context pair for this model.".into(),
         ProfilingAction::SingleBenchmark => "A single benchmark is the safest first check when GPU guidance is limited.".into(),
+        ProfilingAction::BenchmarkSavedProfile => {
+            "Benchmarking saved profiles starts from Configure Hub after you pick a specific config.".into()
+        }
         ProfilingAction::FullSweep => "A full sweep is useful when you want broader context/quant coverage.".into(),
         ProfilingAction::ExportPresets => "Profiles already exist and can be exported directly into the launcher preset file.".into(),
     };
@@ -665,8 +746,17 @@ pub fn blocking_issue_report(record: &CatalogRecord) -> ProfilingFailureReport {
 fn build_success_report(
     record: &CatalogRecord,
     action: ProfilingAction,
+    launch_profile_name: Option<&str>,
 ) -> Result<ProfilingSuccessReport> {
     let history = load_history(&record.model_name)?;
+    let saved_profile_report = match launch_profile_name {
+        Some(profile_name) => {
+            let conn = db::open()?;
+            let benchmarks = db::get_benchmarks(&conn, &record.model_name)?;
+            build_saved_profile_report(profile_name, &benchmarks)
+        }
+        None => None,
+    };
     let recommended_profile = pick_recommended_profile(&history.profiles);
     let summary = match action {
         ProfilingAction::QuickSweep => {
@@ -677,6 +767,14 @@ fn build_success_report(
         }
         ProfilingAction::SingleBenchmark => {
             "Single benchmark completed and stored its result.".into()
+        }
+        ProfilingAction::BenchmarkSavedProfile => {
+            match launch_profile_name {
+                Some(profile_name) => {
+                    format!("Saved profile '{profile_name}' was benchmarked and its report was refreshed.")
+                }
+                None => "Saved profile benchmark completed and its report was refreshed.".into(),
+            }
         }
         ProfilingAction::GenerateProfiles => {
             "Profiles were generated from successful benchmark history.".into()
@@ -690,6 +788,11 @@ fn build_success_report(
     };
 
     let mut suggestions = Vec::new();
+    if let Some(profile_name) = launch_profile_name {
+        suggestions.push(format!(
+            "Review the saved profile report for '{profile_name}' in Configure Hub before launching."
+        ));
+    }
     if history.profile_count > 0 {
         suggestions
             .push("Launch the recommended profile or export it to koboldcpp-presets.conf.".into());
@@ -710,6 +813,8 @@ fn build_success_report(
         profile_count: history.profile_count,
         best_tokens_per_sec: history.best_tokens_per_sec,
         recommended_profile,
+        launch_profile_name: launch_profile_name.map(str::to_string),
+        saved_profile_report,
         suggestions,
         export_detail: None,
     })
@@ -861,7 +966,11 @@ pub async fn run_workflow(
             });
             match export_llamacpp_profiles(&profiles) {
                 Ok(out) => {
-                    let mut report = build_success_report(&request.record, request.action)?;
+                    let mut report = build_success_report(
+                        &request.record,
+                        request.action,
+                        request.launch_profile_name.as_deref(),
+                    )?;
                     report.export_detail = Some(format!("llama.cpp: {}", out.display()));
                     let _ = tx.send(WorkflowEvent::Completed(report));
                 }
@@ -888,7 +997,11 @@ pub async fn run_workflow(
                 Some(&request.record.model_name),
             ) {
                 Ok(_count) => {
-                    let mut report = build_success_report(&request.record, request.action)?;
+                    let mut report = build_success_report(
+                        &request.record,
+                        request.action,
+                        request.launch_profile_name.as_deref(),
+                    )?;
                     if let Ok(content) = std::fs::read_to_string(presets_path()) {
                         let model_lines: Vec<&str> = content
                             .lines()
@@ -991,7 +1104,11 @@ pub async fn run_workflow(
                         detail: "Creating speed/context profiles from benchmark data…".into(),
                     });
                     let _ = analyze::generate_profiles_quiet(&request.record.model_name);
-                    let report = build_success_report(&request.record, request.action)?;
+                    let report = build_success_report(
+                        &request.record,
+                        request.action,
+                        request.launch_profile_name.as_deref(),
+                    )?;
                     let _ = tx.send(WorkflowEvent::Completed(report));
                 }
                 Ok(_) => {
@@ -1014,7 +1131,7 @@ pub async fn run_workflow(
                 }
             }
         }
-        ProfilingAction::SingleBenchmark => {
+        ProfilingAction::SingleBenchmark | ProfilingAction::BenchmarkSavedProfile => {
             if cancel.is_cancelled() {
                 let _ = tx.send(WorkflowEvent::Cancelled);
                 return Ok(());
@@ -1022,9 +1139,19 @@ pub async fn run_workflow(
             let backend = processes::resolved_backend_for_profiling().ok_or_else(|| {
                 anyhow!("No profiling backend available (KoboldCpp or llama-server not found)")
             })?;
-            let plan = planner::plan_profiling_launch(&request.record, &request.hardware);
+            let plan = request.launch_plan_override.clone().unwrap_or_else(|| {
+                planner::plan_profiling_launch(&request.record, &request.hardware)
+            });
+            let benchmark_label = match request.action {
+                ProfilingAction::BenchmarkSavedProfile => request
+                    .launch_profile_name
+                    .as_deref()
+                    .map(|profile_name| format!("Benchmarking saved profile '{profile_name}'"))
+                    .unwrap_or_else(|| "Benchmarking saved profile".into()),
+                _ => "Benchmark".into(),
+            };
             let _ = tx.send(WorkflowEvent::Status {
-                title: "Benchmark".into(),
+                title: benchmark_label,
                 detail: format!(
                     "Benchmarking ctx={} gpu={}/{} cpu={} qkv={}",
                     plan.context_size,
@@ -1055,7 +1182,7 @@ pub async fn run_workflow(
                     let _ = tx.send(WorkflowEvent::Cancelled);
                 }
                 Ok(result) => {
-                    let _ = bench::store_result(
+                    let _ = bench::store_result_with_profile(
                         &request.record.model_name,
                         request.record.model_size_gb,
                         plan.gpu_layers,
@@ -1063,9 +1190,14 @@ pub async fn run_workflow(
                         plan.quant_kv as u32,
                         plan.threads.unwrap_or(0),
                         &result,
+                        request.launch_profile_name.as_deref(),
                     );
                     if result.status == "ok" {
-                        let report = build_success_report(&request.record, request.action)?;
+                        let report = build_success_report(
+                            &request.record,
+                            request.action,
+                            request.launch_profile_name.as_deref(),
+                        )?;
                         let _ = tx.send(WorkflowEvent::Completed(report));
                     } else {
                         let report = build_failure_report(
@@ -1095,7 +1227,11 @@ pub async fn run_workflow(
             });
             match analyze::generate_profiles_quiet(&request.record.model_name) {
                 Ok(_) => {
-                    let report = build_success_report(&request.record, request.action)?;
+                    let report = build_success_report(
+                        &request.record,
+                        request.action,
+                        request.launch_profile_name.as_deref(),
+                    )?;
                     let _ = tx.send(WorkflowEvent::Completed(report));
                 }
                 Err(error) => {
@@ -1179,6 +1315,65 @@ mod tests {
         let picked = pick_recommended_profile(&profiles).expect("expected a profile");
         assert_eq!(picked.profile_name, "speed");
         assert_eq!(picked.context_size, 4096);
+    }
+
+    #[test]
+    fn saved_profile_report_aggregates_latest_and_best_metrics() {
+        let benchmarks = vec![
+            BenchmarkRow {
+                id: None,
+                model_name: "sample.gguf".into(),
+                model_size_gb: 7.0,
+                gpu_layers: 20,
+                context_size: 8192,
+                quant_kv: 1,
+                threads: 8,
+                tokens_per_sec: 11.0,
+                time_to_first_token_ms: 500,
+                vram_peak_mb: 7600,
+                ram_peak_mb: 6200,
+                total_tokens: 100,
+                total_time_ms: 9000,
+                status: "ok".into(),
+                gpu_name: "GPU".into(),
+                gpu_vram_mb: 12000,
+                ram_total_mb: 32000,
+                timestamp: "2026-04-21T00:00:00+00:00".into(),
+                notes: String::new(),
+                launch_profile_name: Some("custom-1".into()),
+            },
+            BenchmarkRow {
+                id: None,
+                model_name: "sample.gguf".into(),
+                model_size_gb: 7.0,
+                gpu_layers: 20,
+                context_size: 8192,
+                quant_kv: 1,
+                threads: 8,
+                tokens_per_sec: 13.5,
+                time_to_first_token_ms: 480,
+                vram_peak_mb: 7700,
+                ram_peak_mb: 6300,
+                total_tokens: 100,
+                total_time_ms: 8000,
+                status: "ok".into(),
+                gpu_name: "GPU".into(),
+                gpu_vram_mb: 12000,
+                ram_total_mb: 32000,
+                timestamp: "2026-04-22T00:00:00+00:00".into(),
+                notes: String::new(),
+                launch_profile_name: Some("custom-1".into()),
+            },
+        ];
+
+        let report =
+            build_saved_profile_report("custom-1", &benchmarks).expect("saved profile report");
+
+        assert_eq!(report.profile_name, "custom-1");
+        assert_eq!(report.benchmark_count, 2);
+        assert_eq!(report.latest_tokens_per_sec, Some(13.5));
+        assert_eq!(report.best_tokens_per_sec, Some(13.5));
+        assert_eq!(report.latest_time_to_first_token_ms, Some(480));
     }
 
     #[test]

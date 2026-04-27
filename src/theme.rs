@@ -35,6 +35,9 @@ pub fn style_red() -> Style {
 pub fn style_gray() -> Style {
     Style::default().fg(GRAY)
 }
+pub fn style_muted() -> Style {
+    Style::default().fg(GRAY).add_modifier(Modifier::DIM)
+}
 pub fn style_bold_lime() -> Style {
     Style::default().fg(LIME).add_modifier(Modifier::BOLD)
 }
@@ -48,6 +51,23 @@ pub fn style_bold_bright_violet() -> Style {
 }
 pub fn style_bold_cyan() -> Style {
     Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+}
+pub fn style_hint_key() -> Style {
+    Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+}
+pub fn style_panel_border(active: bool) -> Style {
+    if active {
+        style_lime()
+    } else {
+        style_gray()
+    }
+}
+pub fn style_panel_title(active: bool) -> Style {
+    if active {
+        style_bold_lime()
+    } else {
+        style_bold_cyan()
+    }
 }
 #[allow(dead_code)]
 pub fn style_bold_green() -> Style {
