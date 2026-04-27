@@ -204,6 +204,10 @@ impl AppContextBridge {
             .render_prompt(&turns)
             .map_err(|error| error.to_string())?;
 
+        // Estimate token count using heuristic: ~3.5 chars per token for English text.
+        let used_tokens = u32::try_from(prompt.chars().count() * 10 / 35)
+            .unwrap_or(u32::MAX);
+
         let preview = ContextPlanPreview {
             source: ContextPlanSource::TranscriptFallback,
             summary: context_preview_summary(
@@ -228,7 +232,7 @@ impl AppContextBridge {
             ),
             omitted_items: Some(0),
             token_budget: Some(ContextTokenBudgetPreview {
-                used_tokens: 0,
+                used_tokens,
                 max_tokens: u32::try_from(inference.config().context.max_tokens)
                     .unwrap_or(u32::MAX),
             }),

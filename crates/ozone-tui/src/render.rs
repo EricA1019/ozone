@@ -83,6 +83,11 @@ pub struct StatusPaneModel {
     pub selected_index: Option<usize>,
     /// Compact-mode VRAM usage hint shown at right edge of the footer bar.
     pub vram_hint: Option<String>,
+    /// Context token usage bar: used / max, rendered as a string like "[████░░░░ 50%]".
+    /// None if no budget data is available yet.
+    pub context_bar: Option<String>,
+    /// Raw token budget for programmatic checks (e.g. warning color when > 80%).
+    pub token_budget: Option<(u32, u32)>, // (used, max)
 }
 
 /// Structured model info for the inspector pane's Model Info section.
@@ -508,6 +513,24 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         None
     };
 
+    let token_budget = state
+        .context_preview
+        .as_ref()
+        .and_then(|preview| preview.token_budget.as_ref())
+        .map(|b| (b.used_tokens, b.max_tokens));
+
+    let context_bar = token_budget.map(|(used, max)| {
+        if max == 0 {
+            return String::new();
+        }
+        let pct = (used as f64 / max as f64 * 100.0).min(100.0) as u8;
+        let filled = (pct as usize * 20) / 100; // 20-block bar
+        let empty = 20 - filled;
+        let bar: String = "█".repeat(filled) + &"░".repeat(empty);
+        let color = if pct >= 90 { "!" } else if pct >= 75 { "+" } else { "" };
+        format!("[{bar}] {pct:3}%{color}", pct = pct)
+    });
+
     let status = StatusPaneModel {
         title: "Status".into(),
         summary: state
@@ -525,6 +548,8 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
             state.session.selected_message
         },
         vram_hint,
+        context_bar,
+        token_budget,
     };
 
     let inspector = layout.inspector.map(|_| InspectorPaneModel {
@@ -1875,6 +1900,21 @@ fn render_status(frame: &mut Frame, pane: &PaneLayout, model: &StatusPaneModel, 
     if !runtime_text.is_empty() {
         spans.push(sep());
         spans.push(Span::styled(runtime_text, theme::dim_style()));
+    }
+
+    if let Some(bar) = model.context_bar.as_deref() {
+        let bar_style = model.token_budget.map(|(used, max)| {
+            let pct = used as f64 / max as f64;
+            if pct >= 0.9 {
+                theme::error_style()
+            } else if pct >= 0.75 {
+                theme::warning_style()
+            } else {
+                theme::dim_style()
+            }
+        }).unwrap_or_else(theme::dim_style);
+        spans.push(Span::styled("  ", theme::muted_style()));
+        spans.push(Span::styled(bar.to_string(), bar_style));
     }
 
     if let Some(vram) = model.vram_hint.as_deref() {
