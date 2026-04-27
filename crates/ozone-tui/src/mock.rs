@@ -590,6 +590,7 @@ impl SessionRuntime for MockRuntime {
             message_count: 0,
             last_active: None,
             folder: None,
+            last_message_preview: None,
         });
         self.session_bootstraps
             .insert(session_id.clone(), bootstrap.clone());

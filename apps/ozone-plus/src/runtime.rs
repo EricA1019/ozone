@@ -2105,6 +2105,7 @@ impl SessionRuntime for Phase1dRuntime {
                 message_count: s.message_count as usize,
                 last_active: Some(crate::format_timestamp_short(s.last_opened_at)),
                 folder: s.folder().map(|f| f.to_owned()),
+                last_message_preview: None,
             })
             .collect())
     }

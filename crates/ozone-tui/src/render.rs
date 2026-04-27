@@ -189,6 +189,7 @@ pub struct SessionListEntryRenderModel {
     pub character: String,
     pub message_count: String,
     pub last_active: String,
+    pub last_message_preview: String,
     pub selected: bool,
     /// True when entries should be indented under a folder header.
     pub indented: bool,
@@ -579,6 +580,10 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
                     message_count: format!("{} msgs", entry.message_count),
                     last_active: entry
                         .last_active
+                        .clone()
+                        .unwrap_or_else(|| "\u{2014}".into()),
+                    last_message_preview: entry
+                        .last_message_preview
                         .clone()
                         .unwrap_or_else(|| "\u{2014}".into()),
                     selected: visual_index == state.session_list.selected,

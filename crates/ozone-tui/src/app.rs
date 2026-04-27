@@ -534,6 +534,8 @@ pub struct SessionListEntry {
     pub message_count: usize,
     pub last_active: Option<String>,
     pub folder: Option<String>,
+    /// Truncated preview of the most recent message content (~40 chars), if available.
+    pub last_message_preview: Option<String>,
 }
 
 /// An item in the visible session list — either a folder header row or a session entry.
@@ -4036,6 +4038,7 @@ mod tests {
             message_count: 5,
             last_active: None,
             folder: None,
+            last_message_preview: None,
         }];
         state.session_list.selected = 0;
 
@@ -4245,6 +4248,7 @@ mod tests {
                 message_count: 10,
                 last_active: None,
                 folder: None,
+                last_message_preview: None,
             },
             SessionListEntry {
                 session_id: "2".into(),
@@ -4253,6 +4257,7 @@ mod tests {
                 message_count: 5,
                 last_active: None,
                 folder: None,
+                last_message_preview: None,
             },
         ];
 
@@ -4273,6 +4278,7 @@ mod tests {
                 message_count: 0,
                 last_active: None,
                 folder: None,
+                last_message_preview: None,
             },
             SessionListEntry {
                 session_id: "2".into(),
@@ -4281,6 +4287,7 @@ mod tests {
                 message_count: 0,
                 last_active: None,
                 folder: None,
+                last_message_preview: None,
             },
         ];
         state.session_list.selected = 1;
