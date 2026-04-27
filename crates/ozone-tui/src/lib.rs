@@ -236,9 +236,9 @@ where
                                         app.enter_conversation();
                                         app.status_line = Some("New conversation started".into());
                                     }
-                                    Err(error) => {
+                                    Err(_error) => {
                                         app.status_line =
-                                            Some(format!("Failed to create session: {:?}", error));
+                                            Some("Failed to create session — please try again".into());
                                     }
                                 }
                             }
@@ -334,8 +334,8 @@ where
                                         app.character_list.entries = chars;
                                     }
                                 }
-                                Err(e) => {
-                                    app.status_line = Some(format!("Create failed: {:?}", e));
+                                Err(_e) => {
+                                    app.status_line = Some("Create failed — please try again".into());
                                 }
                             },
                             app::RuntimeCommand::UpdateCharacter {
@@ -364,8 +364,9 @@ where
                                         app.character_list.entries = chars;
                                     }
                                 }
-                                Err(e) => {
-                                    app.status_line = Some(format!("Update failed: {:?}", e));
+                                Err(_e) => {
+                                    app.status_line =
+                                        Some("Update failed — please try again".into());
                                 }
                             },
                             app::RuntimeCommand::ImportCharacter { path } => {
@@ -377,8 +378,9 @@ where
                                             app.character_list.entries = chars;
                                         }
                                     }
-                                    Err(e) => {
-                                        app.status_line = Some(format!("Import failed: {:?}", e));
+                                    Err(_e) => {
+                                        app.status_line =
+                                            Some("Import failed — please check the file and try again".into());
                                     }
                                 }
                             }
@@ -391,8 +393,9 @@ where
                                     Ok(None) => {
                                         app.status_line = Some("Character not found".into());
                                     }
-                                    Err(e) => {
-                                        app.status_line = Some(format!("Edit failed: {:?}", e));
+                                    Err(_e) => {
+                                        app.status_line =
+                                            Some("Edit failed — please try again".into());
                                     }
                                 }
                             }
@@ -416,9 +419,9 @@ where
                                         };
                                         app.status_line = Some(status);
                                     }
-                                    Err(error) => {
+                                    Err(_error) => {
                                         app.status_line =
-                                            Some(format!("Folder update failed: {:?}", error));
+                                            Some("Folder update failed — please try again".into());
                                     }
                                 }
                                 if let Ok(entries) = runtime.list_sessions() {
@@ -442,9 +445,9 @@ where
                                     app.status_line =
                                         Some(format!("Session not found: {session_id}"));
                                 }
-                                Err(error) => {
+                                Err(_error) => {
                                     app.status_line =
-                                        Some(format!("Failed to open session: {:?}", error));
+                                        Some("Failed to open session — please try again".into());
                                 }
                             },
                         }
