@@ -119,12 +119,11 @@ impl SqliteRepository {
             _ => return Ok(None),
         };
 
-        // Look up the character
-        let character = self
-            .get_character_by_name(character_name)?
-            .ok_or_else(|| PersistError::InvalidData(format!(
-                "character '{character_name}' not found but session references it"
-            )))?;
+        // Look up the character — if not in catalog, skip gracefully
+        let character = match self.get_character_by_name(character_name)? {
+            Some(c) => c,
+            None => return Ok(None),
+        };
 
         let greeting_text = character.greeting.trim();
         if greeting_text.is_empty() {
