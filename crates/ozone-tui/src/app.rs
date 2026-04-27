@@ -1396,6 +1396,27 @@ pub enum RuntimeCommand {
     },
 }
 
+/// Ephemeral event recorded when the context engine compresses messages due to budget exceeded.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ContextCompressionEvent {
+    /// Number of tokens freed by the compression.
+    pub freed_tokens: usize,
+    /// Remaining tokens in the budget after compression.
+    pub remaining_tokens: usize,
+    /// When the compression occurred, for fade-out timing.
+    pub timestamp: Instant,
+}
+
+impl ContextCompressionEvent {
+    pub fn new(freed_tokens: usize, remaining_tokens: usize) -> Self {
+        Self {
+            freed_tokens,
+            remaining_tokens,
+            timestamp: Instant::now(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct RuntimeSendReceipt {
     pub request_id: String,
@@ -1403,6 +1424,9 @@ pub struct RuntimeSendReceipt {
     pub context_preview: Option<ContextPreview>,
     pub context_dry_run: Option<ContextDryRunPreview>,
     pub refresh: Option<RuntimeContextRefresh>,
+    /// Compression event emitted when context was truncated due to budget.
+    /// Tuple is (freed_tokens, remaining_tokens).
+    pub context_compression: Option<(usize, usize)>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -1779,6 +1803,8 @@ pub struct ShellState {
     pub normal_mode_count: Option<u32>,
     /// Whether Ctrl+W pane-prefix mode is active — next key dispatches pane focus.
     pub pane_prefix_active: bool,
+    /// Last context compression event for displaying the freed-tokens flash.
+    pub last_context_compression: Option<ContextCompressionEvent>,
 }
 
 impl ShellState {
@@ -1818,6 +1844,7 @@ impl ShellState {
             toast: None,
             normal_mode_count: None,
             pane_prefix_active: false,
+            last_context_compression: None,
         }
     }
 
@@ -1845,7 +1872,7 @@ impl ShellState {
         if !draft.text.is_empty() {
             self.focus = FocusTarget::Draft;
             self.input_mode = InputMode::Insert;
-            self.sync_textarea_from_draft(&draft);
+            self.sync_textarea_from_draft(&draft.text, draft.cursor);
         } else {
             self.focus = FocusTarget::Draft;
             self.input_mode = InputMode::Normal;
@@ -1891,6 +1918,7 @@ impl ShellState {
         self.session_stats = None;
         self.context_preview = None;
         self.context_dry_run = None;
+        self.last_context_compression = None;
         self.recall_browser = None;
         self.command_palette.close();
         self.slash_selected = None;
@@ -1920,7 +1948,7 @@ impl ShellState {
     }
 
     fn replace_draft(&mut self, draft: DraftState) {
-        self.sync_textarea_from_draft(&draft);
+        self.sync_textarea_from_draft(&draft.text, draft.cursor);
         self.draft = draft;
     }
 
@@ -1941,9 +1969,9 @@ impl ShellState {
     }
 
     /// Replace textarea contents from a DraftState (for history navigation).
-    fn sync_textarea_from_draft(&mut self, draft: &DraftState) {
+    fn sync_textarea_from_draft(&mut self, text: &str, cursor: usize) {
         self.textarea =
-            themed_textarea_from_text(self.active_textarea_surface(), &draft.text, draft.cursor);
+            themed_textarea_from_text(self.active_textarea_surface(), text, cursor);
     }
 
     // ── Slash-popup helpers ─────────────────────────────────────────────────
@@ -2451,35 +2479,49 @@ impl ShellState {
                 self.input_mode = InputMode::Insert;
                 self.history.reset_navigation();
                 self.draft.insert_char(ch);
-                self.sync_textarea_from_draft(&self.draft.clone());
+                let text = self.draft.text.clone();
+                let cursor = self.draft.cursor;
+                self.sync_textarea_from_draft(&text, cursor);
             }
             KeyAction::DraftBackspace => {
                 self.slash_dismissed = false;
                 self.history.reset_navigation();
                 self.draft.backspace();
-                self.sync_textarea_from_draft(&self.draft.clone());
+                let text = self.draft.text.clone();
+                let cursor = self.draft.cursor;
+                self.sync_textarea_from_draft(&text, cursor);
             }
             KeyAction::DraftDelete => {
                 self.slash_dismissed = false;
                 self.history.reset_navigation();
                 self.draft.delete();
-                self.sync_textarea_from_draft(&self.draft.clone());
+                let text = self.draft.text.clone();
+                let cursor = self.draft.cursor;
+                self.sync_textarea_from_draft(&text, cursor);
             }
             KeyAction::MoveCursorLeft => {
                 self.draft.move_cursor_left();
-                self.sync_textarea_from_draft(&self.draft.clone());
+                let text = self.draft.text.clone();
+                let cursor = self.draft.cursor;
+                self.sync_textarea_from_draft(&text, cursor);
             }
             KeyAction::MoveCursorRight => {
                 self.draft.move_cursor_right();
-                self.sync_textarea_from_draft(&self.draft.clone());
+                let text = self.draft.text.clone();
+                let cursor = self.draft.cursor;
+                self.sync_textarea_from_draft(&text, cursor);
             }
             KeyAction::MoveCursorHome => {
                 self.draft.move_cursor_home();
-                self.sync_textarea_from_draft(&self.draft.clone());
+                let text = self.draft.text.clone();
+                let cursor = self.draft.cursor;
+                self.sync_textarea_from_draft(&text, cursor);
             }
             KeyAction::MoveCursorEnd => {
                 self.draft.move_cursor_end();
-                self.sync_textarea_from_draft(&self.draft.clone());
+                let text = self.draft.text.clone();
+                let cursor = self.draft.cursor;
+                self.sync_textarea_from_draft(&text, cursor);
             }
             KeyAction::ToggleHelp => {
                 self.screen = match &self.screen {
@@ -2824,6 +2866,78 @@ impl ShellState {
                     }
                 }
             }
+            // Visual mode actions
+            KeyAction::EnterVisual => {
+                self.input_mode = InputMode::Visual;
+                self.status_line = Some("VISUAL · h/j/k/l move · y yank · d delete · Esc exit".into());
+            }
+            KeyAction::VisualMoveLeft => {
+                // Visual character-wise selection - move cursor left
+                if self.draft.cursor > 0 {
+                    self.draft.cursor -= 1;
+                    let text = self.draft.text.clone();
+                    let cursor = self.draft.cursor;
+                    self.sync_textarea_from_draft(&text, cursor);
+                }
+            }
+            KeyAction::VisualMoveRight => {
+                // Visual character-wise selection - move cursor right
+                let text_len = self.draft.text.chars().count();
+                if self.draft.cursor < text_len {
+                    self.draft.cursor += 1;
+                    let text = self.draft.text.clone();
+                    let cursor = self.draft.cursor;
+                    self.sync_textarea_from_draft(&text, cursor);
+                }
+            }
+            KeyAction::VisualMoveUp => {
+                // Move to start of current line (line-wise movement stub)
+                self.draft.move_cursor_home();
+                let text = self.draft.text.clone();
+                let cursor = self.draft.cursor;
+                self.sync_textarea_from_draft(&text, cursor);
+            }
+            KeyAction::VisualMoveDown => {
+                // Move to end of current line (line-wise movement stub)
+                self.draft.move_cursor_end();
+                let text = self.draft.text.clone();
+                let cursor = self.draft.cursor;
+                self.sync_textarea_from_draft(&text, cursor);
+            }
+            KeyAction::VisualDelete => {
+                // Delete selected text (from cursor to visual selection anchor)
+                // For now, delete the character at cursor position
+                if !self.draft.text.is_empty() {
+                    self.draft.delete();
+                    let text = self.draft.text.clone();
+                    let cursor = self.draft.cursor;
+                    self.sync_textarea_from_draft(&text, cursor);
+                    self.status_line = Some("Deleted selection".into());
+                }
+                self.input_mode = InputMode::Normal;
+            }
+            KeyAction::VisualYank => {
+                // Yank (copy) selected text to clipboard
+                // For now, just copy the current draft text
+                if let Some(ref text) = self.draft.text.is_empty().then_some(&self.draft.text) {
+                    if !text.is_empty() {
+                        // TODO: Implement actual clipboard integration
+                        self.status_line = Some(format!("Yanked {} chars", text.chars().count()));
+                    }
+                }
+                self.input_mode = InputMode::Normal;
+            }
+            KeyAction::VisualChange => {
+                // Change selected text (delete and enter insert mode)
+                if !self.draft.text.is_empty() {
+                    self.draft.delete();
+                    let text = self.draft.text.clone();
+                    let cursor = self.draft.cursor;
+                    self.sync_textarea_from_draft(&text, cursor);
+                }
+                self.input_mode = InputMode::Insert;
+                self.status_line = Some("Changed selection".into());
+            }
             KeyAction::CycleInspectorFocus | KeyAction::CycleInspectorFocusReverse => {
                 todo!()
             }
@@ -2907,6 +3021,11 @@ impl ShellState {
         }
         if let Some(context_dry_run) = receipt.context_dry_run {
             self.context_dry_run = Some(context_dry_run);
+        }
+        // Record compression event for the freed-tokens flash
+        if let Some((freed_tokens, remaining_tokens)) = receipt.context_compression {
+            self.last_context_compression =
+                Some(ContextCompressionEvent::new(freed_tokens, remaining_tokens));
         }
         self.sync_pending_user_message(receipt.user_message);
         self.session.runtime = RuntimePhase::Generating {
@@ -3185,7 +3304,9 @@ impl ShellState {
 
         let cursor = item.content.chars().count();
         self.draft = DraftState::restore(DraftCheckpoint::new(item.content, cursor));
-        self.sync_textarea_from_draft(&self.draft.clone());
+        let text = self.draft.text.clone();
+        let cursor = self.draft.cursor;
+        self.sync_textarea_from_draft(&text, cursor);
         self.focus = FocusTarget::Draft;
         self.input_mode = InputMode::Insert;
         self.history.reset_navigation();
@@ -3214,7 +3335,7 @@ impl ShellState {
         if previous_draft.text.is_empty() {
             self.textarea = new_themed_textarea();
         } else {
-            self.sync_textarea_from_draft(&previous_draft);
+            self.sync_textarea_from_draft(&previous_draft.text, previous_draft.cursor);
         }
     }
 
@@ -3449,7 +3570,9 @@ mod tests {
         let mut app = ShellState::new(session_context());
         app.enter_conversation();
         app.draft = DraftState::with_text("stale draft");
-        app.sync_textarea_from_draft(&app.draft.clone());
+        let draft_text = app.draft.text.clone();
+        let draft_cursor = app.draft.cursor;
+        app.sync_textarea_from_draft(&draft_text, draft_cursor);
         app.session.runtime = RuntimePhase::Generating {
             request_id: "req-stale".into(),
             prompt: "old prompt".into(),
@@ -3657,11 +3780,12 @@ mod tests {
         assert_eq!(app.take_runtime_commands().len(), 1);
 
         app.apply_send_receipt(RuntimeSendReceipt {
-            request_id: "mock-request-1".into(),
+            request_id: "test-1".into(),
             user_message: TranscriptItem::new("user", "hello"),
             context_preview: None,
             context_dry_run: None,
             refresh: None,
+            context_compression: None,
         });
 
         assert_eq!(
@@ -3673,7 +3797,7 @@ mod tests {
             RuntimePhase::Cancelling {
                 request_id: Some(ref request_id),
                 ..
-            } if request_id == "mock-request-1"
+            } if request_id == "test-1"
         ));
         assert_eq!(
             app.take_runtime_commands(),
@@ -3693,12 +3817,14 @@ mod tests {
         assert!(app.inspector.visible);
 
         app.apply_send_receipt(RuntimeSendReceipt {
-            request_id: "mock-request-2".into(),
+            request_id: "test-1".into(),
             user_message: TranscriptItem::new("user", "inspect me"),
             context_preview: None,
             context_dry_run: None,
             refresh: None,
+            context_compression: None,
         });
+
         assert_eq!(app.inspector.focus, InspectorFocus::Message);
 
         app.apply_runtime_cancellation(RuntimeCancellation {
@@ -3839,11 +3965,12 @@ mod tests {
     fn apply_runtime_progress_updates_partial_content_while_generating() {
         let mut app = ShellState::new(session_context());
         app.apply_send_receipt(RuntimeSendReceipt {
-            request_id: "req-1".into(),
+            request_id: "test-1".into(),
             user_message: TranscriptItem::new("user", "stream this"),
             context_preview: None,
             context_dry_run: None,
             refresh: None,
+            context_compression: None,
         });
 
         assert!(app.session.runtime.partial_content().is_none());
@@ -3884,11 +4011,12 @@ mod tests {
     fn apply_runtime_failure_transitions_to_failed_and_sets_status() {
         let mut app = ShellState::new(session_context());
         app.apply_send_receipt(RuntimeSendReceipt {
-            request_id: "req-2".into(),
+            request_id: "test-1".into(),
             user_message: TranscriptItem::new("user", "will fail"),
             context_preview: None,
             context_dry_run: None,
             refresh: None,
+            context_compression: None,
         });
 
         app.apply_runtime_failure(RuntimeFailure {
@@ -4064,6 +4192,7 @@ mod tests {
             context_preview: None,
             context_dry_run: None,
             refresh: None,
+            context_compression: None,
         });
 
         assert_eq!(state.session.transcript.len(), 2);

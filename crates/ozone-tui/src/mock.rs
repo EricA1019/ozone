@@ -343,6 +343,7 @@ impl SessionRuntime for MockRuntime {
             context_preview: None,
             context_dry_run: None,
             refresh: None,
+            context_compression: None,
         }))
     }
 
@@ -382,6 +383,7 @@ impl SessionRuntime for MockRuntime {
             context_preview: None,
             context_dry_run: None,
             refresh: None,
+            context_compression: None,
         }))
     }
 

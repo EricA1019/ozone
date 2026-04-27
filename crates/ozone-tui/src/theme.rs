@@ -145,6 +145,9 @@ pub const MODE_CMD_BG: Color = Color::Rgb(45, 30, 0); // dark amber
 /// Background for NORMAL mode badge.
 pub const MODE_NORMAL_BG: Color = Color::Rgb(20, 20, 20); // near-black
 
+/// Background for VISUAL mode badge.
+pub const MODE_VISUAL_BG: Color = Color::Rgb(0, 80, 60); // dark teal
+
 // ── Neutral palette ──────────────────────────────────────────────────────
 
 /// Readable off-white for primary text on dark backgrounds.

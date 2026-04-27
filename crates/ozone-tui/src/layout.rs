@@ -207,6 +207,7 @@ fn composer_height(input_mode: InputMode, viewport_height: u16) -> u16 {
         InputMode::Normal => 3,
         InputMode::Insert => 5,
         InputMode::Command => 4,
+        InputMode::Visual => 3,
     };
 
     if viewport_height >= 36 {

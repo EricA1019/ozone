@@ -3197,6 +3197,7 @@ fn input_mode_label(input_mode: InputMode) -> &'static str {
         InputMode::Normal => "NORMAL",
         InputMode::Insert => "INSERT",
         InputMode::Command => "COMMAND",
+        InputMode::Visual => "VISUAL",
     }
 }
 
@@ -3432,6 +3433,7 @@ fn composer_hint(input_mode: InputMode) -> &'static str {
             "Enter send · Esc normal · Ctrl+U undo · Ctrl+R redo · Ctrl+C cancel · Ctrl+D dry-run · F2 inspector"
         }
         InputMode::Command => "Enter send · Esc normal · Ctrl+C cancel · Ctrl+D dry-run",
+        InputMode::Visual => "h/j/k/l move · y yank · d/x delete · c change · Esc exit",
     }
 }
 
@@ -3726,6 +3728,7 @@ mod tests {
             context_preview: None,
             context_dry_run: None,
             refresh: None,
+            context_compression: None,
         });
         state.apply_runtime_progress(RuntimeProgress {
             request_id: "req-stream-1".into(),
@@ -3763,6 +3766,7 @@ mod tests {
             context_preview: None,
             context_dry_run: None,
             refresh: None,
+            context_compression: None,
         });
         state.apply_runtime_failure(RuntimeFailure {
             request_id: "req-fail-1".into(),

@@ -1400,6 +1400,7 @@ impl SessionRuntime for Phase1dRuntime {
             context_preview: None,
             context_dry_run: None,
             refresh: None,
+            context_compression: None,
         };
 
         let context_build = match self.build_context_for_generation(context) {
@@ -1478,6 +1479,7 @@ impl SessionRuntime for Phase1dRuntime {
             context_preview: None,
             context_dry_run: None,
             refresh: None,
+            context_compression: None,
         };
 
         let context_build = match self.build_context_for_transcript(context, &source.transcript_prefix) {

@@ -620,6 +620,7 @@ mod tests {
                 context_preview: None,
                 context_dry_run: None,
                 refresh: None,
+                context_compression: None,
             }))
         }
 
@@ -699,10 +700,11 @@ mod tests {
         ) -> Result<Option<RuntimeSendReceipt>, Self::Error> {
             Ok(Some(RuntimeSendReceipt {
                 request_id: "fail-req-1".into(),
-                user_message: TranscriptItem::new("user", "this will fail"),
+                user_message: TranscriptItem::new("user", "test prompt"),
                 context_preview: None,
                 context_dry_run: None,
                 refresh: None,
+                context_compression: None,
             }))
         }
 

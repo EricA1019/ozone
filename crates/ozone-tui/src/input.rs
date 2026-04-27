@@ -5,6 +5,7 @@ pub enum InputMode {
     Normal,
     Insert,
     Command,
+    Visual,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -86,6 +87,22 @@ pub enum KeyAction {
     PaneUp,
     /// Focus pane to the right (Ctrl+W l)
     PaneRight,
+    /// Enter visual mode (v)
+    EnterVisual,
+    /// Move visual selection left (h / Left)
+    VisualMoveLeft,
+    /// Move visual selection right (l / Right)
+    VisualMoveRight,
+    /// Move visual selection up (k / Up)
+    VisualMoveUp,
+    /// Move visual selection down (j / Down)
+    VisualMoveDown,
+    /// Delete selected text in visual mode (d / x)
+    VisualDelete,
+    /// Yank selected text in visual mode (y)
+    VisualYank,
+    /// Change selected text in visual mode (c)
+    VisualChange,
 }
 
 pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
@@ -124,6 +141,7 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
             }
             KeyCode::Char('i') => KeyAction::EnterInsert,
             KeyCode::Char('I') => KeyAction::ToggleInspector,
+            KeyCode::Char('v') => KeyAction::EnterVisual,
             KeyCode::Tab => KeyAction::FocusDraft,
             KeyCode::BackTab => KeyAction::CycleInspectorFocusReverse,
             KeyCode::Char('t') => KeyAction::FocusTranscript,
@@ -149,6 +167,17 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
             KeyCode::Char(ch) if allows_text_insertion(key.modifiers) => {
                 KeyAction::DraftInsertChar(ch)
             }
+            _ => KeyAction::Noop,
+        },
+        InputMode::Visual => match key.code {
+            KeyCode::Esc => KeyAction::LeaveInputMode,
+            KeyCode::Char('h') | KeyCode::Left => KeyAction::VisualMoveLeft,
+            KeyCode::Char('l') | KeyCode::Right => KeyAction::VisualMoveRight,
+            KeyCode::Char('k') | KeyCode::Up => KeyAction::VisualMoveUp,
+            KeyCode::Char('j') | KeyCode::Down => KeyAction::VisualMoveDown,
+            KeyCode::Char('d') | KeyCode::Char('x') => KeyAction::VisualDelete,
+            KeyCode::Char('y') => KeyAction::VisualYank,
+            KeyCode::Char('c') => KeyAction::VisualChange,
             _ => KeyAction::Noop,
         },
     }
