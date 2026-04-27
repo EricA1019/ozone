@@ -1,5 +1,6 @@
 use std::time::Instant;
 
+use arboard::Clipboard;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers, MouseEvent, MouseEventKind};
 use ozone_core::{engine::CancelReason, session::SessionId};
 use ratatui::{
@@ -2983,9 +2984,24 @@ impl ShellState {
             KeyAction::VisualYank => {
                 // Yank (copy) selected text to clipboard
                 if !self.draft.text.is_empty() {
-                    // TODO: Implement actual clipboard integration
-                    self.status_line =
-                        Some(format!("Yanked {} chars", self.draft.text.chars().count()));
+                    let char_count = self.draft.text.chars().count();
+                    match Clipboard::new() {
+                        Ok(mut clipboard) => {
+                            if let Err(e) = clipboard.set_text(&self.draft.text) {
+                                self.status_line = Some(format!(
+                                    "Yanked {} chars (clipboard error: {e})",
+                                    char_count
+                                ));
+                            } else {
+                                self.status_line =
+                                    Some(format!("Yanked {} chars to clipboard", char_count));
+                            }
+                        }
+                        Err(_e) => {
+                            // Fallback: clipboard unavailable (e.g., headless environment)
+                            self.status_line = Some(format!("Yanked {} chars", char_count));
+                        }
+                    }
                 }
                 self.input_mode = InputMode::Normal;
             }
