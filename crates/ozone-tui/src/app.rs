@@ -772,6 +772,7 @@ pub struct CharacterEntry {
     pub card_id: String,
     pub name: String,
     pub description: String,
+    pub greeting: String,
     pub session_count: usize,
 }
 
@@ -1806,6 +1807,8 @@ pub struct ShellState {
     pub pane_prefix_active: bool,
     /// Last context compression event for displaying the freed-tokens flash.
     pub last_context_compression: Option<ContextCompressionEvent>,
+    /// Buffer for jj/jk escape sequence detection in Insert mode.
+    pub insert_escape_buffer: Vec<char>,
 }
 
 impl ShellState {
@@ -1846,6 +1849,7 @@ impl ShellState {
             normal_mode_count: None,
             pane_prefix_active: false,
             last_context_compression: None,
+            insert_escape_buffer: Vec::new(),
         }
     }
 
@@ -2275,7 +2279,64 @@ impl ShellState {
                 if self.message_edit.is_some() {
                     dispatch_edit_key(key)
                 } else {
-                    dispatch_key(self.input_mode, key)
+                    let action = dispatch_key(self.input_mode, key);
+
+                    // jj/jk escape sequence detection in Insert mode
+                    if self.input_mode == InputMode::Insert
+                        && matches!(action, KeyAction::TextAreaInput(_))
+                    {
+                        if let KeyAction::TextAreaInput(key_event) = action {
+                            match key_event.code {
+                                KeyCode::Char('j') | KeyCode::Char('k') => {
+                                    let last_char = match key_event.code {
+                                        KeyCode::Char(c) => c,
+                                        _ => unreachable!(),
+                                    };
+                                    self.insert_escape_buffer.push(last_char);
+                                    // Keep buffer small
+                                    while self.insert_escape_buffer.len() > 3 {
+                                        self.insert_escape_buffer.remove(0);
+                                    }
+                                    // Check for jj or jk escape sequence
+                                    let buf = &self.insert_escape_buffer;
+                                    if buf.len() >= 2 && buf[buf.len() - 2] == 'j'
+                                        && (buf[buf.len() - 1] == 'j' || buf[buf.len() - 1] == 'k')
+                                    {
+                                        // Escape sequence detected - remove the 'j' that was already
+                                        // inserted into textarea by undoing the last character
+                                        self.textarea.input(KeyEvent::new(
+                                            KeyCode::Backspace,
+                                            KeyModifiers::NONE,
+                                        ));
+                                        self.insert_escape_buffer.clear();
+                                        let escape_action = KeyAction::LeaveInputMode;
+                                        self.apply_action_with_layout(escape_action, layout);
+                                        return escape_action;
+                                    }
+                                    // Not an escape sequence yet - buffer the char and return Noop
+                                    KeyAction::Noop
+                                }
+                                _ => {
+                                    // Any other character - inject buffered 'j' if any, then pass through
+                                    if !self.insert_escape_buffer.is_empty() {
+                                        // Inject the buffered 'j' character(s) into textarea
+                                        for &c in &self.insert_escape_buffer {
+                                            self.textarea.input(KeyEvent::new(
+                                                KeyCode::Char(c),
+                                                KeyModifiers::NONE,
+                                            ));
+                                        }
+                                    }
+                                    self.insert_escape_buffer.clear();
+                                    action
+                                }
+                            }
+                        } else {
+                            action
+                        }
+                    } else {
+                        action
+                    }
                 }
             }
             ScreenState::ModelIntelligence => dispatch_menu_key(key, false),
@@ -2426,6 +2487,8 @@ impl ShellState {
                     self.input_mode = InputMode::Normal;
                     self.history.reset_navigation();
                 }
+                // Clear jj/jk escape buffer when leaving Insert mode
+                self.insert_escape_buffer.clear();
             }
             KeyAction::SubmitDraft => self.submit_draft(),
             KeyAction::CancelGeneration => self.cancel_generation(),
@@ -4292,6 +4355,144 @@ mod tests {
         assert_eq!(state.screen, ScreenState::MainMenu);
     }
 
+    // ── Insert mode jj/jk escape sequence tests ──────────────────────────
+
+    #[test]
+    fn jj_exits_insert_mode() {
+        use crate::layout::build_layout_for_area;
+        use ratatui::layout::Rect;
+
+        let mut app = ShellState::new(session_context());
+        app.enter_conversation();
+        app.input_mode = InputMode::Insert;
+
+        let layout = build_layout_for_area(&app, Rect::new(0, 0, 80, 24));
+
+        // First 'j' is buffered and passed to textarea
+        let action = app.handle_key_event_with_layout(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            &layout,
+        );
+        assert_eq!(action, KeyAction::Noop); // j is buffered
+        assert_eq!(app.insert_escape_buffer.len(), 1);
+
+        // Second 'j' triggers escape and exits Insert mode
+        let action = app.handle_key_event_with_layout(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            &layout,
+        );
+        assert_eq!(action, KeyAction::LeaveInputMode);
+        assert_eq!(app.input_mode, InputMode::Normal);
+        assert!(app.insert_escape_buffer.is_empty());
+    }
+
+    #[test]
+    fn jk_exits_insert_mode() {
+        use crate::layout::build_layout_for_area;
+        use ratatui::layout::Rect;
+
+        let mut app = ShellState::new(session_context());
+        app.enter_conversation();
+        app.input_mode = InputMode::Insert;
+
+        let layout = build_layout_for_area(&app, Rect::new(0, 0, 80, 24));
+
+        // First 'j' is buffered
+        let action = app.handle_key_event_with_layout(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            &layout,
+        );
+        assert_eq!(action, KeyAction::Noop);
+        assert_eq!(app.insert_escape_buffer.len(), 1);
+
+        // 'k' after 'j' triggers escape
+        let action = app.handle_key_event_with_layout(
+            KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE),
+            &layout,
+        );
+        assert_eq!(action, KeyAction::LeaveInputMode);
+        assert_eq!(app.input_mode, InputMode::Normal);
+    }
+
+    #[test]
+    fn ja_does_not_exit_insert_mode() {
+        use crate::layout::build_layout_for_area;
+        use ratatui::layout::Rect;
+
+        let mut app = ShellState::new(session_context());
+        app.enter_conversation();
+        app.input_mode = InputMode::Insert;
+
+        let layout = build_layout_for_area(&app, Rect::new(0, 0, 80, 24));
+
+        // First 'j' is buffered
+        let action = app.handle_key_event_with_layout(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            &layout,
+        );
+        assert_eq!(action, KeyAction::Noop);
+
+        // 'a' after 'j' should NOT trigger escape - 'j' is passed through
+        let action = app.handle_key_event_with_layout(
+            KeyEvent::new(KeyCode::Char('a'), KeyModifiers::NONE),
+            &layout,
+        );
+        // 'a' should pass through (not LeaveInputMode)
+        assert_eq!(action, KeyAction::TextAreaInput(KeyEvent::new(
+            KeyCode::Char('a'),
+            KeyModifiers::NONE,
+        )));
+        // Buffer should be cleared after non-j/k char
+        assert!(app.insert_escape_buffer.is_empty());
+    }
+
+    #[test]
+    fn single_j_does_not_exit_insert_mode() {
+        use crate::layout::build_layout_for_area;
+        use ratatui::layout::Rect;
+
+        let mut app = ShellState::new(session_context());
+        app.enter_conversation();
+        app.input_mode = InputMode::Insert;
+
+        let layout = build_layout_for_area(&app, Rect::new(0, 0, 80, 24));
+
+        // Single 'j' should not exit Insert mode
+        let action = app.handle_key_event_with_layout(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            &layout,
+        );
+        assert_eq!(action, KeyAction::Noop);
+        assert_eq!(app.input_mode, InputMode::Insert);
+    }
+
+    #[test]
+    fn escape_key_clears_escape_buffer() {
+        use crate::layout::build_layout_for_area;
+        use ratatui::layout::Rect;
+
+        let mut app = ShellState::new(session_context());
+        app.enter_conversation();
+        app.input_mode = InputMode::Insert;
+
+        let layout = build_layout_for_area(&app, Rect::new(0, 0, 80, 24));
+
+        // Buffer a 'j'
+        app.handle_key_event_with_layout(
+            KeyEvent::new(KeyCode::Char('j'), KeyModifiers::NONE),
+            &layout,
+        );
+        assert_eq!(app.insert_escape_buffer.len(), 1);
+
+        // Press Escape - should exit and clear buffer
+        let action = app.handle_key_event_with_layout(
+            KeyEvent::new(KeyCode::Esc, KeyModifiers::NONE),
+            &layout,
+        );
+        assert_eq!(action, KeyAction::LeaveInputMode);
+        assert!(app.insert_escape_buffer.is_empty());
+    }
+
     // ── Menu navigation tests ──────────────────────────────────────────
 
     #[test]
@@ -4787,18 +4988,21 @@ mod tests {
                 card_id: "c1".into(),
                 name: "Alice".into(),
                 description: "First".into(),
+                greeting: "Hello, I'm Alice!".into(),
                 session_count: 3,
             },
             CharacterEntry {
                 card_id: "c2".into(),
                 name: "Bob".into(),
                 description: "Second".into(),
+                greeting: "Hey there!".into(),
                 session_count: 1,
             },
             CharacterEntry {
                 card_id: "c3".into(),
                 name: "Carol".into(),
                 description: "Third".into(),
+                greeting: String::new(),
                 session_count: 0,
             },
         ]

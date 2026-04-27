@@ -219,6 +219,7 @@ pub struct CharacterListEntryRenderModel {
 pub struct CharacterDetailRenderModel {
     pub name: String,
     pub description: String,
+    pub greeting: Option<String>,
     pub session_count: usize,
 }
 
@@ -409,7 +410,30 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
             }
             entries
         },
-        empty_state: "⬡ Start a conversation — press i to enter insert mode".into(),
+        empty_state: {
+            // Show character greeting if transcript is empty and greeting is set
+            if state.session.transcript.is_empty() {
+                if let Some(greeting) = state
+                    .session_metadata
+                    .as_ref()
+                    .and_then(|m| m.greeting.as_ref())
+                {
+                    let name_prefix = state
+                        .session_metadata
+                        .as_ref()
+                        .and_then(|m| m.character_name.as_ref())
+                        .filter(|n| !n.is_empty());
+                    match name_prefix {
+                        Some(name) => format!("⬡ {} says: {}", name, greeting),
+                        None => format!("⬡ {}", greeting),
+                    }
+                } else {
+                    "⬡ Start a conversation — press i to enter insert mode".into()
+                }
+            } else {
+                "⬡ Start a conversation — press i to enter insert mode".into()
+            }
+        },
         hint: if state.message_edit.is_some() {
             "Editing selected message · Enter save · Esc cancel · Ctrl+U undo · Ctrl+R redo · F2 inspector"
                 .into()
@@ -658,6 +682,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
                 .map(|e| CharacterDetailRenderModel {
                     name: e.name.clone(),
                     description: e.description.clone(),
+                    greeting: if e.greeting.is_empty() { None } else { Some(e.greeting.clone()) },
                     session_count: e.session_count,
                 });
         Some(CharacterListRenderModel {
@@ -984,28 +1009,65 @@ fn build_hints(state: &ShellState) -> Vec<HintItem> {
                 ]
             }
         }
-        ScreenState::Conversation => vec![
-            HintItem {
-                key: "i".into(),
-                action: "Insert mode".into(),
-            },
-            HintItem {
-                key: "Enter".into(),
-                action: "Send".into(),
-            },
-            HintItem {
-                key: "?".into(),
-                action: "Help".into(),
-            },
-            HintItem {
-                key: "Esc".into(),
-                action: "Menu".into(),
-            },
-            HintItem {
-                key: "/".into(),
-                action: "Commands".into(),
-            },
-        ],
+        ScreenState::Conversation => match state.input_mode {
+            InputMode::Normal => vec![
+                HintItem {
+                    key: "j/k".into(),
+                    action: "scroll".into(),
+                },
+                HintItem {
+                    key: "b".into(),
+                    action: "bookmark".into(),
+                },
+                HintItem {
+                    key: "r".into(),
+                    action: "reroll".into(),
+                },
+                HintItem {
+                    key: "t".into(),
+                    action: "focus transcript".into(),
+                },
+                HintItem {
+                    key: "Ctrl+K".into(),
+                    action: "pin".into(),
+                },
+                HintItem {
+                    key: "Ctrl+D".into(),
+                    action: "dry run".into(),
+                },
+                HintItem {
+                    key: "Esc".into(),
+                    action: "menu".into(),
+                },
+                HintItem {
+                    key: "/".into(),
+                    action: "commands".into(),
+                },
+            ],
+            InputMode::Insert => vec![
+                HintItem {
+                    key: "Esc".into(),
+                    action: "exit".into(),
+                },
+                HintItem {
+                    key: "Enter".into(),
+                    action: "send".into(),
+                },
+                HintItem {
+                    key: "Tab".into(),
+                    action: "focus".into(),
+                },
+                HintItem {
+                    key: "↑↓".into(),
+                    action: "history".into(),
+                },
+                HintItem {
+                    key: "type".into(),
+                    action: "compose".into(),
+                },
+            ],
+            _ => vec![],
+        },
         ScreenState::Help => vec![
             HintItem {
                 key: "Esc".into(),
@@ -2793,6 +2855,20 @@ fn render_character_list(frame: &mut Frame, pane: &PaneLayout, model: &Character
                     format!("  {s}"),
                     theme::text_style(),
                 )));
+            }
+        }
+        if let Some(greeting) = &detail.greeting {
+            detail_lines.push(Line::from(Span::styled(
+                "  Greeting:",
+                theme::muted_style(),
+            )));
+            for chunk in greeting.as_bytes().chunks(70) {
+                if let Ok(s) = std::str::from_utf8(chunk) {
+                    detail_lines.push(Line::from(Span::styled(
+                        format!("  {s}"),
+                        theme::text_style(),
+                    )));
+                }
             }
         }
         detail_lines.push(Line::from(Span::styled(

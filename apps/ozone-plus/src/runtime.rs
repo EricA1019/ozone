@@ -2358,6 +2358,7 @@ impl SessionRuntime for Phase1dRuntime {
                 card_id: c.card_id,
                 name: c.name,
                 description: c.description,
+                greeting: c.greeting,
                 session_count: 0,
             })
             .collect())
@@ -2383,6 +2384,7 @@ impl SessionRuntime for Phase1dRuntime {
             card_id: stored.card_id,
             name: stored.name,
             description: stored.description,
+            greeting: stored.greeting,
             session_count: 0,
         })
     }
@@ -2408,6 +2410,7 @@ impl SessionRuntime for Phase1dRuntime {
             card_id: stored.card_id,
             name: stored.name,
             description: stored.description,
+            greeting: stored.greeting,
             session_count: 0,
         })
     }
@@ -2453,6 +2456,7 @@ impl SessionRuntime for Phase1dRuntime {
             card_id: stored.card_id,
             name: stored.name,
             description: stored.description,
+            greeting: stored.greeting,
             session_count: 0,
         })
     }

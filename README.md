@@ -364,12 +364,11 @@ Type these in the input box:
 | `/search session <query>` | Full-text search this session's transcript |
 | `/search global <query>` | Full-text search across all sessions |
 | `/summarize session` | Generate a session synopsis |
-| `/summarize chunk` | Summarize the current context window |
-| `/thinking immersive` | Show AI thinking blocks inline |
+| `/thinking hidden` | Suppress thinking block display |
 | `/thinking assisted` | Show thinking as a collapsed summary |
 | `/thinking debug` | Show raw thinking output |
-| `/tierb on` | Enable Tier B assistive features (importance scoring, keyword extraction) |
-| `/tierb off` | Disable Tier B |
+| `/tierb status` | Show Tier B feature status |
+| `/tierb toggle` | Toggle Tier B features on/off |
 | `/safemode on` | Disable all Tier B and assistive features |
 | `/safemode off` | Re-enable assistive features |
 | `/hooks status` | Show loaded shell hooks |

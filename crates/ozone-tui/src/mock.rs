@@ -512,6 +512,7 @@ impl SessionRuntime for MockRuntime {
             card_id: format!("mock-char-{}", self.available_characters.len() + 1),
             name: detail.name.clone(),
             description: String::new(),
+            greeting: detail.greeting.clone(),
             session_count: 0,
         };
         self.available_characters.push(entry.clone());
@@ -529,11 +530,13 @@ impl SessionRuntime for MockRuntime {
         {
             entry.name = detail.name.clone();
             entry.description = detail.description.clone();
+            entry.greeting = detail.greeting.clone();
         }
         Ok(crate::app::CharacterEntry {
             card_id: detail.card_id,
             name: detail.name,
             description: detail.description,
+            greeting: detail.greeting,
             session_count: 0,
         })
     }
@@ -550,6 +553,7 @@ impl SessionRuntime for MockRuntime {
             card_id: e.card_id.clone(),
             name: e.name.clone(),
             description: e.description.clone(),
+            greeting: e.greeting.clone(),
             ..Default::default()
         }))
     }
@@ -562,6 +566,7 @@ impl SessionRuntime for MockRuntime {
             card_id: format!("mock-import-{}", self.available_characters.len() + 1),
             name: "Imported Character".into(),
             description: "Imported from file".into(),
+            greeting: String::new(),
             session_count: 0,
         };
         self.available_characters.push(entry.clone());

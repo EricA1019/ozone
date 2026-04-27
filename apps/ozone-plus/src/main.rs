@@ -3347,7 +3347,7 @@ mod tests {
 
     #[test]
     fn import_and_export_commands_use_xdg_paths() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let sandbox = TestSandbox::new("import-export-smoke");
         fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
         let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
@@ -3622,7 +3622,7 @@ mod tests {
 
     #[test]
     fn memory_and_search_commands_execute_against_xdg_repo() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let sandbox = TestSandbox::new("memory-search-smoke");
         fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
         let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
@@ -3684,7 +3684,7 @@ mod tests {
 
     #[test]
     fn index_rebuild_command_persists_embeddings_and_builds_vector_index() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let sandbox = TestSandbox::new("index-rebuild");
         fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
         let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
@@ -3749,7 +3749,7 @@ mock_seed = 11
 
     #[test]
     fn index_rebuild_fails_cleanly_when_provider_is_disabled() {
-        let _env_guard = ENV_LOCK.lock().unwrap();
+        let _env_guard = ENV_LOCK.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
         let sandbox = TestSandbox::new("index-rebuild-disabled");
         fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
         let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
