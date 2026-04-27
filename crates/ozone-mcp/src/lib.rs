@@ -592,10 +592,28 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
             }
             "list" => self.with_repo(sandbox_id.as_deref(), |repo| {
                 let sessions = repo.list_sessions()?;
+                let session_jsons: Vec<Value> = sessions
+                    .iter()
+                    .map(|session| {
+                        let mut json = session_summary_json(session);
+                        // Attach last message preview if available
+                        if let Ok(messages) = repo.list_session_messages(&session.session_id) {
+                            if let Some(last) = messages.last() {
+                                if let Some(obj) = json.as_object_mut() {
+                                    obj.insert(
+                                        "lastMessagePreview".to_owned(),
+                                        json!(last.content.as_str()),
+                                    );
+                                }
+                            }
+                        }
+                        json
+                    })
+                    .collect();
                 Ok(ToolReply::success(
                     "Listed ozone+ sessions".to_owned(),
                     json!({
-                        "sessions": sessions.iter().map(session_summary_json).collect::<Vec<_>>(),
+                        "sessions": session_jsons,
                         "found": sessions.len()
                     }),
                 ))
@@ -786,13 +804,18 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
             }
             "list" => {
                 let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-                self.with_repo(sandbox_id.as_deref(), |repo| {
-                    let memories = repo.list_pinned_memories(&session_id)?;
+                let kind_opt = optional_string(args, "kind");
+                self.with_repo(sandbox_id.as_deref(), move |repo| {
+                    let memories = match kind_opt.as_deref() {
+                        Some("note") => repo.list_note_memories(&session_id)?,
+                        _ => repo.list_pinned_memories(&session_id)?,
+                    };
                     Ok(ToolReply::success(
-                        "Listed pinned memories".to_owned(),
+                        "Listed memories".to_owned(),
                         json!({
                             "memories": memories.iter().map(pinned_memory_view_json).collect::<Vec<_>>(),
-                            "found": memories.len()
+                            "found": memories.len(),
+                            "kind": kind_opt.as_deref().unwrap_or("pinned")
                         }),
                     ))
                 })
