@@ -3818,6 +3818,7 @@ mod tests {
             session_metadata: Some(SessionMetadata {
                 character_name: Some("Beatrice".into()),
                 tags: vec!["story".into()],
+                pinned_count: None,
                 greeting: None,
             }),
             session_stats: Some(SessionStats {
@@ -4139,6 +4140,7 @@ mod tests {
         state.session_metadata = Some(SessionMetadata {
             character_name: Some("Stale".into()),
             tags: vec!["stale".into()],
+            pinned_count: None,
             greeting: None,
         });
         state.session_stats = Some(SessionStats {
@@ -5626,6 +5628,7 @@ mod tests {
             message_count: 5,
             last_active: None,
             folder: None,
+            last_message_preview: None,
         }];
         app.screen = super::ScreenState::SessionList;
         app.session_list.selected = 0;

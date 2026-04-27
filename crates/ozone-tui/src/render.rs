@@ -3549,6 +3549,7 @@ mod tests {
             session_metadata: Some(crate::app::SessionMetadata {
                 character_name: Some("Beatrice".into()),
                 tags: vec!["story".into()],
+                pinned_count: None,
                 greeting: None,
             }),
             session_stats: Some(crate::app::SessionStats {
@@ -3893,6 +3894,7 @@ mod tests {
                 message_count: 42,
                 last_active: Some("2 hours ago".into()),
                 folder: None,
+                last_message_preview: Some(String::new()),
             },
             crate::app::SessionListEntry {
                 session_id: "test-2".into(),
@@ -3901,6 +3903,7 @@ mod tests {
                 message_count: 7,
                 last_active: Some("yesterday".into()),
                 folder: None,
+                last_message_preview: Some(String::new()),
             },
         ];
 
@@ -3968,6 +3971,7 @@ mod tests {
             message_count: 10,
             last_active: None,
             folder: None,
+            last_message_preview: Some(String::new()),
         }];
 
         let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
