@@ -98,6 +98,78 @@ impl SqliteRepository {
         })
     }
 
+    /// Seed the character greeting into a session if the session has a character
+    /// with a non-empty greeting and the transcript is currently empty.
+    /// Returns the greeting text if seeded, or None if no greeting was injected.
+    /// This enables greetings to fire when loading pre-existing sessions.
+    /// Seed the character greeting into a session if the session has a character
+    /// with a non-empty greeting and the transcript is currently empty.
+    /// Returns the greeting text if seeded, or None if no greeting was injected.
+    /// This enables greetings to fire when loading pre-existing sessions.
+    pub fn maybe_seed_character_greeting(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Option<String>> {
+        // Get session record (not summary — we need character_name from the full record)
+        let session = self
+            .get_session(session_id)?
+            .ok_or_else(|| PersistError::SessionNotFound(session_id.to_string()))?;
+        let character_name = match session.character_name.as_deref() {
+            Some(name) if !name.is_empty() => name,
+            _ => return Ok(None),
+        };
+
+        // Look up the character
+        let character = self
+            .get_character_by_name(character_name)?
+            .ok_or_else(|| PersistError::InvalidData(format!(
+                "character '{character_name}' not found but session references it"
+            )))?;
+
+        let greeting_text = character.greeting.trim();
+        if greeting_text.is_empty() {
+            return Ok(None);
+        }
+
+        // Check if transcript is empty (don't double-inject)
+        let messages = self.get_active_branch_transcript(session_id)?;
+        if !messages.is_empty() {
+            return Ok(None);
+        }
+
+        // Insert greeting as assistant message
+        let message = self.insert_message(
+            session_id,
+            CreateMessageRequest {
+                parent_id: None,
+                author_kind: "assistant".to_owned(),
+                author_name: Some(character_name.to_owned()),
+                content: greeting_text.to_owned(),
+            },
+        )?;
+
+        let message_id = MessageId::parse(message.message_id)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        let branch = ConversationBranch::new(
+            BranchId::parse(generate_uuid_like())?,
+            session_id.clone(),
+            "main",
+            message_id.clone(),
+            now,
+        );
+
+        self.create_branch(CreateBranchCommand {
+            branch,
+            forked_from: message_id,
+        })?;
+
+        Ok(Some(greeting_text.to_owned()))
+    }
+
     pub fn list_sessions(&self) -> Result<Vec<SessionSummary>> {
         let conn = self.ensure_global_connection()?;
         let mut stmt = conn.prepare(

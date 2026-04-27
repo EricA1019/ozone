@@ -645,6 +645,37 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
                     ))
                 })
             }
+            "load" => {
+                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
+                self.with_repo(sandbox_id.as_deref(), |repo| {
+                    // Seed greeting if character has one and transcript is empty
+                    let greeting_seeded = repo.maybe_seed_character_greeting(&session_id)?;
+                    // Build standard metadata response
+                    let session = repo
+                        .get_session(&session_id)?
+                        .ok_or_else(|| anyhow!("session {session_id} was not found"))?;
+                    let active_branch = repo.get_active_branch(&session_id)?;
+                    let transcript_message_count = match active_branch.as_ref() {
+                        Some(record) => repo
+                            .list_branch_messages(&session_id, &record.branch.branch_id)?
+                            .len(),
+                        None => 0,
+                    };
+                    let lock_probe = probe_session_lock(&repo, &session_id)?;
+                    let active_branch_name = active_branch.as_ref().map(|r| r.branch.name.clone());
+                    Ok(ToolReply::success(
+                        "Loaded session".to_owned(),
+                        json!({
+                            "session": session_summary_json(&session),
+                            "activeBranch": active_branch.as_ref().map(branch_record_json),
+                            "activeBranchName": active_branch_name,
+                            "transcriptMessageCount": transcript_message_count,
+                            "lock": lock_probe,
+                            "greetingSeeded": greeting_seeded,
+                        }),
+                    ))
+                })
+            }
             "transcript" => {
                 let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
                 let branch_id = optional_string(args, "branchId")
