@@ -595,7 +595,8 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
                 Ok(ToolReply::success(
                     "Listed ozone+ sessions".to_owned(),
                     json!({
-                        "sessions": sessions.iter().map(session_summary_json).collect::<Vec<_>>()
+                        "sessions": sessions.iter().map(session_summary_json).collect::<Vec<_>>(),
+                        "found": sessions.len()
                     }),
                 ))
             }),
@@ -613,11 +614,13 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
                         None => 0,
                     };
                     let lock_probe = probe_session_lock(&repo, &session_id)?;
+                    let active_branch_name = active_branch.as_ref().map(|r| r.branch.name.clone());
                     Ok(ToolReply::success(
                         "Loaded session metadata".to_owned(),
                         json!({
                             "session": session_summary_json(&session),
                             "activeBranch": active_branch.as_ref().map(branch_record_json),
+                            "activeBranchName": active_branch_name,
                             "transcriptMessageCount": transcript_message_count,
                             "lock": lock_probe
                         }),
@@ -646,6 +649,27 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
                             "branch": branch_record_json(&branch),
                             "messages": messages.iter().map(message_json).collect::<Vec<_>>()
                         }),
+                    ))
+                })
+            }
+            "rename" => {
+                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
+                let new_name = required_string(args, "newName")?;
+                self.with_repo(sandbox_id.as_deref(), |repo| {
+                    let session = repo.rename_session(&session_id, &new_name)?;
+                    Ok(ToolReply::success(
+                        "Renamed ozone+ session".to_owned(),
+                        json!({ "session": session_summary_json(&session) }),
+                    ))
+                })
+            }
+            "delete" => {
+                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
+                self.with_repo(sandbox_id.as_deref(), |repo| {
+                    repo.delete_session(&session_id)?;
+                    Ok(ToolReply::success(
+                        "Deleted ozone+ session".to_owned(),
+                        json!({ "sessionId": session_id.to_string() }),
                     ))
                 })
             }
@@ -688,6 +712,7 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
             command.push("--author-name".to_owned());
             command.push(author_name);
         }
+        let parent_message_id = optional_string(args, "parentMessageId");
         let output = self.run_workspace_command("cargo", &command, sandbox_id.as_deref())?;
         let message_ids = output
             .stdout
@@ -697,10 +722,14 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
             .filter(|value| !value.is_empty())
             .map(ToOwned::to_owned)
             .collect::<Vec<_>>();
+        let user_message_id = message_ids.first().cloned();
+        let assistant_message_id = message_ids.get(1).cloned();
         let data = json!({
             "command": output.command,
             "ok": output.success,
-            "messageIds": message_ids,
+            "userMessageId": user_message_id,
+            "assistantMessageId": assistant_message_id,
+            "parentMessageId": parent_message_id,
             "stdout": output.stdout,
             "stderr": output.stderr,
             "exitCode": output.exit_code
@@ -762,7 +791,8 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
                     Ok(ToolReply::success(
                         "Listed pinned memories".to_owned(),
                         json!({
-                            "memories": memories.iter().map(pinned_memory_view_json).collect::<Vec<_>>()
+                            "memories": memories.iter().map(pinned_memory_view_json).collect::<Vec<_>>(),
+                            "found": memories.len()
                         }),
                     ))
                 })
@@ -838,10 +868,20 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
         let mode = parse_prefixed_field(&output.stdout, "  mode            ");
         let hits = parse_prefixed_field(&output.stdout, "  hits            ")
             .and_then(|value| value.parse::<u64>().ok());
+        let status = parse_prefixed_field(&output.stdout, "  status          ");
+        // Replace cryptic embedding disabled message with user-friendly FTS fallback note
+        let status = status.map(|s| {
+            if s.contains("embedding.provider is disabled") {
+                "FTS mode — configure embedding provider for vector search".to_owned()
+            } else {
+                s
+            }
+        });
         let data = json!({
             "command": output.command,
             "ok": output.success,
             "mode": mode,
+            "status": status,
             "hits": hits,
             "stdout": output.stdout,
             "stderr": output.stderr,
@@ -906,7 +946,8 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
                     Ok(ToolReply::success(
                         "Listed branches".to_owned(),
                         json!({
-                            "branches": branches.iter().map(branch_record_json).collect::<Vec<_>>()
+                            "branches": branches.iter().map(branch_record_json).collect::<Vec<_>>(),
+                            "found": branches.len()
                         }),
                     ))
                 })
@@ -919,6 +960,17 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
                     Ok(ToolReply::success(
                         "Activated branch".to_owned(),
                         json!({ "branch": branch_record_json(&branch) }),
+                    ))
+                })
+            }
+            "delete" => {
+                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
+                let branch_id = parse_branch_id(&required_string(args, "branchId")?)?;
+                self.with_repo(sandbox_id.as_deref(), |repo| {
+                    repo.delete_branch(&session_id, &branch_id)?;
+                    Ok(ToolReply::success(
+                        "Deleted branch".to_owned(),
+                        json!({ "branchId": branch_id.to_string() }),
                     ))
                 })
             }
@@ -1158,6 +1210,7 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
                 .map_err(|error| anyhow!(error.to_string()))?,
             (None, None) => bail!("import_card requires either `path` or `cardJson`"),
         };
+        let sillytavern_format = card.source_format.starts_with("chara_card_v2");
         self.with_repo(sandbox_id.as_deref(), |repo| {
             let imported = repo.import_character_card(ImportCharacterCardRequest {
                 card,
@@ -1171,7 +1224,8 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
                 json!({
                     "session": session_summary_json(&imported.session),
                     "seededBranchId": imported.seeded_branch_id.map(|value| value.to_string()),
-                    "seededMessageId": imported.seeded_message_id.map(|value| value.to_string())
+                    "seededMessageId": imported.seeded_message_id.map(|value| value.to_string()),
+                    "sillytavernFormat": sillytavern_format
                 }),
             ))
         })
@@ -5454,7 +5508,8 @@ fn session_summary_json(session: &ozone_persist::SessionSummary) -> Value {
         "lastOpenedAt": session.last_opened_at,
         "messageCount": session.message_count,
         "dbSizeBytes": session.db_size_bytes,
-        "tags": session.tags
+        "tags": session.tags,
+        "lastMessageId": serde_json::Value::Null
     })
 }
 

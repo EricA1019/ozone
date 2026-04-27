@@ -209,4 +209,30 @@ impl SqliteRepository {
             None => Ok(Vec::new()),
         }
     }
+
+    /// Delete a branch by setting its state to Deleted.
+    pub fn delete_branch(&self, session_id: &SessionId, branch_id: &BranchId) -> Result<()> {
+        let touched_at = self.now();
+        let mut session_conn = self.open_session_connection(session_id)?;
+        let tx = session_conn.transaction()?;
+
+        let branch = get_branch_record_in_tx(&tx, branch_id)?
+            .ok_or_else(|| PersistError::BranchNotFound(branch_id.to_string()))?;
+
+        if branch.branch.session_id != *session_id {
+            return Err(PersistError::ConsistencyError(format!(
+                "branch {} belongs to session {}, not {}",
+                branch_id, branch.branch.session_id, session_id
+            )));
+        }
+
+        tx.execute(
+            "UPDATE branches SET state = ?2 WHERE branch_id = ?1",
+            params![branch_id.as_str(), BranchState::Deleted.as_str()],
+        )?;
+
+        tx.commit()?;
+        self.touch_session_summary(session_id, touched_at, 0)?;
+        Ok(())
+    }
 }

@@ -261,6 +261,42 @@ impl SqliteRepository {
         let rows = conn.execute("DELETE FROM session_lock WHERE id = 1", [])?;
         Ok(rows != 0)
     }
+
+    /// Rename a session by updating its name in the global index.
+    pub fn rename_session(&self, session_id: &SessionId, new_name: &str) -> Result<SessionRecord> {
+        let request = UpdateSessionRequest {
+            name: Some(new_name.to_owned()),
+            character_name: None,
+            tags: None,
+        };
+        self.update_session_metadata(session_id, request)
+    }
+
+    /// Delete a session: removes it from the global index and deletes its on-disk database and directory.
+    pub fn delete_session(&self, session_id: &SessionId) -> Result<()> {
+        // Verify the session exists first
+        let _ = self
+            .get_session(session_id)?
+            .ok_or_else(|| PersistError::SessionNotFound(session_id.to_string()))?;
+
+        // Remove from global sessions table
+        let global_conn = self.ensure_global_connection()?;
+        let rows = global_conn.execute(
+            "DELETE FROM sessions WHERE session_id = ?1",
+            [session_id.as_str()],
+        )?;
+        if rows == 0 {
+            return Err(PersistError::SessionNotFound(session_id.to_string()));
+        }
+
+        // Delete the session directory and all its contents
+        let session_dir = self.paths.session_dir(session_id);
+        if session_dir.exists() {
+            fs::remove_dir_all(&session_dir)?;
+        }
+
+        Ok(())
+    }
 }
 
 fn merge_tags(primary: &[String], secondary: &[String]) -> Vec<String> {
