@@ -27,7 +27,8 @@ pub use app::{
     RuntimeCancellation, RuntimeCompletion, RuntimeContextRefresh, RuntimeFailure, RuntimePhase,
     RuntimeProgress, RuntimeSendReceipt, RuntimeSessionLoad, ScreenState, SessionContext,
     SessionListEntry, SessionListState, SessionMetadata, SessionState, SessionStats,
-    SettingsCategory, SettingsEntry, SettingsState, ShellState, TranscriptItem, VisibleSessionItem,
+    SettingsCategory, SettingsEntry, SettingsState, ShellState, TranscriptItem, TuiMemoryView,
+    TuiSessionMemoryMetadata, VisibleSessionItem,
 };
 pub use input::{
     dispatch_command_palette_key, dispatch_edit_key, dispatch_key, dispatch_menu_key, InputMode,

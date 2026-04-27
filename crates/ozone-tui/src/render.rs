@@ -328,6 +328,8 @@ pub struct RenderModel {
     pub breadcrumb: String,
     pub command_palette: Option<CommandPaletteRenderModel>,
     pub toast_message: Option<String>,
+    /// Memory metadata for the memories overlay (populated at session load)
+    pub memory_metadata: Option<crate::app::TuiSessionMemoryMetadata>,
 }
 
 fn build_folder_picker_model(picker: &FolderPickerState) -> Option<FolderPickerRenderModel> {
@@ -345,7 +347,7 @@ fn build_folder_picker_model(picker: &FolderPickerState) -> Option<FolderPickerR
 
 pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderModel {
     let indicators = ShellIndicators {
-        screen: screen_label(state.screen).into(),
+        screen: screen_label(&state.screen).into(),
         input_mode: input_mode_label(state.input_mode).into(),
         focus: focus_label(state.focus).into(),
         selection: selection_label(state),
@@ -787,7 +789,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         status,
         inspector,
         indicators,
-        overlay: overlay_model(state.screen, state.input_mode),
+        overlay: overlay_model(&state.screen, state.input_mode),
         main_menu,
         session_list,
         character_list,
@@ -816,6 +818,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
             None
         },
         toast_message: state.active_toast().map(str::to_owned),
+        memory_metadata: state.session_metadata.as_ref().and_then(|m| m.memory_metadata.clone()),
     }
 }
 
@@ -1021,6 +1024,7 @@ fn build_breadcrumb(state: &ShellState) -> String {
         ScreenState::Help => "⬡ Ozone+ › Help".into(),
         ScreenState::Quit => "⬡ Ozone+".into(),
         ScreenState::ModelIntelligence => "⬡ Ozone+ › Model Intel".into(),
+        ScreenState::MemoriesOverlay | ScreenState::CharacterOverlay(_) => todo!(),
     }
 }
 
@@ -3156,7 +3160,7 @@ fn input_mode_label(input_mode: InputMode) -> &'static str {
     }
 }
 
-fn screen_label(screen: ScreenState) -> &'static str {
+fn screen_label(screen: &ScreenState) -> &'static str {
     match screen {
         ScreenState::MainMenu => "main menu",
         ScreenState::SessionList => "sessions",
@@ -3169,6 +3173,7 @@ fn screen_label(screen: ScreenState) -> &'static str {
         ScreenState::Help => "help",
         ScreenState::Quit => "quit",
         ScreenState::ModelIntelligence => "model intelligence",
+        ScreenState::MemoriesOverlay | ScreenState::CharacterOverlay(_) => todo!(),
     }
 }
 
@@ -3177,6 +3182,7 @@ fn focus_label(focus: FocusTarget) -> &'static str {
         FocusTarget::Transcript => "conversation",
         FocusTarget::Draft => "composer",
         FocusTarget::Status => "status",
+        FocusTarget::Inspector => "inspector",
     }
 }
 
@@ -3420,7 +3426,7 @@ fn build_slash_suggestions(draft_text: &str) -> Vec<SlashSuggestion> {
         .collect()
 }
 
-fn overlay_model(screen: ScreenState, input_mode: InputMode) -> Option<OverlayRenderModel> {
+fn overlay_model(screen: &ScreenState, input_mode: InputMode) -> Option<OverlayRenderModel> {
     match screen {
         ScreenState::MainMenu
         | ScreenState::SessionList
@@ -3431,6 +3437,7 @@ fn overlay_model(screen: ScreenState, input_mode: InputMode) -> Option<OverlayRe
         | ScreenState::Settings
         | ScreenState::ModelIntelligence
         | ScreenState::Conversation => None,
+        ScreenState::MemoriesOverlay | ScreenState::CharacterOverlay(_) => todo!(),
         ScreenState::Help => Some(OverlayRenderModel {
             title: "Help".into(),
             lines: vec![
@@ -3551,6 +3558,7 @@ mod tests {
                 tags: vec!["story".into()],
                 pinned_count: None,
                 greeting: None,
+                memory_metadata: None,
             }),
             session_stats: Some(crate::app::SessionStats {
                 message_count: 2,

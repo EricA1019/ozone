@@ -76,7 +76,7 @@ pub fn build_layout(state: &ShellState) -> LayoutModel {
 
 pub fn build_layout_for_area(state: &ShellState, viewport: Rect) -> LayoutModel {
     // For menu screens, use a full-screen centered layout
-    if is_menu_screen(state.screen) {
+    if is_menu_screen(&state.screen) {
         return build_menu_layout(state, viewport);
     }
 
@@ -130,13 +130,13 @@ pub fn build_layout_for_area(state: &ShellState, viewport: Rect) -> LayoutModel 
             area: rows[2],
         },
         inspector,
-        overlay: overlay_for_screen(state.screen, viewport),
+        overlay: overlay_for_screen(&state.screen, viewport),
         menu_area: None,
         focused: focused_pane(state.focus),
     }
 }
 
-fn is_menu_screen(screen: ScreenState) -> bool {
+fn is_menu_screen(screen: &ScreenState) -> bool {
     matches!(
         screen,
         ScreenState::MainMenu
@@ -187,7 +187,7 @@ fn build_menu_layout(state: &ShellState, viewport: Rect) -> LayoutModel {
             area: zero_area,
         },
         inspector: None,
-        overlay: overlay_for_screen(state.screen, viewport),
+        overlay: overlay_for_screen(&state.screen, viewport),
         menu_area,
         focused: PaneId::FullScreen,
     }
@@ -198,6 +198,7 @@ fn focused_pane(focus: FocusTarget) -> PaneId {
         FocusTarget::Transcript => PaneId::Conversation,
         FocusTarget::Draft => PaneId::Composer,
         FocusTarget::Status => PaneId::Status,
+        FocusTarget::Inspector => PaneId::Inspector,
     }
 }
 
@@ -224,7 +225,7 @@ fn inspector_width(viewport_width: u16) -> u16 {
         .clamp(INSPECTOR_MIN_WIDTH as u32, INSPECTOR_MAX_WIDTH as u32) as u16
 }
 
-fn overlay_for_screen(screen: ScreenState, viewport: Rect) -> Option<PaneLayout> {
+fn overlay_for_screen(screen: &ScreenState, viewport: Rect) -> Option<PaneLayout> {
     let pane = match screen {
         ScreenState::MainMenu
         | ScreenState::SessionList
@@ -237,15 +238,27 @@ fn overlay_for_screen(screen: ScreenState, viewport: Rect) -> Option<PaneLayout>
         | ScreenState::Conversation => return None,
         ScreenState::Help => PaneId::HelpOverlay,
         ScreenState::Quit => PaneId::QuitOverlay,
+        ScreenState::MemoriesOverlay | ScreenState::CharacterOverlay(_) => PaneId::FullScreen,
+    };
+
+    let (width, height) = match screen {
+        ScreenState::MemoriesOverlay => (
+            viewport.width.saturating_sub(8).clamp(40, 100),
+            viewport.height.saturating_sub(8).clamp(12, 36),
+        ),
+        ScreenState::CharacterOverlay(_) => (
+            viewport.width.saturating_sub(8).clamp(60, 90),
+            viewport.height.saturating_sub(8).clamp(16, 32),
+        ),
+        _ => (
+            viewport.width.saturating_sub(8).clamp(32, 72),
+            viewport.height.saturating_sub(8).clamp(8, 12),
+        ),
     };
 
     Some(PaneLayout {
         pane,
-        area: centered_rect(
-            viewport,
-            viewport.width.saturating_sub(8).clamp(32, 72),
-            viewport.height.saturating_sub(8).clamp(8, 12),
-        ),
+        area: centered_rect(viewport, width, height),
     })
 }
 

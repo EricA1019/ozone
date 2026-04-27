@@ -70,6 +70,22 @@ pub enum KeyAction {
     // Page navigation
     PageUp,
     PageDown,
+    /// Cycle inspector focus forward (Tab)
+    CycleInspectorFocus,
+    /// Cycle inspector focus backward (Shift+Tab)
+    CycleInspectorFocusReverse,
+    /// Ctrl+W prefix received — next key dispatches pane focus
+    PanePrefix,
+    /// Accumulate a digit toward the Normal-mode count prefix
+    AccumulateCount(u32),
+    /// Focus pane to the left (Ctrl+W h)
+    PaneLeft,
+    /// Focus pane below (Ctrl+W j)
+    PaneDown,
+    /// Focus pane above (Ctrl+W k)
+    PaneUp,
+    /// Focus pane to the right (Ctrl+W l)
+    PaneRight,
 }
 
 pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
@@ -93,15 +109,23 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
         return KeyAction::TogglePinnedMemory;
     }
 
+    if is_ctrl_w(key) {
+        return KeyAction::PanePrefix;
+    }
+
     match input_mode {
         InputMode::Normal => match key.code {
             KeyCode::Up => KeyAction::MoveSelectionUp,
             KeyCode::Down => KeyAction::MoveSelectionDown,
             KeyCode::Char('k') => KeyAction::ScrollConversationUp,
             KeyCode::Char('j') => KeyAction::ScrollConversationDown,
+            KeyCode::Char(ch) if ch.is_ascii_digit() && ch != '0' => {
+                KeyAction::AccumulateCount(ch.to_digit(10).unwrap())
+            }
             KeyCode::Char('i') => KeyAction::EnterInsert,
             KeyCode::Char('I') => KeyAction::ToggleInspector,
             KeyCode::Tab => KeyAction::FocusDraft,
+            KeyCode::BackTab => KeyAction::CycleInspectorFocusReverse,
             KeyCode::Char('t') => KeyAction::FocusTranscript,
             KeyCode::Char('b') => KeyAction::ToggleBookmark,
             KeyCode::Char('r') => KeyAction::RerollSelectedMessage,
@@ -239,6 +263,11 @@ fn is_ctrl_d(key: KeyEvent) -> bool {
 
 fn is_ctrl_k(key: KeyEvent) -> bool {
     matches!(key.code, KeyCode::Char('k') | KeyCode::Char('K'))
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
+fn is_ctrl_w(key: KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Char('w') | KeyCode::Char('W'))
         && key.modifiers.contains(KeyModifiers::CONTROL)
 }
 

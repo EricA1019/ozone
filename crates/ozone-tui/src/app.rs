@@ -84,7 +84,7 @@ fn themed_textarea_from_text(
     textarea
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ScreenState {
     MainMenu,
     SessionList,
@@ -97,6 +97,10 @@ pub enum ScreenState {
     Conversation,
     Help,
     Quit,
+    /// Full-screen overlay showing all session memories (pinned and notes).
+    MemoriesOverlay,
+    /// Full-screen overlay showing the active character card details.
+    CharacterOverlay(CharacterDetail),
 }
 
 /// The top-level categories shown in the Settings menu.
@@ -414,6 +418,7 @@ pub enum FocusTarget {
     Transcript,
     Draft,
     Status,
+    Inspector,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1213,6 +1218,22 @@ pub struct RecallBrowser {
     pub lines: Vec<String>,
 }
 
+/// Memory metadata for a session (pinned and note memories).
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct TuiSessionMemoryMetadata {
+    pub pinned_memories: Vec<TuiMemoryView>,
+    pub note_memories: Vec<TuiMemoryView>,
+}
+
+/// A display-friendly memory entry for the TUI.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TuiMemoryView {
+    pub artifact_id: String,
+    pub text: String,
+    pub provenance: String,
+    pub created_at: String,
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct SessionMetadata {
     pub character_name: Option<String>,
@@ -1221,6 +1242,8 @@ pub struct SessionMetadata {
     /// The character's greeting message, if one is set and the session transcript is empty.
     /// This field is populated at session load time so the TUI can display it.
     pub greeting: Option<String>,
+    /// Full memory data for inspector/memories overlay.
+    pub memory_metadata: Option<TuiSessionMemoryMetadata>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -1752,6 +1775,10 @@ pub struct ShellState {
     pub tick_count: u64,
     /// Ephemeral toast notification: (message, created_at).
     pub toast: Option<(String, Instant)>,
+    /// Count prefix accumulated in Normal mode (e.g., "3j" → count = 3).
+    pub normal_mode_count: Option<u32>,
+    /// Whether Ctrl+W pane-prefix mode is active — next key dispatches pane focus.
+    pub pane_prefix_active: bool,
 }
 
 impl ShellState {
@@ -1789,6 +1816,8 @@ impl ShellState {
             slash_dismissed: false,
             tick_count: 0,
             toast: None,
+            normal_mode_count: None,
+            pane_prefix_active: false,
         }
     }
 
@@ -2136,6 +2165,33 @@ impl ShellState {
             return KeyAction::Noop; // consume the key — don't pass to session list
         }
 
+        // Ctrl+W pane prefix: intercept h/j/k/l when pane_prefix_active is set
+        if self.pane_prefix_active {
+            self.pane_prefix_active = false;
+            let action = match key.code {
+                KeyCode::Char('h') | KeyCode::Left => KeyAction::PaneLeft,
+                KeyCode::Char('j') | KeyCode::Down => KeyAction::PaneDown,
+                KeyCode::Char('k') | KeyCode::Up => KeyAction::PaneUp,
+                KeyCode::Char('l') | KeyCode::Right => KeyAction::PaneRight,
+                KeyCode::Char('w') | KeyCode::Char('W') => {
+                    // Ctrl+W w: cycle focus forward
+                    self.focus = FocusTarget::Transcript;
+                    return KeyAction::CycleInspectorFocus;
+                }
+                KeyCode::Esc | KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                    // Cancel pane prefix mode
+                    return KeyAction::Noop;
+                }
+                _ => {
+                    // Any other key cancels pane prefix, but still process normally
+                    // (We just return Noop here since the key was consumed by pane mode)
+                    return KeyAction::Noop;
+                }
+            };
+            self.apply_action_with_layout(action, layout);
+            return action;
+        }
+
         let action = match self.screen {
             ScreenState::CharacterManager => {
                 // Intercept n/i/e for create/import/edit before normal menu dispatch
@@ -2194,6 +2250,7 @@ impl ShellState {
                 }
             }
             ScreenState::ModelIntelligence => dispatch_menu_key(key, false),
+            ScreenState::MemoriesOverlay | ScreenState::CharacterOverlay(_) => todo!(),
         };
         if action != KeyAction::Noop {
             self.apply_action_with_layout(action, layout);
@@ -2269,13 +2326,60 @@ impl ShellState {
                 self.focus = FocusTarget::Transcript;
                 self.input_mode = InputMode::Normal;
                 self.history.reset_navigation();
-                self.scroll_conversation(layout, -1);
+                let count = self.normal_mode_count.unwrap_or(1) as isize;
+                self.normal_mode_count = None;
+                self.scroll_conversation(layout, count * -1);
             }
             KeyAction::ScrollConversationDown => {
                 self.focus = FocusTarget::Transcript;
                 self.input_mode = InputMode::Normal;
                 self.history.reset_navigation();
-                self.scroll_conversation(layout, 1);
+                let count = self.normal_mode_count.unwrap_or(1) as isize;
+                self.normal_mode_count = None;
+                self.scroll_conversation(layout, count);
+            }
+            KeyAction::AccumulateCount(digit) => {
+                self.normal_mode_count =
+                    Some(self.normal_mode_count.unwrap_or(0) * 10 + digit);
+                self.status_line =
+                    Some(format!("{}: ", self.normal_mode_count.unwrap()));
+            }
+            KeyAction::PanePrefix => {
+                self.pane_prefix_active = true;
+            }
+            KeyAction::PaneLeft => {
+                // Move focus to the left pane (Transcript <-> Inspector)
+                match self.focus {
+                    FocusTarget::Inspector => self.focus = FocusTarget::Transcript,
+                    FocusTarget::Transcript => {
+                        if self.inspector.visible {
+                            self.focus = FocusTarget::Inspector;
+                        }
+                    }
+                    _ => {}
+                }
+            }
+            KeyAction::PaneDown => {
+                // Move focus down — currently same as FocusDraft
+                self.focus = FocusTarget::Draft;
+                self.input_mode = InputMode::Insert;
+            }
+            KeyAction::PaneUp => {
+                // Move focus up to transcript
+                self.focus = FocusTarget::Transcript;
+                self.input_mode = InputMode::Normal;
+            }
+            KeyAction::PaneRight => {
+                // Move focus to the right pane (Transcript <-> Inspector)
+                match self.focus {
+                    FocusTarget::Transcript => {
+                        if self.inspector.visible {
+                            self.focus = FocusTarget::Inspector;
+                        }
+                    }
+                    FocusTarget::Inspector => self.focus = FocusTarget::Transcript,
+                    _ => {}
+                }
             }
             KeyAction::FocusTranscript => {
                 self.focus = FocusTarget::Transcript;
@@ -2378,10 +2482,10 @@ impl ShellState {
                 self.sync_textarea_from_draft(&self.draft.clone());
             }
             KeyAction::ToggleHelp => {
-                self.screen = match self.screen {
+                self.screen = match &self.screen {
                     ScreenState::Help => ScreenState::Conversation,
                     ScreenState::Conversation => ScreenState::Help,
-                    other => other,
+                    other => other.clone(),
                 };
             }
             KeyAction::ConfirmQuit => match self.screen {
@@ -2719,6 +2823,9 @@ impl ShellState {
                         self.slash_selected = Some(self.slash_selected.unwrap_or(0));
                     }
                 }
+            }
+            KeyAction::CycleInspectorFocus | KeyAction::CycleInspectorFocusReverse => {
+                todo!()
             }
         }
 
@@ -3820,6 +3927,7 @@ mod tests {
                 tags: vec!["story".into()],
                 pinned_count: None,
                 greeting: None,
+                memory_metadata: None,
             }),
             session_stats: Some(SessionStats {
                 message_count: 1,
@@ -4142,6 +4250,7 @@ mod tests {
             tags: vec!["stale".into()],
             pinned_count: None,
             greeting: None,
+            memory_metadata: None,
         });
         state.session_stats = Some(SessionStats {
             message_count: 1,

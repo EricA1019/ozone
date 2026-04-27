@@ -581,6 +581,7 @@ impl SessionRuntime for MockRuntime {
                 tags: Vec::new(),
                 pinned_count: None,
                 greeting: None,
+                memory_metadata: None,
             }),
             ..AppBootstrap::default()
         };

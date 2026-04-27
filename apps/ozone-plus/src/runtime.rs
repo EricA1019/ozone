@@ -498,6 +498,7 @@ impl Phase1dRuntime {
                 tags: session.tags,
                 pinned_count: None,
                 greeting: None,
+                memory_metadata: None,
             },
             stats: TuiSessionStats {
                 message_count,
