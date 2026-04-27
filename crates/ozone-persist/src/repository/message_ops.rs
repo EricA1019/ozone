@@ -206,11 +206,16 @@ impl SqliteRepository {
             .as_deref()
             .map(MessageId::parse)
             .transpose()?;
+        let content = if request.author_kind.as_str() == "assistant" {
+            request.content.trim_end_matches("<|im_end|>").to_owned()
+        } else {
+            request.content
+        };
         let mut message = ConversationMessage::new(
             session_id.clone(),
             message_id.clone(),
             request.author_kind,
-            request.content,
+            content,
             created_at,
         );
         message.parent_id = parent_id.clone();

@@ -56,11 +56,10 @@ impl CharacterCard {
         let personality = string_field(payload, fallback, &["personality"], false)?;
         let scenario = string_field(payload, fallback, &["scenario"], false)?;
         let greeting = string_field(payload, fallback, &["greeting", "first_mes"], false)?;
-        let example_dialogue = string_field(
+        let example_dialogue = string_field_or_array(
             payload,
             fallback,
             &["example_dialogue", "mes_example"],
-            false,
         )?;
         let creator = string_field(payload, fallback, &["creator"], false)?;
         let creator_notes = string_field(payload, fallback, &["creator_notes"], false)?;
@@ -308,6 +307,37 @@ fn string_field(
         }
         Some(_) => Err(PersistError::InvalidData(format!(
             "character card field '{}' must be a string",
+            field_names[0]
+        ))),
+        None => Ok(None),
+    }
+}
+
+fn string_field_or_array(
+    primary: &Map<String, Value>,
+    fallback: Option<&Map<String, Value>>,
+    field_names: &[&str],
+) -> Result<Option<String>> {
+    let value = find_field(primary, fallback, field_names);
+    match value {
+        Some(Value::String(text)) => {
+            let trimmed = text.trim();
+            if trimmed.is_empty() {
+                Ok(None)
+            } else {
+                Ok(Some(trimmed.to_owned()))
+            }
+        }
+        Some(Value::Array(arr)) => {
+            let joined = arr
+                .iter()
+                .filter_map(|v| v.as_str())
+                .collect::<Vec<_>>()
+                .join("\n");
+            Ok(Some(joined))
+        }
+        Some(_) => Err(PersistError::InvalidData(format!(
+            "character card field '{}' must be a string or array",
             field_names[0]
         ))),
         None => Ok(None),
