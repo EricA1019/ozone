@@ -107,6 +107,11 @@ pub struct InspectorPaneModel {
     pub lines: Vec<String>,
     /// Model info section, rendered with brand colors in wide mode.
     pub model_info: Option<ModelInfoDisplay>,
+    /// Context token usage bar: used / max, rendered as a string like "[████░░░░ 50%]".
+    /// None if no budget data is available yet.
+    pub context_bar: Option<String>,
+    /// Formatted token budget string like "context 12,450 / 128,000 tokens (94%)".
+    pub token_budget: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -555,6 +560,33 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         format!("[{bar}] {pct:3}%{color}", pct = pct)
     });
 
+    // Formatted token budget string for inspector pane, e.g. "context 12,450 / 128,000 tokens (94%)".
+    let token_budget_display = token_budget.map(|(used, max)| {
+        if max == 0 {
+            return String::new();
+        }
+        let pct = (used as f64 / max as f64 * 100.0).min(100.0) as u8;
+        let used_str = format!("{}", used);
+        let max_str = format!("{}", max);
+        // Add commas manually since format! doesn't support {:,} for integer separation
+        let format_with_commas = |s: &str| {
+            let chars: Vec<char> = s.chars().collect();
+            let mut result = String::new();
+            for (i, c) in chars.iter().enumerate() {
+                if i > 0 && (chars.len() - i).is_multiple_of(3) {
+                    result.push(',');
+                }
+                result.push(*c);
+            }
+            result
+        };
+        format!(
+            "context {} / {} tokens ({pct}%)",
+            format_with_commas(&used_str),
+            format_with_commas(&max_str)
+        )
+    });
+
     let status = StatusPaneModel {
         title: "Status".into(),
         summary: state
@@ -572,7 +604,7 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
             state.session.selected_message
         },
         vram_hint,
-        context_bar,
+        context_bar: context_bar.clone(),
         token_budget,
     };
 
@@ -580,6 +612,8 @@ pub fn build_render_model(state: &ShellState, layout: &LayoutModel) -> RenderMod
         title: "Inspector".into(),
         lines: inspector_lines(state, &indicators),
         model_info: model_info.clone(),
+        context_bar: context_bar.clone(),
+        token_budget: token_budget_display.clone(),
     });
 
     let main_menu = if state.screen == ScreenState::MainMenu {
@@ -2053,6 +2087,28 @@ fn render_inspector(
             Span::styled("  Source:", Style::default().fg(theme::TEAL)),
             Span::styled(format!(" {}", info.source_label), theme::dim_style()),
         ]));
+    }
+
+    // Render context token budget info if available
+    if model.context_bar.is_some() || model.token_budget.is_some() {
+        let pane_width = pane.area.width.saturating_sub(4) as usize;
+        let divider = format!("─ Context / Token Budget {}",
+            "─".repeat(pane_width.saturating_sub(25)));
+        lines.push(Line::from(Span::styled(divider, theme::muted_style())));
+
+        if let Some(bar) = model.context_bar.as_deref() {
+            lines.push(Line::from(vec![
+                Span::styled("  Bar:   ", Style::default().fg(theme::TEAL)),
+                Span::styled(bar.to_string(), theme::dim_style()),
+            ]));
+        }
+
+        if let Some(budget) = model.token_budget.as_deref() {
+            lines.push(Line::from(vec![
+                Span::styled("  Usage: ", Style::default().fg(theme::TEAL)),
+                Span::styled(budget.to_string(), theme::dim_style()),
+            ]));
+        }
     }
 
     frame.render_widget(
