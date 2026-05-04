@@ -3,10 +3,12 @@
 pub mod workspace_status;
 pub mod cargo_tool;
 pub mod catalog_list;
+pub mod preferences_get;
 
 pub use workspace_status::workspace_status_tool;
 pub use cargo_tool::cargo_tool;
 pub use catalog_list::catalog_list_tool;
+pub use preferences_get::preferences_get_tool;
 
 // Helper functions used by tool modules
 pub(super) fn required_string<'a>(args: &'a serde_json::Value, key: &str) -> anyhow::Result<&'a str> {

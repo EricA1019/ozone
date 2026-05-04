@@ -152,7 +152,7 @@ impl OzoneMcpServer {
             "workspace_status" => tools::workspace_status_tool(self)?,
             "cargo_tool" => tools::cargo_tool(self, &arguments)?,
             "catalog_list" => tools::catalog_list_tool(self, &arguments)?,
-            "preferences_get" => self.preferences_get_tool(&arguments)?,
+            "preferences_get" => tools::preferences_get_tool(self, &arguments)?,
             "sandbox_tool" => self.sandbox_tool(&arguments)?,
             "mock_backend_tool" => self.mock_backend_tool(&arguments)?,
             "session_tool" => self.session_tool(&arguments)?,
@@ -176,54 +176,7 @@ impl OzoneMcpServer {
         Ok(reply.into_result())
     }
 
-    fn preferences_get_tool(&self, args: &Value) -> Result<ToolReply> {
-        let sandbox_id = optional_string(args, "sandboxId");
-        let preferences_path =
-            self.with_sandbox_env(sandbox_id.as_deref(), || Ok(paths::preferences_path()))?;
-        let data = match preferences_path {
-            Some(path) if path.exists() => {
-                let text = fs::read_to_string(&path)
-                    .with_context(|| format!("failed to read {}", path.display()))?;
-                let parsed = serde_json::from_str::<Value>(&text).ok();
-                json!({
-                    "path": path,
-                    "exists": true,
-                    "raw": text,
-                    "parsed": parsed
-                })
-            }
-            Some(path) => json!({
-                "path": path,
-                "exists": false,
-                "raw": null,
-                "parsed": null
-            }),
-            None => json!({
-                "path": null,
-                "exists": false,
-                "raw": null,
-                "parsed": null
-            }),
-        };
-
-        Ok(ToolReply::success(
-            "Loaded preferences file".to_owned(),
-            data,
-        ))
-    }
-
     fn sandbox_tool(&mut self, args: &Value) -> Result<ToolReply> {
-        match required_string(args, "action")?.as_str() {
-            "create" => self.create_sandbox(args),
-            "destroy" => self.destroy_sandbox(args),
-            other => Ok(ToolReply::error(
-                "Sandbox action failed".to_owned(),
-                json!({ "error": format!("unsupported sandbox action `{other}`") }),
-            )),
-        }
-    }
-
-    fn create_sandbox(&mut self, args: &Value) -> Result<ToolReply> {
         let prefix = optional_string(args, "namePrefix").unwrap_or_else(|| "ozone-mcp".to_owned());
         let sandbox_id = format!("sandbox-{}", Uuid::new_v4());
         let root = env::temp_dir().join(format!(
@@ -1560,7 +1513,7 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
         let mut create_args = Map::new();
         create_args.insert("action".to_owned(), Value::String("create".to_owned()));
         create_args.extend(setup_map);
-        let reply = self.create_sandbox(&Value::Object(create_args))?;
+        let reply = self.sandbox_tool(&Value::Object(create_args))?;
         let sandbox_id = reply
             .data
             .get("sandboxId")
