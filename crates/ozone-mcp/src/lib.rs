@@ -153,7 +153,7 @@ impl OzoneMcpServer {
             "cargo_tool" => tools::cargo_tool(self, &arguments)?,
             "catalog_list" => tools::catalog_list_tool(self, &arguments)?,
             "preferences_get" => tools::preferences_get_tool(self, &arguments)?,
-            "sandbox_tool" => self.sandbox_tool(&arguments)?,
+            "sandbox_tool" => tools::sandbox_tool(self, &arguments)?,
             "mock_backend_tool" => self.mock_backend_tool(&arguments)?,
             "session_tool" => self.session_tool(&arguments)?,
             "message_tool" => self.message_tool(&arguments)?,
