@@ -31,7 +31,7 @@ mod tools;
 
 const JSONRPC_VERSION: &str = "2.0";
 const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
-const OZONE_PLUS_PACKAGE: &str = "ozone-plus";
+pub const OZONE_PLUS_PACKAGE: &str = "ozone-plus";
 const DEFAULT_PTY_ROWS: u16 = 40;
 const DEFAULT_PTY_COLUMNS: u16 = 120;
 const DEFAULT_CAPTURE_TAIL_CHARS: usize = 6000;

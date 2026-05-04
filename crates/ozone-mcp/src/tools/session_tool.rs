@@ -1,22 +1,27 @@
-/// MCP tool: session tool.
+/// MCP tool: session operations (create, list, metadata, load, transcript, rename, delete).
 use crate::OzoneMcpServer;
 use crate::ToolReply;
+use crate::probe_session_lock;
+use crate::session_summary_json;
+use crate::branch_record_json;
+use crate::parse_session_id;
+use crate::parse_branch_id;
+use crate::message_json;
 use anyhow::Result;
 use serde_json::Value;
 use serde_json::json;
-use anyhow::anyhow;
-use super::required_string;
-use super::optional_string;
-use super::optional_string_array;
+use ozone_core::session::CreateSessionRequest;
+use ozone_core::session::SessionId;
+use ozone_persist::BranchRecord;
 
 pub fn session_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
-    let action = required_string(args, "action")?;
-    let sandbox_id = optional_string(args, "sandboxId");
+    let action = crate::tools::required_string(args, "action")?;
+    let sandbox_id = crate::tools::optional_string(args, "sandboxId");
     match action.as_str() {
         "create" => {
-            let name = required_string(args, "name")?;
-            let character_name = optional_string(args, "characterName");
-            let tags = optional_string_array(args, "tags")?;
+            let name = crate::tools::required_string(args, "name")?;
+            let character_name = crate::tools::optional_string(args, "characterName");
+            let tags = crate::tools::optional_string_array(args, "tags")?;
             server.with_repo(sandbox_id.as_deref(), |repo| {
                 let mut request = CreateSessionRequest::new(name);
                 request.character_name = character_name;
@@ -57,11 +62,11 @@ pub fn session_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> an
             ))
         }),
         "metadata" => {
-            let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
+            let session_id = parse_session_id(&crate::tools::required_string(args, "sessionId")?)?;
             server.with_repo(sandbox_id.as_deref(), |repo| {
                 let session = repo
                     .get_session(&session_id)?
-                    .ok_or_else(|| anyhow!("session {session_id} was not found"))?;
+                    .ok_or_else(|| anyhow::anyhow!("session {session_id} was not found"))?;
                 let active_branch = repo.get_active_branch(&session_id)?;
                 let transcript_message_count = match active_branch.as_ref() {
                     Some(record) => repo
@@ -84,14 +89,14 @@ pub fn session_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> an
             })
         }
         "load" => {
-            let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
+            let session_id = parse_session_id(&crate::tools::required_string(args, "sessionId")?)?;
             server.with_repo(sandbox_id.as_deref(), |repo| {
                 // Seed greeting if character has one and transcript is empty
                 let greeting_seeded = repo.maybe_seed_character_greeting(&session_id)?;
                 // Build standard metadata response
                 let session = repo
                     .get_session(&session_id)?
-                    .ok_or_else(|| anyhow!("session {session_id} was not found"))?;
+                    .ok_or_else(|| anyhow::anyhow!("session {session_id} was not found"))?;
                 let active_branch = repo.get_active_branch(&session_id)?;
                 let transcript_message_count = match active_branch.as_ref() {
                     Some(record) => repo
@@ -115,18 +120,18 @@ pub fn session_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> an
             })
         }
         "transcript" => {
-            let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-            let branch_id = optional_string(args, "branchId")
+            let session_id = parse_session_id(&crate::tools::required_string(args, "sessionId")?)?;
+            let branch_id = crate::tools::optional_string(args, "branchId")
                 .map(|value| parse_branch_id(&value))
                 .transpose()?;
             server.with_repo(sandbox_id.as_deref(), |repo| {
                 let branch = match branch_id.as_ref() {
                     Some(branch_id) => repo
                         .get_branch(&session_id, branch_id)?
-                        .ok_or_else(|| anyhow!("branch {branch_id} was not found"))?,
+                        .ok_or_else(|| anyhow::anyhow!("branch {branch_id} was not found"))?,
                     None => repo
                         .get_active_branch(&session_id)?
-                        .ok_or_else(|| anyhow!("session {session_id} has no active branch"))?,
+                        .ok_or_else(|| anyhow::anyhow!("session {session_id} has no active branch"))?,
                 };
                 let messages =
                     repo.list_branch_messages(&session_id, &branch.branch.branch_id)?;
@@ -140,8 +145,8 @@ pub fn session_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> an
             })
         }
         "rename" => {
-            let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-            let new_name = required_string(args, "newName")?;
+            let session_id = parse_session_id(&crate::tools::required_string(args, "sessionId")?)?;
+            let new_name = crate::tools::required_string(args, "newName")?;
             server.with_repo(sandbox_id.as_deref(), |repo| {
                 let session = repo.rename_session(&session_id, &new_name)?;
                 Ok(ToolReply::success(
@@ -151,7 +156,7 @@ pub fn session_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> an
             })
         }
         "delete" => {
-            let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
+            let session_id = parse_session_id(&crate::tools::required_string(args, "sessionId")?)?;
             server.with_repo(sandbox_id.as_deref(), |repo| {
                 repo.delete_session(&session_id)?;
                 Ok(ToolReply::success(

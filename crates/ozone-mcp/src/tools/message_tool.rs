@@ -1,11 +1,12 @@
-/// MCP tool: message tool.
+/// MCP tool: message operations (send).
 use crate::OzoneMcpServer;
 use crate::ToolReply;
+use crate::OZONE_PLUS_PACKAGE;
+use crate::tools::required_string;
+use crate::tools::optional_string;
 use anyhow::Result;
 use serde_json::Value;
 use serde_json::json;
-use super::required_string;
-use super::optional_string;
 
 pub fn message_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
     let action = required_string(args, "action")?;

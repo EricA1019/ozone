@@ -1,12 +1,20 @@
-/// MCP tool: memory tool.
+/// MCP tool: memory operations (note, pin, list).
 use crate::OzoneMcpServer;
 use crate::ToolReply;
+use crate::parse_session_id;
+use crate::parse_message_id;
+use crate::pinned_memory_record_json;
+use crate::pinned_memory_view_json;
+use crate::tools::required_string;
+use crate::tools::optional_string;
+use crate::tools::optional_u64;
 use anyhow::Result;
 use serde_json::Value;
 use serde_json::json;
-use super::required_string;
-use super::optional_string;
-use super::optional_u64;
+use ozone_persist::CreateNoteMemoryRequest;
+use ozone_persist::AuthorId;
+use ozone_persist::Provenance;
+use ozone_persist::PinMessageMemoryRequest;
 
 pub fn memory_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
     let action = required_string(args, "action")?;

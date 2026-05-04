@@ -6,6 +6,7 @@ use anyhow::Result;
 use serde_json::Value;
 use serde_json::json;
 use ozone_core::paths;
+use std::fs;
 
 pub fn preferences_get_tool(server: &OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
     let sandbox_id = optional_string(args, "sandboxId");
