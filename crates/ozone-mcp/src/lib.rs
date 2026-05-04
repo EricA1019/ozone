@@ -154,7 +154,7 @@ impl OzoneMcpServer {
             "catalog_list" => tools::catalog_list_tool(self, &arguments)?,
             "preferences_get" => tools::preferences_get_tool(self, &arguments)?,
             "sandbox_tool" => tools::sandbox_tool(self, &arguments)?,
-            "mock_backend_tool" => self.mock_backend_tool(&arguments)?,
+            "mock_backend_tool" => tools::mock_backend_tool(self, &arguments)?,
             "session_tool" => self.session_tool(&arguments)?,
             "message_tool" => self.message_tool(&arguments)?,
             "memory_tool" => self.memory_tool(&arguments)?,
@@ -265,142 +265,7 @@ impl OzoneMcpServer {
         ))
     }
 
-    fn mock_backend_tool(&mut self, args: &Value) -> Result<ToolReply> {
-        match required_string(args, "action")?.as_str() {
-            "start" => self.start_mock_backend(args),
-            "stop" => self.stop_mock_backend(args),
-            other => Ok(ToolReply::error(
-                "Mock backend action failed".to_owned(),
-                json!({ "error": format!("unsupported mock backend action `{other}`") }),
-            )),
-        }
-    }
 
-    fn start_mock_backend(&mut self, args: &Value) -> Result<ToolReply> {
-        let sandbox_id = required_string(args, "sandboxId")?;
-        let port = optional_u64(args, "port").unwrap_or(5001) as u16;
-        let model_name =
-            optional_string(args, "modelName").unwrap_or_else(|| "mock-model.gguf".to_owned());
-        let sandbox = self
-            .sandboxes
-            .get_mut(&sandbox_id)
-            .ok_or_else(|| anyhow!("sandbox `{sandbox_id}` was not found"))?;
-        sandbox.stop_backend()?;
-
-        let script_path = sandbox.root.join("mock_kobold.py");
-        let log_path = sandbox.root.join("mock_kobold.log");
-        let script = format!(
-            r#"from http.server import BaseHTTPRequestHandler, HTTPServer
-import json
-import time
-
-MODEL_NAME = {model_name:?}
-PORT = {port}
-
-class Handler(BaseHTTPRequestHandler):
-    def log_message(self, fmt, *args):
-        pass
-
-    def _json(self, payload, code=200):
-        data = json.dumps(payload).encode("utf-8")
-        self.send_response(code)
-        self.send_header("Content-Type", "application/json")
-        self.send_header("Content-Length", str(len(data)))
-        self.end_headers()
-        self.wfile.write(data)
-
-    def do_GET(self):
-        if self.path == "/api/v1/model":
-            return self._json({{"result": MODEL_NAME}})
-        if self.path == "/api/v1/config/max_context_length":
-            return self._json({{"value": 8192}})
-        if self.path == "/api/extra/perf":
-            return self._json({{"last_process_speed": 12.5, "last_eval_speed": 18.0}})
-        return self._json({{"error": "not found", "path": self.path}}, code=404)
-
-    def do_POST(self):
-        if self.path != "/api/extra/generate/stream":
-            return self._json({{"error": "not found", "path": self.path}}, code=404)
-
-        length = int(self.headers.get("Content-Length", "0") or 0)
-        payload = self.rfile.read(length) if length else b""
-        prompt = ""
-        if payload:
-            try:
-                prompt = json.loads(payload.decode("utf-8")).get("prompt", "")
-            except Exception:
-                prompt = ""
-        prompt = (prompt or "").lower()
-        if "observatory" in prompt:
-            tokens = ["The", " observatory", " key", " is", " logged."]
-        elif "second" in prompt:
-            tokens = ["Second", " reply", " confirmed."]
-        else:
-            tokens = ["Hello", " from", " mock", " backend."]
-
-        self.send_response(200)
-        self.send_header("Content-Type", "text/event-stream")
-        self.send_header("Cache-Control", "no-cache")
-        self.end_headers()
-        for token in tokens:
-            self.wfile.write(f"data: {{json.dumps({{'token': token}})}}\n\n".encode("utf-8"))
-            self.wfile.flush()
-            time.sleep(0.02)
-        self.wfile.write(b'data: {{"done": true}}\n\n')
-        self.wfile.flush()
-
-HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
-"#,
-        );
-        fs::write(&script_path, script)?;
-
-        let log_file = fs::File::create(&log_path)?;
-        let child = Command::new("python3")
-            .arg(&script_path)
-            .stdout(Stdio::from(log_file.try_clone()?))
-            .stderr(Stdio::from(log_file))
-            .spawn()
-            .with_context(|| "failed to launch python3 mock backend")?;
-        thread::sleep(Duration::from_millis(300));
-
-        let base_url = format!("http://127.0.0.1:{port}");
-        let pid = child.id();
-        sandbox.backend = Some(ManagedBackend {
-            child,
-            port,
-            model_name: model_name.clone(),
-            base_url: base_url.clone(),
-            log_path: log_path.clone(),
-        });
-
-        Ok(ToolReply::success(
-            "Started mock backend".to_owned(),
-            json!({
-                "sandboxId": sandbox_id,
-                "pid": pid,
-                "port": port,
-                "baseUrl": base_url,
-                "modelName": model_name,
-                "logPath": log_path
-            }),
-        ))
-    }
-
-    fn stop_mock_backend(&mut self, args: &Value) -> Result<ToolReply> {
-        let sandbox_id = required_string(args, "sandboxId")?;
-        let sandbox = self
-            .sandboxes
-            .get_mut(&sandbox_id)
-            .ok_or_else(|| anyhow!("sandbox `{sandbox_id}` was not found"))?;
-        let stopped = sandbox.stop_backend()?;
-        Ok(ToolReply::success(
-            "Stopped mock backend".to_owned(),
-            json!({
-                "sandboxId": sandbox_id,
-                "stopped": stopped
-            }),
-        ))
-    }
 
     fn session_tool(&mut self, args: &Value) -> Result<ToolReply> {
         let action = required_string(args, "action")?;
@@ -1531,7 +1396,7 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
                 .and_then(|models| models.first())
                 .and_then(Value::as_str)
                 .unwrap_or("mock-model.gguf");
-            self.start_mock_backend(&json!({
+            tools::mock_backend_tool(self, &json!({
                 "action": "start",
                 "sandboxId": sandbox_id,
                 "modelName": model_name,
@@ -4092,7 +3957,7 @@ fn checked_usize(value: u64, key: &str) -> Result<usize> {
     usize::try_from(value).map_err(|_| anyhow!("field `{key}` is too large"))
 }
 
-fn optional_i64(args: &Value, key: &str) -> Option<i64> {
+pub fn optional_i64(args: &Value, key: &str) -> Option<i64> {
     args.get(key).and_then(Value::as_i64)
 }
 
@@ -5312,7 +5177,7 @@ fn normalize_preferences_key(key: &str) -> String {
     normalized
 }
 
-fn default_preferences_json() -> Value {
+pub fn default_preferences_json() -> Value {
     json!({
         "version": 1,
         "last_model_name": "",
@@ -5336,7 +5201,7 @@ fn default_preferences_json() -> Value {
     })
 }
 
-fn merge_json_objects(base: Value, overlay: Value) -> Value {
+pub fn merge_json_objects(base: Value, overlay: Value) -> Value {
     match (base, overlay) {
         (Value::Object(mut base_map), Value::Object(overlay_map)) => {
             for (key, overlay_value) in overlay_map {
@@ -5352,7 +5217,7 @@ fn merge_json_objects(base: Value, overlay: Value) -> Value {
     }
 }
 
-fn sanitize_prefix(value: &str) -> String {
+pub fn sanitize_prefix(value: &str) -> String {
     value
         .chars()
         .map(|ch| if ch.is_ascii_alphanumeric() { ch } else { '-' })

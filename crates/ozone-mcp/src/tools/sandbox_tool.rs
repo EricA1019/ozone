@@ -1,6 +1,11 @@
 use crate::OzoneMcpServer;
 use crate::ToolReply;
 use crate::Sandbox;
+use crate::sanitize_prefix;
+use crate::optional_i64;
+use crate::merge_json_objects;
+use crate::default_preferences_json;
+use crate::normalize_preferences_json;
 use anyhow::{bail, Context, Result};
 use serde_json::{json, Map, Value};
 use std::fs;
@@ -9,7 +14,7 @@ use uuid::Uuid;
 /// Creates a temporary XDG sandbox environment for testing.
 pub fn sandbox_tool(server: &mut OzoneMcpServer, args: &Value) -> Result<ToolReply> {
     let prefix = super::optional_string(args, "namePrefix")
-        .unwrap_or_else(|| "ozone-mcp".to_owned());
+        .unwrap_or("ozone-mcp");
     let sandbox_id = format!("sandbox-{}", Uuid::new_v4());
     let root = std::env::temp_dir().join(format!(
         "{}-{}",
@@ -31,7 +36,7 @@ pub fn sandbox_tool(server: &mut OzoneMcpServer, args: &Value) -> Result<ToolRep
 
     let mut launcher_script = None;
     if super::optional_bool(args, "createLauncherStub").unwrap_or(false) {
-        let exit_code = super::optional_i64(args, "launcherExitCode").unwrap_or(0);
+        let exit_code = optional_i64(args, "launcherExitCode").unwrap_or(0);
         let invocation_log = root.join("launcher-invocation.txt");
         let script_path = root.join("mock-launcher.sh");
         fs::write(
