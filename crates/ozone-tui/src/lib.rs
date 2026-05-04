@@ -5,6 +5,7 @@
 //! integration seam for streaming generation.
 
 pub mod app;
+pub mod hardware;
 pub mod input;
 pub mod layout;
 pub mod mock;

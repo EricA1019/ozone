@@ -1810,6 +1810,10 @@ pub struct ShellState {
     pub last_context_compression: Option<ContextCompressionEvent>,
     /// Buffer for jj/jk escape sequence detection in Insert mode.
     pub insert_escape_buffer: Vec<char>,
+    /// Last polled hardware stats (VRAM/RAM). Updated every 600 ticks (~30s).
+    pub hardware: crate::hardware::HardwareInfo,
+    /// Counter that tracks when to next poll hardware (every 600 ticks).
+    pub hardware_poll_interval: u64,
 }
 
 impl ShellState {
@@ -1851,6 +1855,8 @@ impl ShellState {
             pane_prefix_active: false,
             last_context_compression: None,
             insert_escape_buffer: Vec::new(),
+            hardware: crate::hardware::HardwareInfo::default(),
+            hardware_poll_interval: 0,
         }
     }
 
