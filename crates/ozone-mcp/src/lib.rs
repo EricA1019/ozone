@@ -27,6 +27,8 @@ use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
+mod tools;
+
 const JSONRPC_VERSION: &str = "2.0";
 const MCP_PROTOCOL_VERSION: &str = "2024-11-05";
 const OZONE_PLUS_PACKAGE: &str = "ozone-plus";
@@ -147,9 +149,9 @@ impl OzoneMcpServer {
             .cloned()
             .unwrap_or_else(|| Value::Object(Map::new()));
         let reply = match tool_name {
-            "workspace_status" => self.workspace_status_tool()?,
-            "cargo_tool" => self.cargo_tool(&arguments)?,
-            "catalog_list" => self.catalog_list_tool(&arguments)?,
+            "workspace_status" => tools::workspace_status_tool(self)?,
+            "cargo_tool" => tools::cargo_tool(self, &arguments)?,
+            "catalog_list" => tools::catalog_list_tool(self, &arguments)?,
             "preferences_get" => self.preferences_get_tool(&arguments)?,
             "sandbox_tool" => self.sandbox_tool(&arguments)?,
             "mock_backend_tool" => self.mock_backend_tool(&arguments)?,
@@ -172,130 +174,6 @@ impl OzoneMcpServer {
             ),
         };
         Ok(reply.into_result())
-    }
-
-    fn workspace_status_tool(&self) -> Result<ToolReply> {
-        let preferences_path = paths::preferences_path();
-        let data_dir = paths::data_dir();
-        let models_dir = paths::models_dir();
-        let workspace_members = vec![
-            "apps/ozone-mcp",
-            "apps/ozone-plus",
-            "crates/ozone-core",
-            "crates/ozone-engine",
-            "crates/ozone-inference",
-            "crates/ozone-mcp",
-            "crates/ozone-memory",
-            "crates/ozone-persist",
-            "crates/ozone-tui",
-        ];
-
-        Ok(ToolReply::success(
-            "Loaded workspace status".to_owned(),
-            json!({
-                "repoRoot": self.repo_root,
-                "serverVersion": env!("CARGO_PKG_VERSION"),
-                "workspaceMembers": workspace_members,
-                "defaultPaths": {
-                    "dataDir": data_dir,
-                    "preferencesPath": preferences_path,
-                    "modelsDir": models_dir,
-                    "presetsPath": paths::presets_path(),
-                    "launcherPath": paths::launcher_path()
-                }
-            }),
-        ))
-    }
-
-    fn cargo_tool(&self, args: &Value) -> Result<ToolReply> {
-        let action = required_string(args, "action")?;
-        let package = optional_string(args, "package");
-        let release = optional_bool(args, "release").unwrap_or(false);
-        let quiet = optional_bool(args, "quiet").unwrap_or(false);
-        let extra_args = optional_string_array(args, "extraArgs")?;
-
-        let mut command = Command::new("cargo");
-        command.current_dir(&self.repo_root);
-        match action.as_str() {
-            "check" | "test" | "build" | "clippy" => {
-                command.arg(&action);
-            }
-            other => bail!("unsupported cargo action `{other}`"),
-        }
-        if let Some(package) = package.as_deref() {
-            command.arg("-p").arg(package);
-        }
-        if quiet {
-            command.arg("--quiet");
-        }
-        if release {
-            command.arg("--release");
-        }
-        if action == "clippy" {
-            command.arg("--");
-            if extra_args.is_empty() {
-                command.arg("-D").arg("warnings");
-            } else {
-                command.args(&extra_args);
-            }
-        } else {
-            command.args(&extra_args);
-        }
-
-        let output = command
-            .output()
-            .with_context(|| format!("failed to run cargo {action}"))?;
-        let data = command_output_data(&output);
-        let summary = if output.status.success() {
-            format!("cargo {action} succeeded")
-        } else {
-            format!("cargo {action} failed")
-        };
-        Ok(if output.status.success() {
-            ToolReply::success(summary, data)
-        } else {
-            ToolReply::error(summary, data)
-        })
-    }
-
-    fn catalog_list_tool(&self, args: &Value) -> Result<ToolReply> {
-        let sandbox_id = optional_string(args, "sandboxId");
-        let (models_dir, prefs_path) = self.with_sandbox_env(sandbox_id.as_deref(), || {
-            Ok((paths::models_dir(), paths::preferences_path()))
-        })?;
-
-        let mut models = Vec::new();
-        if models_dir.exists() {
-            for entry in fs::read_dir(&models_dir)
-                .with_context(|| format!("failed to read models dir {}", models_dir.display()))?
-            {
-                let entry = entry?;
-                let path = entry.path();
-                let file_name = entry.file_name().to_string_lossy().into_owned();
-                let metadata = fs::symlink_metadata(&path)?;
-                let is_gguf = file_name.ends_with(".gguf");
-                let broken_symlink = metadata.file_type().is_symlink() && !path.exists();
-                if is_gguf || broken_symlink {
-                    models.push(json!({
-                        "name": file_name,
-                        "path": path,
-                        "isSymlink": metadata.file_type().is_symlink(),
-                        "isBrokenSymlink": broken_symlink,
-                        "sizeBytes": if broken_symlink { None } else { fs::metadata(&path).ok().map(|value| value.len()) }
-                    }));
-                }
-            }
-        }
-        models.sort_by(|left, right| left["name"].as_str().cmp(&right["name"].as_str()));
-
-        Ok(ToolReply::success(
-            "Listed model catalog files".to_owned(),
-            json!({
-                "modelsDir": models_dir,
-                "preferencesPath": prefs_path,
-                "models": models
-            }),
-        ))
     }
 
     fn preferences_get_tool(&self, args: &Value) -> Result<ToolReply> {
@@ -4207,7 +4085,7 @@ fn error_response(id: Value, code: i64, message: String) -> Value {
     })
 }
 
-fn command_output_data(output: &std::process::Output) -> Value {
+pub fn command_output_data(output: &std::process::Output) -> Value {
     json!({
         "success": output.status.success(),
         "exitCode": output.status.code(),

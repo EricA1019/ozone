@@ -1,0 +1,37 @@
+// tools/mod.rs - MCP tool modules for ozone-mcp server
+
+pub mod workspace_status;
+pub mod cargo_tool;
+pub mod catalog_list;
+
+pub use workspace_status::workspace_status_tool;
+pub use cargo_tool::cargo_tool;
+pub use catalog_list::catalog_list_tool;
+
+// Helper functions used by tool modules
+pub(super) fn required_string<'a>(args: &'a serde_json::Value, key: &str) -> anyhow::Result<&'a str> {
+    args.get(key)
+        .and_then(serde_json::Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("missing required string argument `{key}`"))
+}
+
+pub(super) fn optional_string<'a>(args: &'a serde_json::Value, key: &str) -> Option<&'a str> {
+    args.get(key).and_then(serde_json::Value::as_str)
+}
+
+pub(super) fn optional_bool(args: &serde_json::Value, key: &str) -> Option<bool> {
+    args.get(key).and_then(serde_json::Value::as_bool)
+}
+
+pub(super) fn optional_string_array<'a>(
+    args: &'a serde_json::Value,
+    key: &str,
+) -> anyhow::Result<Vec<&'a str>> {
+    match args.get(key) {
+        Some(serde_json::Value::Array(arr)) => {
+            Ok(arr.iter().map(|v| v.as_str().unwrap_or("")).collect())
+        }
+        Some(_) => Err(anyhow::anyhow!("argument `{key}` must be an array")),
+        None => Ok(vec![]),
+    }
+}
