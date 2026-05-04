@@ -1,55 +1,57 @@
-     1|/// MCP tool: export tool.
-     2|use crate::OzoneMcpServer;
-     3|use crate::ToolReply;
-     4|use anyhow::Result;
-     5|use serde_json::Value;
-     6|
-     7|pub fn export_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
-     8|    let action = required_string(args, "action")?;
-     9|    let sandbox_id = optional_string(args, "sandboxId");
-    10|    let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-    11|    match action.as_str() {
-    12|        "session" => server.with_repo(sandbox_id.as_deref(), |repo| {
-    13|            let export = repo.export_session(&session_id)?;
-    14|            if let Some(output_path) = optional_string(args, "outputPath") {
-    15|                let text = serde_json::to_string_pretty(&export)?;
-    16|                fs::write(&output_path, format!("{text}\n"))?;
-    17|            }
-    18|            Ok(ToolReply::success(
-    19|                "Exported session".to_owned(),
-    20|                json!({ "export": export }),
-    21|            ))
-    22|        }),
-    23|        "transcript" => {
-    24|            let branch_id = optional_string(args, "branchId")
-    25|                .map(|value| parse_branch_id(&value))
-    26|                .transpose()?;
-    27|            let format = optional_string(args, "format").unwrap_or_else(|| "json".to_owned());
-    28|            server.with_repo(sandbox_id.as_deref(), |repo| {
-    29|                let export = repo.export_transcript(&session_id, branch_id.as_ref())?;
-    30|                if let Some(output_path) = optional_string(args, "outputPath") {
-    31|                    match format.as_str() {
-    32|                        "json" => {
-    33|                            let text = serde_json::to_string_pretty(&export)?;
-    34|                            fs::write(&output_path, format!("{text}\n"))?;
-    35|                        }
-    36|                        "text" => {
-    37|                            fs::write(&output_path, render_transcript_text(&export))?;
-    38|                        }
-    39|                        other => bail!("unsupported transcript export format `{other}`"),
-    40|                    }
-    41|                }
-    42|                Ok(ToolReply::success(
-    43|                    "Exported transcript".to_owned(),
-    44|                    json!({ "export": export, "format": format }),
-    45|                ))
-    46|            })
-    47|        }
-    48|        other => Ok(ToolReply::error(
-    49|            "Export action failed".to_owned(),
-    50|            json!({ "error": format!("unsupported export action `{other}`") }),
-    51|        )),
-    52|    }
-    53|}
-    54|
-    55|
+/// MCP tool: export tool.
+use crate::OzoneMcpServer;
+use crate::ToolReply;
+use anyhow::Result;
+use serde_json::Value;
+use serde_json::json;
+use anyhow::bail;
+use super::required_string;
+use super::optional_string;
+
+pub fn export_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
+    let action = required_string(args, "action")?;
+    let sandbox_id = optional_string(args, "sandboxId");
+    let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
+    match action.as_str() {
+        "session" => server.with_repo(sandbox_id.as_deref(), |repo| {
+            let export = repo.export_session(&session_id)?;
+            if let Some(output_path) = optional_string(args, "outputPath") {
+                let text = serde_json::to_string_pretty(&export)?;
+                fs::write(&output_path, format!("{text}\n"))?;
+            }
+            Ok(ToolReply::success(
+                "Exported session".to_owned(),
+                json!({ "export": export }),
+            ))
+        }),
+        "transcript" => {
+            let branch_id = optional_string(args, "branchId")
+                .map(|value| parse_branch_id(&value))
+                .transpose()?;
+            let format = optional_string(args, "format").unwrap_or_else(|| "json".to_owned());
+            server.with_repo(sandbox_id.as_deref(), |repo| {
+                let export = repo.export_transcript(&session_id, branch_id.as_ref())?;
+                if let Some(output_path) = optional_string(args, "outputPath") {
+                    match format.as_str() {
+                        "json" => {
+                            let text = serde_json::to_string_pretty(&export)?;
+                            fs::write(&output_path, format!("{text}\n"))?;
+                        }
+                        "text" => {
+                            fs::write(&output_path, render_transcript_text(&export))?;
+                        }
+                        other => bail!("unsupported transcript export format `{other}`"),
+                    }
+                }
+                Ok(ToolReply::success(
+                    "Exported transcript".to_owned(),
+                    json!({ "export": export, "format": format }),
+                ))
+            })
+        }
+        other => Ok(ToolReply::error(
+            "Export action failed".to_owned(),
+            json!({ "error": format!("unsupported export action `{other}`") }),
+        )),
+    }
+}
