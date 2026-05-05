@@ -1,13 +1,17 @@
-use super::required_string;
-use super::optional_string;
-use super::optional_bool;
-/// MCP tool: branch tool.
 use crate::OzoneMcpServer;
 use crate::ToolReply;
-use anyhow::Result;
-use serde_json::Value;
 use serde_json::json;
 use anyhow::anyhow;
+use uuid::Uuid;
+use crate::required_string;
+use crate::optional_string;
+use crate::optional_bool;
+use crate::parse_session_id;
+use crate::parse_message_id;
+use crate::parse_branch_id;
+use crate::now_timestamp_ms;
+use crate::branch_record_json;
+use ozone_core::engine::{ConversationBranch, BranchState, CreateBranchCommand};
 
 pub fn branch_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
     let action = required_string(args, "action")?;

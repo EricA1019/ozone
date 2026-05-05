@@ -1,12 +1,13 @@
-/// MCP tool: export tool.
 use crate::OzoneMcpServer;
 use crate::ToolReply;
-use anyhow::Result;
-use serde_json::Value;
 use serde_json::json;
+use std::fs;
 use anyhow::bail;
-use super::required_string;
-use super::optional_string;
+use crate::required_string;
+use crate::optional_string;
+use crate::parse_session_id;
+use crate::parse_branch_id;
+use crate::render_transcript_text;
 
 pub fn export_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
     let action = required_string(args, "action")?;

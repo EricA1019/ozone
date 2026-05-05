@@ -1,10 +1,8 @@
-/// MCP tool: mock backend.
+/// MCP tool: mock backend operations (start/stop).
 use crate::OzoneMcpServer;
 use crate::ToolReply;
-use anyhow::Result;
-use serde_json::Value;
 use serde_json::json;
-use super::required_string;
+use crate::required_string;
 
 pub fn mock_backend_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
     match required_string(args, "action")?.as_str() {

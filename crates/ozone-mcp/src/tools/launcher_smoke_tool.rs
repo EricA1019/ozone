@@ -1,19 +1,22 @@
-/// MCP tool: launcher smoke tool.
+/// MCP tool: launcher smoke test.
 use crate::OzoneMcpServer;
 use crate::ToolReply;
-use anyhow::Result;
+use anyhow::anyhow;
 use serde_json::Value;
 use serde_json::json;
-use anyhow::anyhow;
-use super::required_string;
-use super::optional_string;
-use super::optional_u64;
+use std::fs;
+use crate::required_string;
+use crate::optional_string;
+use crate::optional_u64;
+use crate::session_summary_json;
+use crate::LauncherSmokeRunnerSpec;
+use crate::PtyVteCaptureConfig;
 
 pub fn launcher_smoke_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
     let sandbox_id = required_string(args, "sandboxId")?;
     let live_refresh_model_name = optional_string(args, "liveRefreshModelName");
     let enter_count = optional_u64(args, "enterCount").unwrap_or(4);
-    let sandbox = self
+    let sandbox = server
         .sandboxes
         .get(&sandbox_id)
         .ok_or_else(|| anyhow!("sandbox `{sandbox_id}` was not found"))?;
@@ -27,36 +30,36 @@ pub fn launcher_smoke_tool(server: &mut OzoneMcpServer, args: &serde_json::Value
         capture: PtyVteCaptureConfig::sandbox_artifacts(sandbox, "launcher-smoke-final"),
     };
     let script_body = r###"def run():
-master, proc = open_pty_process(
-    ["cargo", "run", "--quiet", "--", "--mode", "base", "--frontend", "ozonePlus", "--no-browser"],
-    SPEC["repoRoot"],
-)
-live_refresh_path = SPEC.get("liveRefreshPath")
-live_refresh_name = os.path.basename(live_refresh_path) if live_refresh_path else None
-saw_live_refresh_model = False
+    master, proc = open_pty_process(
+        ["cargo", "run", "--quiet", "--", "--mode", "base", "--frontend", "ozonePlus", "--no-browser"],
+        SPEC["repoRoot"],
+    )
+    live_refresh_path = SPEC.get("liveRefreshPath")
+    live_refresh_name = os.path.basename(live_refresh_path) if live_refresh_path else None
+    saw_live_refresh_model = False
 
-pump(master, proc, 8.0)
-if live_refresh_path:
-    open(live_refresh_path, "ab").close()
-    pump(master, proc, 2.5)
-    saw_live_refresh_model = screen_contains(live_refresh_name)
-
-for index in range(int(SPEC["enterCount"])):
-    send_key(master, "enter")
-    pump(master, proc, 4.0 if index + 1 == int(SPEC["enterCount"]) else 1.0)
-    if live_refresh_name and not saw_live_refresh_model:
+    pump(master, proc, 8.0)
+    if live_refresh_path:
+        open(live_refresh_path, "ab").close()
+        pump(master, proc, 2.5)
         saw_live_refresh_model = screen_contains(live_refresh_name)
 
-process_state = stop_process(proc)
-final_capture = capture_screen()
-return {
-    "ok": True,
-    "bufferTail": final_capture["tailText"],
-    "sawLiveRefreshModel": saw_live_refresh_model,
-    "screen": summarize_capture(final_capture),
-    "processExitedBeforeStop": process_state["processExitedBeforeStop"],
-    "exitCode": process_state["exitCode"],
-}
+    for index in range(int(SPEC["enterCount"])):
+        send_key(master, "enter")
+        pump(master, proc, 4.0 if index + 1 == int(SPEC["enterCount"]) else 1.0)
+        if live_refresh_name and not saw_live_refresh_model:
+            saw_live_refresh_model = screen_contains(live_refresh_name)
+
+    process_state = stop_process(proc)
+    final_capture = capture_screen()
+    return {
+        "ok": True,
+        "bufferTail": final_capture["tailText"],
+        "sawLiveRefreshModel": saw_live_refresh_model,
+        "screen": summarize_capture(final_capture),
+        "processExitedBeforeStop": process_state["processExitedBeforeStop"],
+        "exitCode": process_state["exitCode"],
+    }
 "###;
     let output = server.run_python_vte_helper(
         sandbox,
@@ -66,9 +69,8 @@ return {
     )?;
     let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
     let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-    let pty_data = serde_json::from_str::<Value>(&stdout).unwrap_or_else(
-_| json!({ "bufferTail": stdout.trim(), "sawLiveRefreshModel": false }),
-    );
+    let pty_data = serde_json::from_str::<Value>(&stdout)
+        .unwrap_or_else(|_| json!({ "bufferTail": stdout.trim(), "sawLiveRefreshModel": false }));
     let launcher_invocation_log = sandbox.root.join("launcher-invocation.txt");
     let sessions = server.with_repo(Some(&sandbox_id), |repo| {
         Ok(repo

@@ -1,8 +1,6 @@
 /// MCP tool: workspace status.
 use crate::OzoneMcpServer;
 use crate::ToolReply;
-use anyhow::Result;
-use serde_json::Value;
 use serde_json::json;
 use ozone_core::paths;
 

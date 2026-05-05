@@ -39,39 +39,3 @@ pub use mock_user_tool::mock_user_tool;
 pub use screen_nav_targets_tool::screen_nav_targets_tool;
 pub use screenshot_tool::screenshot_tool;
 pub use screen_check_tool::screen_check_tool;
-
-// Helper functions used by tool modules
-pub(super) fn required_string<'a>(args: &'a serde_json::Value, key: &str) -> anyhow::Result<&'a str> {
-    args.get(key)
-        .and_then(serde_json::Value::as_str)
-        .ok_or_else(|| anyhow::anyhow!("missing required string argument `{key}`"))
-}
-
-pub(super) fn optional_string<'a>(args: &'a serde_json::Value, key: &str) -> Option<&'a str> {
-    args.get(key).and_then(serde_json::Value::as_str)
-}
-
-pub(super) fn optional_bool(args: &serde_json::Value, key: &str) -> Option<bool> {
-    args.get(key).and_then(serde_json::Value::as_bool)
-}
-
-pub(super) fn optional_string_array<'a>(
-    args: &'a serde_json::Value,
-    key: &str,
-) -> anyhow::Result<Vec<&'a str>> {
-    match args.get(key) {
-        Some(serde_json::Value::Array(arr)) => {
-            Ok(arr.iter().map(|v| v.as_str().unwrap_or("")).collect())
-        }
-        Some(_) => Err(anyhow::anyhow!("argument `{key}` must be an array")),
-        None => Ok(vec![]),
-    }
-}
-
-pub(super) fn optional_u64(args: &serde_json::Value, key: &str) -> Option<u64> {
-    args.get(key).and_then(serde_json::Value::as_u64)
-}
-
-pub(super) fn required_u64(args: &serde_json::Value, key: &str) -> anyhow::Result<u64> {
-    optional_u64(args, key).ok_or_else(|| anyhow::anyhow!("missing required integer field `{key}`"))
-}

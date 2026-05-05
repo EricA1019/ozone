@@ -1,11 +1,10 @@
-/// MCP tool: screen nav targets tool.
 use crate::OzoneMcpServer;
 use crate::ToolReply;
 use anyhow::Result;
-use serde_json::Value;
 use serde_json::json;
 use anyhow::anyhow;
-use super::optional_string;
+use crate::optional_string;
+use crate::capturable_screen_journey_builders;
 
 pub fn screen_nav_targets_tool(server: &OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
     let targets = if let Some(target_name) = optional_string(args, "target") {

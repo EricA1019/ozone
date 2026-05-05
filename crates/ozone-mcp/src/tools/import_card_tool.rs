@@ -1,13 +1,14 @@
-/// MCP tool: import card tool.
 use crate::OzoneMcpServer;
 use crate::ToolReply;
-use anyhow::Result;
-use serde_json::Value;
 use serde_json::json;
+use std::fs;
 use anyhow::anyhow;
 use anyhow::bail;
-use super::optional_string;
-use super::optional_string_array;
+use anyhow::Context;
+use crate::optional_string;
+use crate::optional_string_array;
+use crate::session_summary_json;
+use ozone_persist::{CharacterCard, ImportCharacterCardRequest};
 
 pub fn import_card_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
     let sandbox_id = optional_string(args, "sandboxId");

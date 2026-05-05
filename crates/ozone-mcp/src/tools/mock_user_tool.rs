@@ -1,10 +1,9 @@
 /// MCP tool: mock user tool.
 use crate::OzoneMcpServer;
 use crate::ToolReply;
-use anyhow::Result;
 use serde_json::Value;
 use anyhow::bail;
-use super::optional_string;
+use crate::optional_string;
 
 pub fn mock_user_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
     let requested_journey = optional_string(args, "journey");

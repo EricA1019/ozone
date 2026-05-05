@@ -1,11 +1,10 @@
 /// MCP tool: catalog list.
 use crate::OzoneMcpServer;
 use crate::ToolReply;
-use anyhow::Result;
-use serde_json::Value;
+use anyhow::Context;
 use serde_json::json;
 use ozone_core::paths;
-use super::optional_string;
+use crate::optional_string;
 use std::fs;
 
 pub fn catalog_list_tool(server: &OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {

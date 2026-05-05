@@ -1,14 +1,16 @@
-/// MCP tool: screen check tool.
+/// MCP tool: screen check.
 use crate::OzoneMcpServer;
 use crate::ToolReply;
 use anyhow::Result;
-use serde_json::Value;
-use serde_json::json;
 use anyhow::anyhow;
 use anyhow::bail;
-use super::optional_string;
+use serde_json::Value;
+use serde_json::json;
+use crate::optional_string;
+use crate::load_screen_capture_sidecar;
+use crate::evaluate_screen_check;
 
-pub fn screen_check_tool(server: &OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
+pub fn screen_check_tool(_server: &OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
     let artifact_path = optional_string(args, "artifactPath")
         .or_else(|| optional_string(args, "path"))
         .or_else(|| optional_string(args, "sidecarPath"))

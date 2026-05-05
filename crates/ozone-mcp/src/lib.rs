@@ -11,17 +11,13 @@ use std::{
 use anyhow::{anyhow, bail, Context, Result};
 use ozone_core::{
     engine::{
-        ActivateSwipeCommand, BranchId, BranchState, ConversationBranch, ConversationMessage,
-        CreateBranchCommand, MessageId, SwipeCandidate, SwipeCandidateState, SwipeGroup,
+        BranchId, ConversationMessage, MessageId, SwipeCandidate, SwipeGroup,
         SwipeGroupId,
     },
-    paths,
-    session::{CreateSessionRequest, SessionId},
+    session::SessionId,
 };
 use ozone_persist::{
-    AuthorId, BranchRecord, CharacterCard, CreateMessageRequest, CreateNoteMemoryRequest,
-    ImportCharacterCardRequest, PersistError, PinMessageMemoryRequest, PinnedMemoryView,
-    Provenance, SqliteRepository,
+    BranchRecord, PersistError, PinnedMemoryView, SqliteRepository,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Map, Value};
@@ -176,7 +172,7 @@ impl OzoneMcpServer {
         Ok(reply.into_result())
     }
 
-    fn sandbox_tool(&mut self, args: &Value) -> Result<ToolReply> {
+    pub fn sandbox_tool(&mut self, args: &Value) -> Result<ToolReply> {
         let prefix = optional_string(args, "namePrefix").unwrap_or_else(|| "ozone-mcp".to_owned());
         let sandbox_id = format!("sandbox-{}", Uuid::new_v4());
         let root = env::temp_dir().join(format!(
@@ -248,1007 +244,147 @@ impl OzoneMcpServer {
         ))
     }
 
-    fn destroy_sandbox(&mut self, args: &Value) -> Result<ToolReply> {
+
+
+
+
+
+    pub fn start_mock_backend(&mut self, args: &Value) -> Result<ToolReply> {
         let sandbox_id = required_string(args, "sandboxId")?;
-        let mut sandbox = self
-            .sandboxes
-            .remove(&sandbox_id)
-            .ok_or_else(|| anyhow!("sandbox `{sandbox_id}` was not found"))?;
-        sandbox.stop_backend()?;
-        if sandbox.root.exists() {
-            fs::remove_dir_all(&sandbox.root)
-                .with_context(|| format!("failed to remove {}", sandbox.root.display()))?;
-        }
-        Ok(ToolReply::success(
-            "Destroyed sandbox".to_owned(),
-            json!({ "sandboxId": sandbox_id }),
-        ))
-    }
-
-
-
-    fn session_tool(&mut self, args: &Value) -> Result<ToolReply> {
-        let action = required_string(args, "action")?;
-        let sandbox_id = optional_string(args, "sandboxId");
-        match action.as_str() {
-            "create" => {
-                let name = required_string(args, "name")?;
-                let character_name = optional_string(args, "characterName");
-                let tags = optional_string_array(args, "tags")?;
-                self.with_repo(sandbox_id.as_deref(), |repo| {
-                    let mut request = CreateSessionRequest::new(name);
-                    request.character_name = character_name;
-                    request.tags = tags;
-                    let session = repo.create_session(request)?;
-                    Ok(ToolReply::success(
-                        "Created ozone+ session".to_owned(),
-                        json!({ "session": session_summary_json(&session) }),
-                    ))
-                })
-            }
-            "list" => self.with_repo(sandbox_id.as_deref(), |repo| {
-                let sessions = repo.list_sessions()?;
-                let session_jsons: Vec<Value> = sessions
-                    .iter()
-                    .map(|session| {
-                        let mut json = session_summary_json(session);
-                        // Attach last message preview if available
-                        if let Ok(messages) = repo.list_session_messages(&session.session_id) {
-                            if let Some(last) = messages.last() {
-                                if let Some(obj) = json.as_object_mut() {
-                                    obj.insert(
-                                        "lastMessagePreview".to_owned(),
-                                        json!(last.content.as_str()),
-                                    );
-                                }
-                            }
-                        }
-                        json
-                    })
-                    .collect();
-                Ok(ToolReply::success(
-                    "Listed ozone+ sessions".to_owned(),
-                    json!({
-                        "sessions": session_jsons,
-                        "found": sessions.len()
-                    }),
-                ))
-            }),
-            "metadata" => {
-                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-                self.with_repo(sandbox_id.as_deref(), |repo| {
-                    let session = repo
-                        .get_session(&session_id)?
-                        .ok_or_else(|| anyhow!("session {session_id} was not found"))?;
-                    let active_branch = repo.get_active_branch(&session_id)?;
-                    let transcript_message_count = match active_branch.as_ref() {
-                        Some(record) => repo
-                            .list_branch_messages(&session_id, &record.branch.branch_id)?
-                            .len(),
-                        None => 0,
-                    };
-                    let lock_probe = probe_session_lock(&repo, &session_id)?;
-                    let active_branch_name = active_branch.as_ref().map(|r| r.branch.name.clone());
-                    Ok(ToolReply::success(
-                        "Loaded session metadata".to_owned(),
-                        json!({
-                            "session": session_summary_json(&session),
-                            "activeBranch": active_branch.as_ref().map(branch_record_json),
-                            "activeBranchName": active_branch_name,
-                            "transcriptMessageCount": transcript_message_count,
-                            "lock": lock_probe
-                        }),
-                    ))
-                })
-            }
-            "load" => {
-                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-                self.with_repo(sandbox_id.as_deref(), |repo| {
-                    // Seed greeting if character has one and transcript is empty
-                    let greeting_seeded = repo.maybe_seed_character_greeting(&session_id)?;
-                    // Build standard metadata response
-                    let session = repo
-                        .get_session(&session_id)?
-                        .ok_or_else(|| anyhow!("session {session_id} was not found"))?;
-                    let active_branch = repo.get_active_branch(&session_id)?;
-                    let transcript_message_count = match active_branch.as_ref() {
-                        Some(record) => repo
-                            .list_branch_messages(&session_id, &record.branch.branch_id)?
-                            .len(),
-                        None => 0,
-                    };
-                    let lock_probe = probe_session_lock(&repo, &session_id)?;
-                    let active_branch_name = active_branch.as_ref().map(|r| r.branch.name.clone());
-                    Ok(ToolReply::success(
-                        "Loaded session".to_owned(),
-                        json!({
-                            "session": session_summary_json(&session),
-                            "activeBranch": active_branch.as_ref().map(branch_record_json),
-                            "activeBranchName": active_branch_name,
-                            "transcriptMessageCount": transcript_message_count,
-                            "lock": lock_probe,
-                            "greetingSeeded": greeting_seeded,
-                        }),
-                    ))
-                })
-            }
-            "transcript" => {
-                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-                let branch_id = optional_string(args, "branchId")
-                    .map(|value| parse_branch_id(&value))
-                    .transpose()?;
-                self.with_repo(sandbox_id.as_deref(), |repo| {
-                    let branch = match branch_id.as_ref() {
-                        Some(branch_id) => repo
-                            .get_branch(&session_id, branch_id)?
-                            .ok_or_else(|| anyhow!("branch {branch_id} was not found"))?,
-                        None => repo
-                            .get_active_branch(&session_id)?
-                            .ok_or_else(|| anyhow!("session {session_id} has no active branch"))?,
-                    };
-                    let messages =
-                        repo.list_branch_messages(&session_id, &branch.branch.branch_id)?;
-                    Ok(ToolReply::success(
-                        "Loaded transcript".to_owned(),
-                        json!({
-                            "branch": branch_record_json(&branch),
-                            "messages": messages.iter().map(message_json).collect::<Vec<_>>()
-                        }),
-                    ))
-                })
-            }
-            "rename" => {
-                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-                let new_name = required_string(args, "newName")?;
-                self.with_repo(sandbox_id.as_deref(), |repo| {
-                    let session = repo.rename_session(&session_id, &new_name)?;
-                    Ok(ToolReply::success(
-                        "Renamed ozone+ session".to_owned(),
-                        json!({ "session": session_summary_json(&session) }),
-                    ))
-                })
-            }
-            "delete" => {
-                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-                self.with_repo(sandbox_id.as_deref(), |repo| {
-                    repo.delete_session(&session_id)?;
-                    Ok(ToolReply::success(
-                        "Deleted ozone+ session".to_owned(),
-                        json!({ "sessionId": session_id.to_string() }),
-                    ))
-                })
-            }
-            other => Ok(ToolReply::error(
-                "Session action failed".to_owned(),
-                json!({ "error": format!("unsupported session action `{other}`") }),
-            )),
-        }
-    }
-
-    fn message_tool(&mut self, args: &Value) -> Result<ToolReply> {
-        let action = required_string(args, "action")?;
-        if action != "send" {
-            return Ok(ToolReply::error(
-                "Message action failed".to_owned(),
-                json!({ "error": format!("unsupported message action `{action}`") }),
-            ));
-        }
-
-        let session_id = required_string(args, "sessionId")?;
-        let content = required_string(args, "content")?;
-        let sandbox_id = optional_string(args, "sandboxId");
-        let author_kind = optional_string(args, "author").unwrap_or_else(|| "user".to_owned());
-        let author_name = optional_string(args, "authorName");
-        let mut command = vec![
-            "run".to_owned(),
-            "-p".to_owned(),
-            OZONE_PLUS_PACKAGE.to_owned(),
-            "--quiet".to_owned(),
-            "--".to_owned(),
-            "send".to_owned(),
-            session_id.clone(),
-            content.clone(),
-        ];
-        if author_kind != "user" {
-            command.push("--author".to_owned());
-            command.push(author_kind);
-        }
-        if let Some(author_name) = author_name {
-            command.push("--author-name".to_owned());
-            command.push(author_name);
-        }
-        let parent_message_id = optional_string(args, "parentMessageId");
-        let output = self.run_workspace_command("cargo", &command, sandbox_id.as_deref())?;
-        let message_ids = output
-            .stdout
-            .lines()
-            .filter_map(|line| line.strip_prefix("  message id      "))
-            .map(str::trim)
-            .filter(|value| !value.is_empty())
-            .map(ToOwned::to_owned)
-            .collect::<Vec<_>>();
-        let user_message_id = message_ids.first().cloned();
-        let assistant_message_id = message_ids.get(1).cloned();
-        let data = json!({
-            "command": output.command,
-            "ok": output.success,
-            "userMessageId": user_message_id,
-            "assistantMessageId": assistant_message_id,
-            "parentMessageId": parent_message_id,
-            "stdout": output.stdout,
-            "stderr": output.stderr,
-            "exitCode": output.exit_code
-        });
-        Ok(if output.success {
-            ToolReply::success("Completed runtime-backed send".to_owned(), data)
-        } else {
-            ToolReply::error("Runtime-backed send failed".to_owned(), data)
-        })
-    }
-
-    fn memory_tool(&mut self, args: &Value) -> Result<ToolReply> {
-        let action = required_string(args, "action")?;
-        let sandbox_id = optional_string(args, "sandboxId");
-        match action.as_str() {
-            "note" => {
-                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-                let content = required_string(args, "content")?;
-                self.with_repo(sandbox_id.as_deref(), |repo| {
-                    let record = repo.create_note_memory(
-                        &session_id,
-                        CreateNoteMemoryRequest::new(
-                            content,
-                            AuthorId::User,
-                            Provenance::UserAuthored,
-                        ),
-                    )?;
-                    Ok(ToolReply::success(
-                        "Created note memory".to_owned(),
-                        json!({ "record": pinned_memory_record_json(&record) }),
-                    ))
-                })
-            }
-            "pin" => {
-                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-                let message_id = parse_message_id(&required_string(args, "messageId")?)?;
-                let expires_after_turns =
-                    optional_u64(args, "expiresAfterTurns").map(|value| value as u32);
-                self.with_repo(sandbox_id.as_deref(), |repo| {
-                    let record = repo.pin_message_memory(
-                        &session_id,
-                        &message_id,
-                        PinMessageMemoryRequest {
-                            pinned_by: AuthorId::User,
-                            expires_after_turns,
-                            provenance: Provenance::UserAuthored,
-                        },
-                    )?;
-                    Ok(ToolReply::success(
-                        "Pinned memory".to_owned(),
-                        json!({ "record": pinned_memory_record_json(&record) }),
-                    ))
-                })
-            }
-            "list" => {
-                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-                let kind_opt = optional_string(args, "kind");
-                self.with_repo(sandbox_id.as_deref(), move |repo| {
-                    let memories = match kind_opt.as_deref() {
-                        Some("note") => repo.list_note_memories(&session_id)?,
-                        _ => repo.list_pinned_memories(&session_id)?,
-                    };
-                    Ok(ToolReply::success(
-                        "Listed memories".to_owned(),
-                        json!({
-                            "memories": memories.iter().map(pinned_memory_view_json).collect::<Vec<_>>(),
-                            "found": memories.len(),
-                            "kind": kind_opt.as_deref().unwrap_or("pinned")
-                        }),
-                    ))
-                })
-            }
-            other => Ok(ToolReply::error(
-                "Memory action failed".to_owned(),
-                json!({ "error": format!("unsupported memory action `{other}`") }),
-            )),
-        }
-    }
-
-    fn search_tool(&mut self, args: &Value) -> Result<ToolReply> {
-        let action = required_string(args, "action")?;
-        let sandbox_id = optional_string(args, "sandboxId");
-        let output = match action.as_str() {
-            "session" => {
-                let session_id = required_string(args, "sessionId")?;
-                let query = required_string(args, "query")?;
-                self.run_workspace_command(
-                    "cargo",
-                    &[
-                        "run".to_owned(),
-                        "-p".to_owned(),
-                        OZONE_PLUS_PACKAGE.to_owned(),
-                        "--quiet".to_owned(),
-                        "--".to_owned(),
-                        "search".to_owned(),
-                        "session".to_owned(),
-                        session_id,
-                        query,
-                    ],
-                    sandbox_id.as_deref(),
-                )?
-            }
-            "global" => {
-                let query = required_string(args, "query")?;
-                self.run_workspace_command(
-                    "cargo",
-                    &[
-                        "run".to_owned(),
-                        "-p".to_owned(),
-                        OZONE_PLUS_PACKAGE.to_owned(),
-                        "--quiet".to_owned(),
-                        "--".to_owned(),
-                        "search".to_owned(),
-                        "global".to_owned(),
-                        query,
-                    ],
-                    sandbox_id.as_deref(),
-                )?
-            }
-            "index_rebuild" => self.run_workspace_command(
-                "cargo",
-                &[
-                    "run".to_owned(),
-                    "-p".to_owned(),
-                    OZONE_PLUS_PACKAGE.to_owned(),
-                    "--quiet".to_owned(),
-                    "--".to_owned(),
-                    "index".to_owned(),
-                    "rebuild".to_owned(),
-                ],
-                sandbox_id.as_deref(),
-            )?,
-            other => {
-                return Ok(ToolReply::error(
-                    "Search action failed".to_owned(),
-                    json!({ "error": format!("unsupported search action `{other}`") }),
-                ));
-            }
-        };
-
-        let mode = parse_prefixed_field(&output.stdout, "  mode            ");
-        let hits = parse_prefixed_field(&output.stdout, "  hits            ")
-            .and_then(|value| value.parse::<u64>().ok());
-        let status = parse_prefixed_field(&output.stdout, "  status          ");
-        // Replace cryptic embedding disabled message with user-friendly FTS fallback note
-        let status = status.map(|s| {
-            if s.contains("embedding.provider is disabled") {
-                "FTS mode — configure embedding provider for vector search".to_owned()
-            } else {
-                s
-            }
-        });
-        let data = json!({
-            "command": output.command,
-            "ok": output.success,
-            "mode": mode,
-            "status": status,
-            "hits": hits,
-            "stdout": output.stdout,
-            "stderr": output.stderr,
-            "exitCode": output.exit_code
-        });
-        Ok(if output.success {
-            ToolReply::success("Completed search/index command".to_owned(), data)
-        } else {
-            ToolReply::error("Search/index command failed".to_owned(), data)
-        })
-    }
-
-    fn branch_tool(&mut self, args: &Value) -> Result<ToolReply> {
-        let action = required_string(args, "action")?;
-        let sandbox_id = optional_string(args, "sandboxId");
-        match action.as_str() {
-            "create" => {
-                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-                let name = required_string(args, "name")?;
-                let activate = optional_bool(args, "activate").unwrap_or(false);
-                let from_message_id = optional_string(args, "fromMessageId")
-                    .map(|value| parse_message_id(&value))
-                    .transpose()?;
-                self.with_repo(sandbox_id.as_deref(), |repo| {
-                    let tip_message_id = match from_message_id {
-                        Some(value) => value,
-                        None => {
-                            repo.get_active_branch(&session_id)?
-                                .ok_or_else(|| {
-                                    anyhow!("session {session_id} has no active branch")
-                                })?
-                                .branch
-                                .tip_message_id
-                        }
-                    };
-                    let mut branch = ConversationBranch::new(
-                        parse_branch_id(&Uuid::new_v4().to_string())?,
-                        session_id.clone(),
-                        name,
-                        tip_message_id.clone(),
-                        now_timestamp_ms(),
-                    );
-                    branch.state = if activate {
-                        BranchState::Active
-                    } else {
-                        BranchState::Inactive
-                    };
-                    let record = repo.create_branch(CreateBranchCommand {
-                        branch,
-                        forked_from: tip_message_id,
-                    })?;
-                    Ok(ToolReply::success(
-                        "Created branch".to_owned(),
-                        json!({ "branch": branch_record_json(&record) }),
-                    ))
-                })
-            }
-            "list" => {
-                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-                self.with_repo(sandbox_id.as_deref(), |repo| {
-                    let branches = repo.list_branches(&session_id)?;
-                    Ok(ToolReply::success(
-                        "Listed branches".to_owned(),
-                        json!({
-                            "branches": branches.iter().map(branch_record_json).collect::<Vec<_>>(),
-                            "found": branches.len()
-                        }),
-                    ))
-                })
-            }
-            "activate" => {
-                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-                let branch_id = parse_branch_id(&required_string(args, "branchId")?)?;
-                self.with_repo(sandbox_id.as_deref(), |repo| {
-                    let branch = repo.activate_branch(&session_id, &branch_id)?;
-                    Ok(ToolReply::success(
-                        "Activated branch".to_owned(),
-                        json!({ "branch": branch_record_json(&branch) }),
-                    ))
-                })
-            }
-            "delete" => {
-                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-                let branch_id = parse_branch_id(&required_string(args, "branchId")?)?;
-                self.with_repo(sandbox_id.as_deref(), |repo| {
-                    repo.delete_branch(&session_id, &branch_id)?;
-                    Ok(ToolReply::success(
-                        "Deleted branch".to_owned(),
-                        json!({ "branchId": branch_id.to_string() }),
-                    ))
-                })
-            }
-            other => Ok(ToolReply::error(
-                "Branch action failed".to_owned(),
-                json!({ "error": format!("unsupported branch action `{other}`") }),
-            )),
-        }
-    }
-
-    fn swipe_tool(&mut self, args: &Value) -> Result<ToolReply> {
-        let action = required_string(args, "action")?;
-        let sandbox_id = optional_string(args, "sandboxId");
-        match action.as_str() {
-            "add" => {
-                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-                let parent_message_id =
-                    parse_message_id(&required_string(args, "parentMessageId")?)?;
-                let content = required_string(args, "content")?;
-                let parent_context_message_id = optional_string(args, "contextMessageId")
-                    .map(|value| parse_message_id(&value))
-                    .transpose()?;
-                let swipe_group_id = optional_string(args, "swipeGroupId")
-                    .map(|value| parse_swipe_group_id(&value))
-                    .transpose()?;
-                let ordinal = optional_u64(args, "ordinal").map(|value| value as u16);
-                let author_kind =
-                    optional_string(args, "author").unwrap_or_else(|| "assistant".to_owned());
-                let author_name = optional_string(args, "authorName");
-                let state = optional_string(args, "state")
-                    .map(|value| value.parse::<SwipeCandidateState>())
-                    .transpose()?
-                    .unwrap_or_default();
-                self.with_repo(sandbox_id.as_deref(), |repo| {
-                    let message_record = repo.insert_message(
-                        &session_id,
-                        CreateMessageRequest {
-                            parent_id: Some(parent_message_id.to_string()),
-                            author_kind,
-                            author_name,
-                            content,
-                        },
-                    )?;
-                    let message_id = parse_message_id(&message_record.message_id)?;
-                    let existing_group = match swipe_group_id.as_ref() {
-                        Some(group_id) => repo.get_swipe_group(&session_id, group_id)?,
-                        None => repo
-                            .list_swipe_groups(&session_id)?
-                            .into_iter()
-                            .find(|group| group.parent_message_id == parent_message_id),
-                    };
-                    let mut group = existing_group.unwrap_or_else(|| {
-                        let mut group = SwipeGroup::new(
-                            parse_swipe_group_id(&Uuid::new_v4().to_string())
-                                .expect("generated uuid should parse"),
-                            parent_message_id.clone(),
-                        );
-                        group.parent_context_message_id = parent_context_message_id.clone();
-                        group
-                    });
-                    if group.parent_context_message_id.is_none() {
-                        group.parent_context_message_id = parent_context_message_id;
-                    }
-                    let next_ordinal = match ordinal {
-                        Some(value) => value,
-                        None => {
-                            match repo.list_swipe_candidates(&session_id, &group.swipe_group_id) {
-                                Ok(candidates) => candidates
-                                    .iter()
-                                    .map(|candidate| candidate.ordinal)
-                                    .max()
-                                    .unwrap_or(0)
-                                    .saturating_add(1),
-                                Err(PersistError::SwipeGroupNotFound(_)) => 0,
-                                Err(error) => return Err(anyhow!(error.to_string())),
-                            }
-                        }
-                    };
-                    let candidate = repo.record_swipe_candidate(
-                        &session_id,
-                        ozone_persist::RecordSwipeCandidateCommand {
-                            group: group.clone(),
-                            candidate: SwipeCandidate {
-                                swipe_group_id: group.swipe_group_id.clone(),
-                                ordinal: next_ordinal,
-                                message_id,
-                                state,
-                                partial_content: None,
-                                tokens_generated: None,
-                            },
-                        },
-                    )?;
-                    Ok(ToolReply::success(
-                        "Added swipe candidate".to_owned(),
-                        json!({
-                            "group": swipe_group_json(&group),
-                            "candidate": swipe_candidate_json(&candidate)
-                        }),
-                    ))
-                })
-            }
-            "list" => {
-                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-                self.with_repo(sandbox_id.as_deref(), |repo| {
-                    let groups = repo.list_swipe_groups(&session_id)?;
-                    let mut results = Vec::new();
-                    for group in groups {
-                        let candidates = repo.list_swipe_candidates(&session_id, &group.swipe_group_id)?;
-                        results.push(json!({
-                            "group": swipe_group_json(&group),
-                            "candidates": candidates.iter().map(swipe_candidate_json).collect::<Vec<_>>()
-                        }));
-                    }
-                    Ok(ToolReply::success(
-                        "Listed swipe groups".to_owned(),
-                        json!({ "swipes": results }),
-                    ))
-                })
-            }
-            "activate" => {
-                let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-                let swipe_group_id = parse_swipe_group_id(&required_string(args, "swipeGroupId")?)?;
-                let ordinal = required_u64(args, "ordinal")? as u16;
-                self.with_repo(sandbox_id.as_deref(), |repo| {
-                    let group = repo.activate_swipe_candidate(
-                        &session_id,
-                        ActivateSwipeCommand {
-                            swipe_group_id: swipe_group_id.clone(),
-                            ordinal,
-                        },
-                    )?;
-                    let selected_candidate = repo
-                        .list_swipe_candidates(&session_id, &group.swipe_group_id)?
-                        .into_iter()
-                        .find(|candidate| candidate.ordinal == group.active_ordinal)
-                        .ok_or_else(|| {
-                            anyhow!(
-                                "swipe group {} is missing active ordinal {}",
-                                group.swipe_group_id,
-                                group.active_ordinal
-                            )
-                        })?;
-                    if let Some(active_branch) = repo.get_active_branch(&session_id)? {
-                        let candidate_message_ids = repo
-                            .list_swipe_candidates(&session_id, &group.swipe_group_id)?
-                            .into_iter()
-                            .map(|candidate| candidate.message_id)
-                            .collect::<Vec<_>>();
-                        if active_branch.branch.tip_message_id == group.parent_message_id
-                            || candidate_message_ids.contains(&active_branch.branch.tip_message_id)
-                        {
-                            let _ = repo.set_branch_tip(
-                                &session_id,
-                                &active_branch.branch.branch_id,
-                                &selected_candidate.message_id,
-                            )?;
-                        }
-                    }
-                    Ok(ToolReply::success(
-                        "Activated swipe candidate".to_owned(),
-                        json!({
-                            "group": swipe_group_json(&group),
-                            "selectedCandidate": swipe_candidate_json(&selected_candidate)
-                        }),
-                    ))
-                })
-            }
-            other => Ok(ToolReply::error(
-                "Swipe action failed".to_owned(),
-                json!({ "error": format!("unsupported swipe action `{other}`") }),
-            )),
-        }
-    }
-
-    fn export_tool(&mut self, args: &Value) -> Result<ToolReply> {
-        let action = required_string(args, "action")?;
-        let sandbox_id = optional_string(args, "sandboxId");
-        let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-        match action.as_str() {
-            "session" => self.with_repo(sandbox_id.as_deref(), |repo| {
-                let export = repo.export_session(&session_id)?;
-                if let Some(output_path) = optional_string(args, "outputPath") {
-                    let text = serde_json::to_string_pretty(&export)?;
-                    fs::write(&output_path, format!("{text}\n"))?;
-                }
-                Ok(ToolReply::success(
-                    "Exported session".to_owned(),
-                    json!({ "export": export }),
-                ))
-            }),
-            "transcript" => {
-                let branch_id = optional_string(args, "branchId")
-                    .map(|value| parse_branch_id(&value))
-                    .transpose()?;
-                let format = optional_string(args, "format").unwrap_or_else(|| "json".to_owned());
-                self.with_repo(sandbox_id.as_deref(), |repo| {
-                    let export = repo.export_transcript(&session_id, branch_id.as_ref())?;
-                    if let Some(output_path) = optional_string(args, "outputPath") {
-                        match format.as_str() {
-                            "json" => {
-                                let text = serde_json::to_string_pretty(&export)?;
-                                fs::write(&output_path, format!("{text}\n"))?;
-                            }
-                            "text" => {
-                                fs::write(&output_path, render_transcript_text(&export))?;
-                            }
-                            other => bail!("unsupported transcript export format `{other}`"),
-                        }
-                    }
-                    Ok(ToolReply::success(
-                        "Exported transcript".to_owned(),
-                        json!({ "export": export, "format": format }),
-                    ))
-                })
-            }
-            other => Ok(ToolReply::error(
-                "Export action failed".to_owned(),
-                json!({ "error": format!("unsupported export action `{other}`") }),
-            )),
-        }
-    }
-
-    fn import_card_tool(&mut self, args: &Value) -> Result<ToolReply> {
-        let sandbox_id = optional_string(args, "sandboxId");
-        let session_name = optional_string(args, "sessionName");
-        let tags = optional_string_array(args, "tags")?;
-        let path = optional_string(args, "path");
-        let card_json = optional_string(args, "cardJson");
-        let provenance = optional_string(args, "provenance");
-        let card = match (path.as_deref(), card_json.as_deref()) {
-            (Some(path), _) => {
-                let text = fs::read_to_string(path)
-                    .with_context(|| format!("failed to read character card {}", path))?;
-                CharacterCard::from_json_str(&text).map_err(|error| anyhow!(error.to_string()))?
-            }
-            (None, Some(card_json)) => CharacterCard::from_json_str(card_json)
-                .map_err(|error| anyhow!(error.to_string()))?,
-            (None, None) => bail!("import_card requires either `path` or `cardJson`"),
-        };
-        let sillytavern_format = card.source_format.starts_with("chara_card_v2");
-        self.with_repo(sandbox_id.as_deref(), |repo| {
-            let imported = repo.import_character_card(ImportCharacterCardRequest {
-                card,
-                session_name,
-                tags,
-                provenance: provenance
-                    .unwrap_or_else(|| path.clone().unwrap_or_else(|| "ozone-mcp".to_owned())),
-            })?;
-            Ok(ToolReply::success(
-                "Imported character card".to_owned(),
-                json!({
-                    "session": session_summary_json(&imported.session),
-                    "seededBranchId": imported.seeded_branch_id.map(|value| value.to_string()),
-                    "seededMessageId": imported.seeded_message_id.map(|value| value.to_string()),
-                    "sillytavernFormat": sillytavern_format
-                }),
-            ))
-        })
-    }
-
-    fn launcher_smoke_tool(&mut self, args: &Value) -> Result<ToolReply> {
-        let sandbox_id = required_string(args, "sandboxId")?;
-        let live_refresh_model_name = optional_string(args, "liveRefreshModelName");
-        let enter_count = optional_u64(args, "enterCount").unwrap_or(4);
+        let port = optional_u64(args, "port").unwrap_or(5001) as u16;
+        let model_name =
+            optional_string(args, "modelName").unwrap_or_else(|| "mock-model.gguf".to_owned());
         let sandbox = self
             .sandboxes
-            .get(&sandbox_id)
+            .get_mut(&sandbox_id)
             .ok_or_else(|| anyhow!("sandbox `{sandbox_id}` was not found"))?;
-        let refresh_model_path = live_refresh_model_name
-            .as_ref()
-            .map(|name| sandbox.models_dir.join(name));
-        let runner_spec = LauncherSmokeRunnerSpec {
-            repo_root: self.repo_root.to_string_lossy().into_owned(),
-            live_refresh_path: refresh_model_path.map(|path| path.to_string_lossy().into_owned()),
-            enter_count,
-            capture: PtyVteCaptureConfig::sandbox_artifacts(sandbox, "launcher-smoke-final"),
-        };
-        let script_body = r###"def run():
-    master, proc = open_pty_process(
-        ["cargo", "run", "--quiet", "--", "--mode", "base", "--frontend", "ozonePlus", "--no-browser"],
-        SPEC["repoRoot"],
-    )
-    live_refresh_path = SPEC.get("liveRefreshPath")
-    live_refresh_name = os.path.basename(live_refresh_path) if live_refresh_path else None
-    saw_live_refresh_model = False
+        sandbox.stop_backend()?;
 
-    pump(master, proc, 8.0)
-    if live_refresh_path:
-        open(live_refresh_path, "ab").close()
-        pump(master, proc, 2.5)
-        saw_live_refresh_model = screen_contains(live_refresh_name)
+        let script_path = sandbox.root.join("mock_kobold.py");
+        let log_path = sandbox.root.join("mock_kobold.log");
+        let script = format!(
+            r#"from http.server import BaseHTTPRequestHandler, HTTPServer
+import json
+import time
 
-    for index in range(int(SPEC["enterCount"])):
-        send_key(master, "enter")
-        pump(master, proc, 4.0 if index + 1 == int(SPEC["enterCount"]) else 1.0)
-        if live_refresh_name and not saw_live_refresh_model:
-            saw_live_refresh_model = screen_contains(live_refresh_name)
+MODEL_NAME = {model_name:?}
+PORT = {port}
 
-    process_state = stop_process(proc)
-    final_capture = capture_screen()
-    return {
-        "ok": True,
-        "bufferTail": final_capture["tailText"],
-        "sawLiveRefreshModel": saw_live_refresh_model,
-        "screen": summarize_capture(final_capture),
-        "processExitedBeforeStop": process_state["processExitedBeforeStop"],
-        "exitCode": process_state["exitCode"],
-    }
-"###;
-        let output = self.run_python_vte_helper(
-            sandbox,
-            &runner_spec,
-            script_body,
-            "failed to run launcher smoke helper",
-        )?;
-        let stdout = String::from_utf8_lossy(&output.stdout).into_owned();
-        let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
-        let pty_data = serde_json::from_str::<Value>(&stdout).unwrap_or_else(
-            |_| json!({ "bufferTail": stdout.trim(), "sawLiveRefreshModel": false }),
+class Handler(BaseHTTPRequestHandler):
+    def log_message(self, fmt, *args):
+        pass
+
+    def _json(self, payload, code=200):
+        data = json.dumps(payload).encode("utf-8")
+        self.send_response(code)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self):
+        if self.path == "/api/v1/model":
+            return self._json({{"result": MODEL_NAME}})
+        if self.path == "/api/v1/config/max_context_length":
+            return self._json({{"value": 8192}})
+        if self.path == "/api/extra/perf":
+            return self._json({{"last_process_speed": 12.5, "last_eval_speed": 18.0}})
+        return self._json({{"error": "not found", "path": self.path}}, code=404)
+
+    def do_POST(self):
+        if self.path != "/api/extra/generate/stream":
+            return self._json({{"error": "not found", "path": self.path}}, code=404)
+
+        length = int(self.headers.get("Content-Length", "0") or 0)
+        payload = self.rfile.read(length) if length else b""
+        prompt = ""
+        if payload:
+            try:
+                prompt = json.loads(payload.decode("utf-8")).get("prompt", "")
+            except Exception:
+                prompt = ""
+        prompt = (prompt or "").lower()
+        if "observatory" in prompt:
+            tokens = ["The", " observatory", " key", " is", " logged."]
+        elif "second" in prompt:
+            tokens = ["Second", " reply", " confirmed."]
+        else:
+            tokens = ["Hello", " from", " mock", " backend."]
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream")
+        self.send_header("Cache-Control", "no-cache")
+        self.end_headers()
+        for token in tokens:
+            self.wfile.write(f"data: {{json.dumps({{'token': token}})}}\n\n".encode("utf-8"))
+            self.wfile.flush()
+            time.sleep(0.02)
+        self.wfile.write(b'data: {{"done": true}}\n\n')
+        self.wfile.flush()
+
+HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
+"#,
         );
-        let launcher_invocation_log = sandbox.root.join("launcher-invocation.txt");
-        let sessions = self.with_repo(Some(&sandbox_id), |repo| {
-            Ok(repo
-                .list_sessions()?
-                .iter()
-                .map(session_summary_json)
-                .collect::<Vec<_>>())
-        })?;
-        let launcher_session = sessions.iter().find(|session| {
-            session
-                .get("name")
-                .and_then(Value::as_str)
-                .is_some_and(|name| name == "Launcher Session")
-        });
-        let launcher_session_count = sessions
-            .iter()
-            .filter(|session| {
-                session
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .is_some_and(|name| name == "Launcher Session")
-            })
-            .count();
-        let data = json!({
-            "commandOk": output.status.success(),
-            "exitCode": output.status.code(),
-            "pty": pty_data,
-            "stderr": stderr,
-            "launcherInvoked": launcher_invocation_log.exists(),
-            "handoffOk": launcher_session.is_some(),
-            "launcherArgs": if launcher_invocation_log.exists() {
-                fs::read_to_string(&launcher_invocation_log)
-                    .ok()
-                    .map(|text| text.lines().map(str::to_owned).collect::<Vec<_>>())
-            } else {
-                None
-            },
-            "sessions": sessions,
-            "launcherSession": launcher_session.cloned(),
-            "launcherSessionCount": launcher_session_count,
-        });
-        let status_msg = if launcher_session_count > 1 {
-            format!(
-                "Completed launcher handoff smoke (warning: {} duplicate Launcher Session rows)",
-                launcher_session_count
-            )
-        } else {
-            "Completed launcher handoff smoke".to_owned()
-        };
-        Ok(if output.status.success() {
-            ToolReply::success(status_msg, data)
-        } else {
-            ToolReply::error("Launcher handoff smoke failed".to_owned(), data)
-        })
-    }
+        fs::write(&script_path, script)?;
 
-    fn mock_user_tool(&mut self, args: &Value) -> Result<ToolReply> {
-        let requested_journey = optional_string(args, "journey");
-        let requested_target = optional_string(args, "target");
-        let prepared_sandbox = self.prepare_mock_user_sandbox(
-            optional_string(args, "sandboxId"),
-            requested_journey.as_deref(),
-            requested_target.as_deref(),
-        )?;
-        let journey = match (requested_journey.as_deref(), requested_target.as_deref()) {
-            (Some(_), Some(_)) => bail!("provide either `journey` or `target`, not both"),
-            (Some(journey_name), None) => self.build_mock_user_journey(journey_name, args)?,
-            (None, Some(target_name)) => self.build_mock_user_target_journey(target_name)?,
-            (None, None) => bail!("mock_user_tool requires either `journey` or `target`"),
-        };
-        let run_name = journey.name.clone();
-        let mut data =
-            self.run_mock_user_journey(&prepared_sandbox.sandbox_id, &journey, None, args, None)?;
-        self.annotate_prepared_sandbox(&mut data, &prepared_sandbox);
-        let success = data
-            .get("success")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        Ok(if success {
-            ToolReply::success(format!("Completed mock-user journey `{run_name}`"), data)
-        } else {
-            ToolReply::error(format!("Mock-user journey `{run_name}` failed"), data)
-        })
-    }
+        let log_file = fs::File::create(&log_path)?;
+        let child = Command::new("python3")
+            .arg(&script_path)
+            .stdout(Stdio::from(log_file.try_clone()?))
+            .stderr(Stdio::from(log_file))
+            .spawn()
+            .with_context(|| "failed to launch python3 mock backend")?;
+        thread::sleep(Duration::from_millis(300));
 
-    fn screen_nav_targets_tool(&self, args: &Value) -> Result<ToolReply> {
-        let targets = if let Some(target_name) = optional_string(args, "target") {
-            let target = capturable_screen_journey_builders()
-                .iter()
-                .find(|entry| entry.target_screen == target_name)
-                .ok_or_else(|| anyhow!("unknown screen navigation target `{target_name}`"))?;
-            vec![self.screen_nav_target_data(target)?]
-        } else {
-            capturable_screen_journey_builders()
-                .iter()
-                .map(|target| self.screen_nav_target_data(target))
-                .collect::<Result<Vec<_>>>()?
-        };
+        let base_url = format!("http://127.0.0.1:{port}");
+        let pid = child.id();
+        sandbox.backend = Some(ManagedBackend {
+            child,
+            port,
+            model_name: model_name.clone(),
+            base_url: base_url.clone(),
+            log_path: log_path.clone(),
+        });
 
         Ok(ToolReply::success(
-            "Loaded screen navigation targets".to_owned(),
-            json!({ "targets": targets }),
+            "Started mock backend".to_owned(),
+            json!({
+                "sandboxId": sandbox_id,
+                "pid": pid,
+                "port": port,
+                "baseUrl": base_url,
+                "modelName": model_name,
+                "logPath": log_path
+            }),
         ))
     }
 
-    fn screenshot_tool(&mut self, args: &Value) -> Result<ToolReply> {
-        let target = required_string(args, "target")?;
-        let output_dir = PathBuf::from(required_string(args, "outputDir")?);
-        let prepared_sandbox =
-            self.prepare_target_sandbox(optional_string(args, "sandboxId"), &target)?;
-        let journey = self.build_mock_user_target_journey(&target)?;
-        fs::create_dir_all(&output_dir)
-            .with_context(|| format!("failed to create output dir {}", output_dir.display()))?;
 
-        let capture = screenshot_capture_config(args, &output_dir, &target)?;
-        let mut data = self.run_mock_user_journey(
-            &prepared_sandbox.sandbox_id,
-            &journey,
-            Some(target.clone()),
-            args,
-            Some(capture),
-        )?;
-        self.annotate_prepared_sandbox(&mut data, &prepared_sandbox);
-        if let Value::Object(map) = &mut data {
-            map.insert(
-                "outputDir".to_owned(),
-                Value::String(output_dir.display().to_string()),
-            );
-        }
-        let success = data
-            .get("success")
-            .and_then(Value::as_bool)
-            .unwrap_or(false);
-        let missing_dependencies = data
-            .get("missingModules")
-            .and_then(Value::as_array)
-            .is_some_and(|value| !value.is_empty());
-        let summary = if missing_dependencies {
-            format!("Screenshot capture for `{target}` failed: missing Python dependencies")
-        } else if success {
-            format!("Captured screenshot for `{target}`")
-        } else {
-            format!("Screenshot capture for `{target}` failed")
-        };
-        Ok(if success {
-            ToolReply::success(summary, data)
-        } else {
-            ToolReply::error(summary, data)
-        })
+    pub fn stop_mock_backend(&mut self, args: &Value) -> Result<ToolReply> {
+        let sandbox_id = required_string(args, "sandboxId")?;
+        let sandbox = self
+            .sandboxes
+            .get_mut(&sandbox_id)
+            .ok_or_else(|| anyhow!("sandbox `{sandbox_id}` was not found"))?;
+        let stopped = sandbox.stop_backend()?;
+        Ok(ToolReply::success(
+            "Stopped mock backend".to_owned(),
+            json!({
+                "sandboxId": sandbox_id,
+                "stopped": stopped
+            }),
+        ))
     }
 
-    fn screen_check_tool(&self, args: &Value) -> Result<ToolReply> {
-        let artifact_path = optional_string(args, "artifactPath")
-            .or_else(|| optional_string(args, "path"))
-            .or_else(|| optional_string(args, "sidecarPath"))
-            .ok_or_else(|| {
-                anyhow!("screen_check_tool requires `artifactPath` (or `path` / `sidecarPath`)")
-            })?;
-        let checks = args
-            .get("checks")
-            .and_then(Value::as_array)
-            .ok_or_else(|| anyhow!("field `checks` must be an array of check objects"))?;
-        if checks.is_empty() {
-            bail!("field `checks` must contain at least one check");
-        }
 
-        let (sidecar_path, capture) = load_screen_capture_sidecar(&artifact_path)?;
-        let results = checks
-            .iter()
-            .enumerate()
-            .map(|(index, check)| evaluate_screen_check(index, check, &capture))
-            .collect::<Result<Vec<_>>>()?;
-        let passed = results.iter().filter(|result| result.passed).count();
-        let failed = results.len().saturating_sub(passed);
-        let success = failed == 0;
-        let summary = if success {
-            format!("Screen check passed ({passed}/{passed} checks)")
-        } else {
-            format!(
-                "Screen check failed ({passed}/{} checks passed)",
-                results.len()
-            )
-        };
+    #[allow(dead_code)]
+    pub fn screenshot_tool(&mut self, args: &Value) -> Result<ToolReply> {
+        tools::screenshot_tool(self, args)
+    }
 
-        let data = json!({
-            "artifactPath": artifact_path,
-            "sidecarPath": sidecar_path.display().to_string(),
-            "pngPath": capture.png_path,
-            "screen": {
-                "rows": capture.screen_rows,
-                "columns": capture.screen_columns,
-                "cursor": capture.cursor,
-                "font": capture.font
-            },
-            "summary": {
-                "total": results.len(),
-                "passed": passed,
-                "failed": failed,
-                "success": success
-            },
-            "checks": results
-        });
-
-        Ok(if success {
-            ToolReply::success(summary, data)
-        } else {
-            ToolReply::error(summary, data)
-        })
+    #[allow(dead_code)]
+    pub fn screen_check_tool(&self, args: &Value) -> Result<ToolReply> {
+        tools::screen_check_tool(self, args)
     }
 
     fn build_mock_user_journey(
@@ -1303,11 +439,11 @@ impl OzoneMcpServer {
         }
     }
 
-    fn build_mock_user_target_journey(&self, target_name: &str) -> Result<MockUserJourneySpec> {
+    pub fn build_mock_user_target_journey(&self, target_name: &str) -> Result<MockUserJourneySpec> {
         self.build_capturable_screen_journey(target_name, &json!({}), target_name)
     }
 
-    fn prepare_mock_user_sandbox(
+    pub fn prepare_mock_user_sandbox(
         &mut self,
         sandbox_id: Option<String>,
         journey_name: Option<&str>,
@@ -1324,7 +460,7 @@ impl OzoneMcpServer {
         self.prepare_sandbox_from_setup(sandbox_id, setup)
     }
 
-    fn prepare_target_sandbox(
+    pub fn prepare_target_sandbox(
         &mut self,
         sandbox_id: Option<String>,
         target_name: &str,
@@ -1410,7 +546,7 @@ impl OzoneMcpServer {
         })
     }
 
-    fn annotate_prepared_sandbox(&self, data: &mut Value, prepared: &PreparedSandbox) {
+    pub fn annotate_prepared_sandbox(&self, data: &mut Value, prepared: &PreparedSandbox) {
         let Value::Object(map) = data else {
             return;
         };
@@ -1934,7 +1070,7 @@ impl OzoneMcpServer {
         }
     }
 
-    fn run_mock_user_journey(
+    pub fn run_mock_user_journey(
         &self,
         sandbox_id: &str,
         journey: &MockUserJourneySpec,
@@ -2110,7 +1246,7 @@ impl OzoneMcpServer {
         Ok(data)
     }
 
-    fn run_python_vte_helper(
+    pub fn run_python_vte_helper(
         &self,
         sandbox: &Sandbox,
         spec: &impl Serialize,
@@ -2131,7 +1267,7 @@ impl OzoneMcpServer {
         command.output().with_context(|| error_context.to_owned())
     }
 
-    fn with_repo<T>(
+    pub fn with_repo<T>(
         &self,
         sandbox_id: Option<&str>,
         f: impl FnOnce(SqliteRepository) -> Result<T>,
@@ -2142,7 +1278,7 @@ impl OzoneMcpServer {
         })
     }
 
-    fn with_sandbox_env<T>(
+    pub fn with_sandbox_env<T>(
         &self,
         sandbox_id: Option<&str>,
         f: impl FnOnce() -> Result<T>,
@@ -2156,7 +1292,7 @@ impl OzoneMcpServer {
         f()
     }
 
-    fn run_workspace_command(
+    pub fn run_workspace_command(
         &self,
         program: &str,
         args: &[String],
@@ -2320,14 +1456,14 @@ type CapturableScreenJourneyBuilder =
     fn(&OzoneMcpServer, &str, &Value) -> Result<MockUserJourneySpec>;
 type CapturableScreenSandboxSetup = fn() -> Value;
 
-struct CapturableScreenJourneyDefinition {
+pub struct CapturableScreenJourneyDefinition {
     target_screen: &'static str,
     description: &'static str,
     builder: CapturableScreenJourneyBuilder,
     sandbox_setup: CapturableScreenSandboxSetup,
 }
 
-fn capturable_screen_journey_builders() -> &'static [CapturableScreenJourneyDefinition] {
+pub fn capturable_screen_journey_builders() -> &'static [CapturableScreenJourneyDefinition] {
     &[
         CapturableScreenJourneyDefinition {
             target_screen: "base_splash",
@@ -2994,7 +2130,7 @@ struct MockUserRunnerSpec {
 }
 
 #[derive(Debug, Serialize, Deserialize, Clone)]
-struct PtyVteCaptureConfig {
+pub struct PtyVteCaptureConfig {
     rows: u16,
     columns: u16,
     #[serde(rename = "tailChars")]
@@ -3029,7 +2165,7 @@ struct MockUserCaptureSettings {
 #[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
-struct PtyVteCaptureResult {
+pub struct PtyVteCaptureResult {
     screen_rows: u16,
     screen_columns: u16,
     line_count: u16,
@@ -3111,7 +2247,7 @@ struct ScreenRegion {
 }
 
 #[derive(Debug, Serialize)]
-struct ScreenCheckOutcome {
+pub struct ScreenCheckOutcome {
     index: usize,
     #[serde(rename = "type")]
     check_type: String,
@@ -3191,7 +2327,7 @@ impl PtyVteCaptureArtifacts {
     }
 }
 
-fn screenshot_capture_config(
+pub fn screenshot_capture_config(
     args: &Value,
     output_dir: &Path,
     target: &str,
@@ -3912,18 +3048,18 @@ pub fn command_output_data(output: &std::process::Output) -> Value {
     })
 }
 
-fn required_string(args: &Value, key: &str) -> Result<String> {
+pub fn required_string(args: &Value, key: &str) -> Result<String> {
     args.get(key)
         .and_then(Value::as_str)
         .map(ToOwned::to_owned)
         .ok_or_else(|| anyhow!("missing required string field `{key}`"))
 }
 
-fn optional_string(args: &Value, key: &str) -> Option<String> {
+pub fn optional_string(args: &Value, key: &str) -> Option<String> {
     args.get(key).and_then(Value::as_str).map(ToOwned::to_owned)
 }
 
-fn optional_bool(args: &Value, key: &str) -> Option<bool> {
+pub fn optional_bool(args: &Value, key: &str) -> Option<bool> {
     args.get(key).and_then(Value::as_bool)
 }
 
@@ -3931,11 +3067,11 @@ fn optional_object<'a>(args: &'a Value, key: &str) -> Option<&'a Map<String, Val
     args.get(key).and_then(Value::as_object)
 }
 
-fn optional_u64(args: &Value, key: &str) -> Option<u64> {
+pub fn optional_u64(args: &Value, key: &str) -> Option<u64> {
     args.get(key).and_then(Value::as_u64)
 }
 
-fn required_u64(args: &Value, key: &str) -> Result<u64> {
+pub fn required_u64(args: &Value, key: &str) -> Result<u64> {
     optional_u64(args, key).ok_or_else(|| anyhow!("missing required integer field `{key}`"))
 }
 
@@ -3961,7 +3097,7 @@ pub fn optional_i64(args: &Value, key: &str) -> Option<i64> {
     args.get(key).and_then(Value::as_i64)
 }
 
-fn optional_string_array(args: &Value, key: &str) -> Result<Vec<String>> {
+pub fn optional_string_array(args: &Value, key: &str) -> Result<Vec<String>> {
     match args.get(key) {
         None => Ok(Vec::new()),
         Some(Value::Array(values)) => values
@@ -3977,7 +3113,7 @@ fn optional_string_array(args: &Value, key: &str) -> Result<Vec<String>> {
     }
 }
 
-fn load_screen_capture_sidecar(artifact_path: &str) -> Result<(PathBuf, PtyVteCaptureResult)> {
+pub fn load_screen_capture_sidecar(artifact_path: &str) -> Result<(PathBuf, PtyVteCaptureResult)> {
     let requested_path = PathBuf::from(artifact_path);
     if requested_path.is_dir() {
         bail!(
@@ -4042,7 +3178,7 @@ fn load_screen_capture_sidecar(artifact_path: &str) -> Result<(PathBuf, PtyVteCa
     Ok((sidecar_path, capture))
 }
 
-fn evaluate_screen_check(
+pub fn evaluate_screen_check(
     index: usize,
     check: &Value,
     capture: &PtyVteCaptureResult,
@@ -5112,30 +4248,30 @@ fn ansi_color_rgb(value: &str) -> Option<[u8; 3]> {
     })
 }
 
-fn parse_session_id(value: &str) -> Result<SessionId> {
+pub fn parse_session_id(value: &str) -> Result<SessionId> {
     SessionId::parse(value).map_err(|error| anyhow!(error.to_string()))
 }
 
-fn parse_branch_id(value: &str) -> Result<BranchId> {
+pub fn parse_branch_id(value: &str) -> Result<BranchId> {
     BranchId::parse(value).map_err(|error| anyhow!(error.to_string()))
 }
 
-fn parse_message_id(value: &str) -> Result<MessageId> {
+pub fn parse_message_id(value: &str) -> Result<MessageId> {
     MessageId::parse(value).map_err(|error| anyhow!(error.to_string()))
 }
 
-fn parse_swipe_group_id(value: &str) -> Result<SwipeGroupId> {
+pub fn parse_swipe_group_id(value: &str) -> Result<SwipeGroupId> {
     SwipeGroupId::parse(value).map_err(|error| anyhow!(error.to_string()))
 }
 
-fn now_timestamp_ms() -> i64 {
+pub fn now_timestamp_ms() -> i64 {
     std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .map(|duration| duration.as_millis() as i64)
         .unwrap_or(0)
 }
 
-fn parse_prefixed_field(text: &str, prefix: &str) -> Option<String> {
+pub fn parse_prefixed_field(text: &str, prefix: &str) -> Option<String> {
     text.lines().find_map(|line| {
         line.strip_prefix(prefix)
             .map(str::trim)
@@ -5224,7 +4360,7 @@ pub fn sanitize_prefix(value: &str) -> String {
         .collect()
 }
 
-fn probe_session_lock(repo: &SqliteRepository, session_id: &SessionId) -> Result<Value> {
+pub fn probe_session_lock(repo: &SqliteRepository, session_id: &SessionId) -> Result<Value> {
     let instance_id = format!("ozone-mcp-{}", Uuid::new_v4().simple());
     match repo.acquire_session_lock(session_id, &instance_id) {
         Ok(lock) => {
@@ -5249,7 +4385,7 @@ fn probe_session_lock(repo: &SqliteRepository, session_id: &SessionId) -> Result
     }
 }
 
-fn session_summary_json(session: &ozone_persist::SessionSummary) -> Value {
+pub fn session_summary_json(session: &ozone_persist::SessionSummary) -> Value {
     json!({
         "sessionId": session.session_id,
         "name": session.name,
@@ -5263,7 +4399,7 @@ fn session_summary_json(session: &ozone_persist::SessionSummary) -> Value {
     })
 }
 
-fn branch_record_json(record: &BranchRecord) -> Value {
+pub fn branch_record_json(record: &BranchRecord) -> Value {
     json!({
         "branchId": record.branch.branch_id,
         "sessionId": record.branch.session_id,
@@ -5276,7 +4412,7 @@ fn branch_record_json(record: &BranchRecord) -> Value {
     })
 }
 
-fn message_json(message: &ConversationMessage) -> Value {
+pub fn message_json(message: &ConversationMessage) -> Value {
     json!({
         "messageId": message.message_id,
         "sessionId": message.session_id,
@@ -5290,7 +4426,7 @@ fn message_json(message: &ConversationMessage) -> Value {
     })
 }
 
-fn pinned_memory_record_json(record: &ozone_persist::PinnedMemoryRecord) -> Value {
+pub fn pinned_memory_record_json(record: &ozone_persist::PinnedMemoryRecord) -> Value {
     json!({
         "artifactId": record.artifact_id,
         "sessionId": record.session_id,
@@ -5304,7 +4440,7 @@ fn pinned_memory_record_json(record: &ozone_persist::PinnedMemoryRecord) -> Valu
     })
 }
 
-fn pinned_memory_view_json(view: &PinnedMemoryView) -> Value {
+pub fn pinned_memory_view_json(view: &PinnedMemoryView) -> Value {
     json!({
         "record": pinned_memory_record_json(&view.record),
         "isActive": view.is_active,
@@ -5313,7 +4449,7 @@ fn pinned_memory_view_json(view: &PinnedMemoryView) -> Value {
     })
 }
 
-fn swipe_group_json(group: &SwipeGroup) -> Value {
+pub fn swipe_group_json(group: &SwipeGroup) -> Value {
     json!({
         "swipeGroupId": group.swipe_group_id,
         "parentMessageId": group.parent_message_id,
@@ -5322,7 +4458,7 @@ fn swipe_group_json(group: &SwipeGroup) -> Value {
     })
 }
 
-fn swipe_candidate_json(candidate: &SwipeCandidate) -> Value {
+pub fn swipe_candidate_json(candidate: &SwipeCandidate) -> Value {
     json!({
         "swipeGroupId": candidate.swipe_group_id,
         "ordinal": candidate.ordinal,
@@ -5333,7 +4469,7 @@ fn swipe_candidate_json(candidate: &SwipeCandidate) -> Value {
     })
 }
 
-fn render_transcript_text(export: &ozone_persist::TranscriptExport) -> String {
+pub fn render_transcript_text(export: &ozone_persist::TranscriptExport) -> String {
     let mut lines = vec![
         "ozone+ transcript export".to_owned(),
         format!("session id: {}", export.session.session_id),
