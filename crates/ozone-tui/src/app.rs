@@ -2347,7 +2347,10 @@ impl ShellState {
                 }
             }
             ScreenState::ModelIntelligence => dispatch_menu_key(key, false),
-            ScreenState::MemoriesOverlay | ScreenState::CharacterOverlay(_) => todo!(),
+            ScreenState::MemoriesOverlay | ScreenState::CharacterOverlay(_) => {
+                // TODO: implement overlay screens
+                KeyAction::Noop
+            }
         };
         if action != KeyAction::Noop {
             self.apply_action_with_layout(action, layout);
@@ -3023,7 +3026,7 @@ impl ShellState {
                 self.status_line = Some("Changed selection".into());
             }
             KeyAction::CycleInspectorFocus | KeyAction::CycleInspectorFocusReverse => {
-                todo!()
+                // TODO: implement inspector focus cycling
             }
         }
 

@@ -1145,7 +1145,7 @@ fn build_breadcrumb(state: &ShellState) -> String {
         ScreenState::Help => "⬡ Ozone+ › Help".into(),
         ScreenState::Quit => "⬡ Ozone+".into(),
         ScreenState::ModelIntelligence => "⬡ Ozone+ › Model Intel".into(),
-        ScreenState::MemoriesOverlay | ScreenState::CharacterOverlay(_) => todo!(),
+        ScreenState::MemoriesOverlay | ScreenState::CharacterOverlay(_) => "Coming soon".into(),
     }
 }
 
@@ -3346,7 +3346,7 @@ fn screen_label(screen: &ScreenState) -> &'static str {
         ScreenState::Help => "help",
         ScreenState::Quit => "quit",
         ScreenState::ModelIntelligence => "model intelligence",
-        ScreenState::MemoriesOverlay | ScreenState::CharacterOverlay(_) => todo!(),
+        ScreenState::MemoriesOverlay | ScreenState::CharacterOverlay(_) => "Coming soon".into(),
     }
 }
 
@@ -3611,7 +3611,7 @@ fn overlay_model(screen: &ScreenState, input_mode: InputMode) -> Option<OverlayR
         | ScreenState::Settings
         | ScreenState::ModelIntelligence
         | ScreenState::Conversation => None,
-        ScreenState::MemoriesOverlay | ScreenState::CharacterOverlay(_) => todo!(),
+        ScreenState::MemoriesOverlay | ScreenState::CharacterOverlay(_) => None,
         ScreenState::Help => Some(OverlayRenderModel {
             title: "Help".into(),
             lines: vec![
