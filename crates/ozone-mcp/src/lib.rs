@@ -399,6 +399,33 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
         tools::screen_check_tool(self, args)
     }
 
+    // =========================================================================
+    // JOURNEY BUILDER METHODS
+    // =========================================================================
+    //
+    // These methods build MockUserJourneySpec structs for automated testing
+    // and interactive validation. They are organized as methods on OzoneMcpServer
+    // to maintain shared state (repo_root, command building utilities) across
+    // all journey builders.
+    //
+    // Journey builders are registered in capturable_screen_journey_builders()
+    // as function pointers in CapturableScreenJourneyDefinition structures.
+    // This pattern allows:
+    //   1. Type-safe, validated navigation targets
+    //   2. Reusable sandbox setup configurations
+    //   3. Composable journey construction (builders call each other)
+    //
+    // For testing infrastructure (VTE parsing, screen evaluation), see
+    // testing/screen.rs. For sandbox setup utilities, see testing/journey.rs.
+    //
+    // =========================================================================
+
+    /// Build a named mock user journey with optional arguments.
+    ///
+    /// Supported journey names (for advanced testing):
+    /// - "launcher_monitor_roundtrip": Navigate to launcher, then to monitor
+    /// - "launcher_to_ozone_plus": Navigate from launcher to ozone+ shell
+    /// - "ozone_plus_chat_journey": Open ozone+ and send a chat prompt
     fn build_mock_user_journey(
         &self,
         journey_name: &str,
@@ -575,6 +602,12 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
         }
     }
 
+    // --------- Core Builder Dispatch ---------
+
+    /// Navigate to a capturable screen target and build a journey to reach it.
+    ///
+    /// Valid targets are registered in capturable_screen_journey_builders().
+    /// Use screen_nav_targets MCP tool to list available targets.
     fn build_capturable_screen_journey(
         &self,
         target_screen: &str,
@@ -618,6 +651,13 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
             "sandboxSetup": (definition.sandbox_setup)(),
         }))
     }
+
+    // --------- Base Mode Screen Builders ---------
+    //
+    // Each function below builds a journey to reach a specific UI screen
+    // in base mode (the main Ozone launcher). They are composed hierarchically:
+    // base_splash_screen → base_tier_picker → base_launcher → various flows
+    //
 
     fn build_base_splash_screen_journey(
         &self,
@@ -899,6 +939,12 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
         Ok(journey)
     }
 
+    // --------- Ozone+ Mode Screen Builders ---------
+    //
+    // These functions build journeys for the ozone+ TUI application.
+    // ozone+ is launched via the base launcher and provides a full chat/character interface.
+    //
+
     fn build_base_ozone_plus_shell_journey(
         &self,
         journey_name: &str,
@@ -933,6 +979,8 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
             ],
         })
     }
+
+    // --------- Ozone+ Main Menu & Screen Variants ---------
 
     fn build_ozone_plus_main_menu_screen_journey(
         &self,
@@ -1064,6 +1112,17 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
         Ok(journey)
     }
 
+    // =========================================================================
+    // JOURNEY BUILDER HELPERS
+    // =========================================================================
+
+    /// Resolve binary command for journey execution, preferring debug build.
+    ///
+    /// This helper method is used by all journey builders to construct command
+    /// vectors. It prefers the debug binary if available (faster iteration),
+    /// falls back to `cargo run` if needed.
+    ///
+    /// For the standalone version used in testing code, see testing::journey::front_door_binary_command.
     fn front_door_binary_command(&self, binary: &str, args: &[&str]) -> Vec<String> {
         let binary_path = self.repo_root.join("target/debug").join(binary);
         if binary_path.exists() {
