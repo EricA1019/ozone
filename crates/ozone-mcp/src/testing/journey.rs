@@ -85,3 +85,35 @@ pub fn sandbox_setup_base_ozone_plus_shell() -> Value {
 pub fn sandbox_setup_ozone_plus_entry() -> Value {
     sandbox_setup(&[], None, false, false)
 }
+
+// =============================================================================
+// Helper Functions for Journey Building
+// =============================================================================
+
+use std::path::Path;
+
+/// Helper function to append arguments to a command vector.
+pub fn append_args(command: &[String], args: &[&str]) -> Vec<String> {
+    let mut full = command.to_vec();
+    full.extend(args.iter().map(|value| (*value).to_owned()));
+    full
+}
+
+/// Resolve binary command, preferring debug build if available, falling back to cargo run.
+pub fn front_door_binary_command(repo_root: &Path, binary: &str, args: &[&str]) -> Vec<String> {
+    let binary_path = repo_root.join("target/debug").join(binary);
+    if binary_path.exists() {
+        let mut command = vec![binary_path.display().to_string()];
+        command.extend(args.iter().map(|value| (*value).to_owned()));
+        command
+    } else {
+        let mut command = vec!["cargo".to_owned(), "run".to_owned(), "--quiet".to_owned()];
+        if binary != "ozone" {
+            command.push("-p".to_owned());
+            command.push(binary.to_owned());
+        }
+        command.push("--".to_owned());
+        command.extend(args.iter().map(|value| (*value).to_owned()));
+        command
+    }
+}
