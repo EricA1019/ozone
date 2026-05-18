@@ -69,10 +69,6 @@ pub fn style_panel_title(active: bool) -> Style {
         style_bold_cyan()
     }
 }
-#[allow(dead_code)]
-pub fn style_bold_green() -> Style {
-    Style::default().fg(GREEN).add_modifier(Modifier::BOLD)
-}
 
 // ── OZONE ASCII wordmark (5 rows) ─────────────────────────────────────────
 pub const WORDMARK: &[&str] = &[

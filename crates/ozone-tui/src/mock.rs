@@ -2,14 +2,21 @@ use std::{collections::BTreeMap, convert::Infallible};
 
 use ozone_core::engine::CancelReason;
 
-use crate::{
-    app::{
-        AppBootstrap, BranchItem, DraftCheckpoint, DraftState, GenerationPoll, RuntimeCancellation,
-        RuntimeCompletion, RuntimeContextRefresh, RuntimeSendReceipt, RuntimeSessionLoad,
-        SessionContext, SessionListEntry, SessionMetadata, TranscriptItem,
-    },
-    input::KeyAction,
-};
+use crate::state::AppBootstrap;
+use crate::state::BranchItem;
+use crate::state::DraftCheckpoint;
+use crate::state::DraftState;
+use crate::state::GenerationPoll;
+use crate::state::RuntimeCancellation;
+use crate::state::RuntimeCompletion;
+use crate::state::RuntimeContextRefresh;
+use crate::state::RuntimeSendReceipt;
+use crate::state::RuntimeSessionLoad;
+use crate::state::SessionContext;
+use crate::state::SessionListEntry;
+use crate::state::SessionMetadata;
+use crate::state::TranscriptItem;
+use crate::input::KeyAction;
 
 pub trait SessionRuntime {
     type Error: std::fmt::Debug;
@@ -134,38 +141,38 @@ pub trait SessionRuntime {
 
     /// List imported character cards for the character manager.
     /// Returns an empty list by default.
-    fn list_characters(&mut self) -> Result<Vec<crate::app::CharacterEntry>, Self::Error> {
+    fn list_characters(&mut self) -> Result<Vec<crate::state::CharacterEntry>, Self::Error> {
         Ok(Vec::new())
     }
 
     /// Return current configuration entries for the settings screen.
-    fn get_settings(&mut self) -> Result<Vec<crate::app::SettingsEntry>, Self::Error> {
+    fn get_settings(&mut self) -> Result<Vec<crate::state::SettingsEntry>, Self::Error> {
         Ok(Vec::new())
     }
 
     /// Create a new character card in the global library.
     fn create_character(
         &mut self,
-        _detail: crate::app::CharacterDetail,
-    ) -> Result<crate::app::CharacterEntry, Self::Error>;
+        _detail: crate::state::CharacterDetail,
+    ) -> Result<crate::state::CharacterEntry, Self::Error>;
 
     /// Update an existing character card.
     fn update_character(
         &mut self,
-        _detail: crate::app::CharacterDetail,
-    ) -> Result<crate::app::CharacterEntry, Self::Error>;
+        _detail: crate::state::CharacterDetail,
+    ) -> Result<crate::state::CharacterEntry, Self::Error>;
 
     /// Load a character card by ID for editing.
     fn get_character(
         &mut self,
         _card_id: &str,
-    ) -> Result<Option<crate::app::CharacterDetail>, Self::Error>;
+    ) -> Result<Option<crate::state::CharacterDetail>, Self::Error>;
 
     /// Import a character card from a JSON file path.
     fn import_character(
         &mut self,
         _path: String,
-    ) -> Result<crate::app::CharacterEntry, Self::Error>;
+    ) -> Result<crate::state::CharacterEntry, Self::Error>;
 
     /// Persist a changed preference value.
     /// `pref_key` is the JSON field name (e.g. `"theme_preset"`); `value` is
@@ -222,7 +229,7 @@ pub struct MockRuntime {
     pub edited_messages: Vec<(String, String)>,
     pub toggled_pinned_messages: Vec<String>,
     pub available_sessions: Vec<SessionListEntry>,
-    pub available_characters: Vec<crate::app::CharacterEntry>,
+    pub available_characters: Vec<crate::state::CharacterEntry>,
     pub active_generation: Option<MockGeneration>,
     /// Per-session bootstrap data for `open_session()` testing.
     pub session_bootstraps: BTreeMap<String, AppBootstrap>,
@@ -404,7 +411,7 @@ impl SessionRuntime for MockRuntime {
 
         Ok(Some(RuntimeCompletion {
             request_id: generation.request_id,
-            assistant_message,
+            message: assistant_message,
             session_title: None,
             refresh: None,
         }))
@@ -500,15 +507,15 @@ impl SessionRuntime for MockRuntime {
         Ok(self.available_sessions.clone())
     }
 
-    fn list_characters(&mut self) -> Result<Vec<crate::app::CharacterEntry>, Self::Error> {
+    fn list_characters(&mut self) -> Result<Vec<crate::state::CharacterEntry>, Self::Error> {
         Ok(self.available_characters.clone())
     }
 
     fn create_character(
         &mut self,
-        detail: crate::app::CharacterDetail,
-    ) -> Result<crate::app::CharacterEntry, Self::Error> {
-        let entry = crate::app::CharacterEntry {
+        detail: crate::state::CharacterDetail,
+    ) -> Result<crate::state::CharacterEntry, Self::Error> {
+        let entry = crate::state::CharacterEntry {
             card_id: format!("mock-char-{}", self.available_characters.len() + 1),
             name: detail.name.clone(),
             description: String::new(),
@@ -521,8 +528,8 @@ impl SessionRuntime for MockRuntime {
 
     fn update_character(
         &mut self,
-        detail: crate::app::CharacterDetail,
-    ) -> Result<crate::app::CharacterEntry, Self::Error> {
+        detail: crate::state::CharacterDetail,
+    ) -> Result<crate::state::CharacterEntry, Self::Error> {
         if let Some(entry) = self
             .available_characters
             .iter_mut()
@@ -532,7 +539,7 @@ impl SessionRuntime for MockRuntime {
             entry.description = detail.description.clone();
             entry.greeting = detail.greeting.clone();
         }
-        Ok(crate::app::CharacterEntry {
+        Ok(crate::state::CharacterEntry {
             card_id: detail.card_id,
             name: detail.name,
             description: detail.description,
@@ -544,12 +551,12 @@ impl SessionRuntime for MockRuntime {
     fn get_character(
         &mut self,
         card_id: &str,
-    ) -> Result<Option<crate::app::CharacterDetail>, Self::Error> {
+    ) -> Result<Option<crate::state::CharacterDetail>, Self::Error> {
         let entry = self
             .available_characters
             .iter()
             .find(|e| e.card_id == card_id);
-        Ok(entry.map(|e| crate::app::CharacterDetail {
+        Ok(entry.map(|e| crate::state::CharacterDetail {
             card_id: e.card_id.clone(),
             name: e.name.clone(),
             description: e.description.clone(),
@@ -561,8 +568,8 @@ impl SessionRuntime for MockRuntime {
     fn import_character(
         &mut self,
         _path: String,
-    ) -> Result<crate::app::CharacterEntry, Self::Error> {
-        let entry = crate::app::CharacterEntry {
+    ) -> Result<crate::state::CharacterEntry, Self::Error> {
+        let entry = crate::state::CharacterEntry {
             card_id: format!("mock-import-{}", self.available_characters.len() + 1),
             name: "Imported Character".into(),
             description: "Imported from file".into(),
@@ -637,7 +644,7 @@ mod tests {
     use ozone_core::{engine::CancelReason, session::SessionId};
 
     use super::{MockRuntime, SessionRuntime};
-    use crate::app::{DraftState, GenerationPoll, SessionContext, TranscriptItem};
+    use crate::state::{DraftState, GenerationPoll, SessionContext, TranscriptItem};
 
     fn session_context() -> SessionContext {
         let session_id = SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap();
@@ -667,7 +674,7 @@ mod tests {
         let completion = runtime.complete_generation(&context).unwrap().unwrap();
         assert_eq!(completion.request_id, "mock-request-1");
         assert_eq!(
-            completion.assistant_message,
+            completion.message,
             TranscriptItem::new("assistant", "Mock response to: hello mock")
         );
         assert!(runtime.active_generation.is_none());
@@ -770,7 +777,7 @@ mod tests {
 
     #[test]
     fn open_session_returns_registered_bootstrap() {
-        use crate::app::{AppBootstrap, BranchItem};
+        use crate::state::{AppBootstrap, BranchItem};
 
         let mut runtime = MockRuntime::seeded();
         let other_bootstrap = AppBootstrap {

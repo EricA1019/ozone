@@ -1,9 +1,9 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
-use crate::{
-    app::{FocusTarget, ScreenState, ShellState},
-    input::InputMode,
-};
+use crate::state::FocusTarget;
+use crate::state::ScreenState;
+use crate::app::ShellState;
+use crate::input::InputMode;
 
 pub const DEFAULT_VIEWPORT_WIDTH: u16 = 120;
 pub const DEFAULT_VIEWPORT_HEIGHT: u16 = 40;
@@ -321,7 +321,8 @@ mod tests {
     #[test]
     fn help_overlay_is_centered_and_insert_mode_expands_composer() {
         let mut state = seeded_state();
-        state.apply_action(KeyAction::ToggleHelp);
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
+        state.apply_action_with_layout(KeyAction::ToggleHelp, &layout);
         state.input_mode = InputMode::Insert;
 
         let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));

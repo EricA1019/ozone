@@ -196,21 +196,6 @@ pub fn resolved_llamacpp_server_path() -> Result<PathBuf> {
     crate::llama::discover_llama_server_binary()
 }
 
-/// Resolves which backend to use for profiling. Prefers KoboldCpp if available,
-/// falls back to llama.cpp if the kobold launcher is not found but llama-server is.
-/// Returns None if neither is available.
-#[cfg(feature = "bench")]
-pub fn resolved_backend_for_profiling() -> Option<crate::bench::BenchBackend> {
-    let p = resolved_kobold_launcher_path();
-    if p.exists() {
-        return Some(crate::bench::BenchBackend::KoboldCpp { launcher_path: p });
-    }
-    if let Ok(p) = resolved_llamacpp_server_path() {
-        return Some(crate::bench::BenchBackend::LlamaCpp { server_path: p });
-    }
-    None
-}
-
 pub async fn start_kobold(launcher_path: &Path, model_name: &str, args: &[String]) -> Result<()> {
     if !launcher_path.exists() {
         return Err(anyhow!(

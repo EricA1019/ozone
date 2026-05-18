@@ -14,9 +14,6 @@ pub struct SweepConfig {
     pub context_sizes: Vec<u32>,
     pub quant_kv_levels: Vec<u8>,
     pub gpu_vram_budget_mb: u32,
-    /// Stored for future mixed-memory sweep improvements.
-    #[allow(dead_code)]
-    pub ram_total_mb: u32,
 }
 
 pub struct SweepResult {
@@ -364,12 +361,15 @@ fn store_quietly(
     bench: &bench::BenchResult,
 ) {
     match bench::store_result(
-        &config.model_name,
-        config.model_size_gb,
-        gpu_layers,
-        context_size,
-        quant_kv as u32,
-        0,
+        bench::BenchmarkStoreRequest {
+            model_name: &config.model_name,
+            model_size_gb: config.model_size_gb,
+            gpu_layers,
+            context_size,
+            quant_kv: quant_kv as u32,
+            threads: 0,
+            launch_profile_name: None,
+        },
         bench,
     ) {
         Ok(_) => {}

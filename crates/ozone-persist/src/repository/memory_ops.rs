@@ -112,6 +112,23 @@ impl SqliteRepository {
             .collect())
     }
 
+    pub fn list_saved_memories(&self, session_id: &SessionId) -> Result<Vec<PinnedMemoryView>> {
+        let mut memories = self.list_pinned_memories(session_id)?;
+        memories.extend(self.list_note_memories(session_id)?);
+        memories.sort_by(|left, right| {
+            left.record
+                .created_at
+                .cmp(&right.record.created_at)
+                .then_with(|| {
+                    left.record
+                        .artifact_id
+                        .as_str()
+                        .cmp(right.record.artifact_id.as_str())
+                })
+        });
+        Ok(memories)
+    }
+
     pub fn remove_pinned_memory(
         &self,
         session_id: &SessionId,
@@ -122,6 +139,26 @@ impl SqliteRepository {
         let deleted = conn.execute(
             "DELETE FROM memory_artifacts
              WHERE session_id = ?1 AND artifact_id = ?2 AND kind = 'pinned_memory'",
+            params![session_id.as_str(), artifact_id.as_str()],
+        )? > 0;
+
+        if deleted {
+            self.touch_session_summary(session_id, touched_at, 0)?;
+        }
+
+        Ok(deleted)
+    }
+
+    pub fn remove_saved_memory(
+        &self,
+        session_id: &SessionId,
+        artifact_id: &MemoryArtifactId,
+    ) -> Result<bool> {
+        let touched_at = self.now();
+        let conn = self.open_session_connection(session_id)?;
+        let deleted = conn.execute(
+            "DELETE FROM memory_artifacts
+             WHERE session_id = ?1 AND artifact_id = ?2 AND kind IN ('pinned_memory', 'note_memory')",
             params![session_id.as_str(), artifact_id.as_str()],
         )? > 0;
 

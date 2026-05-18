@@ -12,7 +12,7 @@ edges:
     condition: when the task is about local installation, PATH layout, or daily run commands
   - target: "context/conventions.md"
     condition: when adding repo scripts or changing developer workflow helpers
-last_updated: 2026-04-18
+last_updated: 2026-05-12
 ---
 
 # Local Install Sync
@@ -30,7 +30,8 @@ last_updated: 2026-04-18
 ## Steps
 
 1. Build the installable binaries explicitly:
-   - `cargo build --release -p ozone -p ozone-plus -p ozone-mcp-app`
+  - `cargo build --release -p ozone --features full`
+  - `cargo build --release -p ozone-plus -p ozone-mcp-app`
 2. Compare each built artifact against both install locations:
    - `~/.cargo/bin`
    - `~/.local/bin`
@@ -38,7 +39,10 @@ last_updated: 2026-04-18
    missing.
 4. Verify the installed versions/checksums after syncing when the task is
    install-focused or release-focused.
-5. If the task touches the startup prompt path, test both branches:
+5. When the task needs a failing gate instead of an auto-fix, run the helper in
+  non-mutating mode:
+  - `./contrib/sync-local-install.sh --verify-only`
+6. If the task touches the startup prompt path, test both branches:
    - decline once with `N`
    - accept once with `Y` and confirm the binary relaunches cleanly
 
@@ -46,9 +50,13 @@ last_updated: 2026-04-18
 
 - `ozone-mcp` may not print a friendly `--version`; checksum equality is the more
   reliable install-sync proof there.
+- The installable base `ozone` artifact is the full-featured one; a plain
+  `cargo build --release -p ozone` produces the lean default feature set instead.
 - Do not assume `cargo build --release` alone refreshed the exact binaries you
   care about; build the installable packages explicitly.
 - Keep the helper idempotent so rerunning it on a current install is a safe no-op.
+- `--verify-only` is a release/readiness check, not a repair path; if it fails,
+  follow it with a normal sync and then rerun the same verify-only command.
 - Interactive CI/automation may need `OZONE_SKIP_INSTALL_UPDATE_PROMPT=1` to
   avoid hanging on the `Y/n` question.
 
@@ -56,5 +64,6 @@ last_updated: 2026-04-18
 
 - `bash -n ./contrib/sync-local-install.sh`
 - `./contrib/sync-local-install.sh --no-build`
+- `./contrib/sync-local-install.sh --no-build --verify-only`
 - `ozone --version`
 - `ozone-plus --version`

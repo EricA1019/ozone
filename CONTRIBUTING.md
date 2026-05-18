@@ -7,6 +7,7 @@ Thanks for wanting to improve Ozone. This is a focused tool family — contribut
 - **Check existing issues first.** If there isn't one for your change, open one so we can discuss before you write code.
 - **Keep it focused.** One fix or feature per PR. If your change touches five unrelated things, split it up.
 - **Test on real hardware.** Ozone's core value is correct mixed-memory planning on an actual NVIDIA + RAM setup. Changes to `src/planner.rs`, `src/hardware.rs`, or `src/processes.rs` need to be tested against a real model, not just compiled.
+- **Target `dev` for feature work.** Branch from `dev` and open your PR back to `dev`. Only release merges from `dev` and urgent hotfixes should target `main`.
 
 ## What's in scope
 
@@ -19,7 +20,7 @@ Thanks for wanting to improve Ozone. This is a focused tool family — contribut
 
 ## What's out of scope
 
-- Support for vLLM, llama.cpp-direct, or other inference backends beyond KoboldCpp and Ollama — this needs an abstraction layer first; open an issue to discuss
+- Support for vLLM, llama.cpp-direct, or other inference backends beyond KoboldCpp, llama.cpp, and Ollama — this needs an abstraction layer first; open an issue to discuss
 - GUI or web frontend
 - Breaking changes to the preset, benchmark, or session file formats without a migration path
 
@@ -45,7 +46,9 @@ crates/
 
 ```bash
 cargo build                            # debug build (all crates)
-cargo build --workspace --release      # release build
+cargo build --workspace --release      # release build (workspace outputs)
+cargo build --release -p ozone --features full
+cargo build --release -p ozone-plus -p ozone-mcp-app
 ./contrib/sync-local-install.sh        # release build + checksum-aware local install sync
 ./contrib/prune-build-artifacts.sh     # prune rebuildable build outputs, keep current binaries
 cargo clippy --workspace --all-targets # lints
@@ -55,7 +58,7 @@ cargo test --workspace                 # all tests
 Build just one target:
 
 ```bash
-cargo build -p ozone            # base launcher only
+cargo build -p ozone --release --features full   # installable base launcher artifact
 cargo build -p ozone-plus       # ozone+ binary only
 cargo build -p ozone-mcp-app    # ozone-mcp stdio binary only
 ```

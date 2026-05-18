@@ -56,6 +56,17 @@ pub struct BenchResult {
     pub status: String,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct BenchmarkStoreRequest<'a> {
+    pub model_name: &'a str,
+    pub model_size_gb: f64,
+    pub gpu_layers: i32,
+    pub context_size: u32,
+    pub quant_kv: u32,
+    pub threads: u32,
+    pub launch_profile_name: Option<&'a str>,
+}
+
 /// Run a single benchmark: clear → launch → generate → measure → kill → store.
 pub async fn run_benchmark(
     model_name: &str,
@@ -397,36 +408,13 @@ async fn run_llamacpp_generation() -> Result<GenerationResult> {
 }
 
 /// Store a benchmark result in the database.
-pub fn store_result(
-    model_name: &str,
-    model_size_gb: f64,
-    gpu_layers: i32,
-    context_size: u32,
-    quant_kv: u32,
-    threads: u32,
-    result: &BenchResult,
-) -> Result<i64> {
-    store_result_with_profile(
-        model_name,
-        model_size_gb,
-        gpu_layers,
-        context_size,
-        quant_kv,
-        threads,
-        result,
-        None,
-    )
+pub fn store_result(request: BenchmarkStoreRequest<'_>, result: &BenchResult) -> Result<i64> {
+    store_result_with_profile(request, result)
 }
 
 pub fn store_result_with_profile(
-    model_name: &str,
-    model_size_gb: f64,
-    gpu_layers: i32,
-    context_size: u32,
-    quant_kv: u32,
-    threads: u32,
+    request: BenchmarkStoreRequest<'_>,
     result: &BenchResult,
-    launch_profile_name: Option<&str>,
 ) -> Result<i64> {
     let conn = db::open()?;
     let hw = hardware::load_hardware();
@@ -434,13 +422,12 @@ pub fn store_result_with_profile(
     let gpu_vram_mb = hw.gpu.as_ref().map(|g| g.total_mb as u32).unwrap_or(0);
 
     let row = BenchmarkRow {
-        id: None,
-        model_name: model_name.to_string(),
-        model_size_gb,
-        gpu_layers,
-        context_size,
-        quant_kv,
-        threads,
+        model_name: request.model_name.to_string(),
+        model_size_gb: request.model_size_gb,
+        gpu_layers: request.gpu_layers,
+        context_size: request.context_size,
+        quant_kv: request.quant_kv,
+        threads: request.threads,
         tokens_per_sec: result.tokens_per_sec,
         time_to_first_token_ms: result.time_to_first_token_ms,
         vram_peak_mb: result.vram_peak_mb,
@@ -453,7 +440,7 @@ pub fn store_result_with_profile(
         ram_total_mb: hw.ram_total_mb as u32,
         timestamp: chrono::Local::now().to_rfc3339(),
         notes: String::new(),
-        launch_profile_name: launch_profile_name.map(str::to_string),
+        launch_profile_name: request.launch_profile_name.map(str::to_string),
     };
     db::insert_benchmark(&conn, &row)
 }

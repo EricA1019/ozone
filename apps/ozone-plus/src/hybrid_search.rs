@@ -12,6 +12,7 @@ use ozone_persist::{
     PinnedMemoryView, Provenance, SessionId, SessionRecord, SqliteRepository,
 };
 
+use crate::cli::print::artifact_lifecycle_summary;
 use crate::index_rebuild::{
     memory_embedding_artifact_id, message_embedding_artifact_id, message_provenance_for_author_kind,
 };
@@ -426,7 +427,7 @@ impl<'a> HybridSearchService<'a> {
             return Ok(None);
         };
         let current_message_count = u64::try_from(session_state.messages.len()).unwrap_or(u64::MAX);
-        let lifecycle = Some(crate::artifact_lifecycle_summary(
+        let lifecycle = Some(artifact_lifecycle_summary(
             self.memory,
             record.snapshot_version,
             record.created_at,

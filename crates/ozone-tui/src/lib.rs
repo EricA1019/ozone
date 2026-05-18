@@ -5,6 +5,7 @@
 //! integration seam for streaming generation.
 
 pub mod app;
+pub mod state;
 pub mod hardware;
 pub mod input;
 pub mod layout;
@@ -21,15 +22,18 @@ use crossterm::{
 };
 use ratatui::{backend::CrosstermBackend, Terminal};
 
-pub use app::{
+pub use state::{
     AppBootstrap, BranchItem, CharacterDetail, CharacterEntry, CharacterListState, CommandEntry,
-    CommandPaletteState, ContextDryRunPreview, ContextPreview, ContextTokenBudget, DraftState,
-    EntryKind, FocusTarget, FolderPickerState, GenerationPoll, MenuItem, MenuState, RecallBrowser,
+    CommandPaletteState, DraftCheckpoint, DraftState, EntryKind, FocusTarget,
+    FolderPickerState, GenerationPoll, MenuItem, MenuState, RecallBrowser,
     RuntimeCancellation, RuntimeCompletion, RuntimeContextRefresh, RuntimeFailure, RuntimePhase,
     RuntimeProgress, RuntimeSendReceipt, RuntimeSessionLoad, ScreenState, SessionContext,
-    SessionListEntry, SessionListState, SessionMetadata, SessionState, SessionStats,
-    SettingsCategory, SettingsEntry, SettingsState, ShellState, TranscriptItem, TuiMemoryView,
-    TuiSessionMemoryMetadata, VisibleSessionItem,
+    SessionListEntry, SessionListState, SessionState, SettingsCategory, SettingsEntry, SettingsState,
+    ShellState, TranscriptItem, VisibleSessionItem,
+};
+pub use state::{
+    ContextDryRunPreview, ContextPreview, ContextTokenBudget, SessionMetadata, SessionStats,
+    TuiMemoryView, TuiSessionMemoryMetadata,
 };
 pub use input::{
     dispatch_command_palette_key, dispatch_edit_key, dispatch_key, dispatch_menu_key, InputMode,
@@ -224,14 +228,14 @@ where
 
                     for command in app.take_runtime_commands() {
                         match command {
-                            app::RuntimeCommand::CreateSession { character_name } => {
+                            state::RuntimeCommand::CreateSession { character_name } => {
                                 match runtime.create_session(character_name.as_deref()) {
                                     Ok(session) => {
                                         if let Ok(sid) = ozone_core::session::SessionId::parse(
                                             &session.session_id,
                                         ) {
                                             app.session.context =
-                                                app::SessionContext::new(sid, session.session_name);
+                                                state::SessionContext::new(sid, session.session_name);
                                         }
                                         app.hydrate(session.bootstrap);
                                         app.enter_conversation();
@@ -243,7 +247,7 @@ where
                                     }
                                 }
                             }
-                            app::RuntimeCommand::SendDraft { prompt } => {
+                            state::RuntimeCommand::SendDraft { prompt } => {
                                 if let Some(receipt) = runtime
                                     .send_draft(&app.session.context, &prompt)
                                     .map_err(RunSessionError::Runtime)?
@@ -251,7 +255,7 @@ where
                                     app.apply_send_receipt(receipt);
                                 }
                             }
-                            app::RuntimeCommand::RerollMessage { message_id } => {
+                            state::RuntimeCommand::RerollMessage { message_id } => {
                                 if let Some(receipt) = runtime
                                     .reroll_message(&app.session.context, &message_id)
                                     .map_err(RunSessionError::Runtime)?
@@ -259,7 +263,7 @@ where
                                     app.apply_send_receipt(receipt);
                                 }
                             }
-                            app::RuntimeCommand::EditMessage {
+                            state::RuntimeCommand::EditMessage {
                                 message_id,
                                 content,
                             } => {
@@ -270,7 +274,7 @@ where
                                     app.apply_context_refresh(refresh);
                                 }
                             }
-                            app::RuntimeCommand::CancelGeneration => {
+                            state::RuntimeCommand::CancelGeneration => {
                                 if let Some(cancellation) = runtime
                                     .cancel_generation(&app.session.context)
                                     .map_err(RunSessionError::Runtime)?
@@ -278,7 +282,7 @@ where
                                     app.apply_runtime_cancellation(cancellation);
                                 }
                             }
-                            app::RuntimeCommand::BuildContextDryRun => {
+                            state::RuntimeCommand::BuildContextDryRun => {
                                 if let Some(refresh) = runtime
                                     .build_context_dry_run(&app.session.context)
                                     .map_err(RunSessionError::Runtime)?
@@ -286,7 +290,7 @@ where
                                     app.apply_context_refresh(refresh);
                                 }
                             }
-                            app::RuntimeCommand::ToggleBookmark { message_id } => {
+                            state::RuntimeCommand::ToggleBookmark { message_id } => {
                                 if let Some(refresh) = runtime
                                     .toggle_bookmark(&app.session.context, &message_id)
                                     .map_err(RunSessionError::Runtime)?
@@ -294,7 +298,7 @@ where
                                     app.apply_context_refresh(refresh);
                                 }
                             }
-                            app::RuntimeCommand::TogglePinnedMemory { message_id } => {
+                            state::RuntimeCommand::TogglePinnedMemory { message_id } => {
                                 if let Some(refresh) = runtime
                                     .toggle_pinned_memory(&app.session.context, &message_id)
                                     .map_err(RunSessionError::Runtime)?
@@ -302,7 +306,7 @@ where
                                     app.apply_context_refresh(refresh);
                                 }
                             }
-                            app::RuntimeCommand::RunCommand { input } => {
+                            state::RuntimeCommand::RunCommand { input } => {
                                 if let Some(refresh) = runtime
                                     .run_command(&app.session.context, &input)
                                     .map_err(RunSessionError::Runtime)?
@@ -310,7 +314,7 @@ where
                                     app.apply_context_refresh(refresh);
                                 }
                             }
-                            app::RuntimeCommand::CreateCharacter {
+                            state::RuntimeCommand::CreateCharacter {
                                 name,
                                 description,
                                 system_prompt,
@@ -318,7 +322,7 @@ where
                                 scenario,
                                 greeting,
                                 example_dialogue,
-                            } => match runtime.create_character(app::CharacterDetail {
+                            } => match runtime.create_character(state::CharacterDetail {
                                 card_id: String::new(),
                                 name,
                                 description,
@@ -339,7 +343,7 @@ where
                                     app.status_line = Some("Create failed — please try again".into());
                                 }
                             },
-                            app::RuntimeCommand::UpdateCharacter {
+                            state::RuntimeCommand::UpdateCharacter {
                                 card_id,
                                 name,
                                 description,
@@ -348,7 +352,7 @@ where
                                 scenario,
                                 greeting,
                                 example_dialogue,
-                            } => match runtime.update_character(app::CharacterDetail {
+                            } => match runtime.update_character(state::CharacterDetail {
                                 card_id,
                                 name,
                                 description,
@@ -370,7 +374,7 @@ where
                                         Some("Update failed — please try again".into());
                                 }
                             },
-                            app::RuntimeCommand::ImportCharacter { path } => {
+                            state::RuntimeCommand::ImportCharacter { path } => {
                                 match runtime.import_character(path) {
                                     Ok(entry) => {
                                         app.status_line =
@@ -385,11 +389,11 @@ where
                                     }
                                 }
                             }
-                            app::RuntimeCommand::EditCharacter { card_id } => {
+                            state::RuntimeCommand::EditCharacter { card_id } => {
                                 match runtime.get_character(&card_id) {
                                     Ok(Some(detail)) => {
                                         app.character_create.load_from_character(&detail);
-                                        app.screen = app::ScreenState::CharacterEdit;
+                                        app.screen = state::ScreenState::CharacterEdit;
                                     }
                                     Ok(None) => {
                                         app.status_line = Some("Character not found".into());
@@ -400,7 +404,7 @@ where
                                     }
                                 }
                             }
-                            app::RuntimeCommand::PrefChanged { pref_key, value } => {
+                            state::RuntimeCommand::PrefChanged { pref_key, value } => {
                                 let _ = runtime.save_pref(&pref_key, &value);
                                 // Apply theme change immediately at runtime.
                                 if pref_key == "theme_preset" {
@@ -409,7 +413,7 @@ where
                                     );
                                 }
                             }
-                            app::RuntimeCommand::SetSessionFolder { session_id, folder } => {
+                            state::RuntimeCommand::SetSessionFolder { session_id, folder } => {
                                 match runtime.set_session_folder(&session_id, folder.as_deref()) {
                                     Ok(()) => {
                                         let status = match folder.as_deref() {
@@ -429,7 +433,7 @@ where
                                     app.session_list.entries = entries;
                                 }
                             }
-                            app::RuntimeCommand::OpenSession {
+                            state::RuntimeCommand::OpenSession {
                                 session_id,
                                 session_name: _,
                             } => match runtime.open_session(&session_id) {
@@ -438,7 +442,7 @@ where
                                         ozone_core::session::SessionId::parse(&session.session_id)
                                     {
                                         app.session.context =
-                                            app::SessionContext::new(sid, session.session_name);
+                                            state::SessionContext::new(sid, session.session_name);
                                     }
                                     app.hydrate(session.bootstrap);
                                 }
@@ -451,6 +455,12 @@ where
                                         Some("Failed to open session — please try again".into());
                                 }
                             },
+                            state::RuntimeCommand::SaveSession => {
+                                app.status_line = Some("Session saved".into());
+                            }
+                            state::RuntimeCommand::DeleteSession => {
+                                app.status_line = Some("Session deleted".into());
+                            }
                         }
                         sync_draft(runtime, app)?;
                     }
@@ -467,7 +477,7 @@ where
                 Event::Resize(_, _) => {}
                 _ => {}
             }
-        } else if matches!(app.session.runtime, app::RuntimePhase::Generating { .. }) {
+        } else if matches!(app.session.runtime, state::RuntimePhase::Generating { .. }) {
             // The runtime drives when generation finishes; poll on every quiet
             // tick so real streaming backends can deliver partial content and
             // final completions without a fixed artificial delay.
@@ -541,12 +551,18 @@ impl Drop for TerminalGuard {
 mod tests {
     use ozone_core::session::SessionId;
 
+    use crate::input::InputMode;
+    use crate::state::{
+        ContextDryRunPreview, ContextPreview, FocusTarget, RecallBrowser,
+        RuntimeCommand, RuntimeContextRefresh, SessionMetadata, SessionStats,
+    };
+
     use super::{
         run_session, AppBootstrap, BranchItem, GenerationPoll, MockRuntime, RuntimeCompletion,
         RuntimeFailure, RuntimeProgress, RuntimeSendReceipt, RuntimeSessionLoad, SessionContext,
         SessionRuntime, ShellState, TranscriptItem,
     };
-    use crate::app::RuntimePhase;
+    use crate::state::RuntimePhase;
 
     fn session_context() -> SessionContext {
         let session_id = SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap();
@@ -638,13 +654,13 @@ mod tests {
                 Ok(Some(GenerationPoll::Pending {
                     partial: Some(RuntimeProgress {
                         request_id: self.request_id.clone(),
-                        partial_content: partial.clone(),
+                        content: partial.clone(),
                     }),
                 }))
             } else {
                 Ok(Some(GenerationPoll::Completed(RuntimeCompletion {
                     request_id: self.request_id.clone(),
-                    assistant_message: TranscriptItem::new("assistant", self.final_content.clone()),
+                    message: TranscriptItem::new("assistant", self.final_content.clone()),
                     session_title: None,
                     refresh: None,
                 })))
@@ -653,14 +669,14 @@ mod tests {
 
         fn create_character(
             &mut self,
-            _detail: crate::app::CharacterDetail,
+            _detail: crate::state::CharacterDetail,
         ) -> Result<crate::app::CharacterEntry, Self::Error> {
             Err("not implemented in stub".into())
         }
 
         fn update_character(
             &mut self,
-            _detail: crate::app::CharacterDetail,
+            _detail: crate::state::CharacterDetail,
         ) -> Result<crate::app::CharacterEntry, Self::Error> {
             Err("not implemented in stub".into())
         }
@@ -668,7 +684,7 @@ mod tests {
         fn get_character(
             &mut self,
             _card_id: &str,
-        ) -> Result<Option<crate::app::CharacterDetail>, Self::Error> {
+        ) -> Result<Option<crate::state::CharacterDetail>, Self::Error> {
             Ok(None)
         }
 
@@ -719,19 +735,21 @@ mod tests {
             Ok(Some(GenerationPoll::Failed(RuntimeFailure {
                 request_id: "fail-req-1".into(),
                 message: "backend unavailable".into(),
-            })))
+                    prompt: "test".into(),
+        reason: "test".into(),
+    })))
         }
 
         fn create_character(
             &mut self,
-            _detail: crate::app::CharacterDetail,
+            _detail: crate::state::CharacterDetail,
         ) -> Result<crate::app::CharacterEntry, Self::Error> {
             Err("not implemented in stub".into())
         }
 
         fn update_character(
             &mut self,
-            _detail: crate::app::CharacterDetail,
+            _detail: crate::state::CharacterDetail,
         ) -> Result<crate::app::CharacterEntry, Self::Error> {
             Err("not implemented in stub".into())
         }
@@ -739,7 +757,7 @@ mod tests {
         fn get_character(
             &mut self,
             _card_id: &str,
-        ) -> Result<Option<crate::app::CharacterDetail>, Self::Error> {
+        ) -> Result<Option<crate::state::CharacterDetail>, Self::Error> {
             Ok(None)
         }
 
@@ -852,6 +870,200 @@ mod tests {
         assert_eq!(
             app.status_line.as_deref(),
             Some("Generation failed: backend unavailable")
+        );
+    }
+
+    #[test]
+    fn shell_state_restores_failed_prompt_for_retry() {
+        let context = session_context();
+        let mut app = ShellState::new(context);
+        app.hydrate(AppBootstrap::default());
+
+        app.apply_send_receipt(RuntimeSendReceipt {
+            request_id: "fail-req-1".into(),
+            user_message: TranscriptItem::new("user", "retry me"),
+            context_preview: None,
+            context_dry_run: None,
+            refresh: None,
+            context_compression: None,
+        });
+
+        app.apply_runtime_failure(RuntimeFailure {
+            request_id: "fail-req-1".into(),
+            prompt: "retry me".into(),
+            message: "backend unavailable".into(),
+            reason: "backend unavailable".into(),
+        });
+
+        assert!(matches!(app.session.runtime, RuntimePhase::Failed { .. }));
+        assert_eq!(app.draft.text, "retry me");
+        assert_eq!(app.draft.cursor, "retry me".chars().count());
+        assert!(app.draft.dirty);
+        assert_eq!(app.textarea.lines(), vec![String::from("retry me")]);
+        assert_eq!(app.focus, FocusTarget::Draft);
+        assert_eq!(app.input_mode, InputMode::Insert);
+        assert_eq!(
+            app.status_line.as_deref(),
+            Some("Generation failed: backend unavailable")
+        );
+    }
+
+    #[test]
+    fn shell_state_applies_context_refresh_payload_and_preserves_selection() {
+        let context = session_context();
+        let mut app = ShellState::new(context);
+        let user_message = TranscriptItem::persisted("user-1", "user", "hello", false);
+        let assistant_message = TranscriptItem::persisted("assistant-1", "assistant", "hi", false);
+
+        app.hydrate(AppBootstrap {
+            transcript: vec![user_message.clone(), assistant_message.clone()],
+            branches: vec![BranchItem::new("main", "main", true)],
+            status_line: Some("ready".into()),
+            draft: None,
+            screen: None,
+            session_metadata: None,
+            session_stats: None,
+            context_preview: None,
+            context_dry_run: None,
+            recall_browser: None,
+            active_launch_plan: None,
+        });
+        app.session.selected_message = Some(1);
+
+        app.apply_context_refresh(RuntimeContextRefresh {
+            status_line: Some("Loaded pinned memories".into()),
+            session_title: Some("Retitled Session".into()),
+            transcript: Some(vec![
+                user_message,
+                TranscriptItem::persisted("assistant-1", "assistant", "hi", true),
+                TranscriptItem::persisted("assistant-2", "assistant", "other", false),
+            ]),
+            session_metadata: Some(SessionMetadata {
+                character_name: Some("Ava".into()),
+                tags: vec!["folder:demo".into()],
+                pinned_count: Some(1),
+                greeting: Some("Hello there".into()),
+                memory_metadata: None,
+            }),
+            session_stats: Some(SessionStats {
+                message_count: 3,
+                branch_count: 1,
+                bookmark_count: 1,
+            }),
+            context_preview: Some(ContextPreview {
+                source: "planner".into(),
+                summary: "preview ready".into(),
+                lines: vec!["context line".into()],
+                selected_items: Some(2),
+                omitted_items: Some(1),
+                token_budget: None,
+                inline_status: "ready".into(),
+            }),
+            context_dry_run: Some(ContextDryRunPreview {
+                summary: "dry run ready".into(),
+                built_at: 42,
+            }),
+            recall_browser: Some(RecallBrowser {
+                title: "Recall".into(),
+                summary: "1 pinned".into(),
+                lines: vec!["memory line".into()],
+            }),
+        });
+
+        assert!(matches!(app.session.runtime, RuntimePhase::Idle));
+        assert_eq!(app.session.context.title, "Retitled Session");
+        assert_eq!(app.session.selected_message, Some(1));
+        assert!(app.session.transcript[1].is_bookmarked);
+        assert_eq!(
+            app.session_metadata.as_ref().and_then(|metadata| metadata.character_name.as_deref()),
+            Some("Ava")
+        );
+        assert_eq!(
+            app.session_stats.as_ref().map(|stats| stats.message_count),
+            Some(3)
+        );
+        assert_eq!(
+            app.context_preview.as_ref().map(|preview| preview.summary.as_str()),
+            Some("preview ready")
+        );
+        assert_eq!(
+            app.context_dry_run.as_ref().map(|dry_run| dry_run.summary.as_str()),
+            Some("dry run ready")
+        );
+        assert_eq!(
+            app.recall_browser.as_ref().map(|browser| browser.title.as_str()),
+            Some("Recall")
+        );
+        assert_eq!(app.status_line.as_deref(), Some("Loaded pinned memories"));
+    }
+
+    #[test]
+    fn shell_state_rerolls_backend_labeled_assistant_messages() {
+        let context = session_context();
+        let mut app = ShellState::new(context);
+
+        app.hydrate(AppBootstrap {
+            transcript: vec![
+                TranscriptItem::persisted("user-1", "user", "retry this", false),
+                TranscriptItem::persisted(
+                    "assistant-1",
+                    "koboldcpp backend",
+                    "Recovered",
+                    false,
+                )
+                .with_author_kind("assistant"),
+            ],
+            branches: vec![BranchItem::new("main", "main", true)],
+            status_line: Some("ready".into()),
+            draft: None,
+            screen: None,
+            session_metadata: None,
+            session_stats: None,
+            context_preview: None,
+            context_dry_run: None,
+            recall_browser: None,
+            active_launch_plan: None,
+        });
+        app.session.selected_message = Some(1);
+
+        app.trigger_reroll_selected_message();
+
+        assert_eq!(
+            app.take_runtime_commands(),
+            vec![RuntimeCommand::RerollMessage {
+                message_id: "assistant-1".into(),
+            }]
+        );
+        assert_eq!(app.status_line.as_deref(), Some("Rerolling reply…"));
+    }
+
+    #[test]
+    fn shell_state_keeps_partial_assistant_reply_on_cancellation() {
+        let context = session_context();
+        let mut runtime = MockRuntime::seeded();
+        let mut app = ShellState::new(context.clone());
+        app.hydrate(runtime.bootstrap(&context).unwrap());
+
+        let receipt = runtime.send_draft(&context, "cancel me").unwrap().unwrap();
+        app.apply_send_receipt(receipt);
+
+        let cancellation = runtime.cancel_generation(&context).unwrap().unwrap();
+        app.apply_runtime_cancellation(cancellation);
+
+        assert!(matches!(app.session.runtime, RuntimePhase::Cancelled { .. }));
+        assert!(!app.session.runtime.is_inflight());
+        assert_eq!(app.session.transcript.len(), 3);
+        assert_eq!(
+            app.session.transcript.last(),
+            Some(&TranscriptItem::new(
+                "assistant",
+                "Partial mock response for: cancel me"
+            ))
+        );
+        assert_eq!(app.session.selected_message, Some(2));
+        assert_eq!(
+            app.status_line.as_deref(),
+            Some("Generation cancelled; partial reply kept locally")
         );
     }
 

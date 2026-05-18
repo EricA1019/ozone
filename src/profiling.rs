@@ -27,6 +27,20 @@ pub enum ProfilingBackend {
 }
 
 impl ProfilingBackend {
+    fn resolve_backend(&self) -> Option<bench::BenchBackend> {
+        match self {
+            ProfilingBackend::KoboldCpp => {
+                let launcher_path = processes::resolved_kobold_launcher_path();
+                launcher_path
+                    .exists()
+                    .then_some(bench::BenchBackend::KoboldCpp { launcher_path })
+            }
+            ProfilingBackend::LlamaCpp => processes::resolved_llamacpp_server_path()
+                .ok()
+                .map(|server_path| bench::BenchBackend::LlamaCpp { server_path }),
+        }
+    }
+
     pub fn display_name(&self) -> &'static str {
         match self {
             ProfilingBackend::KoboldCpp => "KoboldCpp",
@@ -178,7 +192,6 @@ pub struct ProfilingSuccessReport {
     pub profile_count: usize,
     pub best_tokens_per_sec: Option<f64>,
     pub recommended_profile: Option<RecommendedProfile>,
-    pub launch_profile_name: Option<String>,
     pub saved_profile_report: Option<SavedProfileReport>,
     pub suggestions: Vec<String>,
     pub export_detail: Option<String>,
@@ -229,8 +242,8 @@ pub enum WorkflowEvent {
         current: u32,
         total: u32,
     },
-    Completed(ProfilingSuccessReport),
-    Failed(ProfilingFailureReport),
+    Completed(Box<ProfilingSuccessReport>),
+    Failed(Box<ProfilingFailureReport>),
     Cancelled,
 }
 
@@ -264,7 +277,14 @@ pub struct SavedProfileReport {
     pub latest_time_to_first_token_ms: Option<u32>,
     pub latest_vram_peak_mb: Option<u32>,
     pub latest_ram_peak_mb: Option<u32>,
-    pub latest_timestamp: Option<String>,
+}
+
+fn send_completed(tx: &UnboundedSender<WorkflowEvent>, report: ProfilingSuccessReport) {
+    let _ = tx.send(WorkflowEvent::Completed(Box::new(report)));
+}
+
+fn send_failed(tx: &UnboundedSender<WorkflowEvent>, report: ProfilingFailureReport) {
+    let _ = tx.send(WorkflowEvent::Failed(Box::new(report)));
 }
 
 pub fn launcher_path() -> PathBuf {
@@ -447,7 +467,6 @@ fn build_saved_profile_report(
             .then_some(latest.time_to_first_token_ms),
         latest_vram_peak_mb: Some(latest.vram_peak_mb),
         latest_ram_peak_mb: Some(latest.ram_peak_mb),
-        latest_timestamp: Some(latest.timestamp.clone()),
     })
 }
 
@@ -673,7 +692,7 @@ pub fn build_advisory(
                 ),
             });
         }
-        if plan.layer_source_label != crate::planner::TopologySource::GgufMetadata.label() {
+        if plan.layer_source_label != crate::gguf::TopologySource::GgufMetadata.label() {
             warnings.push(ProfilingWarning {
                 severity: WarningSeverity::Info,
                 message: plan
@@ -813,7 +832,6 @@ fn build_success_report(
         profile_count: history.profile_count,
         best_tokens_per_sec: history.best_tokens_per_sec,
         recommended_profile,
-        launch_profile_name: launch_profile_name.map(str::to_string),
         saved_profile_report,
         suggestions,
         export_detail: None,
@@ -943,7 +961,7 @@ pub async fn run_workflow(
             "The selected model or launcher path is not valid enough to start profiling.".into(),
             None,
         );
-        let _ = tx.send(WorkflowEvent::Failed(report));
+        send_failed(&tx, report);
         return Ok(());
     }
 
@@ -972,7 +990,7 @@ pub async fn run_workflow(
                         request.launch_profile_name.as_deref(),
                     )?;
                     report.export_detail = Some(format!("llama.cpp: {}", out.display()));
-                    let _ = tx.send(WorkflowEvent::Completed(report));
+                    send_completed(&tx, report);
                 }
                 Err(error) => {
                     let report = build_failure_report(
@@ -981,7 +999,7 @@ pub async fn run_workflow(
                         error.to_string(),
                         None,
                     );
-                    let _ = tx.send(WorkflowEvent::Failed(report));
+                    send_failed(&tx, report);
                 }
             }
         } else {
@@ -1011,7 +1029,7 @@ pub async fn run_workflow(
                             report.export_detail = Some(model_lines.join("\n"));
                         }
                     }
-                    let _ = tx.send(WorkflowEvent::Completed(report));
+                    send_completed(&tx, report);
                 }
                 Err(error) => {
                     let report = build_failure_report(
@@ -1020,7 +1038,7 @@ pub async fn run_workflow(
                         error.to_string(),
                         None,
                     );
-                    let _ = tx.send(WorkflowEvent::Failed(report));
+                    send_failed(&tx, report);
                 }
             }
         }
@@ -1034,7 +1052,7 @@ pub async fn run_workflow(
             "Profiling prerequisites are missing.".into(),
             None,
         );
-        let _ = tx.send(WorkflowEvent::Failed(report));
+        send_failed(&tx, report);
         return Ok(());
     }
 
@@ -1057,8 +1075,11 @@ pub async fn run_workflow(
                 .as_ref()
                 .map(|gpu| (gpu.total_mb as f64 * 0.9) as u32)
                 .unwrap_or(0);
-            let backend = processes::resolved_backend_for_profiling().ok_or_else(|| {
-                anyhow!("No profiling backend available (KoboldCpp or llama-server not found)")
+            let backend = request.profiling_backend.resolve_backend().ok_or_else(|| {
+                anyhow!(
+                    "Requested profiling backend unavailable: {}",
+                    request.profiling_backend.display_name()
+                )
             })?;
             let seed_plan = planner::plan_profiling_launch(&request.record, &request.hardware);
             let config = sweep::SweepConfig {
@@ -1070,7 +1091,6 @@ pub async fn run_workflow(
                 context_sizes,
                 quant_kv_levels,
                 gpu_vram_budget_mb,
-                ram_total_mb: request.hardware.ram_total_mb as u32,
             };
             let _ = tx.send(WorkflowEvent::Status {
                 title: "Profiling".into(),
@@ -1109,7 +1129,7 @@ pub async fn run_workflow(
                         request.action,
                         request.launch_profile_name.as_deref(),
                     )?;
-                    let _ = tx.send(WorkflowEvent::Completed(report));
+                    send_completed(&tx, report);
                 }
                 Ok(_) => {
                     let report = build_failure_report(
@@ -1118,7 +1138,7 @@ pub async fn run_workflow(
                         "Sweep completed without any successful benchmark configurations.".into(),
                         Some("oom"),
                     );
-                    let _ = tx.send(WorkflowEvent::Failed(report));
+                    send_failed(&tx, report);
                 }
                 Err(error) => {
                     let report = build_failure_report(
@@ -1127,7 +1147,7 @@ pub async fn run_workflow(
                         error.to_string(),
                         None,
                     );
-                    let _ = tx.send(WorkflowEvent::Failed(report));
+                    send_failed(&tx, report);
                 }
             }
         }
@@ -1136,8 +1156,11 @@ pub async fn run_workflow(
                 let _ = tx.send(WorkflowEvent::Cancelled);
                 return Ok(());
             }
-            let backend = processes::resolved_backend_for_profiling().ok_or_else(|| {
-                anyhow!("No profiling backend available (KoboldCpp or llama-server not found)")
+            let backend = request.profiling_backend.resolve_backend().ok_or_else(|| {
+                anyhow!(
+                    "Requested profiling backend unavailable: {}",
+                    request.profiling_backend.display_name()
+                )
             })?;
             let plan = request.launch_plan_override.clone().unwrap_or_else(|| {
                 planner::plan_profiling_launch(&request.record, &request.hardware)
@@ -1183,14 +1206,16 @@ pub async fn run_workflow(
                 }
                 Ok(result) => {
                     let _ = bench::store_result_with_profile(
-                        &request.record.model_name,
-                        request.record.model_size_gb,
-                        plan.gpu_layers,
-                        plan.context_size,
-                        plan.quant_kv as u32,
-                        plan.threads.unwrap_or(0),
+                        bench::BenchmarkStoreRequest {
+                            model_name: &request.record.model_name,
+                            model_size_gb: request.record.model_size_gb,
+                            gpu_layers: plan.gpu_layers,
+                            context_size: plan.context_size,
+                            quant_kv: plan.quant_kv as u32,
+                            threads: plan.threads.unwrap_or(0),
+                            launch_profile_name: request.launch_profile_name.as_deref(),
+                        },
                         &result,
-                        request.launch_profile_name.as_deref(),
                     );
                     if result.status == "ok" {
                         let report = build_success_report(
@@ -1198,7 +1223,7 @@ pub async fn run_workflow(
                             request.action,
                             request.launch_profile_name.as_deref(),
                         )?;
-                        let _ = tx.send(WorkflowEvent::Completed(report));
+                        send_completed(&tx, report);
                     } else {
                         let report = build_failure_report(
                             &request.record,
@@ -1206,7 +1231,7 @@ pub async fn run_workflow(
                             format!("Benchmark ended with status '{}'.", result.status),
                             Some(&result.status),
                         );
-                        let _ = tx.send(WorkflowEvent::Failed(report));
+                        send_failed(&tx, report);
                     }
                 }
                 Err(error) => {
@@ -1216,7 +1241,7 @@ pub async fn run_workflow(
                         error.to_string(),
                         None,
                     );
-                    let _ = tx.send(WorkflowEvent::Failed(report));
+                    send_failed(&tx, report);
                 }
             }
         }
@@ -1232,7 +1257,7 @@ pub async fn run_workflow(
                         request.action,
                         request.launch_profile_name.as_deref(),
                     )?;
-                    let _ = tx.send(WorkflowEvent::Completed(report));
+                    send_completed(&tx, report);
                 }
                 Err(error) => {
                     let report = build_failure_report(
@@ -1241,7 +1266,7 @@ pub async fn run_workflow(
                         error.to_string(),
                         None,
                     );
-                    let _ = tx.send(WorkflowEvent::Failed(report));
+                    send_failed(&tx, report);
                 }
             }
         }
@@ -1288,7 +1313,6 @@ mod tests {
     fn recommended_profile_prefers_speed() {
         let profiles = vec![
             ProfileRow {
-                id: None,
                 model_name: "sample.gguf".into(),
                 profile_name: "context".into(),
                 gpu_layers: 20,
@@ -1300,7 +1324,6 @@ mod tests {
                 created_at: "now".into(),
             },
             ProfileRow {
-                id: None,
                 model_name: "sample.gguf".into(),
                 profile_name: "speed".into(),
                 gpu_layers: -1,
@@ -1321,7 +1344,6 @@ mod tests {
     fn saved_profile_report_aggregates_latest_and_best_metrics() {
         let benchmarks = vec![
             BenchmarkRow {
-                id: None,
                 model_name: "sample.gguf".into(),
                 model_size_gb: 7.0,
                 gpu_layers: 20,
@@ -1343,7 +1365,6 @@ mod tests {
                 launch_profile_name: Some("custom-1".into()),
             },
             BenchmarkRow {
-                id: None,
                 model_name: "sample.gguf".into(),
                 model_size_gb: 7.0,
                 gpu_layers: 20,

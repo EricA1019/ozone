@@ -275,7 +275,7 @@ pub struct MockUserRunnerSpec {
 // =============================================================================
 
 pub type CapturableScreenJourneyBuilder =
-    fn(&crate::OzoneMcpServer, &str, &Value) -> anyhow::Result<MockUserJourneySpec>;
+    fn(&std::path::Path, &str, &Value) -> anyhow::Result<MockUserJourneySpec>;
 pub type CapturableScreenSandboxSetup = fn() -> Value;
 
 pub struct CapturableScreenJourneyDefinition {

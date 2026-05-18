@@ -50,6 +50,9 @@ ratatui-braille-bar = "0.2.2"
 [dev-dependencies]
 
 [features]
+# Keep direct source builds on the lightweight launcher surface.
+# The installable base artifact enables `full` via release packaging or
+# `./contrib/sync-local-install.sh`.
 default = []
 full = ["bench", "sweep", "analyze", "profiling-ui", "model-mgmt"]
 database = ["dep:rusqlite"]

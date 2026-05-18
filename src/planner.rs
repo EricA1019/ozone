@@ -2,20 +2,9 @@ use crate::catalog::CatalogRecord;
 use crate::hardware::HardwareProfile;
 use crate::prefs::ModelLaunchOverride;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum TopologySource {
-    GgufMetadata,
-    SizeHeuristic,
-}
-
-impl TopologySource {
-    pub fn label(self) -> &'static str {
-        match self {
-            TopologySource::GgufMetadata => "GGUF metadata",
-            TopologySource::SizeHeuristic => "Size heuristic",
-        }
-    }
-}
+const GGUF_METADATA_LABEL: &str = "GGUF metadata";
+#[cfg(not(any(feature = "profiling-ui", feature = "sweep")))]
+const SIZE_HEURISTIC_LABEL: &str = "Size heuristic";
 
 const MIB_PER_GIB: f64 = 1024.0;
 const VRAM_HEADROOM_RATIO: f64 = 0.9;
@@ -176,13 +165,41 @@ pub fn recommend_threads(
     }
 }
 
+fn launch_topology(record: &CatalogRecord) -> (u32, String, Option<String>) {
+    let fallback_layers = estimate_total_layers(record.model_size_gb.max(0.1));
+    inspect_launch_topology(&record.model_path, fallback_layers)
+}
+
+#[cfg(any(feature = "profiling-ui", feature = "sweep"))]
+fn inspect_launch_topology(
+    model_path: &std::path::Path,
+    fallback_layers: u32,
+) -> (u32, String, Option<String>) {
+    let topology = crate::gguf::inspect_model_topology(model_path, fallback_layers);
+    (
+        topology.total_layers,
+        topology.source.label().to_string(),
+        topology.note,
+    )
+}
+
+#[cfg(not(any(feature = "profiling-ui", feature = "sweep")))]
+fn inspect_launch_topology(
+    _model_path: &std::path::Path,
+    fallback_layers: u32,
+) -> (u32, String, Option<String>) {
+    (
+        fallback_layers,
+        SIZE_HEURISTIC_LABEL.to_string(),
+        Some(
+            "Fast launch is using the size-based layer estimate because GGUF topology inspection is unavailable in this build."
+                .to_string(),
+        ),
+    )
+}
+
 pub fn plan_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
-    let total_layers = estimate_total_layers(record.model_size_gb.max(0.1));
-    let layer_source_label = TopologySource::SizeHeuristic.label().to_string();
-    let layer_source_note = Some(
-        "Fast launch still uses the size-based layer estimate; the enhanced layer-aware heuristic is currently scoped to profiling."
-            .to_string(),
-    );
+    let (total_layers, layer_source_label, layer_source_note) = launch_topology(record);
     plan_launch_with_layers(
         record,
         hw,
@@ -405,14 +422,13 @@ pub fn build_configure_warnings(plan: &LaunchPlan, hw: &HardwareProfile) -> Vec<
 
 #[cfg(feature = "profiling-ui")]
 pub fn plan_profiling_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
-    let fallback_layers = estimate_total_layers(record.model_size_gb.max(0.1));
-    let topology = crate::gguf::inspect_model_topology(&record.model_path, fallback_layers);
+    let (total_layers, layer_source_label, layer_source_note) = launch_topology(record);
     plan_launch_with_layers(
         record,
         hw,
-        topology.total_layers,
-        topology.source.label().to_string(),
-        topology.note,
+        total_layers,
+        layer_source_label,
+        layer_source_note,
         true,
     )
 }
@@ -459,7 +475,7 @@ fn plan_launch_with_layers(
         gpu_layers
     };
 
-    let layer_prefix = if layer_source_label == TopologySource::GgufMetadata.label() {
+    let layer_prefix = if layer_source_label == GGUF_METADATA_LABEL {
         format!("GGUF metadata reports {total_layers} layers. ")
     } else {
         format!("Ozone estimated {total_layers} total layers from model size. ")
@@ -620,6 +636,32 @@ mod tests {
         buf.extend_from_slice(&40u32.to_le_bytes());
 
         fs::write(path, buf).expect("write metadata");
+    }
+
+    #[test]
+    fn fast_launch_uses_metadata_layers() {
+        let path = temp_gguf_path();
+        write_metadata_file(&path);
+        let record = sample_record(path.clone(), 7.0);
+        let hw = HardwareProfile {
+            gpu: Some(crate::hardware::GpuMemory {
+                used_mb: 1000,
+                free_mb: 16000,
+                total_mb: 17000,
+            }),
+            ram_total_mb: 32000,
+            ram_free_mb: 24000,
+            ram_used_mb: 8000,
+            cpu_logical: 8,
+            cpu_physical: 4,
+        };
+
+        let plan = plan_launch(&record, &hw);
+        assert_eq!(plan.total_layers, 40);
+        assert_eq!(plan.cpu_layers, 0);
+        assert_eq!(plan.layer_source_label, "GGUF metadata");
+
+        let _ = fs::remove_file(path);
     }
 
     #[test]

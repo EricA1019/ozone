@@ -60,13 +60,18 @@ TUI / runtime:
 - `/search ...`
 - `:memories` shortcut for the recall browser
 
+Vocabulary rules:
+- pinned-message memories and note memories are both **saved memories** for browse/list/removal surfaces
+- pinning an existing message is separate from creating a freeform note memory
+- `/search session|global` should describe messages plus saved-memory text, not just transcript text
+
 ## Presentation Rule
 
 Reuse the existing inspector/status surfaces instead of inventing a new pane for Phase 2A.
 
 The recall browser should show:
-- active pinned memories
-- expired pinned memories (if any)
+- active saved memories (pins + notes)
+- expired saved memories (if any)
 - session/global search hits
 - enough metadata to preserve provenance and session visibility
 
@@ -75,9 +80,10 @@ The recall browser should show:
 Phase 2A is not just storage — pinned memories must affect generation.
 
 Minimum acceptable behavior:
-- active pinned memories appear in context preview lines/summary
-- active pinned memories are injected into the generation prompt
-- expired pinned memories are excluded from generation
+- active pinned-message memories appear in context preview lines/summary
+- active pinned-message memories are injected into the generation prompt
+- note memories remain searchable/retrievable on demand instead of being injected every turn
+- expired pinned-message memories are excluded from generation
 
 Use `ContextLayerKind::PinnedMemory` where possible instead of inventing a parallel concept.
 

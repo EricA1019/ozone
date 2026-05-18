@@ -216,6 +216,31 @@ pub fn highlight_style() -> Style {
         .add_modifier(Modifier::BOLD)
 }
 
+fn overlay_section_style_for(preset: ThemePreset) -> Style {
+    Style::default()
+        .fg(cyan(preset))
+        .add_modifier(Modifier::BOLD)
+}
+
+pub fn overlay_section_style() -> Style {
+    overlay_section_style_for(active_preset())
+}
+
+fn toast_style_for(preset: ThemePreset) -> Style {
+    Style::default()
+        .fg(cyan(preset))
+        .bg(MODE_NORMAL_BG)
+        .add_modifier(Modifier::BOLD)
+}
+
+pub fn toast_style() -> Style {
+    toast_style_for(active_preset())
+}
+
+pub fn overlay_backdrop_style() -> Style {
+    Style::default().bg(MODE_NORMAL_BG)
+}
+
 /// Selected conversation entry author — violet accent.
 pub fn author_selected_style() -> Style {
     Style::default()
@@ -379,5 +404,42 @@ mod tests {
 
         set_preset(ThemePreset::DarkMint);
         assert_eq!(active_preset(), ThemePreset::DarkMint);
+    }
+
+    #[test]
+    fn overlay_section_style_tracks_active_preset() {
+        let prior = active_preset();
+
+        set_preset(ThemePreset::OzoneDark);
+        assert_eq!(overlay_section_style(), overlay_section_style_for(ThemePreset::OzoneDark));
+
+        set_preset(ThemePreset::HighContrast);
+        assert_eq!(
+            overlay_section_style(),
+            overlay_section_style_for(ThemePreset::HighContrast)
+        );
+        assert_ne!(
+            overlay_section_style_for(ThemePreset::OzoneDark),
+            overlay_section_style_for(ThemePreset::HighContrast)
+        );
+
+        set_preset(prior);
+    }
+
+    #[test]
+    fn toast_style_tracks_active_preset() {
+        let prior = active_preset();
+
+        set_preset(ThemePreset::DarkMint);
+        assert_eq!(toast_style(), toast_style_for(ThemePreset::DarkMint));
+
+        set_preset(ThemePreset::HighContrast);
+        assert_eq!(toast_style(), toast_style_for(ThemePreset::HighContrast));
+        assert_ne!(
+            toast_style_for(ThemePreset::DarkMint),
+            toast_style_for(ThemePreset::HighContrast)
+        );
+
+        set_preset(prior);
     }
 }

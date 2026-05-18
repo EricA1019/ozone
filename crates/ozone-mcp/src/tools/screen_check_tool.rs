@@ -7,8 +7,7 @@ use anyhow::bail;
 use serde_json::Value;
 use serde_json::json;
 use crate::optional_string;
-use crate::load_screen_capture_sidecar;
-use crate::evaluate_screen_check;
+use crate::testing::screen::{load_screen_capture_sidecar, evaluate_screen_check};
 
 pub fn screen_check_tool(_server: &OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
     let artifact_path = optional_string(args, "artifactPath")

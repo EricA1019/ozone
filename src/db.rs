@@ -1,13 +1,10 @@
-use anyhow::Result;
+use anyhow::{Context, Result};
 use ozone_core::paths;
 use rusqlite::Connection;
 
 /// Benchmark result row — one run of a specific configuration.
 #[derive(Debug, Clone)]
 pub struct BenchmarkRow {
-    /// Auto-increment ID from SQLite; unused in app logic.
-    #[allow(dead_code)]
-    pub id: Option<i64>,
     pub model_name: String,
     pub model_size_gb: f64,
     pub gpu_layers: i32,
@@ -32,9 +29,6 @@ pub struct BenchmarkRow {
 /// Auto-generated preset from benchmark data.
 #[derive(Debug, Clone)]
 pub struct ProfileRow {
-    /// Auto-increment ID from SQLite; unused in app logic.
-    #[allow(dead_code)]
-    pub id: Option<i64>,
     pub model_name: String,
     pub profile_name: String,
     pub gpu_layers: i32,
@@ -47,9 +41,12 @@ pub struct ProfileRow {
 }
 
 pub fn open() -> Result<Connection> {
-    let path = paths::benchmarks_db_path().expect("could not determine data directory");
+    let path = paths::benchmarks_db_path()
+        .context("Could not determine ozone data directory for benchmarks DB")?;
     if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent).ok();
+        std::fs::create_dir_all(parent).with_context(|| {
+            format!("Failed to create benchmarks DB directory {}", parent.display())
+        })?;
     }
     let conn = Connection::open(&path)?;
     conn.execute_batch("PRAGMA journal_mode=WAL;")?;
@@ -169,7 +166,7 @@ pub fn insert_profile(conn: &Connection, row: &ProfileRow) -> Result<i64> {
 /// Get all benchmarks for a model, ordered by timestamp desc.
 pub fn get_benchmarks(conn: &Connection, model_name: &str) -> Result<Vec<BenchmarkRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, model_name, model_size_gb, gpu_layers, context_size, quant_kv, threads,
+        "SELECT model_name, model_size_gb, gpu_layers, context_size, quant_kv, threads,
                 tokens_per_sec, time_to_first_token_ms, vram_peak_mb, ram_peak_mb,
                 total_tokens, total_time_ms, status, gpu_name, gpu_vram_mb, ram_total_mb,
                 timestamp, notes, launch_profile_name
@@ -177,26 +174,25 @@ pub fn get_benchmarks(conn: &Connection, model_name: &str) -> Result<Vec<Benchma
     )?;
     let rows = stmt.query_map([model_name], |r| {
         Ok(BenchmarkRow {
-            id: Some(r.get(0)?),
-            model_name: r.get(1)?,
-            model_size_gb: r.get(2)?,
-            gpu_layers: r.get(3)?,
-            context_size: r.get(4)?,
-            quant_kv: r.get(5)?,
-            threads: r.get(6)?,
-            tokens_per_sec: r.get(7)?,
-            time_to_first_token_ms: r.get(8)?,
-            vram_peak_mb: r.get(9)?,
-            ram_peak_mb: r.get(10)?,
-            total_tokens: r.get(11)?,
-            total_time_ms: r.get(12)?,
-            status: r.get(13)?,
-            gpu_name: r.get(14)?,
-            gpu_vram_mb: r.get(15)?,
-            ram_total_mb: r.get(16)?,
-            timestamp: r.get(17)?,
-            notes: r.get(18)?,
-            launch_profile_name: r.get(19)?,
+            model_name: r.get(0)?,
+            model_size_gb: r.get(1)?,
+            gpu_layers: r.get(2)?,
+            context_size: r.get(3)?,
+            quant_kv: r.get(4)?,
+            threads: r.get(5)?,
+            tokens_per_sec: r.get(6)?,
+            time_to_first_token_ms: r.get(7)?,
+            vram_peak_mb: r.get(8)?,
+            ram_peak_mb: r.get(9)?,
+            total_tokens: r.get(10)?,
+            total_time_ms: r.get(11)?,
+            status: r.get(12)?,
+            gpu_name: r.get(13)?,
+            gpu_vram_mb: r.get(14)?,
+            ram_total_mb: r.get(15)?,
+            timestamp: r.get(16)?,
+            notes: r.get(17)?,
+            launch_profile_name: r.get(18)?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -205,7 +201,7 @@ pub fn get_benchmarks(conn: &Connection, model_name: &str) -> Result<Vec<Benchma
 /// Get all benchmarks across all models.
 pub fn get_all_benchmarks(conn: &Connection) -> Result<Vec<BenchmarkRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, model_name, model_size_gb, gpu_layers, context_size, quant_kv, threads,
+        "SELECT model_name, model_size_gb, gpu_layers, context_size, quant_kv, threads,
                 tokens_per_sec, time_to_first_token_ms, vram_peak_mb, ram_peak_mb,
                 total_tokens, total_time_ms, status, gpu_name, gpu_vram_mb, ram_total_mb,
                 timestamp, notes, launch_profile_name
@@ -213,26 +209,25 @@ pub fn get_all_benchmarks(conn: &Connection) -> Result<Vec<BenchmarkRow>> {
     )?;
     let rows = stmt.query_map([], |r| {
         Ok(BenchmarkRow {
-            id: Some(r.get(0)?),
-            model_name: r.get(1)?,
-            model_size_gb: r.get(2)?,
-            gpu_layers: r.get(3)?,
-            context_size: r.get(4)?,
-            quant_kv: r.get(5)?,
-            threads: r.get(6)?,
-            tokens_per_sec: r.get(7)?,
-            time_to_first_token_ms: r.get(8)?,
-            vram_peak_mb: r.get(9)?,
-            ram_peak_mb: r.get(10)?,
-            total_tokens: r.get(11)?,
-            total_time_ms: r.get(12)?,
-            status: r.get(13)?,
-            gpu_name: r.get(14)?,
-            gpu_vram_mb: r.get(15)?,
-            ram_total_mb: r.get(16)?,
-            timestamp: r.get(17)?,
-            notes: r.get(18)?,
-            launch_profile_name: r.get(19)?,
+            model_name: r.get(0)?,
+            model_size_gb: r.get(1)?,
+            gpu_layers: r.get(2)?,
+            context_size: r.get(3)?,
+            quant_kv: r.get(4)?,
+            threads: r.get(5)?,
+            tokens_per_sec: r.get(6)?,
+            time_to_first_token_ms: r.get(7)?,
+            vram_peak_mb: r.get(8)?,
+            ram_peak_mb: r.get(9)?,
+            total_tokens: r.get(10)?,
+            total_time_ms: r.get(11)?,
+            status: r.get(12)?,
+            gpu_name: r.get(13)?,
+            gpu_vram_mb: r.get(14)?,
+            ram_total_mb: r.get(15)?,
+            timestamp: r.get(16)?,
+            notes: r.get(17)?,
+            launch_profile_name: r.get(18)?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -241,22 +236,21 @@ pub fn get_all_benchmarks(conn: &Connection) -> Result<Vec<BenchmarkRow>> {
 /// Get profiles for a model, ordered by profile name.
 pub fn get_profiles(conn: &Connection, model_name: &str) -> Result<Vec<ProfileRow>> {
     let mut stmt = conn.prepare(
-        "SELECT id, model_name, profile_name, gpu_layers, context_size, quant_kv,
+        "SELECT model_name, profile_name, gpu_layers, context_size, quant_kv,
                 tokens_per_sec, vram_mb, source, created_at
          FROM profiles WHERE model_name = ?1 ORDER BY profile_name",
     )?;
     let rows = stmt.query_map([model_name], |r| {
         Ok(ProfileRow {
-            id: Some(r.get(0)?),
-            model_name: r.get(1)?,
-            profile_name: r.get(2)?,
-            gpu_layers: r.get(3)?,
-            context_size: r.get(4)?,
-            quant_kv: r.get(5)?,
-            tokens_per_sec: r.get(6)?,
-            vram_mb: r.get(7)?,
-            source: r.get(8)?,
-            created_at: r.get(9)?,
+            model_name: r.get(0)?,
+            profile_name: r.get(1)?,
+            gpu_layers: r.get(2)?,
+            context_size: r.get(3)?,
+            quant_kv: r.get(4)?,
+            tokens_per_sec: r.get(5)?,
+            vram_mb: r.get(6)?,
+            source: r.get(7)?,
+            created_at: r.get(8)?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -278,7 +272,6 @@ mod tests {
         init_tables(&conn).expect("init tables");
 
         let row = BenchmarkRow {
-            id: None,
             model_name: "sample.gguf".into(),
             model_size_gb: 7.0,
             gpu_layers: 20,

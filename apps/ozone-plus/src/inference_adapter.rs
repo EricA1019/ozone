@@ -1,7 +1,7 @@
 use std::{fmt, path::PathBuf};
 
 use ozone_inference::{
-    detect_template, ConfigLoader, InferenceGateway, InferenceRequest, OzoneConfig,
+    detect_template, ConfigLoader, InferenceError, InferenceGateway, InferenceRequest, OzoneConfig,
     TemplateMessage, TemplateRegistry,
 };
 
@@ -86,6 +86,30 @@ impl fmt::Display for InferenceAdapterError {
 
 impl std::error::Error for InferenceAdapterError {}
 
+fn backend_display_name(backend_type: &str) -> &str {
+    match backend_type {
+        "koboldcpp" => "KoboldCpp",
+        "llamacpp" => "llama.cpp",
+        "ollama" => "Ollama",
+        other => other,
+    }
+}
+
+fn unsupported_backend_message(backend_type: &str) -> String {
+    format!(
+        "ozone+ chat supports KoboldCpp and llama.cpp, but the current config requests {}. Start a supported backend from `ozone`, or update the ozone+ config/session backend before sending your first prompt.",
+        backend_display_name(backend_type)
+    )
+}
+
+fn unreachable_backend_message(backend_type: &str, url: &str) -> String {
+    format!(
+        "no {} backend found at {}. ozone+ chat supports KoboldCpp and llama.cpp. Start the matching backend from `ozone`, or update the ozone+ config/session URL to a running KoboldCpp or llama.cpp endpoint.",
+        backend_display_name(backend_type),
+        url
+    )
+}
+
 pub struct InferenceAdapter {
     config: OzoneConfig,
     template_registry: TemplateRegistry,
@@ -108,7 +132,24 @@ impl InferenceAdapter {
 
         let config = loader
             .build()
-            .map_err(|err| InferenceAdapterError::Config(err.to_string()))?;
+            .map_err(|error| {
+                if let Some(InferenceError::ConfigInvalid { key, reason }) =
+                    error.downcast_ref::<InferenceError>()
+                {
+                    if key == "backend.type" {
+                        if let Some(backend_type) = reason
+                            .strip_prefix("unsupported backend '")
+                            .and_then(|rest| rest.strip_suffix('\''))
+                        {
+                            return InferenceAdapterError::Config(unsupported_backend_message(
+                                backend_type,
+                            ));
+                        }
+                    }
+                }
+
+                InferenceAdapterError::Config(error.to_string())
+            })?;
 
         let mut registry_builder = TemplateRegistry::builder();
         if let Some(path) = init.custom_template_dir.as_ref() {
@@ -122,6 +163,12 @@ impl InferenceAdapter {
         if !template_exists(&template_registry, &selected_template) {
             return Err(InferenceAdapterError::Template(format!(
                 "template '{selected_template}' is not available"
+            )));
+        }
+
+        if !matches!(config.backend.r#type.as_str(), "koboldcpp" | "llamacpp") {
+            return Err(InferenceAdapterError::Gateway(unsupported_backend_message(
+                &config.backend.r#type,
             )));
         }
 
@@ -201,10 +248,9 @@ impl InferenceAdapter {
                 );
                 Ok(())
             }
-            BackendHealth::Unreachable => Err(InferenceAdapterError::Gateway(format!(
-                "no {} backend found at {}. Start it with `ozone` or check session config.",
-                self.config.backend.r#type, self.config.backend.url
-            ))),
+            BackendHealth::Unreachable => Err(InferenceAdapterError::Gateway(
+                unreachable_backend_message(&self.config.backend.r#type, &self.config.backend.url),
+            )),
         }
     }
 }
@@ -298,5 +344,30 @@ mod tests {
             err.to_string().contains("unsupported transcript role"),
             "unexpected error: {err}"
         );
+    }
+
+    #[test]
+    fn unsupported_backend_message_mentions_supported_chat_backends() {
+        let err = InferenceAdapter::load(InferenceAdapterInit {
+            global_config_path: Some(PathBuf::from("/nonexistent/ozone-plus-config.toml")),
+            extra_config_toml: Some("[backend]\ntype = \"ollama\"".to_string()),
+            ..Default::default()
+        })
+        .err()
+        .expect("unsupported chat backends should fail clearly");
+
+        let message = err.to_string();
+        assert!(message.contains("supports KoboldCpp and llama.cpp"));
+        assert!(message.contains("Ollama"));
+    }
+
+    #[test]
+    fn unreachable_backend_message_is_actionable() {
+        let message = unreachable_backend_message("koboldcpp", "http://127.0.0.1:5001");
+
+        assert!(message.contains("KoboldCpp"));
+        assert!(message.contains("supports KoboldCpp and llama.cpp"));
+        assert!(message.contains("http://127.0.0.1:5001"));
+        assert!(message.contains("Start the matching backend from `ozone`"));
     }
 }

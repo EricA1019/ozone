@@ -75,6 +75,11 @@ last_updated: 2026-04-13
 - Keep config path handling aligned with the project layout:
   - global config should live in the XDG config home for ozone
   - session overrides should live in the session-local config file
+- ozone+ first-send guidance must name the actual supported chat backends
+  explicitly: KoboldCpp and llama.cpp. If the session/global config still asks
+  for an unsupported backend type or points at a dead URL, translate that into
+  an actionable adapter/runtime error instead of surfacing raw config/gateway
+  wording.
 - If no real KoboldCpp or llama.cpp instance is available during development, a
   protocol-compatible mock server is good enough to verify the streaming control
   flow — but record that distinction in the plan/router instead of pretending it

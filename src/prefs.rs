@@ -1,6 +1,7 @@
 use std::collections::BTreeMap;
+use std::io::ErrorKind;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use ozone_core::paths;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
@@ -246,13 +247,14 @@ impl Preferences {
     }
 }
 
-pub async fn load_prefs() -> Preferences {
-    let Some(path) = paths::preferences_path() else {
-        return Preferences::default();
-    };
+pub async fn load_prefs() -> Result<Preferences> {
+    let path = paths::preferences_path().context("Could not determine preferences path")?;
     match fs::read_to_string(&path).await {
-        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
-        Err(_) => Preferences::default(),
+        Ok(text) => serde_json::from_str(&text)
+            .with_context(|| format!("Failed to parse preferences file {}", path.display())),
+        Err(error) if error.kind() == ErrorKind::NotFound => Ok(Preferences::default()),
+        Err(error) => Err(error)
+            .with_context(|| format!("Failed to read preferences file {}", path.display())),
     }
 }
 
@@ -271,6 +273,69 @@ pub async fn save_prefs(prefs: &Preferences) -> Result<()> {
 #[cfg(test)]
 mod tests {
     use super::{ModelLaunchOverride, Preferences, SavedLaunchProfile};
+    use std::{
+        path::{Path, PathBuf},
+        sync::{Mutex, OnceLock},
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+    fn env_lock() -> &'static Mutex<()> {
+        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
+        LOCK.get_or_init(|| Mutex::new(()))
+    }
+
+    struct TestSandbox {
+        root: PathBuf,
+    }
+
+    impl TestSandbox {
+        fn new(prefix: &str) -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "ozone-prefs-tests-{prefix}-{}-{}",
+                std::process::id(),
+                TEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            if root.exists() {
+                std::fs::remove_dir_all(&root).unwrap();
+            }
+            std::fs::create_dir_all(&root).unwrap();
+            Self { root }
+        }
+
+        fn xdg_data_home(&self) -> PathBuf {
+            self.root.join("xdg-data")
+        }
+    }
+
+    impl Drop for TestSandbox {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: impl AsRef<Path>) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value.as_ref());
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            match self.previous.as_ref() {
+                Some(previous) => std::env::set_var(self.key, previous),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
 
     #[test]
     fn per_model_launch_override_round_trips() {
@@ -343,6 +408,45 @@ mod tests {
                 threads: Some(8),
             })
         );
+    }
+
+    #[test]
+    fn load_prefs_missing_file_returns_defaults() {
+        let _env_guard = env_lock().lock().unwrap();
+        let sandbox = TestSandbox::new("missing-file");
+        std::fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
+        let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
+        let _home = ScopedEnvVar::set("HOME", sandbox.root.join("home"));
+
+        let prefs = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(super::load_prefs())
+            .expect("missing prefs file should fall back to defaults");
+
+        assert_eq!(prefs.theme_preset, "dark-mint");
+        assert_eq!(prefs.timestamp_style, "relative");
+    }
+
+    #[test]
+    fn load_prefs_invalid_json_returns_error() {
+        let _env_guard = env_lock().lock().unwrap();
+        let sandbox = TestSandbox::new("invalid-json");
+        std::fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
+        let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
+        let _home = ScopedEnvVar::set("HOME", sandbox.root.join("home"));
+
+        let path = ozone_core::paths::preferences_path().expect("prefs path should resolve");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, "{invalid json").unwrap();
+
+        let error = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(super::load_prefs())
+            .expect_err("invalid prefs JSON should return an error");
+
+        let message = error.to_string();
+        assert!(message.contains("Failed to parse preferences file"));
+        assert!(message.contains(&path.display().to_string()));
     }
 
     #[test]

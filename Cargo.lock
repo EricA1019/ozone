@@ -2187,7 +2187,6 @@ dependencies = [
  "ozone-tui",
  "serde",
  "serde_json",
- "sysinfo",
  "tokio",
 ]
 

@@ -3,6 +3,9 @@ use std::sync::Mutex;
 use std::time::{Duration, Instant};
 use sysinfo::System;
 
+const HARDWARE_CACHE_TTL: Duration = Duration::from_secs(30);
+const HARDWARE_LIVE_CACHE_TTL: Duration = Duration::from_secs(2);
+
 #[derive(Debug, Clone, Default)]
 pub struct GpuMemory {
     pub used_mb: u64,
@@ -121,16 +124,7 @@ pub fn query_gpu_memory() -> Option<GpuMemory> {
 
 static HARDWARE_CACHE: Mutex<Option<(HardwareProfile, Instant)>> = Mutex::new(None);
 
-pub fn load_hardware() -> HardwareProfile {
-    // Return cached value if still fresh (30s TTL)
-    if let Ok(guard) = HARDWARE_CACHE.lock() {
-        if let Some((ref hw, ts)) = *guard {
-            if ts.elapsed() < Duration::from_secs(30) {
-                return hw.clone();
-            }
-        }
-    }
-
+fn collect_hardware_profile() -> HardwareProfile {
     let mut sys = System::new_all();
     sys.refresh_all();
 
@@ -140,14 +134,48 @@ pub fn load_hardware() -> HardwareProfile {
     let cpu_logical = sys.cpus().len().max(1);
     let cpu_physical = sys.physical_core_count().unwrap_or(cpu_logical / 2).max(1);
 
-    let result = HardwareProfile {
+    HardwareProfile {
         gpu: query_gpu_memory(),
         ram_total_mb,
         ram_free_mb,
         ram_used_mb,
         cpu_logical,
         cpu_physical,
-    };
+    }
+}
+
+pub fn load_hardware_live() -> HardwareProfile {
+    // The monitor redraws every 500ms, but the underlying GPU/system probes are
+    // much heavier than a frame tick. Keep live data fresher than the 30s
+    // startup cache without hammering vendor CLIs on every refresh.
+    if let Ok(guard) = HARDWARE_CACHE.lock() {
+        if let Some((ref hw, ts)) = *guard {
+            if ts.elapsed() < HARDWARE_LIVE_CACHE_TTL {
+                return hw.clone();
+            }
+        }
+    }
+
+    let result = collect_hardware_profile();
+
+    if let Ok(mut guard) = HARDWARE_CACHE.lock() {
+        *guard = Some((result.clone(), Instant::now()));
+    }
+
+    result
+}
+
+pub fn load_hardware() -> HardwareProfile {
+    // Return cached value if still fresh for splash/planning workloads.
+    if let Ok(guard) = HARDWARE_CACHE.lock() {
+        if let Some((ref hw, ts)) = *guard {
+            if ts.elapsed() < HARDWARE_CACHE_TTL {
+                return hw.clone();
+            }
+        }
+    }
+
+    let result = collect_hardware_profile();
 
     if let Ok(mut guard) = HARDWARE_CACHE.lock() {
         *guard = Some((result.clone(), Instant::now()));

@@ -1,7 +1,7 @@
 use std::{
     collections::BTreeMap,
     env, fs,
-    io::{self, BufRead, BufReader, Write},
+    io::{self, BufReader, Write},
     path::{Path, PathBuf},
     process::{Command, Stdio},
     thread,
@@ -21,20 +21,24 @@ use ozone_core::{
 use ozone_persist::{
     BranchRecord, PersistError, PinnedMemoryView, SqliteRepository,
 };
-use serde::{Deserialize, Serialize};
+use serde::Serialize;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
 mod sandbox;
 mod testing;
 mod tools;
+mod jsonrpc;
+mod tool_dispatch;
+
+use self::jsonrpc::{error_response, read_message, success_response, write_message, JsonRpcRequest};
 
 use testing::{
     sandbox_setup_base_launch_path, sandbox_setup_base_launcher,
     sandbox_setup_base_ozone_plus_shell, sandbox_setup_base_profile_review,
     sandbox_setup_base_profile_run, sandbox_setup_base_splash,
     sandbox_setup_base_tier_picker, sandbox_setup_ozone_plus_entry,
-    CapturableScreenJourneyDefinition, LauncherSmokeRunnerSpec, MockUserCaptureSettings, MockUserJourneySpec, MockUserJourneyStep,
+    CapturableScreenJourneyDefinition, LauncherSmokeRunnerSpec, MockUserCaptureSettings, MockUserJourneySpec,
     MockUserRunnerSpec, PtyVteCaptureArtifacts, PtyVteCaptureConfig,
     PreparedSandbox,
 };
@@ -156,31 +160,7 @@ impl OzoneMcpServer {
             .get("arguments")
             .cloned()
             .unwrap_or_else(|| Value::Object(Map::new()));
-        let reply = match tool_name {
-            "workspace_status" => tools::workspace_status_tool(self)?,
-            "cargo_tool" => tools::cargo_tool(self, &arguments)?,
-            "catalog_list" => tools::catalog_list_tool(self, &arguments)?,
-            "preferences_get" => tools::preferences_get_tool(self, &arguments)?,
-            "sandbox_tool" => tools::sandbox_tool(self, &arguments)?,
-            "mock_backend_tool" => tools::mock_backend_tool(self, &arguments)?,
-            "session_tool" => tools::session_tool(self, &arguments)?,
-            "message_tool" => tools::message_tool(self, &arguments)?,
-            "memory_tool" => tools::memory_tool(self, &arguments)?,
-            "search_tool" => tools::search_tool(self, &arguments)?,
-            "branch_tool" => tools::branch_tool(self, &arguments)?,
-            "swipe_tool" => tools::swipe_tool(self, &arguments)?,
-            "export_tool" => tools::export_tool(self, &arguments)?,
-            "import_card" => tools::import_card_tool(self, &arguments)?,
-            "launcher_smoke" => tools::launcher_smoke_tool(self, &arguments)?,
-            "screen_nav_targets" => tools::screen_nav_targets_tool(self, &arguments)?,
-            "mock_user_tool" => tools::mock_user_tool(self, &arguments)?,
-            "screenshot_tool" => tools::screenshot_tool(self, &arguments)?,
-            "screen_check_tool" => tools::screen_check_tool(self, &arguments)?,
-            _ => ToolReply::error(
-                "Unknown tool".to_owned(),
-                json!({ "error": format!("tool `{tool_name}` does not exist") }),
-            ),
-        };
+        let reply = tool_dispatch::dispatch_tool_call(self, tool_name, &arguments)?;
         Ok(reply.into_result())
     }
 
@@ -431,51 +411,7 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
         journey_name: &str,
         args: &Value,
     ) -> Result<MockUserJourneySpec> {
-        match journey_name {
-            "launcher_monitor_roundtrip" => {
-                let mut journey =
-                    self.build_capturable_screen_journey("base_monitor", args, journey_name)?;
-                journey.steps.push(MockUserJourneyStep::text(
-                    "return to launcher",
-                    "r",
-                    1200,
-                    ["Launch", "Open ozone+", "Settings"],
-                ));
-                Ok(journey)
-            }
-            "launcher_to_ozone_plus" => {
-                self.build_capturable_screen_journey("base_ozone_plus_shell", args, journey_name)
-            }
-            "ozone_plus_chat_journey" => {
-                let prompt = optional_string(args, "prompt")
-                    .unwrap_or_else(|| "Check the observatory key".to_owned());
-                let mut journey = self.build_capturable_screen_journey(
-                    "base_ozone_plus_shell",
-                    args,
-                    journey_name,
-                )?;
-                if let Some(step) = journey.steps.last_mut() {
-                    step.settle_ms = 2500;
-                }
-                journey.steps.extend([
-                    MockUserJourneyStep::key(
-                        "open new chat",
-                        "enter",
-                        800,
-                        ["Composer", "insert mode", "NOR"],
-                    ),
-                    MockUserJourneyStep::text("type prompt", &prompt, 400, []),
-                    MockUserJourneyStep::key(
-                        "send prompt",
-                        "enter",
-                        8000,
-                        ["You", "User", "assistant", "AI", "ozone+"],
-                    ),
-                ]);
-                Ok(journey)
-            }
-            other => bail!("unsupported mock-user journey `{other}`"),
-        }
+        testing::build_mock_user_journey(self, journey_name, args)
     }
 
     pub fn build_mock_user_target_journey(&self, target_name: &str) -> Result<MockUserJourneySpec> {
@@ -614,531 +550,21 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
         args: &Value,
         journey_name: &str,
     ) -> Result<MockUserJourneySpec> {
-        let builder = self.capturable_screen_definition(target_screen)?.builder;
-        builder(self, journey_name, args)
+        testing::build_capturable_screen_journey(self, target_screen, args, journey_name)
     }
 
     fn capturable_screen_definition(
         &self,
         target_screen: &str,
     ) -> Result<&'static CapturableScreenJourneyDefinition> {
-        capturable_screen_journey_builders()
-            .iter()
-            .find(|entry| entry.target_screen == target_screen)
-            .ok_or_else(|| {
-                anyhow!(
-                    "unknown screen navigation target `{target_screen}`; use `screen_nav_targets` to list valid targets"
-                )
-            })
+        testing::capturable_screen_definition(target_screen)
     }
 
     fn screen_nav_target_data(
         &self,
         definition: &CapturableScreenJourneyDefinition,
     ) -> Result<Value> {
-        let journey = self.build_capturable_screen_journey(
-            definition.target_screen,
-            &json!({}),
-            definition.target_screen,
-        )?;
-        Ok(json!({
-            "name": definition.target_screen,
-            "description": definition.description,
-            "command": journey.command,
-            "toolArguments": {
-                "target": definition.target_screen
-            },
-            "sandboxSetup": (definition.sandbox_setup)(),
-        }))
-    }
-
-    // --------- Base Mode Screen Builders ---------
-    //
-    // Each function below builds a journey to reach a specific UI screen
-    // in base mode (the main Ozone launcher). They are composed hierarchically:
-    // base_splash_screen → base_tier_picker → base_launcher → various flows
-    //
-
-    fn build_base_splash_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        Ok(MockUserJourneySpec {
-            name: journey_name.to_owned(),
-            cwd: self.repo_root.to_string_lossy().into_owned(),
-            command: append_args(
-                &self.front_door_binary_command("ozone", &["--mode", "base"]),
-                &["--no-browser"],
-            ),
-            steps: vec![MockUserJourneyStep::wait_for(
-                "render splash",
-                5500,
-                ["Continue", "local-first AI tooling"],
-            )],
-        })
-    }
-
-    fn build_base_tier_picker_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        Ok(MockUserJourneySpec {
-            name: journey_name.to_owned(),
-            cwd: self.repo_root.to_string_lossy().into_owned(),
-            command: self.front_door_binary_command("ozone", &["--pick", "--no-browser"]),
-            steps: vec![
-                MockUserJourneyStep::wait("splash settle", 5500),
-                MockUserJourneyStep::key(
-                    "open tier picker",
-                    "enter",
-                    1000,
-                    ["Choose Your Tier", "ozone+", "ozonelite"],
-                ),
-            ],
-        })
-    }
-
-    fn build_base_launcher_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        Ok(MockUserJourneySpec {
-            name: journey_name.to_owned(),
-            cwd: self.repo_root.to_string_lossy().into_owned(),
-            command: append_args(
-                &self.front_door_binary_command("ozone", &["--mode", "base"]),
-                &["--no-browser"],
-            ),
-            steps: vec![
-                MockUserJourneyStep::wait("splash settle", 5500),
-                MockUserJourneyStep::key(
-                    "reach launcher",
-                    "enter",
-                    1000,
-                    ["Launch", "Open ozone+", "Settings"],
-                ),
-            ],
-        })
-    }
-
-    fn build_base_exit_confirm_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey = self.build_base_launcher_screen_journey(journey_name, &json!({}))?;
-        journey.steps.push(MockUserJourneyStep::key(
-            "open exit confirm",
-            "esc",
-            600,
-            ["Confirm Exit", "Leave Ozone?", "Stay"],
-        ));
-        Ok(journey)
-    }
-
-    fn build_base_settings_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey = self.build_base_launcher_screen_journey(journey_name, &json!({}))?;
-        journey.steps.extend([
-            MockUserJourneyStep::key("move to profile", "down", 150, []),
-            MockUserJourneyStep::key("move to ozone plus", "down", 150, []),
-            MockUserJourneyStep::key("move to settings", "down", 150, []),
-            MockUserJourneyStep::key(
-                "open settings",
-                "enter",
-                800,
-                ["Settings", "Backend", "Frontend"],
-            ),
-        ]);
-        Ok(journey)
-    }
-
-    fn build_base_model_picker_launch_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey = self.build_base_launcher_screen_journey(journey_name, &json!({}))?;
-        journey.steps.push(MockUserJourneyStep::key(
-            "open launch model picker",
-            "enter",
-            1200,
-            ["Model Picker · Launch", "mock-model.gguf", "type to filter"],
-        ));
-        Ok(journey)
-    }
-
-    fn build_base_confirm_launch_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey =
-            self.build_base_model_picker_launch_screen_journey(journey_name, &json!({}))?;
-        journey.steps.push(MockUserJourneyStep::key(
-            "build launch plan",
-            "enter",
-            1200,
-            ["Confirm Launch", "Context:", "QuantKV:"],
-        ));
-        Ok(journey)
-    }
-
-    fn build_base_frontend_choice_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey =
-            self.build_base_confirm_launch_screen_journey(journey_name, &json!({}))?;
-        journey.steps.push(MockUserJourneyStep::key(
-            "open frontend choice",
-            "enter",
-            800,
-            ["Choose Frontend", "SillyTavern", "ozone+"],
-        ));
-        Ok(journey)
-    }
-
-    fn build_base_launching_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey =
-            self.build_base_frontend_choice_screen_journey(journey_name, &json!({}))?;
-        journey.steps.push(MockUserJourneyStep::key(
-            "start launch",
-            "enter",
-            600,
-            [
-                "Launching KoboldCpp",
-                "Preparing ozone+ handoff",
-                "Please wait",
-            ],
-        ));
-        Ok(journey)
-    }
-
-    fn build_base_monitor_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey = self.build_base_launcher_screen_journey(journey_name, &json!({}))?;
-        journey.command = append_args(
-            &self.front_door_binary_command("ozone", &["--mode", "base"]),
-            &["--frontend", "sillyTavern", "--no-browser"],
-        );
-        journey.steps.extend([
-            MockUserJourneyStep::key(
-                "pick launch model",
-                "enter",
-                1500,
-                ["Confirm Launch", "Context:", "QuantKV:"],
-            ),
-            MockUserJourneyStep::key(
-                "launch into monitor",
-                "enter",
-                3000,
-                ["Ozone Monitor", "Services", "SillyTavern"],
-            ),
-        ]);
-        Ok(journey)
-    }
-
-    fn build_base_model_picker_profile_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey = self.build_base_launcher_screen_journey(journey_name, &json!({}))?;
-        journey.steps.extend([
-            MockUserJourneyStep::key("move to profile", "down", 150, []),
-            MockUserJourneyStep::key(
-                "open profile model picker",
-                "enter",
-                1200,
-                [
-                    "Model Picker · Profile",
-                    "mock-model.gguf",
-                    "type to filter",
-                ],
-            ),
-        ]);
-        Ok(journey)
-    }
-
-    fn build_base_profile_advisory_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey =
-            self.build_base_model_picker_profile_screen_journey(journey_name, &json!({}))?;
-        journey.steps.push(MockUserJourneyStep::key(
-            "build profiling advisory",
-            "enter",
-            1200,
-            ["Profiling Advisor", "Next Actions", "Recommendation:"],
-        ));
-        Ok(journey)
-    }
-
-    fn build_base_profile_confirm_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey =
-            self.build_base_profile_advisory_screen_journey(journey_name, &json!({}))?;
-        journey.steps.push(MockUserJourneyStep::key(
-            "open profiling confirm",
-            "enter",
-            800,
-            ["Confirm Profiling Step", "Press Enter to start", "Action:"],
-        ));
-        Ok(journey)
-    }
-
-    fn build_base_profile_running_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey =
-            self.build_base_profile_confirm_screen_journey(journey_name, &json!({}))?;
-        journey.steps.push(MockUserJourneyStep::key(
-            "start profiling",
-            "enter",
-            800,
-            ["Profiling In Progress", "Stage:", "Preparing"],
-        ));
-        Ok(journey)
-    }
-
-    fn build_base_profile_failure_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey =
-            self.build_base_profile_advisory_screen_journey(journey_name, &json!({}))?;
-        journey.steps.push(MockUserJourneyStep::key(
-            "open profiling failure",
-            "enter",
-            800,
-            ["Profiling Failed", "Suggestions", "Recovery Actions"],
-        ));
-        Ok(journey)
-    }
-
-    // --------- Ozone+ Mode Screen Builders ---------
-    //
-    // These functions build journeys for the ozone+ TUI application.
-    // ozone+ is launched via the base launcher and provides a full chat/character interface.
-    //
-
-    fn build_base_ozone_plus_shell_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        Ok(MockUserJourneySpec {
-            name: journey_name.to_owned(),
-            cwd: self.repo_root.to_string_lossy().into_owned(),
-            // Launch the ozone launcher directly (no auto-frontend flag so the UI renders).
-            // The splash advertises Enter once model scan + hardware detection are ready.
-            // Use that explicit handoff before navigating the launcher action list.
-            command: self.front_door_binary_command("ozone", &["--no-browser"]),
-            steps: vec![
-                MockUserJourneyStep::wait_for(
-                    "reach launcher or ready splash",
-                    35000,
-                    ["Continue", "Open ozone+", "Launch ozone+"],
-                ),
-                MockUserJourneyStep::key(
-                    "enter launcher",
-                    "enter",
-                    1000,
-                    ["Open ozone+", "Launch ozone+"],
-                ),
-                MockUserJourneyStep::key("select ozone+", "down", 1000, []),
-                MockUserJourneyStep::key(
-                    "open ozone+ shell",
-                    "enter",
-                    4500,
-                    ["New Chat", "Sessions", "Characters", "Settings"],
-                ),
-            ],
-        })
-    }
-
-    // --------- Ozone+ Main Menu & Screen Variants ---------
-
-    fn build_ozone_plus_main_menu_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        Ok(MockUserJourneySpec {
-            name: journey_name.to_owned(),
-            cwd: self.repo_root.to_string_lossy().into_owned(),
-            command: self
-                .front_door_binary_command("ozone-plus", &["handoff", "--launcher-session"]),
-            steps: vec![MockUserJourneyStep::wait_for(
-                "settle main menu",
-                1200,
-                ["New Chat", "Sessions", "Characters", "Settings"],
-            )],
-        })
-    }
-
-    fn build_ozone_plus_sessions_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey =
-            self.build_ozone_plus_main_menu_screen_journey(journey_name, &json!({}))?;
-        journey.steps.push(MockUserJourneyStep::text(
-            "open sessions",
-            "2",
-            500,
-            ["Sessions", "0 total"],
-        ));
-        Ok(journey)
-    }
-
-    fn build_ozone_plus_characters_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey =
-            self.build_ozone_plus_main_menu_screen_journey(journey_name, &json!({}))?;
-        journey.steps.push(MockUserJourneyStep::text(
-            "open characters",
-            "3",
-            500,
-            ["Characters", "session(s)"],
-        ));
-        Ok(journey)
-    }
-
-    fn build_ozone_plus_settings_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey =
-            self.build_ozone_plus_main_menu_screen_journey(journey_name, &json!({}))?;
-        journey.steps.push(MockUserJourneyStep::text(
-            "open settings",
-            "4",
-            500,
-            ["Settings", "config.toml", "next session open"],
-        ));
-        Ok(journey)
-    }
-
-    fn build_ozone_plus_character_create_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey =
-            self.build_ozone_plus_characters_screen_journey(journey_name, &json!({}))?;
-        journey.steps.push(MockUserJourneyStep::text(
-            "open character create",
-            "n",
-            600,
-            ["New Character", "System Prompt", "Save"],
-        ));
-        Ok(journey)
-    }
-
-    fn build_ozone_plus_character_import_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey =
-            self.build_ozone_plus_characters_screen_journey(journey_name, &json!({}))?;
-        journey.steps.push(MockUserJourneyStep::text(
-            "open character import",
-            "i",
-            600,
-            ["Import Character Card", "File Path", "Supports:"],
-        ));
-        Ok(journey)
-    }
-
-    fn build_ozone_plus_conversation_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey =
-            self.build_ozone_plus_main_menu_screen_journey(journey_name, &json!({}))?;
-        journey.steps.push(MockUserJourneyStep::key(
-            "open conversation",
-            "enter",
-            800,
-            ["Conversation", "Composer", "Status"],
-        ));
-        Ok(journey)
-    }
-
-    fn build_ozone_plus_help_screen_journey(
-        &self,
-        journey_name: &str,
-        _args: &Value,
-    ) -> Result<MockUserJourneySpec> {
-        let mut journey =
-            self.build_ozone_plus_conversation_screen_journey(journey_name, &json!({}))?;
-        journey.steps.push(MockUserJourneyStep::text(
-            "open help",
-            "?",
-            600,
-            ["Help", "Slash Commands", "Ctrl+K"],
-        ));
-        Ok(journey)
-    }
-
-    // =========================================================================
-    // JOURNEY BUILDER HELPERS
-    // =========================================================================
-
-    /// Resolve binary command for journey execution, preferring debug build.
-    ///
-    /// This helper method is used by all journey builders to construct command
-    /// vectors. It prefers the debug binary if available (faster iteration),
-    /// falls back to `cargo run` if needed.
-    ///
-    /// For the standalone version used in testing code, see testing::journey::front_door_binary_command.
-    fn front_door_binary_command(&self, binary: &str, args: &[&str]) -> Vec<String> {
-        let binary_path = self.repo_root.join("target/debug").join(binary);
-        if binary_path.exists() {
-            let mut command = vec![binary_path.display().to_string()];
-            command.extend(args.iter().map(|value| (*value).to_owned()));
-            command
-        } else {
-            let mut command = vec!["cargo".to_owned(), "run".to_owned(), "--quiet".to_owned()];
-            if binary != "ozone" {
-                command.push("-p".to_owned());
-                command.push(binary.to_owned());
-            }
-            command.push("--".to_owned());
-            command.extend(args.iter().map(|value| (*value).to_owned()));
-            command
-        }
+        testing::screen_nav_target_data(self, definition)
     }
 
     pub fn run_mock_user_journey(
@@ -1402,145 +828,145 @@ pub fn capturable_screen_journey_builders() -> &'static [testing::CapturableScre
         CapturableScreenJourneyDefinition {
             target_screen: "base_splash",
             description: "Cold-start Ozone splash screen.",
-            builder: OzoneMcpServer::build_base_splash_screen_journey,
+            builder: testing::build_base_splash_screen_journey,
             sandbox_setup: sandbox_setup_base_splash,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "base_tier_picker",
             description: "First-run tier picker between splash and launcher.",
-            builder: OzoneMcpServer::build_base_tier_picker_screen_journey,
+            builder: testing::build_base_tier_picker_screen_journey,
             sandbox_setup: sandbox_setup_base_tier_picker,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "base_launcher",
             description: "Base Ozone launcher dashboard.",
-            builder: OzoneMcpServer::build_base_launcher_screen_journey,
+            builder: testing::build_base_launcher_screen_journey,
             sandbox_setup: sandbox_setup_base_launcher,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "base_exit_confirm",
             description: "Launcher exit confirmation dialog.",
-            builder: OzoneMcpServer::build_base_exit_confirm_screen_journey,
+            builder: testing::build_base_exit_confirm_screen_journey,
             sandbox_setup: sandbox_setup_base_launcher,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "base_settings",
             description: "Base Ozone settings screen.",
-            builder: OzoneMcpServer::build_base_settings_screen_journey,
+            builder: testing::build_base_settings_screen_journey,
             sandbox_setup: sandbox_setup_base_launcher,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "base_model_picker_launch",
             description: "Launch-mode model picker.",
-            builder: OzoneMcpServer::build_base_model_picker_launch_screen_journey,
+            builder: testing::build_base_model_picker_launch_screen_journey,
             sandbox_setup: sandbox_setup_base_launch_path,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "base_confirm_launch",
             description: "Launch confirmation dialog before backend start.",
-            builder: OzoneMcpServer::build_base_confirm_launch_screen_journey,
+            builder: testing::build_base_confirm_launch_screen_journey,
             sandbox_setup: sandbox_setup_base_launch_path,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "base_frontend_choice",
             description: "Frontend choice screen shown when no frontend is preselected.",
-            builder: OzoneMcpServer::build_base_frontend_choice_screen_journey,
+            builder: testing::build_base_frontend_choice_screen_journey,
             sandbox_setup: sandbox_setup_base_launch_path,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "base_launching",
             description: "Transient launch-progress screen after confirming frontend.",
-            builder: OzoneMcpServer::build_base_launching_screen_journey,
+            builder: testing::build_base_launching_screen_journey,
             sandbox_setup: sandbox_setup_base_launch_path,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "base_monitor",
             description: "Live Ozone monitor screen.",
-            builder: OzoneMcpServer::build_base_monitor_screen_journey,
+            builder: testing::build_base_monitor_screen_journey,
             sandbox_setup: sandbox_setup_base_launch_path,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "base_model_picker_profile",
             description: "Profile-mode model picker.",
-            builder: OzoneMcpServer::build_base_model_picker_profile_screen_journey,
+            builder: testing::build_base_model_picker_profile_screen_journey,
             sandbox_setup: sandbox_setup_base_profile_review,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "base_profile_advisory",
             description: "Profiling advisor overview.",
-            builder: OzoneMcpServer::build_base_profile_advisory_screen_journey,
+            builder: testing::build_base_profile_advisory_screen_journey,
             sandbox_setup: sandbox_setup_base_profile_review,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "base_profile_confirm",
             description: "Profiling action confirmation dialog.",
-            builder: OzoneMcpServer::build_base_profile_confirm_screen_journey,
+            builder: testing::build_base_profile_confirm_screen_journey,
             sandbox_setup: sandbox_setup_base_profile_run,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "base_profile_running",
             description: "Profiling in-progress screen.",
-            builder: OzoneMcpServer::build_base_profile_running_screen_journey,
+            builder: testing::build_base_profile_running_screen_journey,
             sandbox_setup: sandbox_setup_base_profile_run,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "base_profile_failure",
             description: "Profiling failure / issue-report screen.",
-            builder: OzoneMcpServer::build_base_profile_failure_screen_journey,
+            builder: testing::build_base_profile_failure_screen_journey,
             sandbox_setup: sandbox_setup_base_profile_review,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "base_ozone_plus_shell",
             description: "ozone+ conversation shell reached through the base launcher handoff.",
-            builder: OzoneMcpServer::build_base_ozone_plus_shell_journey,
+            builder: testing::build_base_ozone_plus_shell_journey,
             sandbox_setup: sandbox_setup_base_ozone_plus_shell,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "ozone_plus_main_menu",
             description: "ozone+ main menu from direct handoff.",
-            builder: OzoneMcpServer::build_ozone_plus_main_menu_screen_journey,
+            builder: testing::build_ozone_plus_main_menu_screen_journey,
             sandbox_setup: sandbox_setup_ozone_plus_entry,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "ozone_plus_sessions",
             description: "ozone+ session list screen.",
-            builder: OzoneMcpServer::build_ozone_plus_sessions_screen_journey,
+            builder: testing::build_ozone_plus_sessions_screen_journey,
             sandbox_setup: sandbox_setup_ozone_plus_entry,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "ozone_plus_characters",
             description: "ozone+ character manager screen.",
-            builder: OzoneMcpServer::build_ozone_plus_characters_screen_journey,
+            builder: testing::build_ozone_plus_characters_screen_journey,
             sandbox_setup: sandbox_setup_ozone_plus_entry,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "ozone_plus_character_create",
             description: "ozone+ new-character form.",
-            builder: OzoneMcpServer::build_ozone_plus_character_create_screen_journey,
+            builder: testing::build_ozone_plus_character_create_screen_journey,
             sandbox_setup: sandbox_setup_ozone_plus_entry,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "ozone_plus_character_import",
             description: "ozone+ import-character form.",
-            builder: OzoneMcpServer::build_ozone_plus_character_import_screen_journey,
+            builder: testing::build_ozone_plus_character_import_screen_journey,
             sandbox_setup: sandbox_setup_ozone_plus_entry,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "ozone_plus_settings",
             description: "ozone+ settings/config screen.",
-            builder: OzoneMcpServer::build_ozone_plus_settings_screen_journey,
+            builder: testing::build_ozone_plus_settings_screen_journey,
             sandbox_setup: sandbox_setup_ozone_plus_entry,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "ozone_plus_conversation",
             description: "ozone+ conversation shell from the main menu.",
-            builder: OzoneMcpServer::build_ozone_plus_conversation_screen_journey,
+            builder: testing::build_ozone_plus_conversation_screen_journey,
             sandbox_setup: sandbox_setup_ozone_plus_entry,
         },
         CapturableScreenJourneyDefinition {
             target_screen: "ozone_plus_help",
             description: "ozone+ help overlay from conversation mode.",
-            builder: OzoneMcpServer::build_ozone_plus_help_screen_journey,
+            builder: testing::build_ozone_plus_help_screen_journey,
             sandbox_setup: sandbox_setup_ozone_plus_entry,
         },
     ]
@@ -2578,73 +2004,6 @@ impl Drop for EnvOverrideGuard {
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct JsonRpcRequest {
-    jsonrpc: String,
-    #[serde(default)]
-    id: Option<Value>,
-    method: String,
-    #[serde(default)]
-    params: Option<Value>,
-}
-
-fn read_message(reader: &mut impl BufRead) -> Result<Option<JsonRpcRequest>> {
-    let mut content_length = None;
-    loop {
-        let mut line = String::new();
-        let bytes = reader.read_line(&mut line)?;
-        if bytes == 0 {
-            return Ok(None);
-        }
-        let line = line.trim_end_matches(['\r', '\n']);
-        if line.is_empty() {
-            break;
-        }
-        if let Some(value) = line.strip_prefix("Content-Length:") {
-            content_length = Some(
-                value
-                    .trim()
-                    .parse::<usize>()
-                    .context("invalid Content-Length header")?,
-            );
-        }
-    }
-
-    let content_length = content_length.ok_or_else(|| anyhow!("missing Content-Length header"))?;
-    let mut payload = vec![0_u8; content_length];
-    reader.read_exact(&mut payload)?;
-    Ok(Some(
-        serde_json::from_slice::<JsonRpcRequest>(&payload)
-            .context("failed to parse JSON-RPC request body")?,
-    ))
-}
-
-fn write_message(writer: &mut impl Write, value: &Value) -> Result<()> {
-    let payload = serde_json::to_vec(value)?;
-    write!(writer, "Content-Length: {}\r\n\r\n", payload.len())?;
-    writer.write_all(&payload)?;
-    Ok(())
-}
-
-fn success_response(id: Value, result: Value) -> Value {
-    json!({
-        "jsonrpc": JSONRPC_VERSION,
-        "id": id,
-        "result": result
-    })
-}
-
-fn error_response(id: Value, code: i64, message: String) -> Value {
-    json!({
-        "jsonrpc": JSONRPC_VERSION,
-        "id": id,
-        "error": {
-            "code": code,
-            "message": message
-        }
-    })
-}
-
 pub fn command_output_data(output: &std::process::Output) -> Value {
     json!({
         "success": output.status.success(),
@@ -2683,12 +2042,6 @@ pub fn required_u64(args: &Value, key: &str) -> Result<u64> {
 
 fn host_toolchain_dir(name: &str) -> Option<String> {
     env::var_os("HOME").map(|home| PathBuf::from(home).join(name).display().to_string())
-}
-
-fn append_args(command: &[String], args: &[&str]) -> Vec<String> {
-    let mut full = command.to_vec();
-    full.extend(args.iter().map(|value| (*value).to_owned()));
-    full
 }
 
 fn checked_u16(value: u64, key: &str) -> Result<u16> {
@@ -2966,25 +2319,133 @@ pub fn render_transcript_text(export: &ozone_persist::TranscriptExport) -> Strin
 mod tests {
     use super::{
         capturable_screen_journey_builders, default_preferences_json, merge_json_objects,
-        mock_user_capture_settings, normalize_preferences_json, read_message,
-        screenshot_capture_config, tool_definitions, OzoneMcpServer, Sandbox,
+        mock_user_capture_settings, normalize_preferences_json,
+        screenshot_capture_config, tool_definitions, EnvOverrideGuard, OzoneMcpServer,
+        Sandbox,
     };
-    use crate::testing::MockUserAction;
-    use serde_json::json;
+    use crate::testing::{MockUserAction, MockUserJourneyStep};
+    use ozone_core::session::SessionId;
+    use serde_json::{json, Value};
+    use std::collections::BTreeMap;
     use std::fs;
-    use std::io::{BufReader, Cursor};
     use std::path::{Path, PathBuf};
     use uuid::Uuid;
 
-    #[test]
-    fn mcp_messages_parse_with_content_length_framing() {
-        let payload = br#"{"jsonrpc":"2.0","id":1,"method":"ping","params":{}}"#;
-        let mut framed = format!("Content-Length: {}\r\n\r\n", payload.len()).into_bytes();
-        framed.extend_from_slice(payload);
-        let mut reader = BufReader::new(Cursor::new(framed));
-        let request = read_message(&mut reader).unwrap().unwrap();
-        assert_eq!(request.jsonrpc, "2.0");
-        assert_eq!(request.method, "ping");
+    fn with_front_door_profile<T>(profile: &str, f: impl FnOnce() -> T) -> T {
+        let mut overrides = BTreeMap::new();
+        overrides.insert(
+            "OZONE_MCP_FRONT_DOOR_PROFILE".to_owned(),
+            profile.to_owned(),
+        );
+        let _guard = EnvOverrideGuard::new(overrides);
+        f()
+    }
+
+    fn assert_release_front_door_binaries_exist(server: &OzoneMcpServer) {
+        for binary in ["ozone", "ozone-plus"] {
+            let path = server.repo_root.join("target/release").join(binary);
+            assert!(
+                path.is_file(),
+                "missing release binary {} for release smoke; build target/release/{} first",
+                path.display(),
+                binary
+            );
+        }
+    }
+
+    fn assert_mock_user_success(data: &Value, context: &str) {
+        let final_tail = data
+            .get("finalTail")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        assert_eq!(
+            data.get("runnerOk").and_then(Value::as_bool),
+            Some(true),
+            "{context}: PTY runner failed\n{}",
+            final_tail
+        );
+        assert_eq!(
+            data.get("success").and_then(Value::as_bool),
+            Some(true),
+            "{context}: journey markers were not reached\n{}",
+            final_tail
+        );
+    }
+
+    fn build_fresh_base_launcher_journey(
+        server: &OzoneMcpServer,
+    ) -> crate::testing::MockUserJourneySpec {
+        crate::testing::MockUserJourneySpec {
+            name: "release_fresh_base_launcher".to_owned(),
+            cwd: server.repo_root.to_string_lossy().into_owned(),
+            command: crate::testing::append_args(
+                &crate::testing::front_door_binary_command(
+                    &server.repo_root,
+                    "ozone",
+                    &["--mode", "base"],
+                ),
+                &["--no-browser"],
+            ),
+            steps: vec![MockUserJourneyStep::wait_for(
+                "reach launcher",
+                35000,
+                ["Launch", "Open ozone+", "Settings"],
+            )],
+        }
+    }
+
+    fn run_release_binary(
+        server: &OzoneMcpServer,
+        sandbox_id: &str,
+        binary: &str,
+        args: &[&str],
+    ) -> super::CommandOutput {
+        let program = server.repo_root.join("target/release").join(binary);
+        let program = program.display().to_string();
+        let args = args.iter().map(|value| (*value).to_owned()).collect::<Vec<_>>();
+        let output = server
+            .run_workspace_command(&program, &args, Some(sandbox_id))
+            .expect("release binary command");
+        assert!(
+            output.success,
+            "release command failed: {}\nstdout:\n{}\nstderr:\n{}",
+            output.command,
+            output.stdout,
+            output.stderr
+        );
+        output
+    }
+
+    fn first_session_id(server: &OzoneMcpServer, sandbox_id: &str) -> String {
+        server
+            .with_repo(Some(sandbox_id), |repo| {
+                Ok(repo
+                    .list_sessions()?
+                    .into_iter()
+                    .next()
+                    .map(|session| session.session_id.to_string()))
+            })
+            .expect("list sessions")
+            .expect("persisted session")
+    }
+
+    fn active_transcript_len(server: &OzoneMcpServer, sandbox_id: &str, session_id: &str) -> usize {
+        let session_id = SessionId::parse(session_id).expect("valid session id");
+        server
+            .with_repo(Some(sandbox_id), |repo| Ok(repo.get_active_branch_transcript(&session_id)?.len()))
+            .expect("active transcript")
+    }
+
+    fn release_smoke_artifact_dir(name: &str) -> PathBuf {
+        let output_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
+            .parent()
+            .and_then(Path::parent)
+            .expect("repo root")
+            .join("target/test-artifacts/ozone-mcp")
+            .join("release-smoke")
+            .join(format!("{name}-{}", Uuid::new_v4()));
+        fs::create_dir_all(&output_dir).expect("create release-smoke artifact dir");
+        output_dir
     }
 
     #[test]
@@ -3084,7 +2545,7 @@ mod tests {
             ("base_tier_picker", "ozone", "Choose Your Tier"),
             ("base_launcher", "ozone", "Open ozone+"),
             ("base_exit_confirm", "ozone", "Confirm Exit"),
-            ("base_settings", "ozone", "Frontend"),
+            ("base_settings", "ozone", "Active Defaults"),
             ("base_model_picker_launch", "ozone", "Model Picker · Launch"),
             ("base_confirm_launch", "ozone", "Confirm Launch"),
             ("base_frontend_choice", "ozone", "Choose Frontend"),
@@ -3479,6 +2940,375 @@ mod tests {
             }))
             .expect_err("missing sidecar should fail");
         assert!(error.to_string().contains("screen capture sidecar"));
+    }
+
+    #[test]
+    #[ignore = "release smoke"]
+    fn release_smoke_gate_fresh_temp_xdg_user_path() {
+        with_front_door_profile("release", || {
+            let mut server = OzoneMcpServer::new().expect("server");
+            assert_release_front_door_binaries_exist(&server);
+
+            let launcher_sandbox = server
+                .prepare_sandbox_from_setup(None, crate::testing::sandbox_setup_base_launch_path())
+                .expect("launcher sandbox");
+            let launcher_journey = build_fresh_base_launcher_journey(&server);
+            let launcher_capture_args = json!({
+                "filename": "base-launcher-release",
+                "rows": 55,
+                "columns": 140,
+                "fontSize": 18,
+                "tailChars": 2048
+            });
+            let launcher_capture_dir = release_smoke_artifact_dir("base-launcher");
+            let launcher_capture = screenshot_capture_config(
+                &launcher_capture_args,
+                &launcher_capture_dir,
+                "base_launcher",
+            )
+            .expect("launcher capture config");
+            let launcher_run = server
+                .run_mock_user_journey(
+                    &launcher_sandbox.sandbox_id,
+                    &launcher_journey,
+                    Some("base_launcher".to_owned()),
+                    &launcher_capture_args,
+                    Some(launcher_capture),
+                )
+                .expect("launcher run");
+            assert_mock_user_success(&launcher_run, "fresh temp-XDG base launcher");
+
+            let launcher_sidecar = launcher_run["paths"]["json"].as_str().unwrap_or_else(|| {
+                panic!(
+                    "fresh temp-XDG base launcher capture did not produce a sidecar\n{}",
+                    serde_json::to_string_pretty(&launcher_run)
+                        .unwrap_or_else(|_| launcher_run.to_string())
+                )
+            });
+            assert!(
+                Path::new(launcher_sidecar).is_file(),
+                "fresh temp-XDG base launcher sidecar missing: {launcher_sidecar}"
+            );
+            let launcher_screen = server
+                .screen_check_tool(&json!({
+                    "sidecarPath": launcher_sidecar,
+                    "checks": [
+                        { "type": "text_present", "text": "Launch" },
+                        { "type": "text_present", "text": "Open ozone+" },
+                        { "type": "text_present", "text": "Settings" },
+                        { "type": "text_absent", "text": "local-first AI tooling" }
+                    ]
+                }))
+                .expect("launcher screen check");
+            assert!(
+                !launcher_screen.is_error,
+                "fresh temp-XDG launcher screen check failed: {}\n{}",
+                launcher_screen.summary,
+                serde_json::to_string_pretty(&launcher_screen.data)
+                    .unwrap_or_else(|_| launcher_screen.data.to_string())
+            );
+
+            let mut settings_journey = crate::testing::build_base_settings_screen_journey(
+                &server.repo_root,
+                "release_fresh_base_settings",
+                &json!({}),
+            )
+            .expect("settings journey");
+            if let Some(step) = settings_journey.steps.last_mut() {
+                step.expect_any.clear();
+                step.settle_ms = step.settle_ms.max(1000);
+            }
+            let settings_capture_args = json!({
+                "filename": "base-settings-release",
+                "rows": 55,
+                "columns": 140,
+                "fontSize": 18,
+                "tailChars": 2048
+            });
+            let settings_capture_dir = release_smoke_artifact_dir("base-settings");
+            let settings_capture = screenshot_capture_config(
+                &settings_capture_args,
+                &settings_capture_dir,
+                "base_settings",
+            )
+            .expect("settings capture config");
+            let settings_run = server
+                .run_mock_user_journey(
+                    &launcher_sandbox.sandbox_id,
+                    &settings_journey,
+                    Some("base_settings".to_owned()),
+                    &settings_capture_args,
+                    Some(settings_capture),
+                )
+                .expect("settings run");
+            assert_mock_user_success(&settings_run, "fresh temp-XDG base settings");
+
+            let settings_sidecar = settings_run["paths"]["json"].as_str().unwrap_or_else(|| {
+                panic!(
+                    "fresh temp-XDG base settings capture did not produce a sidecar\n{}",
+                    serde_json::to_string_pretty(&settings_run)
+                        .unwrap_or_else(|_| settings_run.to_string())
+                )
+            });
+            assert!(
+                Path::new(settings_sidecar).is_file(),
+                "fresh temp-XDG base settings sidecar missing: {settings_sidecar}"
+            );
+            let settings_screen = server
+                .screen_check_tool(&json!({
+                    "sidecarPath": settings_sidecar,
+                    "checks": [
+                        { "type": "text_present", "text": "Settings" },
+                        { "type": "text_present", "text": "Active Defaults" },
+                        { "type": "text_present", "text": "Backend" },
+                        { "type": "text_present", "text": "Frontend" }
+                    ]
+                }))
+                .expect("settings screen check");
+            assert!(
+                !settings_screen.is_error,
+                "fresh temp-XDG settings screen check failed: {}\n{}",
+                settings_screen.summary,
+                serde_json::to_string_pretty(&settings_screen.data)
+                    .unwrap_or_else(|_| settings_screen.data.to_string())
+            );
+
+            let confirm_launch_journey = crate::testing::build_base_confirm_launch_screen_journey(
+                &server.repo_root,
+                "release_fresh_base_confirm_launch",
+                &json!({}),
+            )
+            .expect("confirm launch journey");
+            let confirm_launch_capture_args = json!({
+                "filename": "base-confirm-launch-release",
+                "rows": 55,
+                "columns": 140,
+                "fontSize": 18,
+                "tailChars": 2048
+            });
+            let confirm_launch_capture_dir = release_smoke_artifact_dir("base-confirm-launch");
+            let confirm_launch_capture = screenshot_capture_config(
+                &confirm_launch_capture_args,
+                &confirm_launch_capture_dir,
+                "base_confirm_launch",
+            )
+            .expect("confirm launch capture config");
+            let confirm_launch_run = server
+                .run_mock_user_journey(
+                    &launcher_sandbox.sandbox_id,
+                    &confirm_launch_journey,
+                    Some("base_confirm_launch".to_owned()),
+                    &confirm_launch_capture_args,
+                    Some(confirm_launch_capture),
+                )
+                .expect("confirm launch run");
+            assert_mock_user_success(
+                &confirm_launch_run,
+                "fresh temp-XDG base confirm launch",
+            );
+
+            let confirm_launch_sidecar = confirm_launch_run["paths"]["json"]
+                .as_str()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "fresh temp-XDG base confirm launch capture did not produce a sidecar\n{}",
+                        serde_json::to_string_pretty(&confirm_launch_run)
+                            .unwrap_or_else(|_| confirm_launch_run.to_string())
+                    )
+                });
+            assert!(
+                Path::new(confirm_launch_sidecar).is_file(),
+                "fresh temp-XDG base confirm launch sidecar missing: {confirm_launch_sidecar}"
+            );
+            let confirm_launch_screen = server
+                .screen_check_tool(&json!({
+                    "sidecarPath": confirm_launch_sidecar,
+                    "checks": [
+                        { "type": "text_present", "text": "Confirm Launch" },
+                        { "type": "text_present", "text": "Context:" },
+                        { "type": "text_present", "text": "QuantKV:" },
+                        { "type": "text_absent", "text": "Choose Frontend" }
+                    ]
+                }))
+                .expect("confirm launch screen check");
+            assert!(
+                !confirm_launch_screen.is_error,
+                "fresh temp-XDG confirm launch screen check failed: {}\n{}",
+                confirm_launch_screen.summary,
+                serde_json::to_string_pretty(&confirm_launch_screen.data)
+                    .unwrap_or_else(|_| confirm_launch_screen.data.to_string())
+            );
+
+            let frontend_choice_journey =
+                crate::testing::build_base_frontend_choice_screen_journey(
+                    &server.repo_root,
+                    "release_fresh_base_frontend_choice",
+                    &json!({}),
+                )
+                .expect("frontend choice journey");
+            let frontend_choice_capture_args = json!({
+                "filename": "base-frontend-choice-release",
+                "rows": 55,
+                "columns": 140,
+                "fontSize": 18,
+                "tailChars": 2048
+            });
+            let frontend_choice_capture_dir = release_smoke_artifact_dir("base-frontend-choice");
+            let frontend_choice_capture = screenshot_capture_config(
+                &frontend_choice_capture_args,
+                &frontend_choice_capture_dir,
+                "base_frontend_choice",
+            )
+            .expect("frontend choice capture config");
+            let frontend_choice_run = server
+                .run_mock_user_journey(
+                    &launcher_sandbox.sandbox_id,
+                    &frontend_choice_journey,
+                    Some("base_frontend_choice".to_owned()),
+                    &frontend_choice_capture_args,
+                    Some(frontend_choice_capture),
+                )
+                .expect("frontend choice run");
+            assert_mock_user_success(
+                &frontend_choice_run,
+                "fresh temp-XDG base frontend choice",
+            );
+
+            let frontend_choice_sidecar = frontend_choice_run["paths"]["json"]
+                .as_str()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "fresh temp-XDG base frontend choice capture did not produce a sidecar\n{}",
+                        serde_json::to_string_pretty(&frontend_choice_run)
+                            .unwrap_or_else(|_| frontend_choice_run.to_string())
+                    )
+                });
+            assert!(
+                Path::new(frontend_choice_sidecar).is_file(),
+                "fresh temp-XDG base frontend choice sidecar missing: {frontend_choice_sidecar}"
+            );
+            let frontend_choice_screen = server
+                .screen_check_tool(&json!({
+                    "sidecarPath": frontend_choice_sidecar,
+                    "checks": [
+                        { "type": "text_present", "text": "Choose Frontend" },
+                        { "type": "text_present", "text": "SillyTavern" },
+                        { "type": "text_present", "text": "ozone+" },
+                        { "type": "text_absent", "text": "Launching KoboldCpp" }
+                    ]
+                }))
+                .expect("frontend choice screen check");
+            assert!(
+                !frontend_choice_screen.is_error,
+                "fresh temp-XDG frontend choice screen check failed: {}\n{}",
+                frontend_choice_screen.summary,
+                serde_json::to_string_pretty(&frontend_choice_screen.data)
+                    .unwrap_or_else(|_| frontend_choice_screen.data.to_string())
+            );
+
+            let chat_sandbox = server
+                .prepare_mock_user_sandbox(None, Some("ozone_plus_chat_journey"), None)
+                .expect("chat sandbox");
+            run_release_binary(
+                &server,
+                &chat_sandbox.sandbox_id,
+                "ozone-plus",
+                &["create", "Release Smoke Fresh"],
+            );
+            let session_id = first_session_id(&server, &chat_sandbox.sandbox_id);
+            run_release_binary(
+                &server,
+                &chat_sandbox.sandbox_id,
+                "ozone-plus",
+                &["send", session_id.as_str(), "Check the observatory key"],
+            );
+
+            let transcript_len = active_transcript_len(&server, &chat_sandbox.sandbox_id, &session_id);
+            assert!(
+                transcript_len >= 2,
+                "fresh-user ozone+ smoke should persist a non-empty transcript"
+            );
+        });
+    }
+
+    #[test]
+    #[ignore = "release smoke"]
+    fn release_smoke_gate_existing_user_data_path() {
+        with_front_door_profile("release", || {
+            let mut server = OzoneMcpServer::new().expect("server");
+            assert_release_front_door_binaries_exist(&server);
+
+            let first_args = json!({
+                "prompt": "Remember the observatory key"
+            });
+            let prepared = server
+                .prepare_mock_user_sandbox(None, Some("ozone_plus_chat_journey"), None)
+                .expect("prepared sandbox");
+            run_release_binary(
+                &server,
+                &prepared.sandbox_id,
+                "ozone-plus",
+                &["create", "Release Smoke Existing"],
+            );
+            let session_id = first_session_id(&server, &prepared.sandbox_id);
+            run_release_binary(
+                &server,
+                &prepared.sandbox_id,
+                "ozone-plus",
+                &[
+                    "send",
+                    session_id.as_str(),
+                    first_args["prompt"].as_str().expect("first prompt"),
+                ],
+            );
+
+            let existing_session_count = server
+                .with_repo(Some(&prepared.sandbox_id), |repo| Ok(repo.list_sessions()?.len()))
+                .expect("existing session count");
+            assert!(
+                existing_session_count >= 1,
+                "existing-user smoke needs persisted data before the second pass"
+            );
+            let initial_transcript_len =
+                active_transcript_len(&server, &prepared.sandbox_id, &session_id);
+
+            let second_args = json!({
+                "prompt": "Use the existing data path and answer again"
+            });
+            let list_output = run_release_binary(
+                &server,
+                &prepared.sandbox_id,
+                "ozone-plus",
+                &["list"],
+            );
+            assert!(
+                list_output.stdout.contains(&session_id),
+                "existing-user smoke should list the persisted session"
+            );
+            run_release_binary(
+                &server,
+                &prepared.sandbox_id,
+                "ozone-plus",
+                &[
+                    "send",
+                    session_id.as_str(),
+                    second_args["prompt"].as_str().expect("second prompt"),
+                ],
+            );
+
+            let final_session_count = server
+                .with_repo(Some(&prepared.sandbox_id), |repo| Ok(repo.list_sessions()?.len()))
+                .expect("final session count");
+            assert!(
+                final_session_count >= existing_session_count,
+                "existing-user smoke should preserve or grow persisted session state"
+            );
+            let final_transcript_len = active_transcript_len(&server, &prepared.sandbox_id, &session_id);
+            assert!(
+                final_transcript_len > initial_transcript_len,
+                "existing-user smoke should append to the persisted transcript"
+            );
+        });
     }
 
     fn screen_check_fixture_path() -> PathBuf {

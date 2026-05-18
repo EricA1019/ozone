@@ -8,22 +8,23 @@ use std::{
 use crate::catalog::CatalogRecord;
 use crate::hardware::HardwareProfile;
 use crate::planner::LaunchPlan;
-use crate::prefs::{ModelLaunchOverride, Preferences, SavedLaunchProfile};
+use crate::prefs::{Preferences, SavedLaunchProfile};
 use crate::processes::{DiskSnapshot, ServiceStatus};
 #[cfg(feature = "profiling-ui")]
 use crate::profiling::{
-    self, ProfilingAction, ProfilingAdvisory, ProfilingFailureReport, ProfilingSuccessReport,
-    WorkflowEvent, WorkflowRequest,
+    ProfilingAction, ProfilingAdvisory, ProfilingFailureReport, ProfilingSuccessReport,
+    WorkflowEvent,
 };
 use anyhow::Result;
+use clap::ValueEnum;
 use crossterm::{
+    cursor::Show,
     event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
 use ratatui::{
     backend::CrosstermBackend,
-    style::{Color, Modifier, Style},
     widgets::Clear,
     Terminal,
 };
@@ -34,11 +35,65 @@ use tokio::sync::mpsc::{error::TryRecvError, UnboundedReceiver};
 use tokio_util::sync::CancellationToken;
 use tui_textarea::TextArea;
 
+mod backend_args;
+mod catalog_flow;
+mod command_overlay_flow;
+mod confirm_flow;
+mod configure_hub_flow;
+mod configure_plan_flow;
+mod configure_profile_flow;
+mod exit_confirm_flow;
+mod frontend_choice_flow;
 pub mod launcher;
+mod launch_execution_flow;
+mod launcher_screen_flow;
+mod model_picker_flow;
 pub mod monitor;
+#[cfg(feature = "profiling-ui")]
+mod profiling_entry_flow;
+#[cfg(feature = "profiling-ui")]
+mod profiling_result_flow;
+mod settings_flow;
+mod settings_screen_flow;
 pub mod splash;
 pub mod tier_install;
 pub mod tier_picker;
+mod tier_picker_flow;
+
+use self::catalog_flow::apply_catalog_report;
+#[cfg(test)]
+use self::catalog_flow::{apply_catalog_refresh, selected_catalog_name};
+use self::command_overlay_flow::{
+    close_command_overlay, input_command_overlay, new_command_overlay, open_command_overlay,
+    overlay_supported,
+};
+#[cfg(test)]
+use self::command_overlay_flow::normalize_command_overlay;
+use self::confirm_flow::handle_confirm_key;
+use self::configure_hub_flow::handle_configure_hub_key;
+#[cfg(test)]
+use self::configure_plan_flow::{adjust_configure_plan, reset_configure_plan};
+#[cfg(test)]
+use self::configure_profile_flow::build_effective_plan;
+use self::exit_confirm_flow::{handle_exit_confirm_key, ExitConfirmOutcome};
+use self::frontend_choice_flow::handle_frontend_choice_key;
+use self::launch_execution_flow::{
+    handle_pending_frontend_launch, PendingFrontendLaunchOutcome,
+};
+use self::launcher_screen_flow::handle_launcher_screen_key;
+use self::model_picker_flow::handle_model_picker_key;
+#[cfg(feature = "profiling-ui")]
+use self::profiling_entry_flow::{handle_profile_advisory_key, handle_profile_confirm_key};
+#[cfg(feature = "profiling-ui")]
+use self::profiling_result_flow::{
+    handle_profile_failure_key, handle_profile_running_key, handle_profile_success_key,
+    ProfilingResultOutcome,
+};
+#[cfg(test)]
+use self::settings_flow::back_from_confirm;
+use self::settings_flow::{open_exit_confirm, open_settings, sync_settings_from_prefs};
+use self::settings_screen_flow::handle_settings_key;
+use self::tier_picker_flow::{handle_tier_picker_key, TierPickerOutcome};
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
@@ -87,7 +142,7 @@ pub enum LauncherActionId {
     Exit,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone)]
 pub struct LauncherAction {
     pub id: LauncherActionId,
     pub label: String,
@@ -95,23 +150,19 @@ pub struct LauncherAction {
     pub command: &'static str,
 }
 
-/// Which frontend the user wants to launch (or `--frontend` CLI bypass).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, clap::ValueEnum)]
-pub enum FrontendMode {
-    /// Open browser to the SillyTavern web UI (default existing behaviour)
-    #[value(name = "sillyTavern")]
-    SillyTavern,
-    /// Launch the ozone+ conversation shell
-    #[value(name = "ozonePlus")]
-    OzonePlus,
-}
-
-/// Which backend the user wants to launch.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
 pub enum BackendMode {
     KoboldCpp,
     LlamaCpp,
     Ollama,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
+#[serde(rename_all = "kebab-case")]
+pub enum FrontendMode {
+    SillyTavern,
+    OzonePlus,
 }
 
 pub struct App {
@@ -127,12 +178,11 @@ pub struct App {
     pub configure_profile_index: usize,
     pub configure_saved_profiles: Vec<SavedLaunchProfile>,
     #[cfg(feature = "profiling-ui")]
-    pub configure_profile_reports: BTreeMap<String, profiling::SavedProfileReport>,
+    pub configure_profile_reports: BTreeMap<String, crate::profiling::SavedProfileReport>,
     pub prefs: Preferences,
     pub services: ServiceStatus,
     pub splash_pulse: bool,
     pub splash_ready: bool,
-    // Monitor state
     pub disk_name: Option<String>,
     pub disk_prev: Option<DiskSnapshot>,
     pub disk_prev_time: Instant,
@@ -142,30 +192,22 @@ pub struct App {
     pub disk_write_mbs: f64,
     pub tokens_per_sec: Option<f64>,
     pub launch_start: Option<Instant>,
-    // UI state
-    /// Stored at construction; event loop uses a local `Instant` instead.
-    #[allow(dead_code)]
-    pub last_refresh: Instant,
     pub ticker: u64,
     pub error_msg: Option<String>,
     pub status_msg: Option<String>,
     pub status_set_at: Option<Instant>,
-    // Model picker filter
     pub model_filter: String,
-    // Frontend choice state
     pub preferred_frontend: Option<FrontendMode>,
     pub frontend_choice_index: usize,
     pub ozone_plus_handoff: bool,
     pub pending_launch_choice: Option<usize>,
     pub exit_confirm_index: usize,
-    // Settings screen state
-    pub settings_section: usize,        // 0=backend, 1=frontend
-    pub settings_backend_index: usize,  // 0=KoboldCpp, 1=LlamaCpp, 2=Ollama
-    pub settings_frontend_index: usize, // 0=SillyTavern, 1=OzonePlus
+    pub settings_section: usize,
+    pub settings_backend_index: usize,
+    pub settings_frontend_index: usize,
     pub command_overlay_open: bool,
     pub command_overlay: TextArea<'static>,
     pub command_overlay_selected: usize,
-    // Profiling flow state (gated — only present with profiling-ui feature)
     #[cfg(feature = "profiling-ui")]
     pub profiling_advisory: Option<ProfilingAdvisory>,
     #[cfg(feature = "profiling-ui")]
@@ -188,7 +230,6 @@ pub struct App {
     pub profiling_event_rx: Option<UnboundedReceiver<WorkflowEvent>>,
     #[cfg(feature = "profiling-ui")]
     pub profiling_cancel: Option<CancellationToken>,
-    // Tier picker state
     pub tier_picker: tier_picker::TierPickerState,
 }
 
@@ -229,7 +270,6 @@ impl App {
             disk_write_mbs: 0.0,
             tokens_per_sec: None,
             launch_start: None,
-            last_refresh: Instant::now(),
             ticker: 0,
             error_msg: None,
             status_msg: None,
@@ -283,7 +323,6 @@ impl App {
             disk_write_mbs: 0.0,
             tokens_per_sec: None,
             launch_start: None,
-            last_refresh: Instant::now(),
             ticker: 0,
             error_msg: None,
             status_msg: None,
@@ -389,6 +428,64 @@ impl App {
     }
 
     #[cfg(feature = "profiling-ui")]
+    pub fn start_profile_workflow(
+        &mut self,
+        rx: UnboundedReceiver<WorkflowEvent>,
+        cancel: CancellationToken,
+    ) {
+        self.profiling_event_rx = Some(rx);
+        self.profiling_cancel = Some(cancel);
+        self.profiling_progress_title = "Preparing".into();
+        self.profiling_progress_current = 0;
+        self.profiling_progress_total = 0;
+        self.profiling_progress.clear();
+        self.push_profile_progress("Preparing workflow...".into());
+        self.profiling_choice_index = 0;
+        self.screen = Screen::ProfileRunning;
+    }
+
+    #[cfg(feature = "profiling-ui")]
+    pub fn reset_profile_and_open_launcher(&mut self) {
+        self.reset_profile_flow();
+        self.screen = Screen::Launcher;
+    }
+
+    #[cfg(feature = "profiling-ui")]
+    pub fn open_profile_advisory(&mut self, advisory: ProfilingAdvisory) {
+        self.profiling_advisory = Some(advisory);
+        self.profiling_choice_index = 0;
+        self.screen = Screen::ProfileAdvisory;
+    }
+
+    #[cfg(feature = "profiling-ui")]
+    pub fn open_profile_failure(&mut self, report: ProfilingFailureReport) {
+        self.profiling_failure = Some(report);
+        self.profiling_choice_index = 0;
+        self.screen = Screen::ProfileFailure;
+    }
+
+    #[cfg(feature = "profiling-ui")]
+    pub fn open_confirm_with_plan(&mut self, plan: LaunchPlan) {
+        self.current_plan = Some(plan);
+        self.configure_recommended_plan = None;
+        self.screen = Screen::Confirm;
+    }
+
+    #[cfg(feature = "profiling-ui")]
+    pub fn clear_profile_success_and_open_configure_hub(&mut self) {
+        self.profiling_pending_action = None;
+        self.profiling_success = None;
+        self.screen = Screen::ConfigureHub;
+    }
+
+    #[cfg(feature = "profiling-ui")]
+    pub fn clear_profile_failure_and_open_configure_hub(&mut self) {
+        self.profiling_pending_action = None;
+        self.profiling_failure = None;
+        self.screen = Screen::ConfigureHub;
+    }
+
+    #[cfg(feature = "profiling-ui")]
     pub fn push_profile_progress(&mut self, line: String) {
         self.profiling_progress.push(line);
         if self.profiling_progress.len() > 20 {
@@ -418,102 +515,11 @@ impl App {
     }
 }
 
-fn build_kc_args(plan: &LaunchPlan) -> Vec<String> {
-    let mut args = vec![
-        "--gpulayers".to_string(),
-        plan.gpu_layers.to_string(),
-        "--contextsize".to_string(),
-        plan.context_size.to_string(),
-        "--quantkv".to_string(),
-        plan.quant_kv.to_string(),
-    ];
-    if let Some(t) = plan.threads {
-        args.push("--threads".to_string());
-        args.push(t.to_string());
-    }
-    if let Some(bt) = plan.blas_threads {
-        args.push("--blasthreads".to_string());
-        args.push(bt.to_string());
-    }
-    args
-}
-
-fn build_llama_args(plan: &LaunchPlan) -> Vec<String> {
-    let gpu_layers = if plan.gpu_layers < 0 {
-        "all".to_string()
-    } else {
-        plan.gpu_layers.to_string()
-    };
-    let mut args = vec![
-        "--host".to_string(),
-        "127.0.0.1".to_string(),
-        "--port".to_string(),
-        "8080".to_string(),
-        "--ctx-size".to_string(),
-        plan.context_size.to_string(),
-        "--gpu-layers".to_string(),
-        gpu_layers,
-        "--no-webui".to_string(),
-    ];
-    if let Some(t) = plan.threads {
-        args.push("--threads".to_string());
-        args.push(t.to_string());
-    }
-    args
-}
-
 fn next_screen_after_splash(app: &App) -> Screen {
     if app.prefs.preferred_tier.is_none() {
         Screen::TierPicker
     } else {
         Screen::Launcher
-    }
-}
-
-fn selected_catalog_name(app: &App) -> Option<String> {
-    app.filtered_catalog_get(app.selected_model)
-        .map(|record| record.model_name)
-}
-
-fn select_catalog_index(app: &App, preferred_name: Option<&str>) -> usize {
-    preferred_name
-        .and_then(|name| {
-            app.filtered_catalog()
-                .iter()
-                .position(|record| record.model_name == name)
-        })
-        .unwrap_or(0)
-}
-
-fn apply_catalog_refresh(app: &mut App, catalog: Vec<CatalogRecord>) {
-    let preferred_name = selected_catalog_name(app)
-        .or_else(|| {
-            app.current_plan
-                .as_ref()
-                .map(|plan| plan.model_name.clone())
-        })
-        .or_else(|| {
-            (!app.prefs.last_model_name.is_empty()).then(|| app.prefs.last_model_name.clone())
-        });
-
-    app.catalog = catalog;
-    app.selected_model = select_catalog_index(app, preferred_name.as_deref());
-
-    let plan_missing = app.current_plan.as_ref().is_some_and(|plan| {
-        !app.catalog
-            .iter()
-            .any(|record| record.model_name == plan.model_name)
-    });
-    if plan_missing {
-        app.current_plan = None;
-        app.configure_recommended_plan = None;
-        if matches!(
-            app.screen,
-            Screen::ConfigureHub | Screen::Confirm | Screen::FrontendChoice
-        ) {
-            app.screen = Screen::ModelPicker;
-            app.set_error("Selected model is no longer available.".into());
-        }
     }
 }
 
@@ -533,66 +539,6 @@ fn queue_frontend_launch(app: &mut App) {
             app.screen = Screen::FrontendChoice;
         }
     }
-}
-
-fn new_command_overlay() -> TextArea<'static> {
-    let mut textarea = TextArea::default();
-    textarea.set_block(ratatui::widgets::Block::default());
-    textarea.set_cursor_style(
-        Style::default()
-            .fg(Color::Black)
-            .bg(crate::theme::LIME)
-            .add_modifier(Modifier::BOLD),
-    );
-    textarea.set_selection_style(Style::default().fg(Color::Black).bg(crate::theme::CYAN));
-    textarea.set_placeholder_text("Type a launcher command");
-    textarea.set_placeholder_style(crate::theme::style_muted());
-    textarea.set_style(crate::theme::style_cyan());
-    textarea.set_max_histories(64);
-    textarea.set_tab_length(0);
-    textarea
-}
-
-fn overlay_supported(screen: &Screen) -> bool {
-    matches!(
-        screen,
-        Screen::Launcher
-            | Screen::ModelPicker
-            | Screen::ConfigureHub
-            | Screen::Confirm
-            | Screen::Settings
-            | Screen::Monitor
-    )
-}
-
-fn open_command_overlay(app: &mut App) {
-    app.command_overlay_open = true;
-    app.command_overlay = new_command_overlay();
-    app.command_overlay_selected = 0;
-}
-
-fn close_command_overlay(app: &mut App) {
-    app.command_overlay_open = false;
-    app.command_overlay = new_command_overlay();
-    app.command_overlay_selected = 0;
-}
-
-fn sync_command_overlay_selection(app: &mut App) {
-    let count = launcher::filtered_launcher_actions(app).len();
-    if count == 0 {
-        app.command_overlay_selected = 0;
-    } else if app.command_overlay_selected >= count {
-        app.command_overlay_selected = count - 1;
-    }
-}
-
-fn normalize_command_overlay(app: &mut App) {
-    let normalized = app.command_overlay_query();
-    app.command_overlay = new_command_overlay();
-    if !normalized.is_empty() {
-        app.command_overlay.insert_str(normalized);
-    }
-    app.command_overlay_selected = 0;
 }
 
 enum LauncherActionOutcome {
@@ -738,256 +684,11 @@ async fn handle_command_overlay_key(
             }
         }
         _ => {
-            app.command_overlay.input(key);
-            normalize_command_overlay(app);
-            sync_command_overlay_selection(app);
+            input_command_overlay(app, key);
         }
     }
 
     Ok(LauncherActionOutcome::Continue)
-}
-
-fn sync_settings_from_prefs(app: &mut App) {
-    app.settings_section = 0;
-    app.settings_backend_index = match app.prefs.preferred_backend {
-        Some(BackendMode::LlamaCpp) => 1,
-        Some(BackendMode::Ollama) => 2,
-        _ => 0,
-    };
-    app.settings_frontend_index = match app.prefs.preferred_frontend {
-        Some(FrontendMode::OzonePlus) => 1,
-        _ => 0,
-    };
-}
-
-fn open_settings(app: &mut App) {
-    sync_settings_from_prefs(app);
-    app.screen = Screen::Settings;
-}
-
-fn open_exit_confirm(app: &mut App) {
-    app.exit_confirm_index = 1;
-    app.screen = Screen::ExitConfirm;
-}
-
-fn back_from_confirm(_app: &App) -> Screen {
-    if _app.configure_recommended_plan.is_some() {
-        return Screen::ConfigureHub;
-    }
-    #[cfg(feature = "profiling-ui")]
-    {
-        let app = _app;
-        if app.profiling_success.is_some() {
-            return Screen::ProfileSuccess;
-        } else if app.profiling_failure.is_some() {
-            return Screen::ProfileFailure;
-        } else if app.profiling_advisory.is_some() {
-            return Screen::ProfileAdvisory;
-        }
-    }
-    Screen::ModelPicker
-}
-
-fn build_effective_plan(
-    app: &App,
-    record: &CatalogRecord,
-    recommended: &LaunchPlan,
-) -> Option<LaunchPlan> {
-    app.hardware.as_ref().map(|hw| {
-        if let Some(profile_name) = app
-            .prefs
-            .default_saved_launch_profile_name_for(&record.model_name)
-        {
-            if let Some(saved_profile) = app
-                .prefs
-                .saved_launch_profile(&record.model_name, profile_name)
-            {
-                return crate::planner::apply_saved_profile(
-                    recommended,
-                    record,
-                    hw,
-                    saved_profile.context_size,
-                    saved_profile.gpu_layers,
-                    saved_profile.quant_kv,
-                    saved_profile.threads,
-                );
-            }
-        }
-        let override_state = app
-            .prefs
-            .launch_override_for(&record.model_name)
-            .unwrap_or_default();
-        crate::planner::apply_launch_override(recommended, record, hw, &override_state)
-    })
-}
-
-fn selected_saved_profile(app: &App) -> Option<SavedLaunchProfile> {
-    app.configure_saved_profiles
-        .get(app.configure_profile_index)
-        .cloned()
-}
-
-#[cfg(feature = "profiling-ui")]
-fn refresh_configure_profile_reports(app: &mut App, model_name: &str) {
-    let reports = profiling::saved_profile_reports(model_name, &app.configure_saved_profiles)
-        .unwrap_or_default();
-    app.configure_profile_reports = reports;
-}
-
-#[cfg(not(feature = "profiling-ui"))]
-fn refresh_configure_profile_reports(_app: &mut App, _model_name: &str) {}
-
-fn refresh_configure_profiles(app: &mut App, model_name: &str) {
-    let profiles = app.prefs.saved_launch_profiles_for(model_name);
-    app.configure_saved_profiles = profiles;
-    if app.configure_saved_profiles.is_empty() {
-        app.configure_profile_index = 0;
-    } else if let Some(default_name) = app.prefs.default_saved_launch_profile_name_for(model_name) {
-        app.configure_profile_index = app
-            .configure_saved_profiles
-            .iter()
-            .position(|profile| profile.profile_name == default_name)
-            .unwrap_or(0);
-    } else {
-        app.configure_profile_index = app
-            .configure_profile_index
-            .min(app.configure_saved_profiles.len().saturating_sub(1));
-    }
-    refresh_configure_profile_reports(app, model_name);
-}
-
-fn next_saved_profile_name(profiles: &[SavedLaunchProfile]) -> String {
-    let mut index = 1usize;
-    loop {
-        let candidate = format!("custom-{index}");
-        if profiles
-            .iter()
-            .all(|profile| profile.profile_name != candidate)
-        {
-            return candidate;
-        }
-        index += 1;
-    }
-}
-
-fn save_current_plan_as_profile(app: &mut App) -> Option<String> {
-    let plan = app.current_plan.clone()?;
-    let profile_name = next_saved_profile_name(&app.configure_saved_profiles);
-    app.prefs.upsert_saved_launch_profile(
-        plan.model_name.clone(),
-        SavedLaunchProfile {
-            profile_name: profile_name.clone(),
-            context_size: plan.context_size,
-            gpu_layers: plan.gpu_layers,
-            quant_kv: plan.quant_kv,
-            threads: plan.threads,
-        },
-    );
-    if app
-        .prefs
-        .default_saved_launch_profile_name_for(&plan.model_name)
-        .is_none()
-    {
-        app.prefs
-            .set_default_saved_launch_profile(plan.model_name.clone(), profile_name.clone());
-    }
-    refresh_configure_profiles(app, &plan.model_name);
-    app.configure_profile_index = app
-        .configure_saved_profiles
-        .iter()
-        .position(|profile| profile.profile_name == profile_name)
-        .unwrap_or(0);
-    Some(profile_name)
-}
-
-fn update_selected_profile_from_current_plan(app: &mut App) -> Option<String> {
-    let plan = app.current_plan.clone()?;
-    let selected = selected_saved_profile(app)?;
-    app.prefs.upsert_saved_launch_profile(
-        plan.model_name.clone(),
-        SavedLaunchProfile {
-            profile_name: selected.profile_name.clone(),
-            context_size: plan.context_size,
-            gpu_layers: plan.gpu_layers,
-            quant_kv: plan.quant_kv,
-            threads: plan.threads,
-        },
-    );
-    refresh_configure_profiles(app, &plan.model_name);
-    app.configure_profile_index = app
-        .configure_saved_profiles
-        .iter()
-        .position(|profile| profile.profile_name == selected.profile_name)
-        .unwrap_or(0);
-    Some(selected.profile_name)
-}
-
-fn apply_selected_saved_profile(app: &mut App) -> Option<String> {
-    let record = selected_record(app)?;
-    let recommended = app.configure_recommended_plan.clone()?;
-    let hw = app.hardware.as_ref()?;
-    let profile = selected_saved_profile(app)?;
-    app.current_plan = Some(crate::planner::apply_saved_profile(
-        &recommended,
-        &record,
-        hw,
-        profile.context_size,
-        profile.gpu_layers,
-        profile.quant_kv,
-        profile.threads,
-    ));
-    Some(profile.profile_name)
-}
-
-fn cycle_saved_profile(app: &mut App, direction: i32) {
-    if app.configure_saved_profiles.is_empty() {
-        return;
-    }
-    let len = app.configure_saved_profiles.len() as i32;
-    let current = app.configure_profile_index as i32;
-    app.configure_profile_index = (current + direction).rem_euclid(len) as usize;
-}
-
-fn set_selected_profile_default(app: &mut App) -> Option<String> {
-    let model_name = app.current_plan.as_ref()?.model_name.clone();
-    let profile = selected_saved_profile(app)?;
-    app.prefs
-        .set_default_saved_launch_profile(model_name.clone(), profile.profile_name.clone());
-    refresh_configure_profiles(app, &model_name);
-    Some(profile.profile_name)
-}
-
-fn delete_selected_saved_profile(app: &mut App) -> Option<String> {
-    let model_name = app.current_plan.as_ref()?.model_name.clone();
-    let profile = selected_saved_profile(app)?;
-    if !app
-        .prefs
-        .remove_saved_launch_profile(&model_name, &profile.profile_name)
-    {
-        return None;
-    }
-    refresh_configure_profiles(app, &model_name);
-    Some(profile.profile_name)
-}
-
-fn build_override_from_plans(
-    recommended: &LaunchPlan,
-    effective: &LaunchPlan,
-) -> ModelLaunchOverride {
-    let recommended_gpu_layers = if recommended.gpu_layers < 0 {
-        recommended.total_layers as i32
-    } else {
-        recommended.gpu_layers
-    };
-    ModelLaunchOverride {
-        context_size: (effective.context_size != recommended.context_size)
-            .then_some(effective.context_size),
-        gpu_layers: (effective.gpu_layers != recommended_gpu_layers)
-            .then_some(effective.gpu_layers),
-        threads: (effective.threads != recommended.threads)
-            .then_some(effective.threads)
-            .flatten(),
-    }
 }
 
 fn selected_record(app: &App) -> Option<CatalogRecord> {
@@ -999,68 +700,63 @@ fn selected_record(app: &App) -> Option<CatalogRecord> {
     })
 }
 
-fn adjust_configure_plan(app: &mut App, direction: i32) {
-    let Some(record) = selected_record(app) else {
-        return;
-    };
-    let Some(recommended) = app.configure_recommended_plan.clone() else {
-        return;
-    };
-    let Some(hw) = app.hardware.as_ref() else {
-        return;
-    };
-    let mut override_state = build_override_from_plans(
-        &recommended,
-        app.current_plan.as_ref().unwrap_or(&recommended),
-    );
+struct TerminalRestoreGuard {
+    raw_mode_enabled: bool,
+    alt_screen_entered: bool,
+}
 
-    match app.configure_field_index {
-        0 => {
-            let current = app
-                .current_plan
-                .as_ref()
-                .map(|plan| plan.context_size)
-                .unwrap_or(recommended.context_size);
-            override_state.context_size =
-                Some(crate::planner::step_context_size(current, direction));
-        }
-        _ => {
-            let current = app
-                .current_plan
-                .as_ref()
-                .map(|plan| plan.gpu_layers)
-                .unwrap_or_else(|| {
-                    if recommended.gpu_layers < 0 {
-                        recommended.total_layers as i32
-                    } else {
-                        recommended.gpu_layers
-                    }
-                });
-            override_state.gpu_layers =
-                Some((current + direction).clamp(0, recommended.total_layers as i32));
+impl TerminalRestoreGuard {
+    fn new() -> Self {
+        Self {
+            raw_mode_enabled: false,
+            alt_screen_entered: false,
         }
     }
 
-    app.current_plan = Some(crate::planner::apply_launch_override(
-        &recommended,
-        &record,
-        hw,
-        &override_state,
-    ));
+    fn mark_raw_mode_enabled(&mut self) {
+        self.raw_mode_enabled = true;
+    }
+
+    fn mark_alt_screen_entered(&mut self) {
+        self.alt_screen_entered = true;
+    }
+
+    fn restore(&mut self) -> io::Result<()> {
+        let raw_mode_enabled = self.raw_mode_enabled;
+        let alt_screen_entered = self.alt_screen_entered;
+        self.raw_mode_enabled = false;
+        self.alt_screen_entered = false;
+
+        let mut first_error = None;
+        if raw_mode_enabled {
+            if let Err(error) = disable_raw_mode() {
+                first_error = Some(error);
+            }
+        }
+        if alt_screen_entered {
+            let mut stdout = io::stdout();
+            if let Err(error) = execute!(stdout, Show, LeaveAlternateScreen) {
+                if first_error.is_none() {
+                    first_error = Some(error);
+                }
+            }
+        }
+        if let Some(error) = first_error {
+            return Err(error);
+        }
+        Ok(())
+    }
 }
 
-fn reset_configure_plan(app: &mut App) {
-    if let (Some(record), Some(recommended), Some(hw)) = (
-        selected_record(app),
-        app.configure_recommended_plan.clone(),
-        app.hardware.as_ref(),
-    ) {
-        app.current_plan = Some(crate::planner::apply_launch_override(
-            &recommended,
-            &record,
-            hw,
-            &ModelLaunchOverride::default(),
-        ));
+impl Drop for TerminalRestoreGuard {
+    fn drop(&mut self) {
+        if self.raw_mode_enabled {
+            let _ = disable_raw_mode();
+        }
+        if self.alt_screen_entered {
+            let mut stdout = io::stdout();
+            let _ = execute!(stdout, Show, LeaveAlternateScreen);
+        }
     }
 }
 
@@ -1070,7 +766,13 @@ pub async fn run_launcher(
     tier_override: Option<crate::prefs::Tier>,
     force_picker: bool,
 ) -> Result<()> {
-    let mut prefs = crate::prefs::load_prefs().await;
+    let (mut prefs, startup_error) = match crate::prefs::load_prefs().await {
+        Ok(prefs) => (prefs, None),
+        Err(error) => (
+            Preferences::default(),
+            Some(format!("Failed to load preferences: {error}")),
+        ),
+    };
     prefs.no_browser = prefs.no_browser || no_browser;
 
     // Apply tier override if given
@@ -1079,6 +781,9 @@ pub async fn run_launcher(
     }
 
     let mut app = App::new(prefs);
+    if let Some(error) = startup_error {
+        app.set_error(error);
+    }
     app.preferred_frontend = preferred_frontend.or(app.prefs.preferred_frontend);
 
     // If --pick flag, clear the tier preference so picker shows
@@ -1090,8 +795,11 @@ pub async fn run_launcher(
     sync_settings_from_prefs(&mut app);
 
     enable_raw_mode()?;
+    let mut terminal_restore = TerminalRestoreGuard::new();
+    terminal_restore.mark_raw_mode_enabled();
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
+    terminal_restore.mark_alt_screen_entered();
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
 
@@ -1111,7 +819,10 @@ pub async fn run_launcher(
     let catalog_model_dir = model_dir.clone();
     let catalog_preset_file = preset_file.clone();
     let catalog_bench_file = bench_file.clone();
-    let (cat_tx, mut cat_rx) = tokio::sync::oneshot::channel::<(u64, Vec<CatalogRecord>)>();
+    let (cat_tx, mut cat_rx) = tokio::sync::oneshot::channel::<(
+        u64,
+        Result<crate::catalog::CatalogLoadReport>,
+    )>();
     tokio::spawn(async move {
         let signature = crate::catalog::catalog_signature(
             &catalog_model_dir,
@@ -1120,37 +831,41 @@ pub async fn run_launcher(
         )
         .await
         .unwrap_or_default();
-        let records = crate::catalog::load_catalog(
+        let report = crate::catalog::load_catalog_report(
             &catalog_model_dir,
             &catalog_preset_file,
             &catalog_bench_file,
         )
-        .await
-        .unwrap_or_default();
-        let _ = cat_tx.send((signature, records));
+        .await;
+        let _ = cat_tx.send((signature, report));
     });
 
     let mut last_tick = Instant::now();
     let mut last_refresh = Instant::now();
     let mut last_fast_refresh = Instant::now();
     let mut last_catalog_signature: Option<u64> = None;
+    let mut catalog_bootstrap_complete = false;
 
     let result = loop {
         // Check incoming async data
         if let Ok(hw) = hw_rx.try_recv() {
             app.hardware = Some(hw);
-            if !app.catalog.is_empty() {
+            if catalog_bootstrap_complete {
                 app.splash_ready = true;
             }
         }
-        if let Ok((signature, catalog)) = cat_rx.try_recv() {
+        if let Ok((signature, report)) = cat_rx.try_recv() {
             last_catalog_signature = Some(signature);
-            apply_catalog_refresh(&mut app, catalog);
+            catalog_bootstrap_complete = true;
+            match report {
+                Ok(report) => apply_catalog_report(&mut app, report),
+                Err(error) => app.set_error(format!("Failed to load catalog: {error}")),
+            }
             if app.hardware.is_some() {
                 app.splash_ready = true;
             }
         }
-        if app.hardware.is_some() && !app.catalog.is_empty() {
+        if app.hardware.is_some() && catalog_bootstrap_complete {
             app.splash_ready = true;
         }
 
@@ -1209,11 +924,11 @@ pub async fn run_launcher(
                     app.push_profile_progress(detail);
                 }
                 WorkflowEvent::Completed(report) => {
+                    let report = *report;
                     app.profiling_event_rx = None;
                     app.profiling_cancel = None;
-                    // TODO(phase2): gate on ProfilingBackend::LlamaCpp once Phase 2 is merged.
-                    // For now, save the recommended profile to prefs when llama.cpp is the
-                    // preferred backend, so profile-driven args are used on next launch.
+                    // Persist llama.cpp profiling hints so the next launch can reuse the
+                    // recommended GPU layers and context size.
                     if app.prefs.preferred_backend == Some(BackendMode::LlamaCpp) {
                         if let Some(ref profile) = report.recommended_profile {
                             app.prefs.llamacpp_gpu_layers = Some(profile.gpu_layers);
@@ -1230,6 +945,7 @@ pub async fn run_launcher(
                     app.screen = Screen::ProfileSuccess;
                 }
                 WorkflowEvent::Failed(report) => {
+                    let report = *report;
                     app.profiling_event_rx = None;
                     app.profiling_cancel = None;
                     app.profiling_failure = Some(report);
@@ -1248,123 +964,10 @@ pub async fn run_launcher(
 
         // Execute a pending frontend launch choice (triggered by FrontendChoice Enter or --frontend bypass).
         if let Some(choice_idx) = app.pending_launch_choice.take() {
-            match app.prefs.preferred_backend {
-                Some(BackendMode::KoboldCpp) => {
-                    if let Some(plan) = app.current_plan.clone() {
-                        app.screen = Screen::Launching;
-                        app.launch_start = Some(Instant::now());
-
-                        let home = std::env::var("HOME").unwrap_or_default();
-                        let launcher_path = crate::processes::resolved_kobold_launcher_path();
-                        let model_path = std::path::PathBuf::from(&home)
-                            .join("models")
-                            .join(&plan.model_name);
-                        let kc_args = build_kc_args(&plan);
-                        match crate::processes::start_kobold(
-                            &launcher_path,
-                            &model_path.to_string_lossy(),
-                            &kc_args,
-                        )
-                        .await
-                        {
-                            Ok(_) => {
-                                let mut updated_prefs = app.prefs.clone();
-                                updated_prefs.last_model_name = plan.model_name.clone();
-                                updated_prefs.last_context_size = Some(plan.context_size);
-                                updated_prefs.last_gpu_layers = Some(plan.gpu_layers);
-                                updated_prefs.last_quant_kv = Some(plan.quant_kv);
-                                let _ = crate::prefs::save_prefs(&updated_prefs).await;
-                                app.prefs = updated_prefs;
-                                if choice_idx == 0 {
-                                    if !app.prefs.no_browser {
-                                        crate::processes::open_browser_app("http://localhost:8000");
-                                    }
-                                    app.screen = Screen::Monitor;
-                                } else {
-                                    app.ozone_plus_handoff = true;
-                                    break Ok(());
-                                }
-                            }
-                            Err(error) => {
-                                app.set_error(format!("Launch failed: {error}"));
-                                app.screen = Screen::Launcher;
-                            }
-                        }
-                    } else {
-                        app.set_error("No launch plan selected.".into());
-                        app.screen = Screen::Launcher;
-                    }
-                }
-                Some(BackendMode::LlamaCpp) => {
-                    if let Some(plan) = app.current_plan.clone() {
-                        app.screen = Screen::Launching;
-                        app.launch_start = Some(Instant::now());
-
-                        let home = std::env::var("HOME").unwrap_or_default();
-                        let server_path = match crate::processes::resolved_llamacpp_server_path() {
-                            Ok(path) => path,
-                            Err(error) => {
-                                app.set_error(format!("Launch failed: {error}"));
-                                app.screen = Screen::Launcher;
-                                continue;
-                            }
-                        };
-                        let model_path = std::path::PathBuf::from(&home)
-                            .join("models")
-                            .join(&plan.model_name);
-                        let llama_args = build_llama_args(&plan);
-                        match crate::processes::start_llamacpp(
-                            &server_path,
-                            &model_path.to_string_lossy(),
-                            &llama_args,
-                        )
-                        .await
-                        {
-                            Ok(_) => {
-                                let mut updated_prefs = app.prefs.clone();
-                                updated_prefs.last_model_name = plan.model_name.clone();
-                                updated_prefs.last_context_size = Some(plan.context_size);
-                                updated_prefs.last_gpu_layers = Some(plan.gpu_layers);
-                                updated_prefs.last_quant_kv = Some(plan.quant_kv);
-                                let _ = crate::prefs::save_prefs(&updated_prefs).await;
-                                app.prefs = updated_prefs;
-                                if choice_idx == 0 {
-                                    if !app.prefs.no_browser {
-                                        crate::processes::open_browser_app("http://localhost:8000");
-                                    }
-                                    app.screen = Screen::Monitor;
-                                } else {
-                                    app.ozone_plus_handoff = true;
-                                    break Ok(());
-                                }
-                            }
-                            Err(error) => {
-                                app.set_error(format!("Launch failed: {error}"));
-                                app.screen = Screen::Launcher;
-                            }
-                        }
-                    } else {
-                        app.set_error("No launch plan selected.".into());
-                        app.screen = Screen::Launcher;
-                    }
-                }
-                Some(BackendMode::Ollama) => {
-                    if choice_idx == 0 {
-                        if !app.prefs.no_browser {
-                            crate::processes::open_browser_app("http://localhost:8000");
-                        }
-                        app.screen = Screen::Monitor;
-                    } else {
-                        app.set_error(
-                            "ozone+ handoff currently requires KoboldCpp. Use SillyTavern for Ollama-backed launches.".into(),
-                        );
-                        app.screen = Screen::Launcher;
-                    }
-                }
-                None => {
-                    app.set_error("Configure backend in Settings first".into());
-                    app.screen = Screen::Launcher;
-                }
+            match handle_pending_frontend_launch(&mut app, choice_idx).await {
+                PendingFrontendLaunchOutcome::Continue => {}
+                PendingFrontendLaunchOutcome::SkipTick => continue,
+                PendingFrontendLaunchOutcome::ExitLauncher => break Ok(()),
             }
         }
 
@@ -1422,704 +1025,68 @@ pub async fn run_launcher(
                         app.screen = next_screen_after_splash(&app);
                     }
                     Screen::TierPicker => {
-                        let phase = app.tier_picker.phase.clone();
-                        match phase {
-                            tier_picker::TierPickerPhase::Picking => match key.code {
-                                KeyCode::Char('q') | KeyCode::Esc => break Ok(()),
-                                KeyCode::Up => app.tier_picker.up(),
-                                KeyCode::Down => app.tier_picker.down(),
-                                KeyCode::Enter => {
-                                    let tier = app.tier_picker.selected_tier();
-                                    let binary =
-                                        tier_install::binary_name_for_tier(tier).to_string();
-                                    match tier {
-                                        crate::prefs::Tier::Lite => {
-                                            app.prefs.preferred_tier = Some(tier);
-                                            let prefs_clone = app.prefs.clone();
-                                            tokio::spawn(async move {
-                                                let _ =
-                                                    crate::prefs::save_prefs(&prefs_clone).await;
-                                            });
-                                            app.screen = Screen::Launcher;
-                                        }
-                                        crate::prefs::Tier::Base | crate::prefs::Tier::Plus => {
-                                            if tier_install::is_tier_installed(&binary) {
-                                                app.prefs.preferred_tier = Some(tier);
-                                                let prefs_clone = app.prefs.clone();
-                                                tokio::spawn(async move {
-                                                    let _ = crate::prefs::save_prefs(&prefs_clone)
-                                                        .await;
-                                                });
-                                                app.screen = Screen::Launcher;
-                                            } else {
-                                                app.tier_picker.phase = tier_picker::TierPickerPhase::ConfirmingDownload {
-                                                    tier,
-                                                    binary,
-                                                };
-                                            }
-                                        }
-                                    }
-                                }
-                                _ => {}
-                            },
-                            tier_picker::TierPickerPhase::ConfirmingDownload { tier, binary } => {
-                                match key.code {
-                                    KeyCode::Char('y') | KeyCode::Char('Y') | KeyCode::Enter => {
-                                        let bin = binary.clone();
-                                        let (tx, rx) = std::sync::mpsc::channel();
-                                        std::thread::spawn(move || {
-                                            let result =
-                                                tier_install::install_tier_from_github(&bin);
-                                            let _ = tx.send(result);
-                                        });
-                                        app.tier_picker.install_rx = Some(rx);
-                                        app.tier_picker.phase =
-                                            tier_picker::TierPickerPhase::Installing {
-                                                tier,
-                                                binary,
-                                            };
-                                    }
-                                    KeyCode::Char('n')
-                                    | KeyCode::Char('N')
-                                    | KeyCode::Char('q')
-                                    | KeyCode::Esc => {
-                                        app.prefs.preferred_tier = Some(crate::prefs::Tier::Lite);
-                                        let prefs_clone = app.prefs.clone();
-                                        tokio::spawn(async move {
-                                            let _ = crate::prefs::save_prefs(&prefs_clone).await;
-                                        });
-                                        app.tier_picker.phase =
-                                            tier_picker::TierPickerPhase::Picking;
-                                        app.screen = Screen::Launcher;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            tier_picker::TierPickerPhase::Installing { .. } => {
-                                // No input during install — spinner only
-                            }
-                            tier_picker::TierPickerPhase::InstallDone { tier, .. } => {
-                                match key.code {
-                                    KeyCode::Enter | KeyCode::Char(' ') => {
-                                        app.prefs.preferred_tier = Some(tier);
-                                        let prefs_clone = app.prefs.clone();
-                                        tokio::spawn(async move {
-                                            let _ = crate::prefs::save_prefs(&prefs_clone).await;
-                                        });
-                                        app.tier_picker.phase =
-                                            tier_picker::TierPickerPhase::Picking;
-                                        app.screen = Screen::Launcher;
-                                    }
-                                    _ => {}
-                                }
-                            }
-                            tier_picker::TierPickerPhase::InstallError { .. } => match key.code {
-                                KeyCode::Enter | KeyCode::Esc | KeyCode::Char(' ') => {
-                                    app.prefs.preferred_tier = Some(crate::prefs::Tier::Lite);
-                                    let prefs_clone = app.prefs.clone();
-                                    tokio::spawn(async move {
-                                        let _ = crate::prefs::save_prefs(&prefs_clone).await;
-                                    });
-                                    app.tier_picker.phase = tier_picker::TierPickerPhase::Picking;
-                                    app.screen = Screen::Launcher;
-                                }
-                                _ => {}
-                            },
+                        match handle_tier_picker_key(&mut app, key) {
+                            TierPickerOutcome::Continue => {}
+                            TierPickerOutcome::ExitLauncher => break Ok(()),
                         }
                     }
-                    Screen::Launcher => match key.code {
-                        KeyCode::Char('q') => break Ok(()),
-                        KeyCode::Esc => open_exit_confirm(&mut app),
-                        KeyCode::Up if app.selected_action > 0 => {
-                            app.selected_action -= 1;
+                    Screen::Launcher => {
+                        match handle_launcher_screen_key(&mut app, key, &mut last_refresh).await {
+                            LauncherActionOutcome::Continue => {}
+                            LauncherActionOutcome::Exit => break Ok(()),
                         }
-                        KeyCode::Down => {
-                            let count = launcher::visible_launcher_actions(&app).len();
-                            if app.selected_action < count - 1 {
-                                app.selected_action += 1;
-                            }
+                    }
+                    Screen::ExitConfirm => {
+                        match handle_exit_confirm_key(&mut app, key) {
+                            ExitConfirmOutcome::Continue => {}
+                            ExitConfirmOutcome::ExitLauncher => break Ok(()),
                         }
-                        KeyCode::Enter => {
-                            let actions = launcher::visible_launcher_actions(&app);
-                            let action = actions
-                                .get(app.selected_action)
-                                .map(|action| action.id)
-                                .unwrap_or(LauncherActionId::Launch);
-                            match run_launcher_action(&mut app, action, &mut last_refresh).await {
-                                LauncherActionOutcome::Continue => {}
-                                LauncherActionOutcome::Exit => break Ok(()),
-                            }
-                        }
-                        _ => {}
-                    },
-                    Screen::ExitConfirm => match key.code {
-                        KeyCode::Esc | KeyCode::Char('n') => app.screen = Screen::Launcher,
-                        KeyCode::Left | KeyCode::Up if app.exit_confirm_index > 0 => {
-                            app.exit_confirm_index -= 1;
-                        }
-                        KeyCode::Right | KeyCode::Down if app.exit_confirm_index < 1 => {
-                            app.exit_confirm_index += 1;
-                        }
-                        KeyCode::Enter | KeyCode::Char('y') => {
-                            if app.exit_confirm_index == 0 {
-                                break Ok(());
-                            }
-                            app.screen = Screen::Launcher;
-                        }
-                        _ => {}
-                    },
-                    Screen::Settings => match key.code {
-                        KeyCode::Tab | KeyCode::Right => {
-                            app.settings_section = (app.settings_section + 1) % 2;
-                        }
-                        KeyCode::BackTab | KeyCode::Left => {
-                            app.settings_section = if app.settings_section == 0 { 1 } else { 0 };
-                        }
-                        KeyCode::Up => match app.settings_section {
-                            0 => {
-                                if app.settings_backend_index > 0 {
-                                    app.settings_backend_index -= 1;
-                                }
-                            }
-                            _ => {
-                                if app.settings_frontend_index > 0 {
-                                    app.settings_frontend_index -= 1;
-                                }
-                            }
-                        },
-                        KeyCode::Down => match app.settings_section {
-                            0 => {
-                                if app.settings_backend_index < 2 {
-                                    app.settings_backend_index += 1;
-                                }
-                            }
-                            _ => {
-                                if app.settings_frontend_index < 1 {
-                                    app.settings_frontend_index += 1;
-                                }
-                            }
-                        },
-                        KeyCode::Enter => {
-                            app.prefs.preferred_backend = match app.settings_backend_index {
-                                0 => Some(BackendMode::KoboldCpp),
-                                1 => Some(BackendMode::LlamaCpp),
-                                2 => Some(BackendMode::Ollama),
-                                _ => None,
-                            };
-                            app.prefs.preferred_frontend = match app.settings_frontend_index {
-                                0 => Some(FrontendMode::SillyTavern),
-                                1 => Some(FrontendMode::OzonePlus),
-                                _ => None,
-                            };
-                            let _ = crate::prefs::save_prefs(&app.prefs).await;
-                            app.preferred_frontend =
-                                preferred_frontend.or(app.prefs.preferred_frontend);
-                            app.set_status("Launcher defaults saved.".into());
-                            app.screen = Screen::Launcher;
-                        }
-                        KeyCode::Esc => {
-                            sync_settings_from_prefs(&mut app);
-                            app.set_status("Settings changes discarded.".into());
-                            app.screen = Screen::Launcher;
-                        }
-                        _ => {}
-                    },
-                    Screen::ModelPicker => match key.code {
-                        KeyCode::Esc => {
-                            if !app.model_filter.is_empty() {
-                                app.model_filter.clear();
-                            } else {
-                                app.current_plan = None;
-                                app.configure_recommended_plan = None;
-                                app.screen = Screen::Launcher;
-                            }
-                        }
-                        KeyCode::Up => {
-                            let count = app.filtered_catalog_len();
-                            if app.selected_model > 0 {
-                                app.selected_model -= 1;
-                            }
-                            let _ = count; // keep borrow checker happy
-                        }
-                        KeyCode::Down => {
-                            let count = app.filtered_catalog_len();
-                            if app.selected_model + 1 < count {
-                                app.selected_model += 1;
-                            }
-                        }
-                        KeyCode::Backspace => {
-                            app.model_filter.pop();
-                            app.selected_model = 0;
-                        }
-                        KeyCode::Enter => {
-                            if let Some(record) = app.filtered_catalog_get(app.selected_model) {
-                                match app.model_picker_mode {
-                                    ModelPickerMode::Launch | ModelPickerMode::Configure => {
-                                        if let Some(hw) = &app.hardware {
-                                            let recommended =
-                                                crate::planner::plan_launch(&record, hw);
-                                            app.current_plan =
-                                                build_effective_plan(&app, &record, &recommended)
-                                                    .or_else(|| Some(recommended.clone()));
-                                            app.configure_recommended_plan = Some(recommended);
-                                            app.configure_field_index = 0;
-                                            refresh_configure_profiles(
-                                                &mut app,
-                                                &record.model_name,
-                                            );
-                                            app.screen = Screen::ConfigureHub;
-                                        }
-                                    }
-                                    #[cfg(feature = "profiling-ui")]
-                                    ModelPickerMode::Profile => {
-                                        match profiling::build_advisory(
-                                            &record,
-                                            app.hardware.as_ref(),
-                                            &app.services,
-                                        ) {
-                                            Ok(advisory) => {
-                                                app.profiling_advisory = Some(advisory);
-                                                app.profiling_choice_index = 0;
-                                                app.profiling_success = None;
-                                                app.profiling_failure = None;
-                                                app.screen = Screen::ProfileAdvisory;
-                                            }
-                                            Err(error) => {
-                                                app.set_error(format!(
-                                                    "Could not prepare profiling advice: {error}"
-                                                ));
-                                                app.screen = Screen::Launcher;
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        KeyCode::Char(c)
-                            if c.is_alphanumeric() || c == '-' || c == '_' || c == '.' =>
-                        {
-                            app.model_filter.push(c);
-                            app.selected_model = 0;
-                        }
-                        _ => {}
-                    },
-                    Screen::Confirm => match key.code {
-                        KeyCode::Esc | KeyCode::Char('n') => app.screen = back_from_confirm(&app),
-                        KeyCode::Enter | KeyCode::Char('y') if app.current_plan.is_some() => {
-                            queue_frontend_launch(&mut app);
-                        }
-                        _ => {}
-                    },
-                    Screen::ConfigureHub => match key.code {
-                        KeyCode::Esc => {
-                            app.current_plan = None;
-                            app.configure_recommended_plan = None;
-                            app.configure_saved_profiles.clear();
-                            app.configure_profile_index = 0;
-                            #[cfg(feature = "profiling-ui")]
-                            app.configure_profile_reports.clear();
-                            app.screen = Screen::ModelPicker;
-                        }
-                        KeyCode::Up if app.configure_field_index > 0 => {
-                            app.configure_field_index -= 1;
-                        }
-                        KeyCode::Down if app.configure_field_index < 1 => {
-                            app.configure_field_index += 1;
-                        }
-                        KeyCode::Left => adjust_configure_plan(&mut app, -1),
-                        KeyCode::Right => adjust_configure_plan(&mut app, 1),
-                        KeyCode::Char('p') | KeyCode::Char('P') => {
-                            cycle_saved_profile(&mut app, -1)
-                        }
-                        KeyCode::Char('n') | KeyCode::Char('N') => cycle_saved_profile(&mut app, 1),
-                        KeyCode::Char('l') | KeyCode::Char('L') => {
-                            if let Some(profile_name) = apply_selected_saved_profile(&mut app) {
-                                app.set_status(format!(
-                                    "Loaded saved profile '{profile_name}' into Configure Hub."
-                                ));
-                            } else {
-                                app.set_error("No saved profile is selected.".into());
-                            }
-                        }
-                        KeyCode::Char('s') | KeyCode::Char('S') => {
-                            if let Some(profile_name) = save_current_plan_as_profile(&mut app) {
-                                let _ = crate::prefs::save_prefs(&app.prefs).await;
-                                app.set_status(format!("Saved profile '{profile_name}'."));
-                            } else {
-                                app.set_error("No launch plan is available to save.".into());
-                            }
-                        }
-                        KeyCode::Char('u') | KeyCode::Char('U') => {
-                            if let Some(profile_name) =
-                                update_selected_profile_from_current_plan(&mut app)
-                            {
-                                let _ = crate::prefs::save_prefs(&app.prefs).await;
-                                app.set_status(format!("Updated saved profile '{profile_name}'."));
-                            } else {
-                                app.set_error("Select a saved profile before updating it.".into());
-                            }
-                        }
-                        KeyCode::Char('d') | KeyCode::Char('D') => {
-                            if let Some(profile_name) = delete_selected_saved_profile(&mut app) {
-                                let _ = crate::prefs::save_prefs(&app.prefs).await;
-                                app.set_status(format!("Deleted saved profile '{profile_name}'."));
-                            } else {
-                                app.set_error("Select a saved profile before deleting it.".into());
-                            }
-                        }
-                        KeyCode::Char('f') | KeyCode::Char('F') => {
-                            if let Some(profile_name) = set_selected_profile_default(&mut app) {
-                                let _ = crate::prefs::save_prefs(&app.prefs).await;
-                                app.set_status(format!(
-                                    "Default launch profile set to '{profile_name}'."
-                                ));
-                            } else {
-                                app.set_error(
-                                    "Select a saved profile before marking it default.".into(),
-                                );
-                            }
-                        }
-                        #[cfg(feature = "profiling-ui")]
-                        KeyCode::Char('b') | KeyCode::Char('B') => {
-                            if selected_saved_profile(&app).is_some() {
-                                app.profiling_pending_action =
-                                    Some(ProfilingAction::BenchmarkSavedProfile);
-                                app.screen = Screen::ProfileConfirm;
-                            } else {
-                                app.set_error(
-                                    "Save and select a profile before benchmarking it.".into(),
-                                );
-                            }
-                        }
-                        KeyCode::Char('r') | KeyCode::Char('R') => reset_configure_plan(&mut app),
-                        KeyCode::Enter => {
-                            if let (Some(recommended), Some(effective)) = (
-                                app.configure_recommended_plan.clone(),
-                                app.current_plan.clone(),
-                            ) {
-                                let override_state =
-                                    build_override_from_plans(&recommended, &effective);
-                                app.prefs.set_model_launch_override(
-                                    effective.model_name.clone(),
-                                    override_state,
-                                );
-                                let _ = crate::prefs::save_prefs(&app.prefs).await;
-                                app.screen = Screen::Confirm;
-                            }
-                        }
-                        _ => {}
-                    },
-                    Screen::FrontendChoice => match key.code {
-                        KeyCode::Esc => app.screen = Screen::Confirm,
-                        KeyCode::Up if app.frontend_choice_index > 0 => {
-                            app.frontend_choice_index -= 1;
-                        }
-                        KeyCode::Down if app.frontend_choice_index < 1 => {
-                            app.frontend_choice_index += 1;
-                        }
-                        KeyCode::Enter if app.current_plan.is_some() => {
-                            app.pending_launch_choice = Some(app.frontend_choice_index);
-                        }
-                        _ => {}
-                    },
+                    }
+                    Screen::Settings => {
+                        handle_settings_key(&mut app, key, preferred_frontend).await;
+                    }
+                    Screen::ModelPicker => {
+                        handle_model_picker_key(&mut app, key);
+                    }
+                    Screen::Confirm => {
+                        handle_confirm_key(&mut app, key);
+                    }
+                    Screen::ConfigureHub => {
+                        handle_configure_hub_key(&mut app, key).await;
+                    }
+                    Screen::FrontendChoice => {
+                        handle_frontend_choice_key(&mut app, key);
+                    }
                     #[cfg(feature = "profiling-ui")]
-                    Screen::ProfileAdvisory => match key.code {
-                        KeyCode::Esc => app.screen = Screen::ModelPicker,
-                        KeyCode::Up if app.profiling_choice_index > 0 => {
-                            app.profiling_choice_index -= 1;
-                        }
-                        KeyCode::Down => {
-                            let count = app
-                                .profiling_advisory
-                                .as_ref()
-                                .map(|advisory| advisory.available_actions.len())
-                                .unwrap_or(0);
-                            if app.profiling_choice_index + 1 < count {
-                                app.profiling_choice_index += 1;
-                            }
-                        }
-                        KeyCode::Enter => {
-                            if let Some(advisory) = &app.profiling_advisory {
-                                if let Some(action) = advisory
-                                    .available_actions
-                                    .get(app.profiling_choice_index)
-                                    .cloned()
-                                {
-                                    match action {
-                                        ProfilingAction::LaunchRecommended => {
-                                            if let (Some(record), Some(hw)) = (
-                                                app.filtered_catalog_get(app.selected_model),
-                                                app.hardware.as_ref(),
-                                            ) {
-                                                match profiling::preferred_launch_plan(&record, hw)
-                                                {
-                                                    Ok(plan) => {
-                                                        app.current_plan = Some(plan);
-                                                        app.configure_recommended_plan = None;
-                                                        app.screen = Screen::Confirm;
-                                                    }
-                                                    Err(error) => {
-                                                        app.set_error(format!(
-                                                            "Could not build launch plan: {error}"
-                                                        ));
-                                                        app.screen = Screen::Launcher;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        ProfilingAction::ReviewIssue => {
-                                            if let Some(record) =
-                                                app.filtered_catalog_get(app.selected_model)
-                                            {
-                                                app.profiling_failure =
-                                                    Some(profiling::blocking_issue_report(&record));
-                                                app.profiling_choice_index = 0;
-                                                app.screen = Screen::ProfileFailure;
-                                            }
-                                        }
-                                        action => {
-                                            app.profiling_pending_action = Some(action);
-                                            app.screen = Screen::ProfileConfirm;
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                        _ => {}
-                    },
+                    Screen::ProfileAdvisory => {
+                        handle_profile_advisory_key(&mut app, key);
+                    }
                     #[cfg(feature = "profiling-ui")]
-                    Screen::ProfileConfirm => match key.code {
-                        KeyCode::Esc => {
-                            if matches!(
-                                app.profiling_pending_action,
-                                Some(ProfilingAction::BenchmarkSavedProfile)
-                            ) && app.configure_recommended_plan.is_some()
-                            {
-                                app.screen = Screen::ConfigureHub;
-                            } else {
-                                app.screen = Screen::ProfileAdvisory;
-                            }
-                        }
-                        KeyCode::Enter => {
-                            if let (Some(record), Some(action)) = (
-                                app.filtered_catalog_get(app.selected_model),
-                                app.profiling_pending_action.clone(),
-                            ) {
-                                let launch_plan_override =
-                                    matches!(action, ProfilingAction::BenchmarkSavedProfile)
-                                        .then(|| app.current_plan.clone())
-                                        .flatten();
-                                let launch_profile_name =
-                                    matches!(action, ProfilingAction::BenchmarkSavedProfile)
-                                        .then(|| {
-                                            selected_saved_profile(&app)
-                                                .map(|profile| profile.profile_name)
-                                        })
-                                        .flatten();
-                                let request = WorkflowRequest {
-                                    record,
-                                    hardware: app.hardware.clone().unwrap_or_default(),
-                                    action,
-                                    profiling_backend: profiling::ProfilingBackend::default(),
-                                    launch_plan_override,
-                                    launch_profile_name,
-                                };
-                                let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-                                let cancel = CancellationToken::new();
-                                let cancel_clone = cancel.clone();
-                                app.profiling_event_rx = Some(rx);
-                                app.profiling_cancel = Some(cancel);
-                                app.profiling_progress_title = "Preparing".into();
-                                app.profiling_progress_current = 0;
-                                app.profiling_progress_total = 0;
-                                app.profiling_progress.clear();
-                                app.push_profile_progress("Preparing workflow…".into());
-                                app.profiling_choice_index = 0;
-                                app.screen = Screen::ProfileRunning;
-                                tokio::spawn(async move {
-                                    let _ =
-                                        profiling::run_workflow(request, tx, cancel_clone).await;
-                                });
-                            }
-                        }
-                        _ => {}
-                    },
+                    Screen::ProfileConfirm => {
+                        handle_profile_confirm_key(&mut app, key);
+                    }
                     #[cfg(feature = "profiling-ui")]
-                    Screen::ProfileRunning => match key.code {
-                        KeyCode::Esc | KeyCode::Char('q') => {
-                            if let Some(token) = &app.profiling_cancel {
-                                token.cancel();
-                                app.push_profile_progress("⏳ Cancelling…".into());
-                            }
-                        }
-                        _ => {}
-                    },
+                    Screen::ProfileRunning => {
+                        handle_profile_running_key(&mut app, key);
+                    }
                     #[cfg(feature = "profiling-ui")]
-                    Screen::ProfileSuccess => match key.code {
-                        KeyCode::Esc => {
-                            if matches!(
-                                app.profiling_success.as_ref().map(|report| &report.action),
-                                Some(ProfilingAction::BenchmarkSavedProfile)
-                            ) && app.configure_recommended_plan.is_some()
-                            {
-                                if let Some(plan) = app.current_plan.as_ref() {
-                                    let model_name = plan.model_name.clone();
-                                    refresh_configure_profiles(&mut app, &model_name);
-                                }
-                                app.profiling_pending_action = None;
-                                app.profiling_success = None;
-                                app.screen = Screen::ConfigureHub;
-                                continue;
-                            }
-                            // Back to advisory — re-run build_advisory to refresh state
-                            if let Some(record) = app.filtered_catalog_get(app.selected_model) {
-                                match profiling::build_advisory(
-                                    &record,
-                                    app.hardware.as_ref(),
-                                    &app.services,
-                                ) {
-                                    Ok(advisory) => {
-                                        app.profiling_advisory = Some(advisory);
-                                        app.profiling_choice_index = 0;
-                                        app.screen = Screen::ProfileAdvisory;
-                                    }
-                                    Err(_) => {
-                                        app.reset_profile_flow();
-                                        app.screen = Screen::Launcher;
-                                    }
-                                }
-                            } else {
-                                app.reset_profile_flow();
-                                app.screen = Screen::Launcher;
-                            }
+                    Screen::ProfileSuccess => {
+                        if matches!(
+                            handle_profile_success_key(&mut app, key),
+                            ProfilingResultOutcome::RestartLoop
+                        ) {
+                            continue;
                         }
-                        KeyCode::Char('q') => {
-                            app.reset_profile_flow();
-                            app.screen = Screen::Launcher;
-                        }
-                        KeyCode::Up if app.profiling_choice_index > 0 => {
-                            app.profiling_choice_index -= 1;
-                        }
-                        KeyCode::Down => {
-                            let count = app
-                                .profiling_success
-                                .as_ref()
-                                .map(|report| report.available_actions().len())
-                                .unwrap_or(0);
-                            if app.profiling_choice_index + 1 < count {
-                                app.profiling_choice_index += 1;
-                            }
-                        }
-                        KeyCode::Enter => {
-                            if let Some(report) = &app.profiling_success {
-                                let actions = report.available_actions();
-                                if let Some(action) =
-                                    actions.get(app.profiling_choice_index).cloned()
-                                {
-                                    match action {
-                                        ProfilingAction::LaunchRecommended => {
-                                            if let (Some(record), Some(hw)) = (
-                                                app.filtered_catalog_get(app.selected_model),
-                                                app.hardware.as_ref(),
-                                            ) {
-                                                match profiling::preferred_launch_plan(&record, hw)
-                                                {
-                                                    Ok(plan) => {
-                                                        app.current_plan = Some(plan);
-                                                        app.configure_recommended_plan = None;
-                                                        app.screen = Screen::Confirm;
-                                                    }
-                                                    Err(error) => {
-                                                        app.set_error(format!(
-                                                            "Could not build launch plan: {error}"
-                                                        ));
-                                                        app.screen = Screen::Launcher;
-                                                    }
-                                                }
-                                            }
-                                        }
-                                        action => {
-                                            app.profiling_pending_action = Some(action);
-                                            app.screen = Screen::ProfileConfirm;
-                                        }
-                                    }
-                                } else {
-                                    app.reset_profile_flow();
-                                    app.screen = Screen::Launcher;
-                                }
-                            }
-                        }
-                        _ => {}
-                    },
+                    }
                     #[cfg(feature = "profiling-ui")]
-                    Screen::ProfileFailure => match key.code {
-                        KeyCode::Esc => {
-                            if matches!(
-                                app.profiling_pending_action,
-                                Some(ProfilingAction::BenchmarkSavedProfile)
-                            ) && app.configure_recommended_plan.is_some()
-                            {
-                                if let Some(plan) = app.current_plan.as_ref() {
-                                    let model_name = plan.model_name.clone();
-                                    refresh_configure_profiles(&mut app, &model_name);
-                                }
-                                app.profiling_pending_action = None;
-                                app.profiling_failure = None;
-                                app.screen = Screen::ConfigureHub;
-                                continue;
-                            }
-                            // Back to advisory
-                            if let Some(record) = app.filtered_catalog_get(app.selected_model) {
-                                match profiling::build_advisory(
-                                    &record,
-                                    app.hardware.as_ref(),
-                                    &app.services,
-                                ) {
-                                    Ok(advisory) => {
-                                        app.profiling_advisory = Some(advisory);
-                                        app.profiling_choice_index = 0;
-                                        app.screen = Screen::ProfileAdvisory;
-                                    }
-                                    Err(_) => {
-                                        app.reset_profile_flow();
-                                        app.screen = Screen::Launcher;
-                                    }
-                                }
-                            } else {
-                                app.reset_profile_flow();
-                                app.screen = Screen::Launcher;
-                            }
+                    Screen::ProfileFailure => {
+                        if matches!(
+                            handle_profile_failure_key(&mut app, key),
+                            ProfilingResultOutcome::RestartLoop
+                        ) {
+                            continue;
                         }
-                        KeyCode::Char('q') => {
-                            app.reset_profile_flow();
-                            app.screen = Screen::Launcher;
-                        }
-                        KeyCode::Up if app.profiling_choice_index > 0 => {
-                            app.profiling_choice_index -= 1;
-                        }
-                        KeyCode::Down => {
-                            let count = app
-                                .profiling_failure
-                                .as_ref()
-                                .map(|report| report.available_actions().len())
-                                .unwrap_or(0);
-                            if app.profiling_choice_index + 1 < count {
-                                app.profiling_choice_index += 1;
-                            }
-                        }
-                        KeyCode::Enter => {
-                            if let Some(report) = &app.profiling_failure {
-                                let actions = report.available_actions();
-                                if let Some(action) =
-                                    actions.get(app.profiling_choice_index).cloned()
-                                {
-                                    app.profiling_pending_action = Some(action);
-                                    app.screen = Screen::ProfileConfirm;
-                                }
-                            }
-                        }
-                        _ => {}
-                    },
+                    }
                     Screen::Monitor => match key.code {
                         KeyCode::Char('q') => break Ok(()),
                         KeyCode::Esc => {
@@ -2158,7 +1125,7 @@ pub async fn run_launcher(
                     None
                 };
                 if let Some(ref mut hw) = app.hardware {
-                    *hw = tokio::task::spawn_blocking(crate::hardware::load_hardware)
+                    *hw = tokio::task::spawn_blocking(crate::hardware::load_hardware_live)
                         .await
                         .unwrap_or_default();
                 }
@@ -2205,12 +1172,17 @@ pub async fn run_launcher(
                         .await
                         .unwrap_or_default();
                 if last_catalog_signature != Some(signature) {
-                    let catalog =
-                        crate::catalog::load_catalog(&model_dir, &preset_file, &bench_file)
-                            .await
-                            .unwrap_or_default();
                     last_catalog_signature = Some(signature);
-                    apply_catalog_refresh(&mut app, catalog);
+                    match crate::catalog::load_catalog_report(&model_dir, &preset_file, &bench_file)
+                        .await
+                    {
+                        Ok(report) => apply_catalog_report(&mut app, report),
+                        Err(error) => {
+                            if app.error_msg.is_none() {
+                                app.set_error(format!("Failed to refresh catalog: {error}"));
+                            }
+                        }
+                    }
                 }
             }
         }
@@ -2221,9 +1193,7 @@ pub async fn run_launcher(
         }
     };
 
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
+    terminal_restore.restore()?;
     if app.ozone_plus_handoff {
         let ozone_plus_bin = std::env::current_exe()
             .ok()
@@ -2338,8 +1308,17 @@ fn spawn_in_terminal(
 }
 
 pub async fn run_monitor() -> Result<()> {
-    let prefs = crate::prefs::load_prefs().await;
+    let (prefs, startup_error) = match crate::prefs::load_prefs().await {
+        Ok(prefs) => (prefs, None),
+        Err(error) => (
+            Preferences::default(),
+            Some(format!("Failed to load preferences: {error}")),
+        ),
+    };
     let mut app = App::new(prefs);
+    if let Some(error) = startup_error {
+        app.set_error(error);
+    }
     app.screen = Screen::Monitor;
     app.hardware = Some(
         tokio::task::spawn_blocking(crate::hardware::load_hardware)
@@ -2349,8 +1328,11 @@ pub async fn run_monitor() -> Result<()> {
     app.services = crate::processes::get_service_status().await;
 
     enable_raw_mode()?;
+    let mut terminal_restore = TerminalRestoreGuard::new();
+    terminal_restore.mark_raw_mode_enabled();
     let mut stdout = io::stdout();
     execute!(stdout, EnterAlternateScreen)?;
+    terminal_restore.mark_alt_screen_entered();
     let backend = CrosstermBackend::new(stdout);
     let mut terminal = Terminal::new(backend)?;
     terminal.hide_cursor()?;
@@ -2398,7 +1380,7 @@ pub async fn run_monitor() -> Result<()> {
                 None
             };
             if let Some(ref mut hw) = app.hardware {
-                *hw = tokio::task::spawn_blocking(crate::hardware::load_hardware)
+                *hw = tokio::task::spawn_blocking(crate::hardware::load_hardware_live)
                     .await
                     .unwrap_or_default();
             }
@@ -2411,9 +1393,7 @@ pub async fn run_monitor() -> Result<()> {
         }
     }
 
-    disable_raw_mode()?;
-    execute!(terminal.backend_mut(), LeaveAlternateScreen)?;
-    terminal.show_cursor()?;
+    terminal_restore.restore()?;
     Ok(())
 }
 
@@ -2437,6 +1417,30 @@ mod tests {
         assert_eq!(app.settings_section, 0);
         assert_eq!(app.settings_backend_index, 2);
         assert_eq!(app.settings_frontend_index, 1);
+    }
+
+    #[test]
+    fn terminal_restore_guard_tracks_terminal_state() {
+        let mut guard = TerminalRestoreGuard::new();
+
+        assert!(!guard.raw_mode_enabled);
+        assert!(!guard.alt_screen_entered);
+
+        guard.mark_raw_mode_enabled();
+        guard.mark_alt_screen_entered();
+
+        assert!(guard.raw_mode_enabled);
+        assert!(guard.alt_screen_entered);
+    }
+
+    #[test]
+    fn terminal_restore_guard_restore_without_state_is_a_noop() {
+        let mut guard = TerminalRestoreGuard::new();
+
+        guard.restore().expect("restore without state should succeed");
+
+        assert!(!guard.raw_mode_enabled);
+        assert!(!guard.alt_screen_entered);
     }
 
     #[test]
@@ -2496,7 +1500,6 @@ mod tests {
             profile_count: 0,
             best_tokens_per_sec: None,
             recommended_profile: None,
-            launch_profile_name: None,
             saved_profile_report: None,
             suggestions: Vec::new(),
             export_detail: None,
@@ -2586,6 +1589,560 @@ mod tests {
         assert_eq!(effective.context_size, 16384);
         assert_eq!(effective.gpu_layers, 12);
         assert_eq!(effective.threads, Some(6));
+    }
+
+    const TEST_MODEL_NAME: &str = "alpha.gguf";
+    const TEST_CONTEXT_BASE: u32 = 4096;
+    const TEST_TOTAL_LAYERS: u32 = 32;
+    const TEST_RECOMMENDED_GPU_LAYERS: i32 = 24;
+    const TEST_RECOMMENDED_CPU_LAYERS: u32 = 8;
+    const TEST_QUANT_KV: u8 = 1;
+    const TEST_GPU_USED_MB: u64 = 1000;
+    const TEST_GPU_FREE_MB: u64 = 12000;
+    const TEST_GPU_TOTAL_MB: u64 = 16000;
+    const TEST_RAM_TOTAL_MB: u64 = 32000;
+    const TEST_RAM_FREE_MB: u64 = 20000;
+    const TEST_RAM_USED_MB: u64 = 12000;
+    const TEST_CPU_LOGICAL: usize = 8;
+    const TEST_CPU_PHYSICAL: usize = 4;
+
+    fn configured_app_for_plan_mutation(configure_field_index: usize) -> App {
+        let mut app = App::new(Preferences::default());
+        app.hardware = Some(crate::hardware::HardwareProfile {
+            gpu: Some(crate::hardware::GpuMemory {
+                used_mb: TEST_GPU_USED_MB,
+                free_mb: TEST_GPU_FREE_MB,
+                total_mb: TEST_GPU_TOTAL_MB,
+            }),
+            ram_total_mb: TEST_RAM_TOTAL_MB,
+            ram_free_mb: TEST_RAM_FREE_MB,
+            ram_used_mb: TEST_RAM_USED_MB,
+            cpu_logical: TEST_CPU_LOGICAL,
+            cpu_physical: TEST_CPU_PHYSICAL,
+        });
+        app.catalog = vec![test_record(TEST_MODEL_NAME)];
+        app.current_plan = Some(LaunchPlan {
+            model_name: TEST_MODEL_NAME.into(),
+            context_size: TEST_CONTEXT_BASE,
+            gpu_layers: TEST_RECOMMENDED_GPU_LAYERS,
+            total_layers: TEST_TOTAL_LAYERS,
+            cpu_layers: TEST_RECOMMENDED_CPU_LAYERS,
+            quant_kv: TEST_QUANT_KV,
+            threads: None,
+            blas_threads: None,
+            mode: crate::planner::RecommendationMode::MixedMemory,
+            rationale: "test".into(),
+            estimated: false,
+            estimated_vram_mb: 0,
+            estimated_ram_mb: 0,
+            source: "test".into(),
+            layer_source_label: "heuristic".into(),
+            layer_source_note: None,
+        });
+        app.configure_recommended_plan = app.current_plan.clone();
+        app.configure_field_index = configure_field_index;
+        app
+    }
+
+    #[test]
+    fn adjust_configure_plan_steps_context_size_when_context_selected() {
+        let mut app = configured_app_for_plan_mutation(0);
+
+        adjust_configure_plan(&mut app, 1);
+
+        let adjusted = app.current_plan.expect("plan should exist");
+        assert_eq!(
+            adjusted.context_size,
+            crate::planner::step_context_size(TEST_CONTEXT_BASE, 1)
+        );
+        assert_eq!(adjusted.gpu_layers, TEST_RECOMMENDED_GPU_LAYERS);
+    }
+
+    #[test]
+    fn adjust_configure_plan_clamps_gpu_layers_when_layers_selected() {
+        let mut app = configured_app_for_plan_mutation(1);
+        let negative_delta = -(TEST_TOTAL_LAYERS as i32) * 2;
+
+        adjust_configure_plan(&mut app, negative_delta);
+
+        let adjusted = app.current_plan.expect("plan should exist");
+        assert_eq!(adjusted.gpu_layers, 0);
+        assert_eq!(adjusted.context_size, TEST_CONTEXT_BASE);
+    }
+
+    #[test]
+    fn reset_configure_plan_restores_recommended_plan() {
+        let mut app = configured_app_for_plan_mutation(1);
+        let increase_layers = 2;
+        adjust_configure_plan(&mut app, increase_layers);
+
+        reset_configure_plan(&mut app);
+
+        let reset_plan = app.current_plan.expect("plan should exist");
+        assert_eq!(reset_plan.context_size, TEST_CONTEXT_BASE);
+        assert_eq!(reset_plan.gpu_layers, TEST_RECOMMENDED_GPU_LAYERS);
+    }
+
+    fn test_launch_plan_for_model(model_name: &str, context_size: u32, gpu_layers: i32) -> LaunchPlan {
+        LaunchPlan {
+            model_name: model_name.into(),
+            context_size,
+            gpu_layers,
+            total_layers: TEST_TOTAL_LAYERS,
+            cpu_layers: TEST_RECOMMENDED_CPU_LAYERS,
+            quant_kv: TEST_QUANT_KV,
+            threads: None,
+            blas_threads: None,
+            mode: crate::planner::RecommendationMode::MixedMemory,
+            rationale: "test".into(),
+            estimated: false,
+            estimated_vram_mb: 0,
+            estimated_ram_mb: 0,
+            source: "test".into(),
+            layer_source_label: "heuristic".into(),
+            layer_source_note: None,
+        }
+    }
+
+    #[test]
+    fn configure_hub_escape_clears_state_and_returns_to_model_picker() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::ConfigureHub;
+        app.current_plan = Some(test_launch_plan_for_model(TEST_MODEL_NAME, TEST_CONTEXT_BASE, 12));
+        app.configure_recommended_plan = Some(test_launch_plan_for_model(
+            TEST_MODEL_NAME,
+            TEST_CONTEXT_BASE,
+            TEST_RECOMMENDED_GPU_LAYERS,
+        ));
+        app.configure_saved_profiles = vec![SavedLaunchProfile {
+            profile_name: "custom-1".into(),
+            context_size: TEST_CONTEXT_BASE,
+            gpu_layers: TEST_RECOMMENDED_GPU_LAYERS,
+            quant_kv: TEST_QUANT_KV,
+            threads: None,
+        }];
+        app.configure_profile_index = 1;
+
+        let key = KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(handle_configure_hub_key(&mut app, key));
+
+        assert!(app.current_plan.is_none());
+        assert!(app.configure_recommended_plan.is_none());
+        assert!(app.configure_saved_profiles.is_empty());
+        assert_eq!(app.configure_profile_index, 0);
+        assert_eq!(app.screen, Screen::ModelPicker);
+    }
+
+    #[test]
+    fn configure_hub_enter_persists_override_and_moves_to_confirm() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::ConfigureHub;
+        app.configure_recommended_plan = Some(test_launch_plan_for_model(
+            TEST_MODEL_NAME,
+            TEST_CONTEXT_BASE,
+            TEST_RECOMMENDED_GPU_LAYERS,
+        ));
+        app.current_plan = Some(test_launch_plan_for_model(TEST_MODEL_NAME, 8192, 20));
+
+        let key = KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(handle_configure_hub_key(&mut app, key));
+
+        let override_state = app
+            .prefs
+            .launch_override_for(TEST_MODEL_NAME)
+            .expect("override should be stored");
+        assert_eq!(override_state.context_size, Some(8192));
+        assert_eq!(override_state.gpu_layers, Some(20));
+        assert_eq!(app.screen, Screen::Confirm);
+    }
+
+    #[test]
+    fn frontend_choice_escape_returns_to_confirm() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::FrontendChoice;
+
+        let key = KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        handle_frontend_choice_key(&mut app, key);
+
+        assert_eq!(app.screen, Screen::Confirm);
+    }
+
+    #[test]
+    fn frontend_choice_enter_sets_pending_launch_when_plan_exists() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::FrontendChoice;
+        app.current_plan = Some(test_launch_plan_for_model(
+            TEST_MODEL_NAME,
+            TEST_CONTEXT_BASE,
+            TEST_RECOMMENDED_GPU_LAYERS,
+        ));
+        app.frontend_choice_index = 1;
+
+        let key = KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
+        handle_frontend_choice_key(&mut app, key);
+
+        assert_eq!(app.pending_launch_choice, Some(1));
+    }
+
+    #[test]
+    fn frontend_choice_down_is_clamped_to_last_option() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::FrontendChoice;
+        app.frontend_choice_index = 1;
+
+        let key = KeyEvent::new(KeyCode::Down, crossterm::event::KeyModifiers::NONE);
+        handle_frontend_choice_key(&mut app, key);
+
+        assert_eq!(app.frontend_choice_index, 1);
+    }
+
+    #[test]
+    fn model_picker_escape_clears_filter_before_navigation() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::ModelPicker;
+        app.model_filter = "alp".into();
+        app.current_plan = Some(test_launch_plan_for_model(
+            TEST_MODEL_NAME,
+            TEST_CONTEXT_BASE,
+            TEST_RECOMMENDED_GPU_LAYERS,
+        ));
+
+        let key = KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        handle_model_picker_key(&mut app, key);
+
+        assert!(app.model_filter.is_empty());
+        assert!(app.current_plan.is_some());
+        assert_eq!(app.screen, Screen::ModelPicker);
+    }
+
+    #[test]
+    fn model_picker_escape_without_filter_returns_to_launcher() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::ModelPicker;
+        app.current_plan = Some(test_launch_plan_for_model(
+            TEST_MODEL_NAME,
+            TEST_CONTEXT_BASE,
+            TEST_RECOMMENDED_GPU_LAYERS,
+        ));
+        app.configure_recommended_plan = Some(test_launch_plan_for_model(
+            TEST_MODEL_NAME,
+            TEST_CONTEXT_BASE,
+            TEST_RECOMMENDED_GPU_LAYERS,
+        ));
+
+        let key = KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        handle_model_picker_key(&mut app, key);
+
+        assert!(app.current_plan.is_none());
+        assert!(app.configure_recommended_plan.is_none());
+        assert_eq!(app.screen, Screen::Launcher);
+    }
+
+    #[test]
+    fn model_picker_enter_in_launch_mode_opens_configure_hub() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::ModelPicker;
+        app.model_picker_mode = ModelPickerMode::Launch;
+        app.catalog = vec![test_record(TEST_MODEL_NAME)];
+        app.selected_model = 0;
+        app.hardware = Some(crate::hardware::HardwareProfile {
+            gpu: Some(crate::hardware::GpuMemory {
+                used_mb: TEST_GPU_USED_MB,
+                free_mb: TEST_GPU_FREE_MB,
+                total_mb: TEST_GPU_TOTAL_MB,
+            }),
+            ram_total_mb: TEST_RAM_TOTAL_MB,
+            ram_free_mb: TEST_RAM_FREE_MB,
+            ram_used_mb: TEST_RAM_USED_MB,
+            cpu_logical: TEST_CPU_LOGICAL,
+            cpu_physical: TEST_CPU_PHYSICAL,
+        });
+
+        let key = KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
+        handle_model_picker_key(&mut app, key);
+
+        assert!(app.current_plan.is_some());
+        assert!(app.configure_recommended_plan.is_some());
+        assert_eq!(app.configure_field_index, 0);
+        assert_eq!(app.screen, Screen::ConfigureHub);
+    }
+
+    #[test]
+    fn confirm_escape_uses_back_navigation_target() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::Confirm;
+        app.configure_recommended_plan = Some(test_launch_plan_for_model(
+            TEST_MODEL_NAME,
+            TEST_CONTEXT_BASE,
+            TEST_RECOMMENDED_GPU_LAYERS,
+        ));
+
+        let key = KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        handle_confirm_key(&mut app, key);
+
+        assert_eq!(app.screen, Screen::ConfigureHub);
+    }
+
+    #[test]
+    fn confirm_enter_with_preferred_frontend_queues_launch_choice() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::Confirm;
+        app.current_plan = Some(test_launch_plan_for_model(
+            TEST_MODEL_NAME,
+            TEST_CONTEXT_BASE,
+            TEST_RECOMMENDED_GPU_LAYERS,
+        ));
+        app.preferred_frontend = Some(FrontendMode::OzonePlus);
+
+        let key = KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
+        handle_confirm_key(&mut app, key);
+
+        assert_eq!(app.pending_launch_choice, Some(1));
+    }
+
+    #[test]
+    fn exit_confirm_enter_on_yes_requests_exit() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::ExitConfirm;
+        app.exit_confirm_index = 0;
+
+        let key = KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
+        let outcome = handle_exit_confirm_key(&mut app, key);
+
+        assert!(matches!(outcome, ExitConfirmOutcome::ExitLauncher));
+    }
+
+    #[test]
+    fn exit_confirm_escape_returns_to_launcher() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::ExitConfirm;
+
+        let key = KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        let outcome = handle_exit_confirm_key(&mut app, key);
+
+        assert!(matches!(outcome, ExitConfirmOutcome::Continue));
+        assert_eq!(app.screen, Screen::Launcher);
+    }
+
+    #[test]
+    fn settings_enter_saves_selection_and_returns_launcher() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::Settings;
+        app.settings_backend_index = 2;
+        app.settings_frontend_index = 1;
+
+        let key = KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(handle_settings_key(&mut app, key, None));
+
+        assert_eq!(app.prefs.preferred_backend, Some(BackendMode::Ollama));
+        assert_eq!(app.prefs.preferred_frontend, Some(FrontendMode::OzonePlus));
+        assert_eq!(app.preferred_frontend, Some(FrontendMode::OzonePlus));
+        assert_eq!(app.screen, Screen::Launcher);
+    }
+
+    #[test]
+    fn settings_escape_discards_changes_and_returns_launcher() {
+        let mut app = App::new(Preferences {
+            preferred_backend: Some(BackendMode::LlamaCpp),
+            preferred_frontend: Some(FrontendMode::SillyTavern),
+            ..Preferences::default()
+        });
+        app.screen = Screen::Settings;
+        app.settings_backend_index = 2;
+        app.settings_frontend_index = 1;
+
+        let key = KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        runtime.block_on(handle_settings_key(&mut app, key, None));
+
+        assert_eq!(app.settings_backend_index, 1);
+        assert_eq!(app.settings_frontend_index, 0);
+        assert_eq!(app.screen, Screen::Launcher);
+    }
+
+    #[test]
+    fn tier_picker_q_requests_exit_in_picking_phase() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::TierPicker;
+        app.tier_picker.phase = tier_picker::TierPickerPhase::Picking;
+
+        let key = KeyEvent::new(KeyCode::Char('q'), crossterm::event::KeyModifiers::NONE);
+        let outcome = handle_tier_picker_key(&mut app, key);
+
+        assert!(matches!(outcome, TierPickerOutcome::ExitLauncher));
+    }
+
+    #[test]
+    fn tier_picker_enter_on_lite_selects_launcher_without_download() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::TierPicker;
+        app.tier_picker.phase = tier_picker::TierPickerPhase::Picking;
+        app.tier_picker.selected = 0;
+
+        let key = KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let outcome = runtime.block_on(async { handle_tier_picker_key(&mut app, key) });
+
+        assert!(matches!(outcome, TierPickerOutcome::Continue));
+        assert_eq!(app.prefs.preferred_tier, Some(crate::prefs::Tier::Lite));
+        assert_eq!(app.screen, Screen::Launcher);
+    }
+
+    #[test]
+    fn launcher_q_requests_exit() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::Launcher;
+        let mut last_refresh = Instant::now();
+
+        let key = KeyEvent::new(KeyCode::Char('q'), crossterm::event::KeyModifiers::NONE);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let outcome = runtime.block_on(handle_launcher_screen_key(&mut app, key, &mut last_refresh));
+
+        assert!(matches!(outcome, LauncherActionOutcome::Exit));
+    }
+
+    #[test]
+    fn launcher_escape_opens_exit_confirm_screen() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::Launcher;
+        let mut last_refresh = Instant::now();
+
+        let key = KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let outcome = runtime.block_on(handle_launcher_screen_key(&mut app, key, &mut last_refresh));
+
+        assert!(matches!(outcome, LauncherActionOutcome::Continue));
+        assert_eq!(app.screen, Screen::ExitConfirm);
+        assert_eq!(app.exit_confirm_index, 1);
+    }
+
+    #[test]
+    #[cfg(feature = "profiling-ui")]
+    fn profile_running_q_cancels_active_workflow() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::ProfileRunning;
+        let cancel = CancellationToken::new();
+        app.profiling_cancel = Some(cancel.clone());
+
+        let key = KeyEvent::new(KeyCode::Char('q'), crossterm::event::KeyModifiers::NONE);
+        handle_profile_running_key(&mut app, key);
+
+        assert!(cancel.is_cancelled());
+        assert!(app
+            .profiling_progress
+            .iter()
+            .any(|line| line.contains("Cancelling")));
+    }
+
+    #[test]
+    #[cfg(feature = "profiling-ui")]
+    fn profile_success_escape_from_saved_profile_returns_configure_hub() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::ProfileSuccess;
+        app.current_plan = Some(test_launch_plan_for_model(
+            TEST_MODEL_NAME,
+            TEST_CONTEXT_BASE,
+            TEST_RECOMMENDED_GPU_LAYERS,
+        ));
+        app.configure_recommended_plan = Some(test_launch_plan_for_model(
+            TEST_MODEL_NAME,
+            TEST_CONTEXT_BASE,
+            TEST_RECOMMENDED_GPU_LAYERS,
+        ));
+        app.profiling_pending_action = Some(ProfilingAction::BenchmarkSavedProfile);
+        app.profiling_success = Some(ProfilingSuccessReport {
+            model_name: TEST_MODEL_NAME.into(),
+            action: ProfilingAction::BenchmarkSavedProfile,
+            summary: "saved".into(),
+            benchmark_count: 0,
+            ok_benchmark_count: 0,
+            profile_count: 0,
+            best_tokens_per_sec: None,
+            recommended_profile: None,
+            saved_profile_report: None,
+            suggestions: Vec::new(),
+            export_detail: None,
+        });
+
+        let key = KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        let outcome = handle_profile_success_key(&mut app, key);
+
+        assert!(matches!(outcome, ProfilingResultOutcome::RestartLoop));
+        assert_eq!(app.screen, Screen::ConfigureHub);
+        assert!(app.profiling_pending_action.is_none());
+        assert!(app.profiling_success.is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "profiling-ui")]
+    fn profile_advisory_escape_returns_to_model_picker() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::ProfileAdvisory;
+
+        let key = KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        handle_profile_advisory_key(&mut app, key);
+
+        assert_eq!(app.screen, Screen::ModelPicker);
+    }
+
+    #[test]
+    #[cfg(feature = "profiling-ui")]
+    fn start_profile_workflow_sets_running_state_cluster() {
+        let mut app = App::new(Preferences::default());
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        drop(tx);
+        let cancel = CancellationToken::new();
+
+        app.start_profile_workflow(rx, cancel.clone());
+
+        assert_eq!(app.screen, Screen::ProfileRunning);
+        assert_eq!(app.profiling_progress_title, "Preparing");
+        assert_eq!(app.profiling_progress_current, 0);
+        assert_eq!(app.profiling_progress_total, 0);
+        assert_eq!(app.profiling_choice_index, 0);
+        assert!(app.profiling_cancel.as_ref().is_some_and(|token| !token.is_cancelled()));
+        assert!(app
+            .profiling_progress
+            .iter()
+            .any(|line| line.contains("Preparing workflow")));
+    }
+
+    #[test]
+    #[cfg(feature = "profiling-ui")]
+    fn reset_profile_and_open_launcher_resets_cluster_and_screen() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::ProfileSuccess;
+        app.profiling_pending_action = Some(ProfilingAction::QuickSweep);
+        app.profiling_progress.push("line".into());
+
+        app.reset_profile_and_open_launcher();
+
+        assert_eq!(app.screen, Screen::Launcher);
+        assert!(app.profiling_pending_action.is_none());
+        assert!(app.profiling_progress.is_empty());
+        assert!(app.profiling_success.is_none());
+        assert!(app.profiling_failure.is_none());
+    }
+
+    #[test]
+    #[cfg(feature = "profiling-ui")]
+    fn profile_confirm_escape_returns_to_configure_hub_for_saved_profile_benchmark() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::ProfileConfirm;
+        app.profiling_pending_action = Some(ProfilingAction::BenchmarkSavedProfile);
+        app.configure_recommended_plan = Some(test_launch_plan_for_model(
+            TEST_MODEL_NAME,
+            TEST_CONTEXT_BASE,
+            TEST_RECOMMENDED_GPU_LAYERS,
+        ));
+
+        let key = KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        handle_profile_confirm_key(&mut app, key);
+
+        assert_eq!(app.screen, Screen::ConfigureHub);
     }
 
     #[test]

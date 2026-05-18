@@ -103,6 +103,55 @@ pub enum KeyAction {
     VisualYank,
     /// Change selected text in visual mode (c)
     VisualChange,
+    // === New variants for refactored key handling ===
+    /// Enter conversation screen
+    EnterConversation,
+    /// Open the main menu
+    OpenMenu,
+    /// Open help screen
+    OpenHelp,
+    /// Toggle settings screen
+    ToggleSettings,
+    /// Open session list
+    OpenSessionList,
+    /// Open character manager
+    OpenCharacterManager,
+    /// Save current session
+    SaveSession,
+    /// Delete current session
+    DeleteSession,
+    /// Confirm action (context-sensitive)
+    Confirm,
+    /// Cancel action (context-sensitive)
+    Cancel,
+    /// Scroll up in conversation
+    ScrollUp,
+    /// Scroll down in conversation
+    ScrollDown,
+    /// Select up (menu/session list)
+    SelectUp,
+    /// Select down (menu/session list)
+    SelectDown,
+    /// Quit application
+    Quit,
+    /// Clear current input
+    Clear,
+    /// Open command palette
+    CommandPaletteOpen,
+    /// Dispatch a key to the draft text area
+    DraftKey(KeyEvent),
+    /// Dispatch a key to the command palette
+    CommandPaletteKey(KeyEvent),
+    /// Dispatch a key to the menu
+    MenuKey(KeyEvent),
+    /// Dispatch a key to a form
+    FormKey(KeyEvent),
+    /// Dispatch a key to the edit mode
+    EditKey(KeyEvent),
+    /// Dispatch a key to settings
+    SettingsKey(KeyEvent),
+    /// Dispatch a key to the inspector
+    InspectorKey(KeyEvent),
 }
 
 pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {

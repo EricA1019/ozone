@@ -60,6 +60,7 @@ fn detect_tier_from_binary_name(name: &str) -> Option<prefs::Tier> {
 #[command(
     name = "ozone",
     about = "⬡ Ozone — local AI stack operator & launcher",
+    after_help = "Source builds keep default features empty. Use `cargo build --release -p ozone --features full` or `./contrib/sync-local-install.sh` for profiling and `ozone model ...` commands in the base binary.",
     version = concat!(env!("CARGO_PKG_VERSION"), "+", env!("OZONE_GIT_HASH"))
 )]
 struct Cli {
@@ -180,16 +181,15 @@ async fn main() -> Result<()> {
         }
         Some(Commands::Monitor) => ui::run_monitor().await,
         Some(Commands::List { json }) => {
-            if !json {
-                eprintln!("  hint: `ozone list` is deprecated — use `ozone model list` instead.");
-                eprintln!();
-            }
             let model_dir = ozone_core::paths::models_dir();
             let preset_file = ozone_core::paths::presets_path();
             let bench_file = model_dir.join("bench-results.txt");
-            let records = catalog::load_catalog(&model_dir, &preset_file, &bench_file)
-                .await
-                .unwrap_or_default();
+            let report = catalog::load_catalog_report(&model_dir, &preset_file, &bench_file)
+                .await?;
+            for issue in &report.issues {
+                eprintln!("catalog {}: {}", issue.level.label(), issue.message);
+            }
+            let records = report.records;
             if json {
                 println!("[");
                 for (i, r) in records.iter().enumerate() {
@@ -203,19 +203,51 @@ async fn main() -> Result<()> {
                 }
                 println!("]");
             } else {
-                println!("  {:<6}  {:>8}  MODEL", "SOURCE", "SIZE");
-                for r in &records {
-                    let size = if r.model_size_gb <= 0.0 {
-                        "⚠ broken".to_string()
-                    } else {
-                        format!("{:.1} GB", r.model_size_gb)
-                    };
-                    println!(
-                        "  [{:5}]  {:>8}  {}",
-                        r.recommendation.source.label(),
-                        size,
-                        r.model_name
+                #[cfg(feature = "model-mgmt")]
+                {
+                    eprintln!("  hint: `ozone list` is deprecated — use `ozone model list` instead.");
+                    eprintln!();
+                }
+                #[cfg(not(feature = "model-mgmt"))]
+                {
+                    eprintln!("  note: this build exposes the lightweight `ozone list` catalog only.");
+                    eprintln!(
+                        "        for `ozone model ...`, install via `./contrib/sync-local-install.sh`"
                     );
+                    eprintln!(
+                        "        or build `cargo build --release -p ozone --features full`."
+                    );
+                    eprintln!();
+                }
+                println!("  {:<6}  {:>8}  MODEL", "SOURCE", "SIZE");
+                if records.is_empty() {
+                    println!();
+                    println!("  no models found in {}", model_dir.display());
+                    println!();
+                    #[cfg(feature = "model-mgmt")]
+                    {
+                        println!("  next: add one with `ozone model add --hf <repo> [filename.gguf]`");
+                        println!("        or symlink an existing `.gguf` into `~/models/`.");
+                    }
+                    #[cfg(not(feature = "model-mgmt"))]
+                    {
+                        println!("  next: place a `.gguf` file or symlink in `~/models/`,");
+                        println!("        then rerun `ozone list` or use the installed full base build.");
+                    }
+                } else {
+                    for r in &records {
+                        let size = if r.model_size_gb <= 0.0 {
+                            "⚠ broken".to_string()
+                        } else {
+                            format!("{:.1} GB", r.model_size_gb)
+                        };
+                        println!(
+                            "  [{:5}]  {:>8}  {}",
+                            r.recommendation.source.label(),
+                            size,
+                            r.model_name
+                        );
+                    }
                 }
             }
             Ok(())
@@ -269,12 +301,15 @@ async fn main() -> Result<()> {
             // Store result
             let thread_count = threads.unwrap_or(0);
             match bench::store_result(
-                &model,
-                model_size_gb,
-                gpu_layers,
-                context,
-                quant_kv as u32,
-                thread_count,
+                bench::BenchmarkStoreRequest {
+                    model_name: &model,
+                    model_size_gb,
+                    gpu_layers,
+                    context_size: context,
+                    quant_kv: quant_kv as u32,
+                    threads: thread_count,
+                    launch_profile_name: None,
+                },
                 &result,
             ) {
                 Ok(id) => ozone_core::cli::success(&format!("Stored as benchmark #{id}")),
@@ -307,7 +342,6 @@ async fn main() -> Result<()> {
                 .as_ref()
                 .map(|g| (g.total_mb as f64 * 0.9) as u32)
                 .unwrap_or(0);
-            let ram_total_mb = hw.ram_total_mb as u32;
 
             let (context_sizes, quant_kv_levels) = if quick {
                 (vec![4096, 8192], vec![1u8])
@@ -332,7 +366,6 @@ async fn main() -> Result<()> {
                 context_sizes,
                 quant_kv_levels,
                 gpu_vram_budget_mb,
-                ram_total_mb,
             };
 
             sweep::run_sweep(sweep_config).await?;

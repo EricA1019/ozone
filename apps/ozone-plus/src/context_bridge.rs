@@ -1,5 +1,6 @@
 use std::fmt::Write as _;
 
+use crate::cli::util::now_timestamp_ms;
 use crate::inference_adapter::{InferenceAdapter, TranscriptRole, TranscriptTurn};
 use ozone_core::engine::ConversationMessage;
 use ozone_core::session::UnixTimestamp;
@@ -124,7 +125,7 @@ impl AppContextBridge {
         self.latest_plan_preview = Some(preview);
         if result.is_dry_run {
             self.latest_dry_run = Some(DryRunContextBuild {
-                built_at: crate::now_timestamp_ms(),
+                built_at: now_timestamp_ms(),
                 result: result.clone(),
             });
         }
@@ -168,7 +169,7 @@ impl AppContextBridge {
             true,
         )?;
         let dry_run = DryRunContextBuild {
-            built_at: crate::now_timestamp_ms(),
+            built_at: now_timestamp_ms(),
             result,
         };
         self.latest_dry_run = Some(dry_run.clone());

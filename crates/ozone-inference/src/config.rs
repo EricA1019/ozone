@@ -551,11 +551,15 @@ pub struct ConfigLoader {
     session_config_path: Option<PathBuf>,
     /// Extra TOML fragments for overriding, used in tests.
     extra_toml: Option<String>,
+    apply_env_overrides: bool,
 }
 
 impl ConfigLoader {
     pub fn new() -> Self {
-        Self::default()
+        Self {
+            apply_env_overrides: true,
+            ..Self::default()
+        }
     }
 
     /// Override the global config path. If not set, the XDG default is used.
@@ -573,6 +577,15 @@ impl ConfigLoader {
     /// Inject an extra TOML fragment on top of all sources. Useful in tests.
     pub fn extra_toml_override(mut self, toml: impl Into<String>) -> Self {
         self.extra_toml = Some(toml.into());
+        self
+    }
+
+    /// Disable `OZONE__...` environment overrides.
+    ///
+    /// This is primarily useful for deterministic tests that need to exercise
+    /// only baked defaults and explicit file/TOML layers.
+    pub fn without_env_overrides(mut self) -> Self {
+        self.apply_env_overrides = false;
         self
     }
 
@@ -607,11 +620,13 @@ impl ConfigLoader {
         }
 
         // 5. Environment variables: OZONE__BACKEND__URL → backend.url
-        builder = builder.add_source(
-            Environment::with_prefix("OZONE")
-                .separator("__")
-                .try_parsing(true),
-        );
+        if self.apply_env_overrides {
+            builder = builder.add_source(
+                Environment::with_prefix("OZONE")
+                    .separator("__")
+                    .try_parsing(true),
+            );
+        }
 
         let cfg: OzoneConfig = builder
             .build()
@@ -798,6 +813,7 @@ mod tests {
     #[test]
     fn defaults_load_without_files() {
         let cfg = ConfigLoader::new()
+            .without_env_overrides()
             // Point at a nonexistent global path so no real file is read.
             .global_config_path("/nonexistent/path/config.toml")
             .build()
@@ -828,6 +844,7 @@ mod tests {
     #[test]
     fn rejects_unknown_backend_type() {
         let err = ConfigLoader::new()
+            .without_env_overrides()
             .global_config_path("/nonexistent/path/config.toml")
             .extra_toml_override("[backend]\ntype = \"mystery\"\n")
             .build()
@@ -843,6 +860,7 @@ mod tests {
 max_tokens = 4096
 "#;
         let cfg = ConfigLoader::new()
+            .without_env_overrides()
             .global_config_path("/nonexistent/path/config.toml")
             .extra_toml_override(session_toml)
             .build()
@@ -870,6 +888,7 @@ max_tokens = 2048
         // (In real use they'd be separate file paths.)
         let combined = format!("{global_toml}\n{session_toml}");
         let cfg = ConfigLoader::new()
+            .without_env_overrides()
             .global_config_path("/nonexistent/path/config.toml")
             .extra_toml_override(combined)
             .build()
@@ -927,6 +946,7 @@ compaction_interval_hours = 6
 "#;
 
         let cfg = ConfigLoader::new()
+            .without_env_overrides()
             .global_config_path("/nonexistent/path/config.toml")
             .extra_toml_override(override_toml)
             .build()
@@ -985,6 +1005,7 @@ compaction_interval_hours = 6
 safety_margin_pct = 99
 "#;
         let result = ConfigLoader::new()
+            .without_env_overrides()
             .global_config_path("/nonexistent/path/config.toml")
             .extra_toml_override(bad_toml)
             .build();
@@ -1007,6 +1028,7 @@ provenance = 0.2
 "#;
 
         let result = ConfigLoader::new()
+            .without_env_overrides()
             .global_config_path("/nonexistent/path/config.toml")
             .extra_toml_override(bad_toml)
             .build();
@@ -1075,6 +1097,7 @@ compaction_interval_hours = 0
 
         for (bad_toml, expected_key) in cases {
             let result = ConfigLoader::new()
+                .without_env_overrides()
                 .global_config_path("/nonexistent/path/config.toml")
                 .extra_toml_override(bad_toml)
                 .build();

@@ -274,7 +274,6 @@ fn generate_profiles_impl(model_name: &str, noisy: bool) -> Result<usize> {
             continue;
         }
         let profile = ProfileRow {
-            id: None,
             model_name: model_name.to_string(),
             profile_name: labels[i].clone(),
             gpu_layers: p.gpu_layers,

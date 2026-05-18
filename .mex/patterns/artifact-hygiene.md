@@ -12,7 +12,7 @@ edges:
     condition: when adding or changing maintenance scripts or developer workflow helpers
   - target: "context/setup.md"
     condition: when documenting daily-run or maintenance commands for contributors
-last_updated: 2026-04-20
+last_updated: 2026-05-07
 ---
 
 # Artifact Hygiene
@@ -45,6 +45,9 @@ last_updated: 2026-04-20
    - `release-lite`
 3. Prefer `--dry-run` first when auditing space pressure
 4. Use `--full` only when you intentionally want an almost-clean build tree
+5. In a Cargo workspace `.gitignore`, prefer `target/` over `/target/`
+  so nested crate-local Cargo outputs are ignored too, not just the repo-root
+  target directory
 
 ## When to run it
 
@@ -65,3 +68,16 @@ last_updated: 2026-04-20
   intermediates, while `sync-local-install.sh` refreshes installed binaries.
 - If you need every artifact gone, use `--full` or `cargo clean`; the default
   helper intentionally leaves current top-level binaries behind.
+- Ignore rules do not retroactively untrack files that were already committed.
+  If root `target/` outputs or other generated files are still in `git ls-files`,
+  fix the history forward with `git rm --cached ...` after confirming they are
+  safe to drop.
+- Root Graphify ignore policy does not automatically cover source-adjacent
+  generated trees like `src/graphify-out/` or `crates/*/src/graphify-out/`.
+  If scoped or experimental Graphify runs are creating worktree noise there,
+  add explicit ignore coverage or keep those outputs under `tmp/` instead of
+  source directories.
+- If those ignored source-adjacent `graphify-out/` directories still exist and
+  contain only `cache/ast/*.json`-style Graphify artifacts, they are disposable
+  generated residue. Deleting them does not affect builds or tests; keep only
+  the repo-root `graphify-out/` set when you intentionally want a shareable graph.

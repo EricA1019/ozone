@@ -52,7 +52,7 @@ done
 
 echo
 if [[ $any_installed -eq 1 ]]; then
-    echo "Dev hooks installed. Local binaries will now auto-sync after commits and merges."
+    echo "Dev hooks installed. Local binaries now auto-sync after commits and merges, and Graphify code graphs refresh automatically when present."
 else
     echo "All hooks are already current."
 fi

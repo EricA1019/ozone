@@ -1,6 +1,6 @@
 # Phase 1G: Journey Builder Extraction Strategy
 
-**Status:** Ready for implementation
+**Status:** Complete (2026-05-12)
 **Baseline:** All 20 tests passing, compilation clean
 **Scope:** Move 22 journey builder functions (~665 lines) from lib.rs to testing/journey.rs
 
@@ -154,9 +154,10 @@ After each sub-phase:
 
 - ✅ All 20 tests pass
 - ✅ Clean compilation with no warnings
-- ✅ lib.rs reduced from 3477 to ~2812 lines
-- ✅ 22 journey builder functions moved to testing/journey.rs
-- ✅ testing/journey.rs grows from 86 to ~751 lines
+- ✅ Journey builder implementations moved from `lib.rs` into `testing/journey.rs`
+- ✅ Core orchestrator logic (`build_mock_user_journey`, capturable-screen dispatch/lookup, screen-nav metadata) extracted into `testing/journey.rs`
+- ✅ `capturable_screen_journey_builders()` now points directly at extracted testing builders
+- ✅ Validation passed with `cargo test -p ozone-mcp --quiet`
 
 ## Approximate Time Investment
 
