@@ -14,11 +14,7 @@ use ozone_tui::{
     RuntimeProgress as TuiRuntimeProgress, RuntimeSendReceipt as TuiRuntimeSendReceipt,
     SessionContext as TuiSessionContext, TranscriptItem as TuiTranscriptItem,
 };
-use std::{
-    sync::mpsc::{self, TryRecvError},
-    thread,
-    time::Instant,
-};
+use std::{sync::mpsc::{self, TryRecvError}, time::Instant};
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 use super::{
     tui_context_dry_run_from_build, tui_context_preview_from_plan,
@@ -131,82 +127,65 @@ impl Phase1dRuntime {
         let (event_tx, event_rx) = mpsc::channel::<WorkerEvent>();
         let (cancel_tx, cancel_rx) = oneshot::channel::<()>();
 
-        thread::Builder::new()
-            .name(format!("ozone-plus-gen-{request_id}"))
-            .spawn(move || {
-                let runtime = match tokio::runtime::Builder::new_current_thread()
-                    .enable_all()
-                    .build()
-                {
-                    Ok(runtime) => runtime,
+        let runtime = self.runtime.clone();
+        runtime.spawn(async move {
+            if let Some(max_ctx) = gateway.probe_max_context_length().await {
+                let prompt_chars = request.prompt.len();
+                let estimated_prompt_tokens = prompt_chars * 10 / 35;
+                if estimated_prompt_tokens > max_ctx {
+                    let _ = event_tx.send(WorkerEvent::Token(format!(
+                        "\n⚠ prompt (~{estimated_prompt_tokens} est. tokens) may exceed backend context ({max_ctx})\n"
+                    )));
+                }
+            }
+
+            let (stream_tx, mut stream_rx) = tokio_mpsc::channel::<StreamChunk>(128);
+            let stream_gateway = gateway.clone();
+            let stream_task = tokio::spawn(async move {
+                stream_gateway
+                    .stream_with_retry(request, stream_tx, cancel_rx, 0)
+                    .await
+            });
+
+            let mut saw_done = false;
+            while let Some(chunk) = stream_rx.recv().await {
+                match chunk {
+                    StreamChunk::Token(token) => {
+                        if event_tx.send(WorkerEvent::Token(token)).is_err() {
+                            return;
+                        }
+                    }
+                    StreamChunk::FinishReason(_) => {}
+                    StreamChunk::Done => {
+                        saw_done = true;
+                        let _ = event_tx.send(WorkerEvent::Finished);
+                    }
+                }
+            }
+
+            if !saw_done {
+                match stream_task.await {
+                    Ok(Ok(_)) => {
+                        let _ = event_tx.send(WorkerEvent::Finished);
+                    }
+                    Ok(Err(error)) => {
+                        if error
+                            .downcast_ref::<InferenceError>()
+                            .is_some_and(|inner| matches!(inner, InferenceError::Cancelled))
+                        {
+                            let _ = event_tx.send(WorkerEvent::Cancelled);
+                        } else {
+                            let _ = event_tx.send(WorkerEvent::Failed(error.to_string()));
+                        }
+                    }
                     Err(error) => {
                         let _ = event_tx.send(WorkerEvent::Failed(format!(
-                            "failed to build tokio runtime: {error}"
+                            "generation task join failure: {error}"
                         )));
-                        return;
                     }
-                };
-
-                runtime.block_on(async move {
-                    if let Some(max_ctx) = gateway.probe_max_context_length().await {
-                        let prompt_chars = request.prompt.len();
-                        let estimated_prompt_tokens = prompt_chars * 10 / 35;
-                        if estimated_prompt_tokens > max_ctx {
-                            let _ = event_tx.send(WorkerEvent::Token(format!(
-                                "\n⚠ prompt (~{estimated_prompt_tokens} est. tokens) may exceed backend context ({max_ctx})\n"
-                            )));
-                        }
-                    }
-
-                    let (stream_tx, mut stream_rx) = tokio_mpsc::channel::<StreamChunk>(128);
-                    let stream_gateway = gateway.clone();
-                    let stream_task = tokio::spawn(async move {
-                        stream_gateway
-                            .stream_with_retry(request, stream_tx, cancel_rx, 0)
-                            .await
-                    });
-
-                    let mut saw_done = false;
-                    while let Some(chunk) = stream_rx.recv().await {
-                        match chunk {
-                            StreamChunk::Token(token) => {
-                                if event_tx.send(WorkerEvent::Token(token)).is_err() {
-                                    return;
-                                }
-                            }
-                            StreamChunk::FinishReason(_) => {}
-                            StreamChunk::Done => {
-                                saw_done = true;
-                                let _ = event_tx.send(WorkerEvent::Finished);
-                            }
-                        }
-                    }
-
-                    if !saw_done {
-                        match stream_task.await {
-                            Ok(Ok(_)) => {
-                                let _ = event_tx.send(WorkerEvent::Finished);
-                            }
-                            Ok(Err(error)) => {
-                                if error
-                                    .downcast_ref::<InferenceError>()
-                                    .is_some_and(|inner| matches!(inner, InferenceError::Cancelled))
-                                {
-                                    let _ = event_tx.send(WorkerEvent::Cancelled);
-                                } else {
-                                    let _ = event_tx.send(WorkerEvent::Failed(error.to_string()));
-                                }
-                            }
-                            Err(error) => {
-                                let _ = event_tx.send(WorkerEvent::Failed(format!(
-                                    "generation task join failure: {error}"
-                                )));
-                            }
-                        }
-                    }
-                });
-            })
-            .map_err(|error| format!("failed to spawn generation worker: {error}"))?;
+                }
+            }
+        });
 
         Ok(PendingGeneration {
             branch_id,

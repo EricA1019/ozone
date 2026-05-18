@@ -48,6 +48,7 @@ use recall_helpers::{
     tui_context_preview_from_plan, tui_recall_browser_from_state,
     tui_transcript_item_from_message,
 };
+use std::sync::Arc;
 
 // Generation-related types are defined in `generation.rs` and re-exported above.
 
@@ -71,6 +72,7 @@ pub struct Phase1dRuntime {
     custom_commands: Vec<crate::hooks::CustomCommand>,
     hooks_config: crate::hooks::HooksConfig,
     safe_mode: bool,
+    runtime: Arc<tokio::runtime::Runtime>,
 }
 
 impl Phase1dRuntime {
@@ -94,6 +96,13 @@ impl Phase1dRuntime {
 
         let inference = Self::load_inference_for_session(&repo, &session_id)?;
 
+        let runtime = Arc::new(
+            tokio::runtime::Builder::new_multi_thread()
+                .enable_all()
+                .build()
+                .map_err(|error| format!("failed to build tokio runtime: {error}"))?,
+        );
+
         Ok(Self {
             engine: SingleWriterConversationEngine::new(crate::store::RepoConversationStore::new(
                 repo.clone(),
@@ -111,6 +120,7 @@ impl Phase1dRuntime {
             custom_commands: crate::hooks::discover_commands(),
             hooks_config: crate::hooks::HooksConfig::default(),
             safe_mode: false,
+            runtime,
         })
     }
 
