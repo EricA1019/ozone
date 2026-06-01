@@ -8,9 +8,9 @@ use crate::{
     session_title,
 };
 
-use super::{Phase1dRuntime, TuiRuntimeSessionLoad};
+use super::{OzonePlusRuntime, TuiRuntimeSessionLoad};
 
-impl Phase1dRuntime {
+impl OzonePlusRuntime {
     pub(super) fn list_sessions_impl(&mut self) -> Result<Vec<SessionListEntry>, String> {
         let sessions = self.repo.list_sessions().map_err(|e| e.to_string())?;
         Ok(sessions
@@ -29,7 +29,7 @@ impl Phase1dRuntime {
 
     pub(super) fn get_settings_impl(&mut self) -> Result<Vec<ozone_tui::SettingsEntry>, String> {
         let config = self.inference.config();
-        let prefs = load_prefs_sync();
+        let prefs = load_prefs_sync()?;
         let mut entries = Vec::new();
 
         entries.push(ozone_tui::SettingsEntry {
@@ -159,7 +159,7 @@ impl Phase1dRuntime {
     }
 
     pub(super) fn save_pref_impl(&mut self, pref_key: &str, value: &str) -> Result<(), String> {
-        let mut prefs = load_prefs_sync();
+        let mut prefs = load_prefs_sync()?;
         match pref_key {
             "theme_preset" => prefs.theme_preset = value.to_string(),
             "timestamp_style" => prefs.timestamp_style = value.to_string(),

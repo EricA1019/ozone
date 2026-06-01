@@ -60,7 +60,7 @@
         prefix: &str,
     ) -> (
         TestSandbox,
-        Phase1dRuntime,
+        OzonePlusRuntime,
         TuiSessionContext,
         BranchId,
         MessageId,
@@ -143,7 +143,7 @@
             })
             .unwrap();
 
-        let runtime = Phase1dRuntime::open(repo, session.session_id.clone()).unwrap();
+        let runtime = OzonePlusRuntime::open(repo, session.session_id.clone()).unwrap();
         (
             sandbox,
             runtime,
@@ -292,7 +292,7 @@
             .create_session(CreateSessionRequest::new("Open Conversation"))
             .unwrap();
 
-        let mut runtime = Phase1dRuntime::open(repo, session.session_id.clone()).unwrap();
+        let mut runtime = OzonePlusRuntime::open(repo, session.session_id.clone()).unwrap();
         let loaded = runtime.load_session_into_tui(session.session_id.clone()).unwrap();
 
         assert_eq!(loaded.session_id, session.session_id.to_string());
@@ -317,7 +317,7 @@
             )
             .unwrap();
 
-        let mut runtime = Phase1dRuntime::open(repo, session.session_id.clone()).unwrap();
+        let mut runtime = OzonePlusRuntime::open(repo, session.session_id.clone()).unwrap();
         let added = runtime
             .toggle_bookmark(&context, &message.message_id)
             .unwrap()
@@ -431,7 +431,7 @@
             .unwrap();
         let context = TuiSessionContext::new(session.session_id.clone(), session.name.clone());
 
-        let mut runtime = Phase1dRuntime::open(repo, session.session_id.clone()).unwrap();
+        let mut runtime = OzonePlusRuntime::open(repo, session.session_id.clone()).unwrap();
         let refresh = runtime
             .run_command(&context, "/session rename Renamed Session")
             .unwrap()

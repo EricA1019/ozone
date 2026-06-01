@@ -6,27 +6,39 @@ use rusqlite::Connection;
 #[derive(Debug, Clone)]
 pub struct BenchmarkRow {
     pub model_name: String,
+    #[cfg(any(feature = "bench", feature = "profiling-ui"))]
     pub model_size_gb: f64,
     pub gpu_layers: i32,
     pub context_size: u32,
     pub quant_kv: u32,
+    #[cfg(any(feature = "bench", feature = "profiling-ui"))]
     pub threads: u32,
     pub tokens_per_sec: f64,
     pub time_to_first_token_ms: u32,
     pub vram_peak_mb: u32,
+    #[cfg(any(feature = "bench", feature = "profiling-ui"))]
     pub ram_peak_mb: u32,
+    #[cfg(any(feature = "bench", feature = "profiling-ui"))]
     pub total_tokens: u32,
+    #[cfg(any(feature = "bench", feature = "profiling-ui"))]
     pub total_time_ms: u32,
     pub status: String,
+    #[cfg(any(feature = "bench", feature = "profiling-ui"))]
     pub gpu_name: String,
+    #[cfg(any(feature = "bench", feature = "profiling-ui"))]
     pub gpu_vram_mb: u32,
+    #[cfg(any(feature = "bench", feature = "profiling-ui"))]
     pub ram_total_mb: u32,
+    #[cfg(any(feature = "bench", feature = "profiling-ui"))]
     pub timestamp: String,
+    #[cfg(any(feature = "bench", feature = "profiling-ui"))]
     pub notes: String,
+    #[cfg(any(feature = "bench", feature = "profiling-ui"))]
     pub launch_profile_name: Option<String>,
 }
 
 /// Auto-generated preset from benchmark data.
+#[cfg(any(feature = "analyze", feature = "profiling-ui"))]
 #[derive(Debug, Clone)]
 pub struct ProfileRow {
     pub model_name: String,
@@ -108,6 +120,7 @@ fn init_tables(conn: &Connection) -> Result<()> {
 }
 
 /// Insert a benchmark result. Returns the row id.
+#[cfg(any(feature = "bench", feature = "profiling-ui"))]
 pub fn insert_benchmark(conn: &Connection, row: &BenchmarkRow) -> Result<i64> {
     conn.execute(
         "INSERT INTO benchmarks (
@@ -142,6 +155,7 @@ pub fn insert_benchmark(conn: &Connection, row: &BenchmarkRow) -> Result<i64> {
 }
 
 /// Insert a profile preset.
+#[cfg(any(feature = "analyze", feature = "profiling-ui"))]
 pub fn insert_profile(conn: &Connection, row: &ProfileRow) -> Result<i64> {
     conn.execute(
         "INSERT INTO profiles (
@@ -164,6 +178,7 @@ pub fn insert_profile(conn: &Connection, row: &ProfileRow) -> Result<i64> {
 }
 
 /// Get all benchmarks for a model, ordered by timestamp desc.
+#[cfg(any(feature = "analyze", feature = "profiling-ui", test))]
 pub fn get_benchmarks(conn: &Connection, model_name: &str) -> Result<Vec<BenchmarkRow>> {
     let mut stmt = conn.prepare(
         "SELECT model_name, model_size_gb, gpu_layers, context_size, quant_kv, threads,
@@ -175,23 +190,34 @@ pub fn get_benchmarks(conn: &Connection, model_name: &str) -> Result<Vec<Benchma
     let rows = stmt.query_map([model_name], |r| {
         Ok(BenchmarkRow {
             model_name: r.get(0)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             model_size_gb: r.get(1)?,
             gpu_layers: r.get(2)?,
             context_size: r.get(3)?,
             quant_kv: r.get(4)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             threads: r.get(5)?,
             tokens_per_sec: r.get(6)?,
             time_to_first_token_ms: r.get(7)?,
             vram_peak_mb: r.get(8)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             ram_peak_mb: r.get(9)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             total_tokens: r.get(10)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             total_time_ms: r.get(11)?,
             status: r.get(12)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             gpu_name: r.get(13)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             gpu_vram_mb: r.get(14)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             ram_total_mb: r.get(15)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             timestamp: r.get(16)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             notes: r.get(17)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             launch_profile_name: r.get(18)?,
         })
     })?;
@@ -199,6 +225,7 @@ pub fn get_benchmarks(conn: &Connection, model_name: &str) -> Result<Vec<Benchma
 }
 
 /// Get all benchmarks across all models.
+#[cfg(any(feature = "analyze", feature = "profiling-ui"))]
 pub fn get_all_benchmarks(conn: &Connection) -> Result<Vec<BenchmarkRow>> {
     let mut stmt = conn.prepare(
         "SELECT model_name, model_size_gb, gpu_layers, context_size, quant_kv, threads,
@@ -210,23 +237,34 @@ pub fn get_all_benchmarks(conn: &Connection) -> Result<Vec<BenchmarkRow>> {
     let rows = stmt.query_map([], |r| {
         Ok(BenchmarkRow {
             model_name: r.get(0)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             model_size_gb: r.get(1)?,
             gpu_layers: r.get(2)?,
             context_size: r.get(3)?,
             quant_kv: r.get(4)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             threads: r.get(5)?,
             tokens_per_sec: r.get(6)?,
             time_to_first_token_ms: r.get(7)?,
             vram_peak_mb: r.get(8)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             ram_peak_mb: r.get(9)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             total_tokens: r.get(10)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             total_time_ms: r.get(11)?,
             status: r.get(12)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             gpu_name: r.get(13)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             gpu_vram_mb: r.get(14)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             ram_total_mb: r.get(15)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             timestamp: r.get(16)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             notes: r.get(17)?,
+            #[cfg(any(feature = "bench", feature = "profiling-ui"))]
             launch_profile_name: r.get(18)?,
         })
     })?;
@@ -234,6 +272,7 @@ pub fn get_all_benchmarks(conn: &Connection) -> Result<Vec<BenchmarkRow>> {
 }
 
 /// Get profiles for a model, ordered by profile name.
+#[cfg(any(feature = "analyze", feature = "profiling-ui"))]
 pub fn get_profiles(conn: &Connection, model_name: &str) -> Result<Vec<ProfileRow>> {
     let mut stmt = conn.prepare(
         "SELECT model_name, profile_name, gpu_layers, context_size, quant_kv,
@@ -257,6 +296,7 @@ pub fn get_profiles(conn: &Connection, model_name: &str) -> Result<Vec<ProfileRo
 }
 
 /// Delete all profiles for a model (before regenerating).
+#[cfg(any(feature = "analyze", feature = "profiling-ui"))]
 pub fn clear_profiles(conn: &Connection, model_name: &str) -> Result<()> {
     conn.execute("DELETE FROM profiles WHERE model_name = ?1", [model_name])?;
     Ok(())
@@ -266,6 +306,47 @@ pub fn clear_profiles(conn: &Connection, model_name: &str) -> Result<()> {
 mod tests {
     use super::*;
 
+    fn legacy_benchmarks_schema_without_launch_profile_name(conn: &Connection) {
+        conn.execute_batch(
+            "CREATE TABLE benchmarks (
+                id                    INTEGER PRIMARY KEY,
+                model_name            TEXT NOT NULL,
+                model_size_gb         REAL,
+                gpu_layers            INTEGER,
+                context_size          INTEGER,
+                quant_kv              INTEGER,
+                threads               INTEGER,
+                tokens_per_sec        REAL,
+                time_to_first_token_ms INTEGER,
+                vram_peak_mb          INTEGER,
+                ram_peak_mb           INTEGER,
+                total_tokens          INTEGER,
+                total_time_ms         INTEGER,
+                status                TEXT,
+                gpu_name              TEXT,
+                gpu_vram_mb           INTEGER,
+                ram_total_mb          INTEGER,
+                timestamp             TEXT,
+                notes                 TEXT
+            );
+
+            CREATE TABLE profiles (
+                id            INTEGER PRIMARY KEY,
+                model_name    TEXT NOT NULL,
+                profile_name  TEXT,
+                gpu_layers    INTEGER,
+                context_size  INTEGER,
+                quant_kv      INTEGER,
+                tokens_per_sec REAL,
+                vram_mb       INTEGER,
+                source        TEXT,
+                created_at    TEXT
+             );",
+        )
+        .expect("create legacy schema");
+    }
+
+    #[cfg(any(feature = "bench", feature = "profiling-ui"))]
     #[test]
     fn benchmark_round_trip_preserves_launch_profile_name() {
         let conn = Connection::open_in_memory().expect("in-memory sqlite");
@@ -298,5 +379,41 @@ mod tests {
 
         assert_eq!(rows.len(), 1);
         assert_eq!(rows[0].launch_profile_name.as_deref(), Some("custom-1"));
+    }
+
+    #[test]
+    fn init_tables_is_reentrant_for_existing_schema() {
+        let conn = Connection::open_in_memory().expect("in-memory sqlite");
+
+        init_tables(&conn).expect("first init");
+        init_tables(&conn).expect("second init");
+
+        let column_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('benchmarks') WHERE name = 'launch_profile_name'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count launch_profile_name column");
+
+        assert_eq!(column_count, 1);
+    }
+
+    #[test]
+    fn init_tables_upgrades_legacy_schema_with_launch_profile_name() {
+        let conn = Connection::open_in_memory().expect("in-memory sqlite");
+        legacy_benchmarks_schema_without_launch_profile_name(&conn);
+
+        init_tables(&conn).expect("upgrade legacy schema");
+
+        let column_count: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM pragma_table_info('benchmarks') WHERE name = 'launch_profile_name'",
+                [],
+                |row| row.get(0),
+            )
+            .expect("count launch_profile_name column");
+
+        assert_eq!(column_count, 1);
     }
 }

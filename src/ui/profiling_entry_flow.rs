@@ -6,7 +6,6 @@ use crate::profiling::{self, ProfilingAction, WorkflowRequest};
 use super::{
     configure_profile_flow::selected_saved_profile,
     App,
-    BackendMode,
     Screen,
 };
 
@@ -95,15 +94,11 @@ pub(super) fn handle_profile_confirm_key(app: &mut App, key: KeyEvent) {
                 let launch_profile_name = matches!(action, ProfilingAction::BenchmarkSavedProfile)
                     .then(|| selected_saved_profile(app).map(|profile| profile.profile_name))
                     .flatten();
-                let profiling_backend = match app.prefs.preferred_backend {
-                    Some(BackendMode::LlamaCpp) => profiling::ProfilingBackend::LlamaCpp,
-                    _ => profiling::ProfilingBackend::KoboldCpp,
-                };
                 let request = WorkflowRequest {
                     record,
                     hardware: app.hardware.clone().unwrap_or_default(),
                     action,
-                    profiling_backend,
+                    profiling_backend: profiling::ProfilingBackend::LlamaCpp,
                     launch_plan_override,
                     launch_profile_name,
                 };

@@ -26,9 +26,9 @@ pub(super) fn handle_tier_picker_key(app: &mut App, key: KeyEvent) -> TierPicker
                         });
                         app.screen = Screen::Launcher;
                     }
-                    crate::prefs::Tier::Base | crate::prefs::Tier::Plus => {
+                    _ => {
                         if tier_install::is_tier_installed(&binary) {
-                            app.prefs.preferred_tier = Some(tier);
+                            app.prefs.preferred_tier = Some(crate::prefs::Tier::Base);
                             let prefs_clone = app.prefs.clone();
                             tokio::spawn(async move {
                                 let _ = crate::prefs::save_prefs(&prefs_clone).await;
@@ -36,7 +36,7 @@ pub(super) fn handle_tier_picker_key(app: &mut App, key: KeyEvent) -> TierPicker
                             app.screen = Screen::Launcher;
                         } else {
                             app.tier_picker.phase = tier_picker::TierPickerPhase::ConfirmingDownload {
-                                tier,
+                                tier: crate::prefs::Tier::Base,
                                 binary,
                             };
                         }

@@ -14,10 +14,10 @@ use ozone_tui::{
 use super::{
     tui_context_dry_run_from_build, tui_context_preview_from_plan,
     tui_transcript_item_from_message, PendingCompletion, PendingGeneration, PendingReroll,
-    Phase1dRuntime, RerollBranchMode, RerollSource,
+    OzonePlusRuntime, RerollBranchMode, RerollSource,
 };
 
-impl Phase1dRuntime {
+impl OzonePlusRuntime {
     pub(super) fn resolve_reroll_source(
         &self,
         context: &TuiSessionContext,

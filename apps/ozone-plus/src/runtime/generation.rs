@@ -18,7 +18,7 @@ use std::{sync::mpsc::{self, TryRecvError}, time::Instant};
 use tokio::sync::{mpsc as tokio_mpsc, oneshot};
 use super::{
     tui_context_dry_run_from_build, tui_context_preview_from_plan,
-    tui_transcript_item_from_message, Phase1dRuntime,
+    tui_transcript_item_from_message, OzonePlusRuntime,
 };
 
 // Types related to generation worker events and pending generation state.
@@ -114,7 +114,7 @@ fn apply_stream_token(pending: &mut PendingGeneration, token: &str) {
     pending.tokens_generated = pending.tokens_generated.saturating_add(1);
 }
 
-impl Phase1dRuntime {
+impl OzonePlusRuntime {
     pub(super) fn start_generation_task(
         &self,
         branch_id: BranchId,

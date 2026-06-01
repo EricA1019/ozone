@@ -12,7 +12,7 @@ use ozone_tui::{
 
 use super::{
     tui_branch_from_record, tui_context_dry_run_from_build, tui_context_preview_from_plan,
-    tui_transcript_item_from_message, Phase1dRuntime,
+    tui_transcript_item_from_message, OzonePlusRuntime,
 };
 
 pub(super) struct SessionSnapshot {
@@ -23,7 +23,7 @@ pub(super) struct SessionSnapshot {
     pub(super) stats: TuiSessionStats,
 }
 
-impl Phase1dRuntime {
+impl OzonePlusRuntime {
     pub(super) fn load_session_into_tui(
         &mut self,
         session_id: SessionId,
@@ -209,5 +209,5 @@ impl Phase1dRuntime {
     }
 
     // Persisted draft I/O moved to `persisted_draft.rs` as methods on
-    // `Phase1dRuntime` to keep bootstrap responsibilities focused.
+    // `OzonePlusRuntime` to keep bootstrap responsibilities focused.
 }

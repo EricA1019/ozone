@@ -1,6 +1,7 @@
-use crossterm::event::KeyEvent;
+use crossterm::event::{KeyEvent, KeyCode};
 use ratatui::style::{Color, Modifier, Style};
 use tui_textarea::TextArea;
+use std::time::Instant;
 
 use super::{launcher, App, Screen};
 
@@ -68,4 +69,41 @@ pub(super) fn input_command_overlay(app: &mut App, key: KeyEvent) {
     app.command_overlay.input(key);
     normalize_command_overlay(app);
     sync_command_overlay_selection(app);
+}
+
+pub(super) async fn handle_command_overlay_key(
+    app: &mut App,
+    key: KeyEvent,
+    last_refresh: &mut Instant,
+) -> anyhow::Result<super::LauncherActionOutcome> {
+    match key.code {
+        KeyCode::Esc => {
+            close_command_overlay(app);
+        }
+        KeyCode::Up => {
+            if app.command_overlay_selected > 0 {
+                app.command_overlay_selected -= 1;
+            }
+        }
+        KeyCode::Down => {
+            let count = launcher::filtered_launcher_actions(app).len();
+            if app.command_overlay_selected + 1 < count {
+                app.command_overlay_selected += 1;
+            }
+        }
+        KeyCode::Enter => {
+            let selected = launcher::filtered_launcher_actions(app)
+                .get(app.command_overlay_selected)
+                .map(|action| action.id);
+            close_command_overlay(app);
+            if let Some(action) = selected {
+                return Ok(super::run_launcher_action(app, action, last_refresh).await);
+            }
+        }
+        _ => {
+            input_command_overlay(app, key);
+        }
+    }
+
+    Ok(super::LauncherActionOutcome::Continue)
 }

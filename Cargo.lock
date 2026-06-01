@@ -2090,10 +2090,13 @@ dependencies = [
 name = "ozone-core"
 version = "0.4.8-alpha"
 dependencies = [
+ "anyhow",
  "directories",
  "dirs 5.0.1",
  "serde",
+ "serde_json",
  "sha2",
+ "sysinfo",
 ]
 
 [[package]]
@@ -2140,14 +2143,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "ozone-mcp-app"
-version = "0.4.8-alpha"
-dependencies = [
- "anyhow",
- "ozone-mcp",
-]
-
-[[package]]
 name = "ozone-memory"
 version = "0.4.8-alpha"
 dependencies = [
@@ -2170,24 +2165,6 @@ dependencies = [
  "serde",
  "serde_json",
  "thiserror 1.0.69",
-]
-
-[[package]]
-name = "ozone-plus"
-version = "0.4.8-alpha"
-dependencies = [
- "chrono",
- "clap",
- "dirs 6.0.0",
- "ozone-core",
- "ozone-engine",
- "ozone-inference",
- "ozone-memory",
- "ozone-persist",
- "ozone-tui",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]

@@ -1,16 +1,9 @@
-use super::{App, BackendMode, FrontendMode, Screen};
+use super::{App, BackendMode, Screen};
 
 pub(super) fn sync_settings_from_prefs(app: &mut App) {
     app.settings_section = 0;
-    app.settings_backend_index = match app.prefs.preferred_backend {
-        Some(BackendMode::LlamaCpp) => 1,
-        Some(BackendMode::Ollama) => 2,
-        _ => 0,
-    };
-    app.settings_frontend_index = match app.prefs.preferred_frontend {
-        Some(FrontendMode::OzonePlus) => 1,
-        _ => 0,
-    };
+    app.settings_backend_index = 0;
+    app.prefs.preferred_backend = Some(BackendMode::LlamaCpp);
 }
 
 pub(super) fn open_settings(app: &mut App) {

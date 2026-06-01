@@ -12,8 +12,8 @@ use ratatui::{
 
 use crate::prefs::Tier;
 use crate::theme::{
-    style_bold_bright_violet, style_bold_lime, style_bright_violet, style_cyan, style_gray,
-    style_green, style_lime, style_red, HEX, HEX_FILLED, LIME, TAGLINE,
+    style_bold_lime, style_cyan, style_gray, style_green, style_lime, style_red, HEX,
+    HEX_FILLED, LIME, TAGLINE,
 };
 
 /// Phases of the tier picker flow
@@ -53,8 +53,6 @@ impl TierPickerState {
     pub fn selected_tier(&self) -> Tier {
         match self.selected {
             0 => Tier::Lite,
-            1 => Tier::Base,
-            2 => Tier::Plus,
             _ => Tier::Base,
         }
     }
@@ -66,16 +64,15 @@ impl TierPickerState {
     }
 
     pub fn down(&mut self) {
-        if self.selected < 2 {
+        if self.selected < 1 {
             self.selected += 1;
         }
     }
 }
 
-const TIERS: [(Tier, &str, &str); 3] = [
+const TIERS: [(Tier, &str, &str); 2] = [
     (Tier::Lite, "ozonelite", "Launch + monitor only"),
     (Tier::Base, "ozone", "Launch + bench + sweep + analyze"),
-    (Tier::Plus, "ozone+", "Chat shell with memory & sessions"),
 ];
 
 /// Render the tier picker screen — dispatches based on current phase.
@@ -208,17 +205,11 @@ fn render_picking(f: &mut Frame, area: Rect, state: &TierPickerState) {
     let items: Vec<ListItem> = TIERS
         .iter()
         .enumerate()
-        .map(|(i, (tier, name, desc))| {
+        .map(|(i, (_tier, name, desc))| {
             let selected = i == state.selected;
             let bullet = if selected { HEX_FILLED } else { HEX };
 
-            let (name_style, bullet_style) = if *tier == Tier::Plus {
-                if selected {
-                    (style_bold_bright_violet(), style_bright_violet())
-                } else {
-                    (style_gray(), style_gray())
-                }
-            } else if selected {
+            let (name_style, bullet_style) = if selected {
                 (
                     Style::default().fg(LIME).add_modifier(Modifier::BOLD),
                     style_lime(),

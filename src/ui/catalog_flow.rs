@@ -32,10 +32,7 @@ pub(super) fn apply_catalog_refresh(app: &mut App, catalog: Vec<CatalogRecord>) 
     if plan_missing {
         app.current_plan = None;
         app.configure_recommended_plan = None;
-        if matches!(
-            app.screen,
-            Screen::ConfigureHub | Screen::Confirm | Screen::FrontendChoice
-        ) {
+        if matches!(app.screen, Screen::ConfigureHub | Screen::Confirm) {
             app.screen = Screen::ModelPicker;
             app.set_error("Selected model is no longer available.".into());
         }

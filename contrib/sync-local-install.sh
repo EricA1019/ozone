@@ -6,7 +6,7 @@ usage() {
     cat <<'EOF'
 Usage: ./contrib/sync-local-install.sh [--no-build] [--verify-only]
 
-Build the current release binaries and sync them into:
+Build the current release binary and sync it into:
   - ~/.cargo/bin
   - ~/.local/bin
 
@@ -123,8 +123,6 @@ INSTALL_STATE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/ozone"
 INSTALL_SOURCE_ROOT_FILE="$INSTALL_STATE_DIR/install-source-root.txt"
 BINARIES=(
     "ozone:ozone"
-    "ozone-plus:ozone-plus"
-    "ozone-mcp-app:ozone-mcp"
 )
 
 if [[ "$NO_BUILD" -eq 0 ]]; then
@@ -132,7 +130,6 @@ if [[ "$NO_BUILD" -eq 0 ]]; then
     (
         cd "$REPO_ROOT"
         cargo build --release -p ozone --features full
-        cargo build --release -p ozone-plus -p ozone-mcp-app
     )
 fi
 

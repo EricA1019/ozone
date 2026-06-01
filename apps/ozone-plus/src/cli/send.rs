@@ -1,6 +1,6 @@
 use crate::cli::args::*;
 use crate::cli::util::{open_repository, parse_session_id};
-use crate::runtime::Phase1dRuntime;
+use crate::runtime::OzonePlusRuntime;
 use ozone_tui::mock::SessionRuntime;
 use ozone_tui::GenerationPoll;
 use ozone_tui::state::SessionContext as TuiSessionContext;
@@ -17,7 +17,7 @@ pub fn send_message(args: SendArgs) -> Result<(), String> {
         .get_session(&session_id)
         .map_err(|error| error.to_string())?
         .ok_or_else(|| format!("session {session_id} was not found"))?;
-    let mut runtime = Phase1dRuntime::open(repo.clone(), session_id.clone())?;
+    let mut runtime = OzonePlusRuntime::open(repo.clone(), session_id.clone())?;
     let context = TuiSessionContext::new(session_id.clone(), session.name);
 
     let send_result = (|| -> Result<(), String> {

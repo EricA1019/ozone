@@ -228,13 +228,12 @@ mod tests {
     use std::{
         fs,
         path::{Path, PathBuf},
-        sync::{Mutex, OnceLock},
+        sync::Mutex,
         time::{SystemTime, UNIX_EPOCH},
     };
 
     fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
+        crate::test_support::env_lock()
     }
 
     struct ScopedEnvVar {
@@ -300,7 +299,7 @@ mod tests {
             &home
         ));
         assert!(is_managed_install_path(
-            &home.join(".local/bin/ozone-plus"),
+            &home.join(".local/bin/ozone"),
             &home
         ));
         assert!(!is_managed_install_path(
@@ -331,13 +330,13 @@ mod tests {
         let root = unique_temp_dir("match");
         let home = root.join("home");
         let repo = root.join("repo");
-        let current = home.join(".cargo/bin/ozone-plus");
-        let release = repo.join("target/release/ozone-plus");
+        let current = home.join(".cargo/bin/ozone");
+        let release = repo.join("target/release/ozone");
 
         write_file(&current, b"same-binary");
         write_file(&release, b"same-binary");
 
-        let detected = stale_release_artifact(&current, &repo, "ozone-plus", &home).unwrap();
+        let detected = stale_release_artifact(&current, &repo, "ozone", &home).unwrap();
         assert!(detected.is_none());
 
         let _ = fs::remove_dir_all(root);

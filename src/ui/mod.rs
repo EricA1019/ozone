@@ -16,19 +16,20 @@ use crate::profiling::{
     WorkflowEvent,
 };
 use anyhow::Result;
-use clap::ValueEnum;
 use crossterm::{
     cursor::Show,
-    event::{self, Event, KeyCode, KeyEvent, KeyEventKind},
+    event::{self, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
+#[cfg(test)]
+use crossterm::event::KeyEvent;
 use ratatui::{
     backend::CrosstermBackend,
     widgets::Clear,
     Terminal,
 };
-use serde::{Deserialize, Serialize};
+use serde::{de, Deserialize, Deserializer, Serialize};
 #[cfg(feature = "profiling-ui")]
 use tokio::sync::mpsc::{error::TryRecvError, UnboundedReceiver};
 #[cfg(feature = "profiling-ui")]
@@ -43,11 +44,11 @@ mod configure_hub_flow;
 mod configure_plan_flow;
 mod configure_profile_flow;
 mod exit_confirm_flow;
-mod frontend_choice_flow;
 pub mod launcher;
 mod launch_execution_flow;
 mod launcher_screen_flow;
 mod model_picker_flow;
+mod monitor_flow;
 pub mod monitor;
 #[cfg(feature = "profiling-ui")]
 mod profiling_entry_flow;
@@ -56,6 +57,7 @@ mod profiling_result_flow;
 mod settings_flow;
 mod settings_screen_flow;
 pub mod splash;
+mod splash_flow;
 pub mod tier_install;
 pub mod tier_picker;
 mod tier_picker_flow;
@@ -64,8 +66,7 @@ use self::catalog_flow::apply_catalog_report;
 #[cfg(test)]
 use self::catalog_flow::{apply_catalog_refresh, selected_catalog_name};
 use self::command_overlay_flow::{
-    close_command_overlay, input_command_overlay, new_command_overlay, open_command_overlay,
-    overlay_supported,
+    new_command_overlay, open_command_overlay, overlay_supported, handle_command_overlay_key,
 };
 #[cfg(test)]
 use self::command_overlay_flow::normalize_command_overlay;
@@ -76,23 +77,24 @@ use self::configure_plan_flow::{adjust_configure_plan, reset_configure_plan};
 #[cfg(test)]
 use self::configure_profile_flow::build_effective_plan;
 use self::exit_confirm_flow::{handle_exit_confirm_key, ExitConfirmOutcome};
-use self::frontend_choice_flow::handle_frontend_choice_key;
 use self::launch_execution_flow::{
-    handle_pending_frontend_launch, PendingFrontendLaunchOutcome,
+    handle_pending_frontend_launch, PendingFrontendLaunchOutcome, run_launcher_action,
 };
 use self::launcher_screen_flow::handle_launcher_screen_key;
 use self::model_picker_flow::handle_model_picker_key;
+use self::monitor_flow::{handle_monitor_key, MonitorOutcome};
 #[cfg(feature = "profiling-ui")]
 use self::profiling_entry_flow::{handle_profile_advisory_key, handle_profile_confirm_key};
 #[cfg(feature = "profiling-ui")]
 use self::profiling_result_flow::{
     handle_profile_failure_key, handle_profile_running_key, handle_profile_success_key,
-    ProfilingResultOutcome,
+    apply_workflow_event, ProfilingResultOutcome,
 };
 #[cfg(test)]
 use self::settings_flow::back_from_confirm;
 use self::settings_flow::{open_exit_confirm, open_settings, sync_settings_from_prefs};
 use self::settings_screen_flow::handle_settings_key;
+use self::splash_flow::handle_splash_key;
 use self::tier_picker_flow::{handle_tier_picker_key, TierPickerOutcome};
 
 #[derive(Debug, Clone, PartialEq)]
@@ -104,7 +106,6 @@ pub enum Screen {
     ModelPicker,
     ConfigureHub,
     Confirm,
-    FrontendChoice,
     Launching,
     #[cfg(feature = "profiling-ui")]
     ProfileAdvisory,
@@ -134,8 +135,6 @@ pub enum LauncherActionId {
     ConfigureModel,
     #[cfg(feature = "profiling-ui")]
     ProfileModel,
-    OpenOzonePlus,
-    OpenOzonePlusSideBySide,
     Settings,
     ClearGpu,
     Monitor,
@@ -150,19 +149,36 @@ pub struct LauncherAction {
     pub command: &'static str,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum BackendMode {
-    KoboldCpp,
     LlamaCpp,
-    Ollama,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, ValueEnum)]
-#[serde(rename_all = "kebab-case")]
-pub enum FrontendMode {
-    SillyTavern,
-    OzonePlus,
+impl<'de> Deserialize<'de> for BackendMode {
+    fn deserialize<D>(deserializer: D) -> Result<Self, D::Error>
+    where
+        D: Deserializer<'de>,
+    {
+        const LLAMACPP_BACKEND_NAME: &str = "llama-cpp";
+        const LEGACY_KOBOLD_BACKEND_NAME: &str = "kobold-cpp";
+        const LEGACY_OLLAMA_BACKEND_NAME: &str = "ollama";
+
+        let raw = String::deserialize(deserializer)?;
+        match raw.as_str() {
+            LLAMACPP_BACKEND_NAME | LEGACY_KOBOLD_BACKEND_NAME | LEGACY_OLLAMA_BACKEND_NAME => {
+                Ok(Self::LlamaCpp)
+            }
+            _ => Err(de::Error::unknown_variant(
+                &raw,
+                &[
+                    LLAMACPP_BACKEND_NAME,
+                    LEGACY_KOBOLD_BACKEND_NAME,
+                    LEGACY_OLLAMA_BACKEND_NAME,
+                ],
+            )),
+        }
+    }
 }
 
 pub struct App {
@@ -197,14 +213,10 @@ pub struct App {
     pub status_msg: Option<String>,
     pub status_set_at: Option<Instant>,
     pub model_filter: String,
-    pub preferred_frontend: Option<FrontendMode>,
-    pub frontend_choice_index: usize,
-    pub ozone_plus_handoff: bool,
     pub pending_launch_choice: Option<usize>,
     pub exit_confirm_index: usize,
     pub settings_section: usize,
     pub settings_backend_index: usize,
-    pub settings_frontend_index: usize,
     pub command_overlay_open: bool,
     pub command_overlay: TextArea<'static>,
     pub command_overlay_selected: usize,
@@ -252,12 +264,8 @@ impl App {
             configure_saved_profiles: Vec::new(),
             prefs,
             services: ServiceStatus {
-                kobold_running: false,
-                kobold_model: None,
                 llamacpp_running: false,
                 llamacpp_model: None,
-                ollama_running: false,
-                st_running: false,
             },
             splash_pulse: false,
             splash_ready: false,
@@ -275,14 +283,10 @@ impl App {
             status_msg: None,
             status_set_at: None,
             model_filter: String::new(),
-            preferred_frontend: None,
-            frontend_choice_index: 0,
-            ozone_plus_handoff: false,
             pending_launch_choice: None,
             exit_confirm_index: 1,
             settings_section: 0,
             settings_backend_index: 0,
-            settings_frontend_index: 0,
             command_overlay_open: false,
             command_overlay: new_command_overlay(),
             command_overlay_selected: 0,
@@ -305,12 +309,8 @@ impl App {
             configure_profile_reports: BTreeMap::new(),
             prefs,
             services: ServiceStatus {
-                kobold_running: false,
-                kobold_model: None,
                 llamacpp_running: false,
                 llamacpp_model: None,
-                ollama_running: false,
-                st_running: false,
             },
             splash_pulse: false,
             splash_ready: false,
@@ -328,14 +328,10 @@ impl App {
             status_msg: None,
             status_set_at: None,
             model_filter: String::new(),
-            preferred_frontend: None,
-            frontend_choice_index: 0,
-            ozone_plus_handoff: false,
             pending_launch_choice: None,
             exit_confirm_index: 1,
             settings_section: 0,
             settings_backend_index: 0,
-            settings_frontend_index: 0,
             command_overlay_open: false,
             command_overlay: new_command_overlay(),
             command_overlay_selected: 0,
@@ -523,22 +519,8 @@ fn next_screen_after_splash(app: &App) -> Screen {
     }
 }
 
-fn queue_frontend_launch(app: &mut App) {
-    match app.preferred_frontend {
-        Some(FrontendMode::SillyTavern) => {
-            app.pending_launch_choice = Some(0);
-        }
-        Some(FrontendMode::OzonePlus) => {
-            app.pending_launch_choice = Some(1);
-        }
-        None => {
-            app.frontend_choice_index = match app.prefs.preferred_frontend {
-                Some(FrontendMode::OzonePlus) => 1,
-                _ => 0,
-            };
-            app.screen = Screen::FrontendChoice;
-        }
-    }
+fn queue_launch(app: &mut App) {
+    app.pending_launch_choice = Some(0);
 }
 
 enum LauncherActionOutcome {
@@ -546,150 +528,9 @@ enum LauncherActionOutcome {
     Exit,
 }
 
-async fn run_launcher_action(
-    app: &mut App,
-    action: LauncherActionId,
-    last_refresh: &mut Instant,
-) -> LauncherActionOutcome {
-    match action {
-        LauncherActionId::Launch => match app.prefs.preferred_backend {
-            None => {
-                app.set_error("Configure backend in Settings first".into());
-            }
-            Some(BackendMode::KoboldCpp) | Some(BackendMode::LlamaCpp) => {
-                if !app.catalog.is_empty() {
-                    #[cfg(feature = "profiling-ui")]
-                    app.reset_profile_flow();
-                    app.model_picker_mode = ModelPickerMode::Launch;
-                    app.screen = Screen::ModelPicker;
-                }
-            }
-            Some(BackendMode::Ollama) => {
-                if crate::processes::is_url_ready("http://127.0.0.1:11434/api/tags").await {
-                    app.set_status("Ollama backend ready.".into());
-                    queue_frontend_launch(app);
-                } else {
-                    app.set_error("Ollama not running on :11434".into());
-                }
-            }
-        },
-        LauncherActionId::ConfigureModel => {
-            if !app.catalog.is_empty() {
-                #[cfg(feature = "profiling-ui")]
-                app.reset_profile_flow();
-                app.model_picker_mode = ModelPickerMode::Configure;
-                app.screen = Screen::ModelPicker;
-            }
-        }
-        #[cfg(feature = "profiling-ui")]
-        LauncherActionId::ProfileModel => {
-            if !app.catalog.is_empty() {
-                app.reset_profile_flow();
-                app.model_picker_mode = ModelPickerMode::Profile;
-                app.screen = Screen::ModelPicker;
-            }
-        }
-        LauncherActionId::OpenOzonePlus => {
-            if app.prefs.side_by_side_monitor {
-                let ozone_plus_bin = std::env::current_exe()
-                    .ok()
-                    .and_then(|p| p.parent().map(|dir| dir.join("ozone-plus")))
-                    .filter(|p| p.exists())
-                    .unwrap_or_else(|| std::path::PathBuf::from("ozone-plus"));
-                match spawn_in_terminal(&ozone_plus_bin, app.prefs.preferred_backend.as_ref()) {
-                    Ok(_child) => {
-                        app.screen = Screen::Monitor;
-                        app.set_status("ozone+ launched in new terminal window.".into());
-                    }
-                    Err(e) => {
-                        app.set_error(format!(
-                            "Side-by-side failed: {e}. Disable the pref or check your terminal."
-                        ));
-                    }
-                }
-            } else {
-                app.ozone_plus_handoff = true;
-                return LauncherActionOutcome::Exit;
-            }
-        }
-        LauncherActionId::OpenOzonePlusSideBySide => {
-            let ozone_plus_bin = std::env::current_exe()
-                .ok()
-                .and_then(|p| p.parent().map(|dir| dir.join("ozone-plus")))
-                .filter(|p| p.exists())
-                .unwrap_or_else(|| std::path::PathBuf::from("ozone-plus"));
-            match spawn_in_terminal(&ozone_plus_bin, app.prefs.preferred_backend.as_ref()) {
-                Ok(_child) => {
-                    app.prefs.side_by_side_monitor = true;
-                    let prefs_clone = app.prefs.clone();
-                    tokio::spawn(async move {
-                        let _ = crate::prefs::save_prefs(&prefs_clone).await;
-                    });
-                    app.screen = Screen::Monitor;
-                    app.set_status("ozone+ launched in new terminal window.".into());
-                }
-                Err(e) => {
-                    app.set_error(format!(
-                        "Side-by-side failed: {e}. Use 'Open ozone+' instead."
-                    ));
-                }
-            }
-        }
-        LauncherActionId::Settings => {
-            open_settings(app);
-        }
-        LauncherActionId::ClearGpu => {
-            let _ = crate::processes::clear_gpu_backends().await;
-            app.services = crate::processes::get_service_status().await;
-            *last_refresh = Instant::now();
-            app.set_status("GPU backends cleared.".into());
-        }
-        LauncherActionId::Monitor => {
-            app.screen = Screen::Monitor;
-            app.launch_start = Some(Instant::now());
-        }
-        LauncherActionId::Exit => open_exit_confirm(app),
-    }
 
-    LauncherActionOutcome::Continue
-}
 
-async fn handle_command_overlay_key(
-    app: &mut App,
-    key: KeyEvent,
-    last_refresh: &mut Instant,
-) -> Result<LauncherActionOutcome> {
-    match key.code {
-        KeyCode::Esc => {
-            close_command_overlay(app);
-        }
-        KeyCode::Up => {
-            if app.command_overlay_selected > 0 {
-                app.command_overlay_selected -= 1;
-            }
-        }
-        KeyCode::Down => {
-            let count = launcher::filtered_launcher_actions(app).len();
-            if app.command_overlay_selected + 1 < count {
-                app.command_overlay_selected += 1;
-            }
-        }
-        KeyCode::Enter => {
-            let selected = launcher::filtered_launcher_actions(app)
-                .get(app.command_overlay_selected)
-                .map(|action| action.id);
-            close_command_overlay(app);
-            if let Some(action) = selected {
-                return Ok(run_launcher_action(app, action, last_refresh).await);
-            }
-        }
-        _ => {
-            input_command_overlay(app, key);
-        }
-    }
 
-    Ok(LauncherActionOutcome::Continue)
-}
 
 fn selected_record(app: &App) -> Option<CatalogRecord> {
     app.current_plan.as_ref().and_then(|plan| {
@@ -762,7 +603,6 @@ impl Drop for TerminalRestoreGuard {
 
 pub async fn run_launcher(
     no_browser: bool,
-    preferred_frontend: Option<FrontendMode>,
     tier_override: Option<crate::prefs::Tier>,
     force_picker: bool,
 ) -> Result<()> {
@@ -784,7 +624,6 @@ pub async fn run_launcher(
     if let Some(error) = startup_error {
         app.set_error(error);
     }
-    app.preferred_frontend = preferred_frontend.or(app.prefs.preferred_frontend);
 
     // If --pick flag, clear the tier preference so picker shows
     if force_picker {
@@ -814,7 +653,7 @@ pub async fn run_launcher(
 
     // Spawn catalog loading
     let model_dir = ozone_core::paths::models_dir();
-    let preset_file = ozone_core::paths::presets_path();
+    let preset_file = ozone_core::paths::catalog_preset_path();
     let bench_file = model_dir.join("bench-results.txt");
     let catalog_model_dir = model_dir.clone();
     let catalog_preset_file = preset_file.clone();
@@ -907,62 +746,10 @@ pub async fn run_launcher(
             let Some(event) = event else {
                 break;
             };
-            match event {
-                WorkflowEvent::Status { title, detail } => {
-                    app.profiling_progress_title = title;
-                    app.push_profile_progress(detail);
-                }
-                WorkflowEvent::Progress {
-                    title,
-                    detail,
-                    current,
-                    total,
-                } => {
-                    app.profiling_progress_title = title;
-                    app.profiling_progress_current = current;
-                    app.profiling_progress_total = total;
-                    app.push_profile_progress(detail);
-                }
-                WorkflowEvent::Completed(report) => {
-                    let report = *report;
-                    app.profiling_event_rx = None;
-                    app.profiling_cancel = None;
-                    // Persist llama.cpp profiling hints so the next launch can reuse the
-                    // recommended GPU layers and context size.
-                    if app.prefs.preferred_backend == Some(BackendMode::LlamaCpp) {
-                        if let Some(ref profile) = report.recommended_profile {
-                            app.prefs.llamacpp_gpu_layers = Some(profile.gpu_layers);
-                            app.prefs.llamacpp_context_size = Some(profile.context_size);
-                            let prefs_clone = app.prefs.clone();
-                            tokio::spawn(async move {
-                                let _ = crate::prefs::save_prefs(&prefs_clone).await;
-                            });
-                        }
-                    }
-                    app.profiling_success = Some(report);
-                    app.profiling_failure = None;
-                    app.profiling_choice_index = 0;
-                    app.screen = Screen::ProfileSuccess;
-                }
-                WorkflowEvent::Failed(report) => {
-                    let report = *report;
-                    app.profiling_event_rx = None;
-                    app.profiling_cancel = None;
-                    app.profiling_failure = Some(report);
-                    app.profiling_success = None;
-                    app.profiling_choice_index = 0;
-                    app.screen = Screen::ProfileFailure;
-                }
-                WorkflowEvent::Cancelled => {
-                    app.profiling_event_rx = None;
-                    app.profiling_cancel = None;
-                    app.set_status("Profiling cancelled.".into());
-                    app.screen = Screen::Launcher;
-                }
-            }
+            apply_workflow_event(&mut app, event);
         }
 
-        // Execute a pending frontend launch choice (triggered by FrontendChoice Enter or --frontend bypass).
+        // Execute a pending launch request queued by the confirm flow.
         if let Some(choice_idx) = app.pending_launch_choice.take() {
             match handle_pending_frontend_launch(&mut app, choice_idx).await {
                 PendingFrontendLaunchOutcome::Continue => {}
@@ -984,7 +771,6 @@ pub async fn run_launcher(
                 Screen::ModelPicker => launcher::render_model_picker(f, &app),
                 Screen::ConfigureHub => launcher::render_configure_hub(f, &app),
                 Screen::Confirm => launcher::render_confirm(f, &app),
-                Screen::FrontendChoice => launcher::render_frontend_choice(f, &app),
                 Screen::Launching => launcher::render_launching(f, &app),
                 #[cfg(feature = "profiling-ui")]
                 Screen::ProfileAdvisory => launcher::render_profile_advisory(f, &app),
@@ -1021,9 +807,7 @@ pub async fn run_launcher(
                     continue;
                 }
                 match app.screen {
-                    Screen::Splash if app.splash_ready => {
-                        app.screen = next_screen_after_splash(&app);
-                    }
+                    Screen::Splash => handle_splash_key(&mut app),
                     Screen::TierPicker => {
                         match handle_tier_picker_key(&mut app, key) {
                             TierPickerOutcome::Continue => {}
@@ -1043,7 +827,7 @@ pub async fn run_launcher(
                         }
                     }
                     Screen::Settings => {
-                        handle_settings_key(&mut app, key, preferred_frontend).await;
+                        handle_settings_key(&mut app, key).await;
                     }
                     Screen::ModelPicker => {
                         handle_model_picker_key(&mut app, key);
@@ -1053,9 +837,6 @@ pub async fn run_launcher(
                     }
                     Screen::ConfigureHub => {
                         handle_configure_hub_key(&mut app, key).await;
-                    }
-                    Screen::FrontendChoice => {
-                        handle_frontend_choice_key(&mut app, key);
                     }
                     #[cfg(feature = "profiling-ui")]
                     Screen::ProfileAdvisory => {
@@ -1087,21 +868,9 @@ pub async fn run_launcher(
                             continue;
                         }
                     }
-                    Screen::Monitor => match key.code {
-                        KeyCode::Char('q') => break Ok(()),
-                        KeyCode::Esc => {
-                            app.screen = Screen::Launcher;
-                        }
-                        KeyCode::Char('s') => {
-                            let _ = crate::processes::clear_gpu_backends().await;
-                            app.services = crate::processes::get_service_status().await;
-                            app.set_status("GPU backends cleared.".into());
-                            app.screen = Screen::Launcher;
-                        }
-                        KeyCode::Char('r') => {
-                            app.screen = Screen::Launcher;
-                        }
-                        _ => {}
+                    Screen::Monitor => match handle_monitor_key(&mut app, key).await {
+                        MonitorOutcome::Continue => {}
+                        MonitorOutcome::ExitLauncher => break Ok(()),
                     },
                     _ => {}
                 }
@@ -1119,11 +888,7 @@ pub async fn run_launcher(
             last_fast_refresh = Instant::now();
             if matches!(app.screen, Screen::Monitor) {
                 app.services = crate::processes::get_service_status().await;
-                app.tokens_per_sec = if app.services.kobold_running {
-                    crate::processes::get_kobold_perf().await
-                } else {
-                    None
-                };
+                app.tokens_per_sec = None;
                 if let Some(ref mut hw) = app.hardware {
                     *hw = tokio::task::spawn_blocking(crate::hardware::load_hardware_live)
                         .await
@@ -1147,7 +912,6 @@ pub async fn run_launcher(
                     | Screen::ModelPicker
                     | Screen::ConfigureHub
                     | Screen::Confirm
-                    | Screen::FrontendChoice
                     | Screen::Settings
                     | Screen::ExitConfirm
             ) || {
@@ -1194,118 +958,10 @@ pub async fn run_launcher(
     };
 
     terminal_restore.restore()?;
-    if app.ozone_plus_handoff {
-        let ozone_plus_bin = std::env::current_exe()
-            .ok()
-            .and_then(|p| p.parent().map(|dir| dir.join("ozone-plus")))
-            .filter(|p| p.exists())
-            .unwrap_or_else(|| std::path::PathBuf::from("ozone-plus"));
-        use std::os::unix::process::CommandExt;
-        let mut command = std::process::Command::new(ozone_plus_bin);
-        command.arg("handoff").arg("--launcher-session");
-        match app.prefs.preferred_backend {
-            Some(BackendMode::KoboldCpp) => {
-                command.env("OZONE__BACKEND__TYPE", "koboldcpp");
-                command.env(
-                    "OZONE__BACKEND__URL",
-                    ozone_core::paths::koboldcpp_base_url(),
-                );
-            }
-            Some(BackendMode::LlamaCpp) => {
-                command.env("OZONE__BACKEND__TYPE", "llamacpp");
-                command.env(
-                    "OZONE__BACKEND__URL",
-                    ozone_core::paths::llamacpp_base_url(),
-                );
-            }
-            Some(BackendMode::Ollama) | None => {}
-        }
-        if let Some(plan) = app.current_plan.as_ref() {
-            if let Ok(json) = serde_json::to_string(plan) {
-                command.env("OZONE__LAUNCH_PLAN", json);
-            }
-        }
-        let err = command.exec();
-        return Err(anyhow::anyhow!("Failed to exec ozone-plus: {err}"));
-    }
     result
 }
 
-/// Searches `PATH` for a binary by name.
-fn find_in_path(binary: &str) -> bool {
-    std::env::var("PATH")
-        .map(|p| {
-            p.split(':')
-                .any(|dir| std::path::Path::new(dir).join(binary).exists())
-        })
-        .unwrap_or(false)
-}
 
-/// Spawns `ozone-plus handoff --launcher-session` in a new terminal window.
-///
-/// Env vars for the chosen backend are embedded into the shell command so the
-/// spawned terminal process inherits them correctly.  The caller stays alive
-/// (event-loop continues) — this is the key difference from `exec()`.
-fn spawn_in_terminal(
-    bin: &std::path::Path,
-    backend: Option<&BackendMode>,
-) -> anyhow::Result<std::process::Child> {
-    let program = bin.display().to_string();
-
-    let env_prefix = match backend {
-        Some(BackendMode::KoboldCpp) => format!(
-            "OZONE__BACKEND__TYPE=koboldcpp OZONE__BACKEND__URL='{}' ",
-            ozone_core::paths::koboldcpp_base_url()
-        ),
-        Some(BackendMode::LlamaCpp) => format!(
-            "OZONE__BACKEND__TYPE=llamacpp OZONE__BACKEND__URL='{}' ",
-            ozone_core::paths::llamacpp_base_url()
-        ),
-        _ => String::new(),
-    };
-
-    // Full shell command that runs inside the new terminal window.
-    let shell_cmd = format!("{}{} handoff --launcher-session", env_prefix, program);
-
-    // Respect the user's preferred terminal if set.
-    if let Ok(term) = std::env::var("TERMINAL") {
-        if let Ok(child) = std::process::Command::new(&term)
-            .args(["-e", "sh", "-c", &shell_cmd])
-            .spawn()
-        {
-            return Ok(child);
-        }
-    }
-
-    // (terminal_binary, args_that_precede_the_sh_-c_SHELL_CMD)
-    let candidates: &[(&str, &[&str])] = &[
-        ("alacritty", &["-e", "sh", "-c"]),
-        ("kitty", &["sh", "-c"]),
-        ("wezterm", &["start", "--", "sh", "-c"]),
-        ("x-terminal-emulator", &["-e", "sh", "-c"]),
-        ("gnome-terminal", &["--", "sh", "-c"]),
-        ("xterm", &["-e", "sh", "-c"]),
-        ("konsole", &["-e", "sh", "-c"]),
-    ];
-
-    for (term, pre_args) in candidates {
-        if find_in_path(term) {
-            if let Ok(child) = std::process::Command::new(term)
-                .args(*pre_args)
-                .arg(&shell_cmd)
-                .spawn()
-            {
-                return Ok(child);
-            }
-        }
-    }
-
-    Err(anyhow::anyhow!(
-        "No suitable terminal emulator found. \
-         Set the TERMINAL environment variable to your terminal binary \
-         (e.g. TERMINAL=alacritty)."
-    ))
-}
 
 pub async fn run_monitor() -> Result<()> {
     let (prefs, startup_error) = match crate::prefs::load_prefs().await {
@@ -1374,11 +1030,7 @@ pub async fn run_monitor() -> Result<()> {
         if last_fast_refresh.elapsed() >= Duration::from_millis(500) {
             last_fast_refresh = Instant::now();
             app.services = crate::processes::get_service_status().await;
-            app.tokens_per_sec = if app.services.kobold_running {
-                crate::processes::get_kobold_perf().await
-            } else {
-                None
-            };
+            app.tokens_per_sec = None;
             if let Some(ref mut hw) = app.hardware {
                 *hw = tokio::task::spawn_blocking(crate::hardware::load_hardware_live)
                     .await
@@ -1404,19 +1056,16 @@ mod tests {
     #[test]
     fn settings_screen_syncs_from_saved_preferences() {
         let mut app = App::new(Preferences {
-            preferred_backend: Some(BackendMode::Ollama),
-            preferred_frontend: Some(FrontendMode::OzonePlus),
+            preferred_backend: Some(BackendMode::LlamaCpp),
             ..Preferences::default()
         });
         app.settings_section = 1;
         app.settings_backend_index = 0;
-        app.settings_frontend_index = 0;
 
         sync_settings_from_prefs(&mut app);
 
         assert_eq!(app.settings_section, 0);
-        assert_eq!(app.settings_backend_index, 2);
-        assert_eq!(app.settings_frontend_index, 1);
+    assert_eq!(app.settings_backend_index, 0);
     }
 
     #[test]
@@ -1759,46 +1408,6 @@ mod tests {
     }
 
     #[test]
-    fn frontend_choice_escape_returns_to_confirm() {
-        let mut app = App::new(Preferences::default());
-        app.screen = Screen::FrontendChoice;
-
-        let key = KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
-        handle_frontend_choice_key(&mut app, key);
-
-        assert_eq!(app.screen, Screen::Confirm);
-    }
-
-    #[test]
-    fn frontend_choice_enter_sets_pending_launch_when_plan_exists() {
-        let mut app = App::new(Preferences::default());
-        app.screen = Screen::FrontendChoice;
-        app.current_plan = Some(test_launch_plan_for_model(
-            TEST_MODEL_NAME,
-            TEST_CONTEXT_BASE,
-            TEST_RECOMMENDED_GPU_LAYERS,
-        ));
-        app.frontend_choice_index = 1;
-
-        let key = KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
-        handle_frontend_choice_key(&mut app, key);
-
-        assert_eq!(app.pending_launch_choice, Some(1));
-    }
-
-    #[test]
-    fn frontend_choice_down_is_clamped_to_last_option() {
-        let mut app = App::new(Preferences::default());
-        app.screen = Screen::FrontendChoice;
-        app.frontend_choice_index = 1;
-
-        let key = KeyEvent::new(KeyCode::Down, crossterm::event::KeyModifiers::NONE);
-        handle_frontend_choice_key(&mut app, key);
-
-        assert_eq!(app.frontend_choice_index, 1);
-    }
-
-    #[test]
     fn model_picker_escape_clears_filter_before_navigation() {
         let mut app = App::new(Preferences::default());
         app.screen = Screen::ModelPicker;
@@ -1886,7 +1495,7 @@ mod tests {
     }
 
     #[test]
-    fn confirm_enter_with_preferred_frontend_queues_launch_choice() {
+    fn confirm_enter_queues_launch_request() {
         let mut app = App::new(Preferences::default());
         app.screen = Screen::Confirm;
         app.current_plan = Some(test_launch_plan_for_model(
@@ -1894,12 +1503,11 @@ mod tests {
             TEST_CONTEXT_BASE,
             TEST_RECOMMENDED_GPU_LAYERS,
         ));
-        app.preferred_frontend = Some(FrontendMode::OzonePlus);
 
         let key = KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
         handle_confirm_key(&mut app, key);
 
-        assert_eq!(app.pending_launch_choice, Some(1));
+        assert_eq!(app.pending_launch_choice, Some(0));
     }
 
     #[test]
@@ -1931,15 +1539,12 @@ mod tests {
         let mut app = App::new(Preferences::default());
         app.screen = Screen::Settings;
         app.settings_backend_index = 2;
-        app.settings_frontend_index = 1;
 
         let key = KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
-        runtime.block_on(handle_settings_key(&mut app, key, None));
+        runtime.block_on(handle_settings_key(&mut app, key));
 
-        assert_eq!(app.prefs.preferred_backend, Some(BackendMode::Ollama));
-        assert_eq!(app.prefs.preferred_frontend, Some(FrontendMode::OzonePlus));
-        assert_eq!(app.preferred_frontend, Some(FrontendMode::OzonePlus));
+    assert_eq!(app.prefs.preferred_backend, Some(BackendMode::LlamaCpp));
         assert_eq!(app.screen, Screen::Launcher);
     }
 
@@ -1947,19 +1552,16 @@ mod tests {
     fn settings_escape_discards_changes_and_returns_launcher() {
         let mut app = App::new(Preferences {
             preferred_backend: Some(BackendMode::LlamaCpp),
-            preferred_frontend: Some(FrontendMode::SillyTavern),
             ..Preferences::default()
         });
         app.screen = Screen::Settings;
         app.settings_backend_index = 2;
-        app.settings_frontend_index = 1;
 
         let key = KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
-        runtime.block_on(handle_settings_key(&mut app, key, None));
+        runtime.block_on(handle_settings_key(&mut app, key));
 
-        assert_eq!(app.settings_backend_index, 1);
-        assert_eq!(app.settings_frontend_index, 0);
+        assert_eq!(app.settings_backend_index, 0);
         assert_eq!(app.screen, Screen::Launcher);
     }
 
@@ -2017,6 +1619,69 @@ mod tests {
         assert!(matches!(outcome, LauncherActionOutcome::Continue));
         assert_eq!(app.screen, Screen::ExitConfirm);
         assert_eq!(app.exit_confirm_index, 1);
+    }
+
+    #[test]
+    fn splash_key_advances_to_tier_picker_without_preferred_tier() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::Splash;
+        app.splash_ready = true;
+
+        handle_splash_key(&mut app);
+
+        assert_eq!(app.screen, Screen::TierPicker);
+    }
+
+    #[test]
+    fn splash_key_advances_to_launcher_with_preferred_tier() {
+        let mut app = App::new(Preferences {
+            preferred_tier: Some(crate::prefs::Tier::Base),
+            ..Preferences::default()
+        });
+        app.screen = Screen::Splash;
+        app.splash_ready = true;
+
+        handle_splash_key(&mut app);
+
+        assert_eq!(app.screen, Screen::Launcher);
+    }
+
+    #[test]
+    fn monitor_q_requests_exit() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::Monitor;
+
+        let key = KeyEvent::new(KeyCode::Char('q'), crossterm::event::KeyModifiers::NONE);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let outcome = runtime.block_on(handle_monitor_key(&mut app, key));
+
+        assert!(matches!(outcome, MonitorOutcome::ExitLauncher));
+    }
+
+    #[test]
+    fn monitor_escape_returns_to_launcher() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::Monitor;
+
+        let key = KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let outcome = runtime.block_on(handle_monitor_key(&mut app, key));
+
+        assert!(matches!(outcome, MonitorOutcome::Continue));
+        assert_eq!(app.screen, Screen::Launcher);
+    }
+
+    #[test]
+    fn monitor_r_returns_to_launcher() {
+        let mut app = App::new(Preferences::default());
+        app.screen = Screen::Monitor;
+
+        let key = KeyEvent::new(KeyCode::Char('r'), crossterm::event::KeyModifiers::NONE);
+        let runtime = tokio::runtime::Runtime::new().expect("runtime");
+        let outcome = runtime.block_on(handle_monitor_key(&mut app, key));
+
+        assert!(matches!(outcome, MonitorOutcome::Continue));
+        assert_eq!(app.screen, Screen::Launcher);
     }
 
     #[test]

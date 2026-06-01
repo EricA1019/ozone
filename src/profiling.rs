@@ -22,19 +22,12 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum ProfilingBackend {
     #[default]
-    KoboldCpp,
     LlamaCpp,
 }
 
 impl ProfilingBackend {
     fn resolve_backend(&self) -> Option<bench::BenchBackend> {
         match self {
-            ProfilingBackend::KoboldCpp => {
-                let launcher_path = processes::resolved_kobold_launcher_path();
-                launcher_path
-                    .exists()
-                    .then_some(bench::BenchBackend::KoboldCpp { launcher_path })
-            }
             ProfilingBackend::LlamaCpp => processes::resolved_llamacpp_server_path()
                 .ok()
                 .map(|server_path| bench::BenchBackend::LlamaCpp { server_path }),
@@ -43,7 +36,6 @@ impl ProfilingBackend {
 
     pub fn display_name(&self) -> &'static str {
         match self {
-            ProfilingBackend::KoboldCpp => "KoboldCpp",
             ProfilingBackend::LlamaCpp => "llama.cpp",
         }
     }
@@ -88,7 +80,9 @@ impl ProfilingAction {
             ProfilingAction::GenerateProfiles => {
                 "Create speed/context profiles from benchmark history."
             }
-            ProfilingAction::ExportPresets => "Write the best profile into koboldcpp-presets.conf.",
+            ProfilingAction::ExportPresets => {
+                "Write the best saved profile export for runtime reuse."
+            }
             ProfilingAction::LaunchRecommended => {
                 "Use the best available profile and launch the backend."
             }
@@ -146,8 +140,8 @@ impl FailureClass {
         match self {
             FailureClass::InvalidModelPath => "Model path is invalid",
             FailureClass::LauncherMissing => "Configured launcher is missing",
-            FailureClass::LauncherBrokenInstall => "KoboldCpp install is broken",
-            FailureClass::BackendTimeout => "KoboldCpp never became ready",
+            FailureClass::LauncherBrokenInstall => "llama.cpp server install is broken",
+            FailureClass::BackendTimeout => "llama.cpp server never became ready",
             FailureClass::OomOrOvercommit => "Model likely exceeded memory limits",
             FailureClass::GenerationHttpError => "Generation request failed",
             FailureClass::Unknown => "Profiling failed unexpectedly",
@@ -288,20 +282,15 @@ fn send_failed(tx: &UnboundedSender<WorkflowEvent>, report: ProfilingFailureRepo
 }
 
 pub fn launcher_path() -> PathBuf {
-    processes::resolved_kobold_launcher_path()
+    processes::resolved_llamacpp_server_path().unwrap_or_else(|_| PathBuf::from("llama-server"))
 }
 
 pub fn presets_path() -> PathBuf {
-    models_dir().join("koboldcpp-presets.conf")
+    ozone_core::paths::runtime_profiles_path()
 }
 
-fn models_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(home).join("models")
-}
-
-fn kobold_log_path() -> Option<PathBuf> {
-    paths::kobold_log_path()
+fn backend_log_path() -> Option<PathBuf> {
+    paths::llamacpp_log_path()
 }
 
 fn llamacpp_export_dir() -> PathBuf {
@@ -368,8 +357,8 @@ fn export_llamacpp_profiles(profiles: &[ProfileRow]) -> anyhow::Result<PathBuf> 
     Ok(sh_path)
 }
 
-fn kobold_log_suggestion() -> String {
-    kobold_log_path()
+fn backend_log_suggestion() -> String {
+    backend_log_path()
         .map(|path| format!("Inspect the launcher log at {}.", path.display()))
         .unwrap_or_else(|| {
             "Inspect the launcher log once the ozone data directory is available.".into()
@@ -523,7 +512,7 @@ pub fn preferred_launch_plan(
 ) -> Result<LaunchPlan> {
     let fallback_layers = planner::estimate_total_layers(record.model_size_gb);
     let topology = crate::gguf::inspect_model_topology(&record.model_path, fallback_layers);
-    let history = load_history(&record.model_name)?;
+    let history = load_history(&record.model_name).unwrap_or_default();
     if let Some(profile) = pick_recommended_profile(&history.profiles) {
         let total_layers = topology.total_layers;
         let gpu_layers = profile.gpu_layers;
@@ -566,7 +555,7 @@ pub fn build_advisory(
     hardware: Option<&HardwareProfile>,
     services: &ServiceStatus,
 ) -> Result<ProfilingAdvisory> {
-    let history = load_history(&record.model_name)?;
+    let history = load_history(&record.model_name).unwrap_or_default();
     let launcher = launcher_path();
     let model_ok = record.model_path.exists();
     let launcher_ok = launcher.exists() && is_executable(&launcher);
@@ -632,20 +621,20 @@ pub fn build_advisory(
         warnings.push(ProfilingWarning {
             severity: WarningSeverity::Critical,
             message: format!(
-                "Configured KoboldCpp launcher is missing or not executable: {}.",
+                "Configured llama.cpp server is missing or not executable: {}.",
                 launcher.display()
             ),
         });
     }
-    if services.kobold_running {
+    if services.llamacpp_running {
         warnings.push(ProfilingWarning {
             severity: WarningSeverity::Warning,
-            message: "Profiling will interrupt the currently running KoboldCpp backend.".into(),
+            message: "Profiling will interrupt the currently running managed llama.cpp runtime.".into(),
         });
     } else {
         warnings.push(ProfilingWarning {
             severity: WarningSeverity::Info,
-            message: "Profiling clears KoboldCpp/Ollama runners before it starts.".into(),
+            message: "Profiling clears the managed llama.cpp runtime before it starts.".into(),
         });
     }
     if history.benchmark_count == 0 {
@@ -799,7 +788,7 @@ fn build_success_report(
             "Profiles were generated from successful benchmark history.".into()
         }
         ProfilingAction::ExportPresets => {
-            format!("Preset export completed: {}", presets_path().display())
+            format!("Profile export completed: {}", presets_path().display())
         }
         ProfilingAction::LaunchRecommended | ProfilingAction::ReviewIssue => {
             "Workflow finished.".into()
@@ -813,8 +802,7 @@ fn build_success_report(
         ));
     }
     if history.profile_count > 0 {
-        suggestions
-            .push("Launch the recommended profile or export it to koboldcpp-presets.conf.".into());
+        suggestions.push("Launch the recommended profile or export it for reuse.".into());
     } else if history.ok_benchmark_count >= 2 {
         suggestions.push(
             "Generate profiles now so the launcher can reuse the best speed/context pair.".into(),
@@ -859,10 +847,10 @@ fn build_failure_report(
         || lower.contains("core dumped")
     {
         FailureClass::LauncherBrokenInstall
-    } else if !(launcher.exists() && is_executable(&launcher)) {
-        FailureClass::LauncherMissing
     } else if status == Some("oom") || lower.contains("out of memory") || lower.contains("oom") {
         FailureClass::OomOrOvercommit
+    } else if !(launcher.exists() && is_executable(&launcher)) {
+        FailureClass::LauncherMissing
     } else if status == Some("timeout")
         || lower.contains("did not start")
         || lower.contains("timeout")
@@ -885,28 +873,21 @@ fn build_failure_report(
         ],
         FailureClass::LauncherMissing => vec![
             format!(
-                "Restore the configured launcher and make it executable: {}.",
+                "Restore the configured llama.cpp server binary and make it executable: {}.",
                 launcher.display()
             ),
-            format!(
-                "Set {}=/path/to/launch-koboldcpp.sh if you want ozone to use a repaired wrapper elsewhere.",
-                "OZONE_KOBOLDCPP_LAUNCHER"
-            ),
+            "Re-run launcher discovery after fixing the llama.cpp install.".into(),
         ],
         FailureClass::LauncherBrokenInstall => vec![
             format!(
-                "The configured KoboldCpp install behind {} looks broken; repair or replace it before retrying.",
+                "The configured llama.cpp server behind {} looks broken; repair or replace it before retrying.",
                 launcher.display()
             ),
-            format!(
-                "Set {}=/path/to/launch-koboldcpp.sh to point ozone at a repaired launcher.",
-                "OZONE_KOBOLDCPP_LAUNCHER"
-            ),
-            "Run the launcher script manually once to confirm KoboldCpp can start.".into(),
+            "Run llama-server manually once to confirm it can start cleanly.".into(),
         ],
         FailureClass::BackendTimeout => vec![
             "Retry with a single benchmark or a quick sweep instead of the current action.".into(),
-            kobold_log_suggestion(),
+            backend_log_suggestion(),
         ],
         FailureClass::OomOrOvercommit => vec![
             "Lower context size or GPU layers before retrying.".into(),
@@ -915,11 +896,11 @@ fn build_failure_report(
         ],
         FailureClass::GenerationHttpError => vec![
             "Retry a single benchmark to validate the backend before sweeping again.".into(),
-            kobold_log_suggestion(),
+            backend_log_suggestion(),
         ],
         FailureClass::Unknown => vec![
             "Retry the recommended single benchmark first to narrow the failure surface.".into(),
-            kobold_log_suggestion(),
+            backend_log_suggestion(),
         ],
     };
 
@@ -944,7 +925,7 @@ fn build_failure_report(
         detail,
         suggestions,
         retry_action,
-        log_path: kobold_log_path(),
+        log_path: backend_log_path(),
     }
 }
 
@@ -1005,10 +986,7 @@ pub async fn run_workflow(
         } else {
             let _ = tx.send(WorkflowEvent::Status {
                 title: "Export".into(),
-                detail: format!(
-                    "Exporting KoboldCpp presets to {}…",
-                    presets_path().display()
-                ),
+                detail: format!("Exporting saved profiles to {}…", presets_path().display()),
             });
             match analyze::export_presets_conf_quiet(
                 &presets_path(),
@@ -1194,7 +1172,7 @@ pub async fn run_workflow(
                 plan.threads,
                 |progress| {
                     let _ = tx.send(WorkflowEvent::Status {
-                        title: format!("Benchmark · {}", progress.stage),
+                        title: "Benchmark".into(),
                         detail: progress.message,
                     });
                 },
@@ -1470,12 +1448,8 @@ mod tests {
                 cpu_physical: 4,
             }),
             &ServiceStatus {
-                kobold_running: false,
-                kobold_model: None,
                 llamacpp_running: false,
                 llamacpp_model: None,
-                ollama_running: false,
-                st_running: false,
             },
         )
         .expect("advisory should build");

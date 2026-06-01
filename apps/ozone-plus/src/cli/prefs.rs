@@ -1,6 +1,8 @@
 use ozone_core::paths::preferences_path;
+use ozone_core::prefs as core_prefs;
 use ozone_tui::ThemePreset;
 use serde::{Deserialize, Serialize};
+use serde_json::Value;
 use std::fs;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -39,32 +41,30 @@ impl Default for OzonePlusPrefs {
     }
 }
 
-pub fn load_theme_preset() -> ThemePreset {
-    let Some(path) = preferences_path() else {
-        return ThemePreset::default();
+pub fn load_theme_preset() -> Result<ThemePreset, String> {
+    let Some(_path) = preferences_path() else {
+        return Ok(ThemePreset::default());
     };
-    let text = match fs::read_to_string(&path) {
-        Ok(t) => t,
-        Err(_) => return ThemePreset::default(),
-    };
-    let value: serde_json::Value = match serde_json::from_str(&text) {
-        Ok(v) => v,
-        Err(_) => return ThemePreset::default(),
-    };
-    value
-        .get("theme_preset")
-        .and_then(|v| v.as_str())
-        .map(ThemePreset::from_pref_str)
-        .unwrap_or_default()
+    match core_prefs::read_preferences_json() {
+        Ok(Some(value)) => Ok(value
+            .get("theme_preset")
+            .and_then(|v| v.as_str())
+            .map(ThemePreset::from_pref_str)
+            .unwrap_or_default()),
+        Ok(None) => Ok(ThemePreset::default()),
+        Err(e) => Err(e.to_string()),
+    }
 }
 
-pub fn load_prefs_sync() -> OzonePlusPrefs {
-    let Some(path) = preferences_path() else {
-        return OzonePlusPrefs::default();
+pub fn load_prefs_sync() -> Result<OzonePlusPrefs, String> {
+    let Some(_path) = preferences_path() else {
+        return Ok(OzonePlusPrefs::default());
     };
-    match fs::read_to_string(&path) {
-        Ok(text) => serde_json::from_str(&text).unwrap_or_default(),
-        Err(_) => OzonePlusPrefs::default(),
+    match core_prefs::read_preferences_json() {
+        Ok(Some(value)) => serde_json::from_value::<OzonePlusPrefs>(value)
+            .map_err(|e| e.to_string()),
+        Ok(None) => Ok(OzonePlusPrefs::default()),
+        Err(e) => Err(e.to_string()),
     }
 }
 
@@ -72,9 +72,13 @@ pub fn save_prefs_sync(prefs: &OzonePlusPrefs) -> Result<(), String> {
     let Some(path) = preferences_path() else {
         return Ok(());
     };
-    let existing_text = fs::read_to_string(&path).unwrap_or_default();
-    let mut existing: serde_json::Value =
-        serde_json::from_str(&existing_text).unwrap_or(serde_json::json!({}));
+
+    let mut existing = match core_prefs::read_preferences_json() {
+        Ok(Some(value)) => value,
+        Ok(None) => Value::Object(serde_json::Map::new()),
+        Err(e) => return Err(e.to_string()),
+    };
+
     if let Some(obj) = existing.as_object_mut() {
         let new_val = serde_json::to_value(prefs).map_err(|e| e.to_string())?;
         if let Some(new_obj) = new_val.as_object() {
@@ -83,6 +87,7 @@ pub fn save_prefs_sync(prefs: &OzonePlusPrefs) -> Result<(), String> {
             }
         }
     }
+
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }

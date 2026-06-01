@@ -1,6 +1,6 @@
 use crate::cli::args::*;
 use crate::cli::util::{open_repository, parse_session_id};
-use crate::runtime::Phase1dRuntime;
+use crate::runtime::OzonePlusRuntime;
 use ozone_persist::{
     CreateSessionRequest, PersistError, SessionId, SessionSummary,
     SqliteRepository, UpdateSessionRequest,
@@ -96,9 +96,9 @@ pub fn run_session_shell(
     session_name: String,
 ) -> Result<(), String> {
     // Initialise the TUI theme from the shared preferences file.
-    ozone_tui::theme::set_preset(load_prefs());
+    ozone_tui::theme::set_preset(load_prefs()?);
 
-    let mut runtime = Phase1dRuntime::open(repo.clone(), session_id.clone())?;
+    let mut runtime = OzonePlusRuntime::open(repo.clone(), session_id.clone())?;
     if let Err(error) = repo
         .update_session_metadata(&session_id, UpdateSessionRequest::default())
         .map_err(|error| error.to_string())
@@ -195,6 +195,6 @@ pub fn open_session_metadata(
     Ok(())
 }
 
-fn load_prefs() -> ozone_tui::ThemePreset {
+fn load_prefs() -> Result<ozone_tui::ThemePreset, String> {
     crate::cli::prefs::load_theme_preset()
 }

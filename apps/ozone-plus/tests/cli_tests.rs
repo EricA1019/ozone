@@ -24,7 +24,7 @@ use ozone_plus::cli::util::*;
 use ozone_plus::cli::print::*;
 use ozone_plus::run_cli;
 use ozone_plus::store::{ManualSwipeCandidateRequest, RepoConversationStore};
-use ozone_plus::runtime::Phase1dRuntime;
+use ozone_plus::runtime::OzonePlusRuntime;
 use ozone_tui::mock::SessionRuntime;
 
 static TEST_COUNTER: AtomicU64 = AtomicU64::new(1);
@@ -164,21 +164,21 @@ fn formatted_search_report_surfaces_mode_and_breakdown() {
 }
 
 #[test]
-fn phase1d_runtime_restores_persisted_draft_on_bootstrap() {
-    let sandbox = TestSandbox::new("phase1d-draft");
+fn ozone_plus_runtime_restores_persisted_draft_on_bootstrap() {
+    let sandbox = TestSandbox::new("runtime-draft");
     let repo = sandbox.repo();
     let session = repo
         .create_session(CreateSessionRequest::new("Draft Session"))
         .unwrap();
     let context = ozone_tui::SessionContext::new(session.session_id.clone(), session.name.clone());
 
-    let mut runtime = Phase1dRuntime::open(repo.clone(), session.session_id.clone()).unwrap();
+    let mut runtime = OzonePlusRuntime::open(repo.clone(), session.session_id.clone()).unwrap();
     runtime
         .persist_draft(&context, Some("restored from app runtime"))
         .unwrap();
     runtime.release_lock().unwrap();
 
-    let mut reopened = Phase1dRuntime::open(repo, session.session_id.clone()).unwrap();
+    let mut reopened = OzonePlusRuntime::open(repo, session.session_id.clone()).unwrap();
     let bootstrap = reopened.bootstrap(&context).unwrap();
     reopened.release_lock().unwrap();
 
@@ -698,7 +698,7 @@ fn load_theme_preset_reads_saved_preferences() {
     )
     .unwrap();
 
-    assert_eq!(cli::prefs::load_theme_preset(), ozone_tui::ThemePreset::HighContrast);
+    assert_eq!(cli::prefs::load_theme_preset().unwrap(), ozone_tui::ThemePreset::HighContrast);
 }
 
 #[test]

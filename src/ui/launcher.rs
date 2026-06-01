@@ -9,7 +9,7 @@ use ratatui::{
     Frame,
 };
 
-use super::{App, BackendMode, FrontendMode, LauncherAction, LauncherActionId, ModelPickerMode};
+use super::{App, LauncherAction, LauncherActionId, ModelPickerMode};
 use crate::planner::{self, ConfigureWarningSeverity};
 #[cfg(feature = "profiling-ui")]
 use crate::profiling::{ProfilingAction, WarningSeverity};
@@ -34,13 +34,7 @@ pub(super) fn filtered_launcher_actions(app: &App) -> Vec<LauncherAction> {
         .collect()
 }
 
-fn launcher_actions(app: &App) -> Vec<LauncherAction> {
-    let (open_ozone_label, open_ozone_desc) = if app.prefs.side_by_side_monitor {
-        ("Open ozone+ [new window]", "New terminal (side-by-side on)")
-    } else {
-        ("Open ozone+", "Direct shell (no model needed)")
-    };
-
+fn launcher_actions(_app: &App) -> Vec<LauncherAction> {
     let mut actions = vec![
         LauncherAction {
             id: LauncherActionId::Launch,
@@ -62,27 +56,11 @@ fn launcher_actions(app: &App) -> Vec<LauncherAction> {
         description: "Auto-tune GPU layers for a model".into(),
         command: "profile",
     });
-
-    let is_lite = matches!(app.prefs.preferred_tier, Some(crate::prefs::Tier::Lite));
-    if !is_lite {
-        actions.push(LauncherAction {
-            id: LauncherActionId::OpenOzonePlus,
-            label: open_ozone_label.into(),
-            description: open_ozone_desc.into(),
-            command: "open-ozone-plus",
-        });
-        actions.push(LauncherAction {
-            id: LauncherActionId::OpenOzonePlusSideBySide,
-            label: "Launch ozone+ (side-by-side)".into(),
-            description: "Spawn new window, save preference".into(),
-            command: "launch-ozone-plus-side-by-side",
-        });
-    }
     actions.extend([
         LauncherAction {
             id: LauncherActionId::Settings,
             label: "Settings".into(),
-            description: "Configure backend & frontend".into(),
+            description: "Configure backend defaults".into(),
             command: "settings",
         },
         LauncherAction {
@@ -286,23 +264,10 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         Span::styled(format!("{model_count} models"), style_cyan()),
     ]);
 
-    // Backend/frontend badge line
-    let (backend_label, backend_style) = match app.prefs.preferred_backend {
-        Some(BackendMode::KoboldCpp) => ("KoboldCpp", style_cyan()),
-        Some(BackendMode::LlamaCpp) => ("LlamaCpp", style_violet()),
-        Some(BackendMode::Ollama) => ("Ollama", style_green()),
-        None => ("—", style_gray()),
-    };
-    let (frontend_label, frontend_style) = match app.prefs.preferred_frontend {
-        Some(FrontendMode::SillyTavern) => ("SillyTavern", style_cyan()),
-        Some(FrontendMode::OzonePlus) => ("ozone+", style_violet()),
-        None => ("—", style_gray()),
-    };
+    // Backend badge line
     let subtitle = Line::from(vec![
         Span::styled("  Backend: ", style_gray()),
-        Span::styled(backend_label, backend_style),
-        Span::styled("  Frontend: ", style_gray()),
-        Span::styled(frontend_label, frontend_style),
+        Span::styled("llama.cpp", style_violet()),
     ]);
 
     f.render_widget(Paragraph::new(title), text_chunks[0]);
@@ -382,47 +347,18 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let (kc_icon, kc_style) = if app.services.kobold_running {
-        ("●", style_green())
-    } else {
-        ("○", style_gray())
-    };
-    let (st_icon, st_style) = if app.services.st_running {
-        ("●", style_green())
-    } else {
-        ("○", style_gray())
-    };
-    let (ollama_icon, ollama_style) = if app.services.ollama_running {
-        ("●", style_green())
-    } else {
-        ("○", style_gray())
-    };
     let (llama_icon, llama_style) = if app.services.llamacpp_running {
         ("●", style_green())
     } else {
         ("○", style_gray())
     };
 
-    let model_label = app.services.kobold_model.as_deref().unwrap_or("—");
     let llama_model_label = app.services.llamacpp_model.as_deref().unwrap_or("—");
     let lines = vec![
         Line::from(vec![
-            Span::styled(format!("  {kc_icon} KoboldCpp  "), kc_style),
-            Span::styled(model_label, style_cyan()),
-            Span::styled("  :5001", style_gray()),
-        ]),
-        Line::from(vec![
-            Span::styled(format!("  {llama_icon} LlamaCpp   "), llama_style),
+            Span::styled(format!("  {llama_icon} llama.cpp  "), llama_style),
             Span::styled(llama_model_label, style_violet()),
-            Span::styled("  :8080", style_gray()),
-        ]),
-        Line::from(vec![
-            Span::styled(format!("  {ollama_icon} Ollama     "), ollama_style),
-            Span::styled(":11434", style_gray()),
-        ]),
-        Line::from(vec![
-            Span::styled(format!("  {st_icon} SillyTavern  "), st_style),
-            Span::styled(":8000", style_gray()),
+            Span::styled("  :8989", style_gray()),
         ]),
     ];
     f.render_widget(Paragraph::new(lines), inner);
@@ -499,7 +435,6 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
     };
     let tier_badge = match app.prefs.preferred_tier {
         Some(crate::prefs::Tier::Lite) => Span::styled(" [lite] ", style_cyan()),
-        Some(crate::prefs::Tier::Plus) => Span::styled(" [ozone+] ", style_cyan()),
         _ => Span::raw(" "),
     };
     let pulse = if (app.ticker / 8).is_multiple_of(2) {
@@ -640,7 +575,7 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
                     Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
                 } else {
                     Style::default()
-                        .fg(VIOLET_BRIGHT)
+                        .fg(VIOLET)
                         .add_modifier(Modifier::BOLD)
                 }
             } else {
@@ -721,12 +656,7 @@ pub fn render_launching(f: &mut Frame, app: &App) {
 
     let lines = vec![
         Line::from(Span::styled(
-            match app.prefs.preferred_backend {
-                Some(BackendMode::KoboldCpp) => "  Launching KoboldCpp…",
-                Some(BackendMode::LlamaCpp) => "  Launching llama.cpp…",
-                Some(BackendMode::Ollama) => "  Launching Ollama…",
-                None => "  Launching backend…",
-            },
+            "  Launching llama.cpp…",
             style_bold_violet(),
         )),
         Line::from(Span::styled(format!("  {model}"), style_cyan())),
@@ -1156,73 +1086,6 @@ fn configure_warning_style(severity: ConfigureWarningSeverity) -> Style {
     }
 }
 
-pub fn render_frontend_choice(f: &mut Frame, app: &App) {
-    let area = f.area();
-    let center = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Fill(1),
-            Constraint::Length(10),
-            Constraint::Fill(1),
-        ])
-        .split(area)[1];
-    let center_h = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Fill(1),
-            Constraint::Max(58),
-            Constraint::Fill(1),
-        ])
-        .split(center)[1];
-
-    let choices: &[(&str, &str)] = &[
-        ("SillyTavern", "open browser to SillyTavern web UI"),
-        ("ozone+", "launch ozone+ conversation shell"),
-    ];
-    let items: Vec<ListItem> = choices
-        .iter()
-        .enumerate()
-        .map(|(i, (label, desc))| {
-            if i == app.frontend_choice_index {
-                ListItem::new(Line::from(vec![
-                    Span::styled(format!("{} ", HEX_CURSOR), style_cyan()),
-                    Span::styled(
-                        *label,
-                        Style::default()
-                            .fg(crate::theme::CYAN)
-                            .add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(format!("  — {desc}"), style_gray()),
-                ]))
-            } else {
-                ListItem::new(Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(*label, style_gray()),
-                    Span::styled(format!("  — {desc}"), style_gray()),
-                ]))
-            }
-        })
-        .collect();
-
-    let block = Block::default()
-        .title(Span::styled(
-            format!(" {} Choose Frontend ", HEX_CURSOR),
-            style_bold_violet(),
-        ))
-        .title_bottom(Line::from(Span::styled(
-            "  ↑↓ choose · Enter launch · Esc back",
-            style_gray(),
-        )))
-        .borders(Borders::ALL)
-        .border_style(style_lime());
-    let inner = block.inner(center_h);
-    f.render_widget(block, center_h);
-
-    let mut list_state = ListState::default();
-    list_state.select(Some(app.frontend_choice_index));
-    f.render_stateful_widget(List::new(items), inner, &mut list_state);
-}
-
 pub fn render_exit_confirm(f: &mut Frame, app: &App) {
     let area = f.area();
     let center = Layout::default()
@@ -1535,7 +1398,7 @@ pub fn render_profile_confirm(f: &mut Frame, app: &App) {
     ];
     if action.clears_backends() {
         lines.push(Line::from(Span::styled(
-            "  Warning: this will clear KoboldCpp/Ollama runners before it starts.",
+            "  Warning: this will clear the managed llama.cpp runtime before it starts.",
             style_amber(),
         )));
     }
@@ -1941,7 +1804,6 @@ pub fn render_settings(f: &mut Frame, app: &App) {
             Constraint::Length(3), // header
             Constraint::Length(3), // summary
             Constraint::Length(5), // backend block
-            Constraint::Length(5), // frontend block
             Constraint::Length(3), // hint
         ])
         .split(center_h);
@@ -1952,32 +1814,14 @@ pub fn render_settings(f: &mut Frame, app: &App) {
     )))
     .block(chrome_block_with_hint(
         launcher_title("Settings"),
-        "Tab/←→ switch section · ↑↓ choose · Enter save · Esc back",
+        "↑↓ choose · Enter save · Esc back",
         style_lime(),
     ));
     f.render_widget(header, chunks[0]);
 
-    let current_backend = match app.settings_backend_index {
-        1 => "LlamaCpp",
-        2 => "Ollama",
-        _ => "KoboldCpp",
-    };
-    let current_frontend = match app.settings_frontend_index {
-        1 => "ozone+",
-        _ => "SillyTavern",
-    };
     let summary = Paragraph::new(Line::from(vec![
         Span::styled(" backend ", style_muted()),
-        Span::styled(current_backend, style_cyan()),
-        Span::styled("  ·  frontend ", style_muted()),
-        Span::styled(
-            current_frontend,
-            if current_frontend == "ozone+" {
-                style_violet()
-            } else {
-                style_cyan()
-            },
-        ),
+        Span::styled("llama.cpp", style_cyan()),
     ]))
     .block(chrome_block(
         Line::from(Span::styled(" Active Defaults ", style_bold_cyan())),
@@ -1996,7 +1840,7 @@ pub fn render_settings(f: &mut Frame, app: &App) {
     let backend_inner = backend_block.inner(chunks[2]);
     f.render_widget(backend_block, chunks[2]);
 
-    let backend_options = ["KoboldCpp", "LlamaCpp", "Ollama"];
+    let backend_options = ["llama.cpp"];
     let backend_items: Vec<ListItem> = backend_options
         .iter()
         .enumerate()
@@ -2033,61 +1877,8 @@ pub fn render_settings(f: &mut Frame, app: &App) {
         .collect();
     f.render_widget(List::new(backend_items), backend_inner);
 
-    // Frontend block
-    let frontend_block = chrome_block(
-        Line::from(Span::styled(
-            " Frontend ",
-            style_panel_title(app.settings_section == 1),
-        )),
-        style_panel_border(app.settings_section == 1),
-    );
-    let frontend_inner = frontend_block.inner(chunks[3]);
-    f.render_widget(frontend_block, chunks[3]);
-
-    let frontend_options = ["SillyTavern", "ozone+"];
-    let frontend_items: Vec<ListItem> = frontend_options
-        .iter()
-        .enumerate()
-        .map(|(i, label)| {
-            let selected = i == app.settings_frontend_index;
-            let focused = app.settings_section == 1;
-            let marker = if selected && focused {
-                HEX_CURSOR
-            } else if selected {
-                "●"
-            } else {
-                "○"
-            };
-            let style = if selected {
-                match (*label, focused) {
-                    ("ozone+", true) => style_bold_bright_violet(),
-                    ("ozone+", false) => style_violet(),
-                    (_, true) => style_bold_lime(),
-                    _ => style_bold_cyan(),
-                }
-            } else {
-                style_gray()
-            };
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("  {marker} "), style),
-                Span::styled(*label, style),
-                Span::styled(
-                    if selected { "  selected" } else { "" },
-                    if focused {
-                        style_hint_key()
-                    } else {
-                        style_muted()
-                    },
-                ),
-            ]))
-        })
-        .collect();
-    f.render_widget(List::new(frontend_items), frontend_inner);
-
     // Hint
     let hint = Paragraph::new(Line::from(vec![
-        Span::styled("  Tab/←→", style_hint_key()),
-        Span::styled(" switch section  ", style_muted()),
         Span::styled("↑↓", style_hint_key()),
         Span::styled(" choose  ", style_muted()),
         Span::styled("Enter", style_hint_key()),
@@ -2099,7 +1890,7 @@ pub fn render_settings(f: &mut Frame, app: &App) {
         Line::from(Span::styled(" Navigation ", style_bold_cyan())),
         style_gray(),
     ));
-    f.render_widget(hint, chunks[4]);
+    f.render_widget(hint, chunks[3]);
 }
 
 #[cfg(test)]
@@ -2174,7 +1965,7 @@ mod tests {
     }
 
     #[test]
-    fn lite_tier_hides_ozone_plus_launcher_actions() {
+    fn launcher_actions_do_not_expose_legacy_plus_commands() {
         let app = App::new(Preferences {
             preferred_tier: Some(Tier::Lite),
             ..Preferences::default()
@@ -2183,10 +1974,7 @@ mod tests {
 
         assert!(!actions
             .iter()
-            .any(|action| action.id == LauncherActionId::OpenOzonePlus));
-        assert!(!actions
-            .iter()
-            .any(|action| action.id == LauncherActionId::OpenOzonePlusSideBySide));
+            .any(|action| action.command.contains("ozone-plus")));
     }
 
     #[test]
@@ -2199,22 +1987,19 @@ mod tests {
 
         let rendered = render_to_string(100, 24, render, &app);
 
-        assert!(rendered.contains("Configure backend & frontend · /settings"));
+        assert!(rendered.contains("Configure backend defaults · /settings"));
     }
 
     #[test]
     fn settings_render_shows_normalized_summary_and_navigation() {
         let mut app = base_app();
-        app.settings_section = 1;
         app.settings_backend_index = 2;
-        app.settings_frontend_index = 1;
 
         let rendered = render_to_string(100, 24, render_settings, &app);
 
         assert!(rendered.contains("Active Defaults"));
         assert!(rendered.contains("Navigation"));
-        assert!(rendered.contains("Ollama"));
-        assert!(rendered.contains("ozone+"));
+        assert!(rendered.contains("llama.cpp"));
     }
 
     #[test]
@@ -2238,7 +2023,7 @@ mod tests {
 
         assert!(rendered.contains("Quick Command"));
         assert!(rendered.contains("/settings"));
-        assert!(rendered.contains("Configure backend & frontend"));
+        assert!(rendered.contains("Configure backend defaults"));
     }
 
     #[test]

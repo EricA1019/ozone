@@ -19,6 +19,8 @@ mod profiling;
 #[cfg(feature = "sweep")]
 mod sweep;
 mod theme;
+#[cfg(test)]
+mod test_support;
 mod ui;
 
 use anyhow::Result;
@@ -29,7 +31,6 @@ use clap::{Parser, Subcommand, ValueEnum};
 pub enum TierArg {
     Lite,
     Base,
-    Plus,
 }
 
 impl From<TierArg> for prefs::Tier {
@@ -37,7 +38,6 @@ impl From<TierArg> for prefs::Tier {
         match arg {
             TierArg::Lite => prefs::Tier::Lite,
             TierArg::Base => prefs::Tier::Base,
-            TierArg::Plus => prefs::Tier::Plus,
         }
     }
 }
@@ -50,7 +50,7 @@ fn detect_tier_from_binary_name(name: &str) -> Option<prefs::Tier> {
         || name.contains("ozoneplus")
         || name.contains("plus")
     {
-        Some(prefs::Tier::Plus)
+        Some(prefs::Tier::Base)
     } else {
         None
     }
@@ -70,13 +70,8 @@ struct Cli {
     #[arg(long, help = "Skip browser launch")]
     no_browser: bool,
 
-    /// Choose the frontend to open after launching the backend.
-    /// Omit to see an interactive choice screen.
-    #[arg(long, value_name = "MODE")]
-    frontend: Option<ui::FrontendMode>,
-
-    /// Override product tier (lite, base, plus).
-    /// Also detectable via binary name (ozone-lite, ozone, ozone+).
+    /// Override product tier (lite, base).
+    /// Also detectable via binary name, including legacy plus aliases.
     #[arg(long, value_enum)]
     mode: Option<TierArg>,
 
@@ -94,6 +89,8 @@ enum Commands {
     },
     /// Clear GPU backends (KoboldCpp, llama.cpp, Ollama)
     Clear,
+    /// Stop the managed llama.cpp model and clear its tracked launch state
+    PurgeLastModel,
     /// Live monitor dashboard
     Monitor,
     /// Benchmark a model with specific settings
@@ -126,7 +123,7 @@ enum Commands {
         generate: bool,
         #[arg(long, help = "Show stored profiles")]
         profiles: bool,
-        #[arg(long, help = "Export profiles to koboldcpp-presets.conf")]
+        #[arg(long, help = "Export the recommended runtime profile set")]
         export: bool,
     },
     /// Smart parameter sweep to find optimal settings
@@ -167,7 +164,7 @@ async fn main() -> Result<()> {
     });
 
     match cli.command {
-        None => ui::run_launcher(cli.no_browser, cli.frontend, tier_override, cli.pick).await,
+        None => ui::run_launcher(cli.no_browser, tier_override, cli.pick).await,
         Some(Commands::Clear) => {
             let killed = processes::clear_gpu_backends().await?;
             if killed.is_empty() {
@@ -179,10 +176,21 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
+        Some(Commands::PurgeLastModel) => {
+            let killed = processes::purge_last_model().await?;
+            if killed.is_empty() {
+                ozone_core::cli::info("No managed llama.cpp model was running.");
+            } else {
+                for pid in killed {
+                    ozone_core::cli::success(&format!("Stopped managed llama.cpp pid {pid}"));
+                }
+            }
+            Ok(())
+        }
         Some(Commands::Monitor) => ui::run_monitor().await,
         Some(Commands::List { json }) => {
             let model_dir = ozone_core::paths::models_dir();
-            let preset_file = ozone_core::paths::presets_path();
+            let preset_file = ozone_core::paths::catalog_preset_path();
             let bench_file = model_dir.join("bench-results.txt");
             let report = catalog::load_catalog_report(&model_dir, &preset_file, &bench_file)
                 .await?;
@@ -262,8 +270,8 @@ async fn main() -> Result<()> {
         }) => {
             let model_dir = ozone_core::paths::models_dir();
             let model_path = model_dir.join(&model);
-            let launcher_path = processes::resolved_kobold_launcher_path();
-            let backend = bench::BenchBackend::KoboldCpp { launcher_path };
+            let server_path = processes::resolved_llamacpp_server_path()?;
+            let backend = bench::BenchBackend::LlamaCpp { server_path };
 
             if !model_path.exists() {
                 ozone_core::cli::error(&format!("Model not found: {}", model_path.display()));
@@ -325,7 +333,7 @@ async fn main() -> Result<()> {
         }) => {
             let model_dir = ozone_core::paths::models_dir();
             let model_path = model_dir.join(&model);
-            let launcher_path = processes::resolved_kobold_launcher_path();
+            let server_path = processes::resolved_llamacpp_server_path()?;
 
             if !model_path.exists() {
                 ozone_core::cli::error(&format!("Model not found: {}", model_path.display()));
@@ -356,7 +364,7 @@ async fn main() -> Result<()> {
             let sweep_config = sweep::SweepConfig {
                 model_name: model,
                 model_path: model_path.clone(),
-                backend: bench::BenchBackend::KoboldCpp { launcher_path },
+                backend: bench::BenchBackend::LlamaCpp { server_path },
                 model_size_gb,
                 total_layers: gguf::inspect_model_topology(
                     &model_path,
@@ -380,7 +388,7 @@ async fn main() -> Result<()> {
             export,
         }) => {
             if export {
-                let conf_path = ozone_core::paths::presets_path();
+                let conf_path = ozone_core::paths::runtime_profiles_path();
                 analyze::export_presets_conf(&conf_path, model.as_deref())?;
             } else if profiles {
                 analyze::show_profiles(model.as_deref())?;
@@ -433,13 +441,13 @@ mod tests {
         );
         assert_eq!(
             detect_tier_from_binary_name("ozone+"),
-            Some(prefs::Tier::Plus)
+            Some(prefs::Tier::Base)
         );
         assert_eq!(
             detect_tier_from_binary_name("ozoneplus"),
-            Some(prefs::Tier::Plus)
+            Some(prefs::Tier::Base)
         );
-        assert_eq!(detect_tier_from_binary_name("oz+"), Some(prefs::Tier::Plus));
+        assert_eq!(detect_tier_from_binary_name("oz+"), Some(prefs::Tier::Base));
         assert_eq!(detect_tier_from_binary_name("ozone"), None);
     }
 }

@@ -42,7 +42,7 @@ pub fn sandbox_setup_base_launch_path() -> Value {
         &["mock-model.gguf"],
         Some(json!({
             "preferredTier": "base",
-            "preferredBackend": "KoboldCpp"
+            "preferredBackend": "kobold-cpp"
         })),
         true,
         false,
@@ -55,7 +55,7 @@ pub fn sandbox_setup_base_profile_review() -> Value {
         &["mock-model.gguf"],
         Some(json!({
             "preferredTier": "base",
-            "preferredBackend": "KoboldCpp"
+            "preferredBackend": "kobold-cpp"
         })),
         false,
         false,
@@ -73,8 +73,8 @@ pub fn sandbox_setup_base_ozone_plus_shell() -> Value {
         &["mock-model.gguf"],
         Some(json!({
             "preferredTier": "base",
-            "preferredBackend": "KoboldCpp",
-            "preferredFrontend": "OzonePlus"
+            "preferredBackend": "kobold-cpp",
+            "preferredFrontend": "ozone-plus"
         })),
         true,
         false,
@@ -408,7 +408,7 @@ pub fn build_base_monitor_screen_journey(
     let mut journey = build_base_launcher_screen_journey(repo_root, journey_name, &json!({}))?;
     journey.command = append_args(
         &front_door_binary_command(repo_root, "ozone", &["--mode", "base"]),
-        &["--frontend", "sillyTavern", "--no-browser"],
+        &["--frontend", "silly-tavern", "--no-browser"],
     );
     journey.steps.extend([
         MockUserJourneyStep::key(

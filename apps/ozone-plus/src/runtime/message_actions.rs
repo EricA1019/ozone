@@ -2,9 +2,9 @@ use ozone_core::engine::MessageId;
 use ozone_engine::{ConversationEngine, EngineCommand, EngineCommandResult};
 use ozone_persist::{AuthorId, PinMessageMemoryRequest, Provenance};
 
-use super::{Phase1dRuntime, TuiRuntimeContextRefresh, TuiSessionContext};
+use super::{OzonePlusRuntime, TuiRuntimeContextRefresh, TuiSessionContext};
 
-impl Phase1dRuntime {
+impl OzonePlusRuntime {
     pub(super) fn toggle_bookmark_impl(
         &mut self,
         context: &TuiSessionContext,

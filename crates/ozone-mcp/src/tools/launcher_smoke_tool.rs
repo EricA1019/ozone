@@ -31,7 +31,7 @@ pub fn launcher_smoke_tool(server: &mut OzoneMcpServer, args: &serde_json::Value
     };
     let script_body = r###"def run():
     master, proc = open_pty_process(
-        ["cargo", "run", "--quiet", "--", "--mode", "base", "--frontend", "ozonePlus", "--no-browser"],
+        ["cargo", "run", "--quiet", "--", "--mode", "base", "--frontend", "ozone-plus", "--no-browser"],
         SPEC["repoRoot"],
     )
     live_refresh_path = SPEC.get("liveRefreshPath")

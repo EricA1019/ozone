@@ -1,4 +1,4 @@
-//! Tier install flow — offered when user picks Base or Plus and the binary is not found.
+//! Tier install flow — offered when user picks Base and the binary is not found.
 
 use std::path::PathBuf;
 
@@ -7,7 +7,7 @@ pub fn binary_name_for_tier(tier: crate::prefs::Tier) -> &'static str {
     match tier {
         crate::prefs::Tier::Lite => "ozone-lite",
         crate::prefs::Tier::Base => "ozone",
-        crate::prefs::Tier::Plus => "ozone-plus",
+        crate::prefs::Tier::Plus => "ozone",
     }
 }
 

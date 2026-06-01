@@ -10,10 +10,10 @@ use crate::{
 };
 
 use super::{
-    tui_context_dry_run_from_build, tui_context_preview_from_plan, Phase1dRuntime,
+    tui_context_dry_run_from_build, tui_context_preview_from_plan, OzonePlusRuntime,
 };
 
-impl Phase1dRuntime {
+impl OzonePlusRuntime {
     pub(super) fn build_context_for_generation(
         &mut self,
         context: &TuiSessionContext,

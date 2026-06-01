@@ -416,7 +416,7 @@ mod fastembed_backend {
 
     enum FastembedState {
         Uninitialized { model: EmbeddingModel },
-        Ready(TextEmbedding),
+        Ready(Box<TextEmbedding>),
         Failed(String),
     }
 
@@ -471,12 +471,13 @@ mod fastembed_backend {
                             *state = FastembedState::Failed(reason.clone());
                             EmbeddingProviderError::unavailable(reason)
                         })?;
-                *state = FastembedState::Ready(initialized);
+                *state = FastembedState::Ready(Box::new(initialized));
             }
 
             match &mut *state {
                 FastembedState::Ready(model) => {
-                    op(model).map_err(|error| EmbeddingProviderError::backend(error.to_string()))
+                    op(model.as_mut())
+                        .map_err(|error| EmbeddingProviderError::backend(error.to_string()))
                 }
                 FastembedState::Failed(reason) => {
                     Err(EmbeddingProviderError::unavailable(reason.clone()))
@@ -528,7 +529,7 @@ mod fastembed_backend {
             let embeddings = requests
                 .iter()
                 .cloned()
-                .zip(vectors.into_iter())
+                .zip(vectors)
                 .map(|(request, vector)| GeneratedEmbedding {
                     content: EmbeddingContent::new(vector, source_text_hash(&request.text)),
                     request,

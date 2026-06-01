@@ -1,5 +1,6 @@
 use crate::planner::LaunchPlan;
 
+#[cfg(test)]
 pub(super) fn build_kc_args(plan: &LaunchPlan) -> Vec<String> {
     let mut args = vec![
         "--gpulayers".to_string(),
@@ -21,6 +22,9 @@ pub(super) fn build_kc_args(plan: &LaunchPlan) -> Vec<String> {
 }
 
 pub(super) fn build_llama_args(plan: &LaunchPlan) -> Vec<String> {
+    const LLAMACPP_MANAGED_HOST: &str = "127.0.0.1";
+    const LLAMACPP_MANAGED_PORT: &str = "8989";
+
     let gpu_layers = if plan.gpu_layers < 0 {
         "all".to_string()
     } else {
@@ -28,9 +32,9 @@ pub(super) fn build_llama_args(plan: &LaunchPlan) -> Vec<String> {
     };
     let mut args = vec![
         "--host".to_string(),
-        "127.0.0.1".to_string(),
+        LLAMACPP_MANAGED_HOST.to_string(),
         "--port".to_string(),
-        "8080".to_string(),
+        LLAMACPP_MANAGED_PORT.to_string(),
         "--ctx-size".to_string(),
         plan.context_size.to_string(),
         "--gpu-layers".to_string(),
@@ -92,7 +96,7 @@ mod tests {
     }
 
     #[test]
-    fn build_llama_args_uses_all_for_negative_gpu_layers() {
+    fn build_llama_args_uses_managed_port_and_all_for_negative_gpu_layers() {
         let mut plan = sample_plan();
         plan.gpu_layers = -1;
         plan.threads = None;
@@ -105,7 +109,7 @@ mod tests {
                 "--host",
                 "127.0.0.1",
                 "--port",
-                "8080",
+                "8989",
                 "--ctx-size",
                 "8192",
                 "--gpu-layers",

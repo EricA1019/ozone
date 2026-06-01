@@ -1,6 +1,6 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
-use crate::profiling::{self, ProfilingAction};
+use crate::profiling::{self, ProfilingAction, WorkflowEvent};
 
 use super::{
     configure_profile_flow::refresh_configure_profiles,
@@ -163,4 +163,52 @@ fn return_to_profile_advisory_or_launcher(app: &mut App) -> ProfilingResultOutco
     }
 
     ProfilingResultOutcome::Continue
+}
+
+#[cfg(feature = "profiling-ui")]
+pub(super) fn apply_workflow_event(app: &mut App, event: WorkflowEvent) {
+    match event {
+        WorkflowEvent::Status { title, detail } => {
+            app.profiling_progress_title = title;
+            app.push_profile_progress(detail);
+        }
+        WorkflowEvent::Progress { title, detail, current, total } => {
+            app.profiling_progress_title = title;
+            app.profiling_progress_current = current;
+            app.profiling_progress_total = total;
+            app.push_profile_progress(detail);
+        }
+        WorkflowEvent::Completed(report) => {
+            let report = *report;
+            app.profiling_event_rx = None;
+            app.profiling_cancel = None;
+            if let Some(ref profile) = report.recommended_profile {
+                app.prefs.llamacpp_gpu_layers = Some(profile.gpu_layers);
+                app.prefs.llamacpp_context_size = Some(profile.context_size);
+                let prefs_clone = app.prefs.clone();
+                tokio::spawn(async move {
+                    let _ = crate::prefs::save_prefs(&prefs_clone).await;
+                });
+            }
+            app.profiling_success = Some(report);
+            app.profiling_failure = None;
+            app.profiling_choice_index = 0;
+            app.screen = Screen::ProfileSuccess;
+        }
+        WorkflowEvent::Failed(report) => {
+            let report = *report;
+            app.profiling_event_rx = None;
+            app.profiling_cancel = None;
+            app.profiling_failure = Some(report);
+            app.profiling_success = None;
+            app.profiling_choice_index = 0;
+            app.screen = Screen::ProfileFailure;
+        }
+        WorkflowEvent::Cancelled => {
+            app.profiling_event_rx = None;
+            app.profiling_cancel = None;
+            app.set_status("Profiling cancelled.".into());
+            app.screen = Screen::Launcher;
+        }
+    }
 }

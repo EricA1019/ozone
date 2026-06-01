@@ -229,6 +229,32 @@ mod tests {
     }
 
     #[test]
+    fn character_overlay_renders_character_detail_fields() {
+        let mut state = seeded_state();
+        state.screen = ScreenState::CharacterOverlay(crate::state::CharacterDetail {
+            card_id: "card-1".into(),
+            name: "Archivist Nyx".into(),
+            description: "A careful chronicler of lost worlds".into(),
+            system_prompt: "Stay concise and precise".into(),
+            personality: "Calm, analytic".into(),
+            scenario: "A ruined observatory".into(),
+            greeting: "Welcome back, seeker.".into(),
+            example_dialogue: "User: What happened here?".into(),
+        });
+
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 120, 40));
+        let model = build_render_model(&state, &layout);
+        let rendered = render_to_string(120, 40, &layout, &model);
+
+        assert!(model.overlay.is_some(), "character overlay should build a render model");
+        assert!(rendered.contains("Character Card"));
+        assert!(rendered.contains("Archivist Nyx"));
+        assert!(rendered.contains("A careful chronicler of lost worlds"));
+        assert!(rendered.contains("Stay concise and precise"));
+        assert!(rendered.contains("Esc/q close"));
+    }
+
+    #[test]
     fn help_overlay_closes_on_escape_q_or_question() {
         use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 

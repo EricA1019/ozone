@@ -6,7 +6,7 @@ use ozone_core::paths;
 use serde::{Deserialize, Serialize};
 use tokio::fs;
 
-use crate::ui::{BackendMode, FrontendMode};
+use crate::ui::BackendMode;
 
 /// Product tier for the ozone family
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -17,7 +17,15 @@ pub enum Tier {
     Plus,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum FrontendPreference {
+    SillyTavern,
+    OzonePlus,
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(default)]
 pub struct Preferences {
     pub version: u32,
     pub last_model_name: String,
@@ -30,11 +38,10 @@ pub struct Preferences {
     #[serde(default)]
     pub preferred_backend: Option<BackendMode>,
     #[serde(default)]
-    pub preferred_frontend: Option<FrontendMode>,
+    pub preferred_frontend: Option<FrontendPreference>,
     #[serde(default)]
     pub preferred_tier: Option<Tier>,
-    /// When true, "Launch ozone+ (side-by-side)" opens ozone+ in a new terminal
-    /// window instead of replacing this process via exec().
+    /// Legacy toggle for the old side-by-side monitor launch path.
     #[serde(default)]
     pub side_by_side_monitor: bool,
     #[serde(default)]
@@ -53,7 +60,7 @@ pub struct Preferences {
     /// Converted to the TUI enum at startup; unknown values fall back to `DarkMint`.
     #[serde(default = "default_theme_preset")]
     pub theme_preset: String,
-    /// Whether the inspector pane is shown when ozone+ first opens.
+    /// Whether the inspector pane is shown when the chat shell first opens.
     #[serde(default)]
     pub show_inspector: bool,
     /// How message timestamps are displayed: `"relative"`, `"absolute"`, or `"off"`.
@@ -83,6 +90,26 @@ pub struct SavedLaunchProfile {
     pub quant_kv: u8,
     #[serde(default)]
     pub threads: Option<u32>,
+}
+
+fn coerce_supported_tier(tier: Option<Tier>) -> Option<Tier> {
+    match tier {
+        Some(Tier::Plus) => Some(Tier::Base),
+        other => other,
+    }
+}
+
+fn coerce_supported_frontend(
+    frontend: Option<FrontendPreference>,
+) -> Option<FrontendPreference> {
+    match frontend {
+        Some(FrontendPreference::OzonePlus) => None,
+        other => other,
+    }
+}
+
+fn coerce_supported_backend(_backend: Option<BackendMode>) -> Option<BackendMode> {
+    Some(BackendMode::LlamaCpp)
 }
 
 impl ModelLaunchOverride {
@@ -118,7 +145,7 @@ impl Default for Preferences {
             last_threads: None,
             last_blas_threads: None,
             no_browser: false,
-            preferred_backend: None,
+            preferred_backend: Some(BackendMode::LlamaCpp),
             preferred_frontend: None,
             preferred_tier: None,
             side_by_side_monitor: false,
@@ -250,12 +277,20 @@ impl Preferences {
 pub async fn load_prefs() -> Result<Preferences> {
     let path = paths::preferences_path().context("Could not determine preferences path")?;
     match fs::read_to_string(&path).await {
-        Ok(text) => serde_json::from_str(&text)
+        Ok(text) => serde_json::from_str::<Preferences>(&text)
+            .map(normalize_loaded_prefs)
             .with_context(|| format!("Failed to parse preferences file {}", path.display())),
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(Preferences::default()),
         Err(error) => Err(error)
             .with_context(|| format!("Failed to read preferences file {}", path.display())),
     }
+}
+
+fn normalize_loaded_prefs(mut prefs: Preferences) -> Preferences {
+    prefs.preferred_backend = coerce_supported_backend(prefs.preferred_backend);
+    prefs.preferred_tier = coerce_supported_tier(prefs.preferred_tier);
+    prefs.preferred_frontend = coerce_supported_frontend(prefs.preferred_frontend);
+    prefs
 }
 
 pub async fn save_prefs(prefs: &Preferences) -> Result<()> {
@@ -272,19 +307,15 @@ pub async fn save_prefs(prefs: &Preferences) -> Result<()> {
 
 #[cfg(test)]
 mod tests {
-    use super::{ModelLaunchOverride, Preferences, SavedLaunchProfile};
+    use super::{ModelLaunchOverride, Preferences, SavedLaunchProfile, Tier};
+    use crate::test_support::env_lock;
+    use crate::ui::BackendMode;
     use std::{
         path::{Path, PathBuf},
-        sync::{Mutex, OnceLock},
         sync::atomic::{AtomicU64, Ordering},
     };
 
     static TEST_COUNTER: AtomicU64 = AtomicU64::new(1);
-
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
-    }
 
     struct TestSandbox {
         root: PathBuf,
@@ -412,7 +443,7 @@ mod tests {
 
     #[test]
     fn load_prefs_missing_file_returns_defaults() {
-        let _env_guard = env_lock().lock().unwrap();
+        let _env_guard = env_lock();
         let sandbox = TestSandbox::new("missing-file");
         std::fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
         let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
@@ -423,13 +454,14 @@ mod tests {
             .block_on(super::load_prefs())
             .expect("missing prefs file should fall back to defaults");
 
+        assert_eq!(prefs.preferred_backend, Some(BackendMode::LlamaCpp));
         assert_eq!(prefs.theme_preset, "dark-mint");
         assert_eq!(prefs.timestamp_style, "relative");
     }
 
     #[test]
     fn load_prefs_invalid_json_returns_error() {
-        let _env_guard = env_lock().lock().unwrap();
+        let _env_guard = env_lock();
         let sandbox = TestSandbox::new("invalid-json");
         std::fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
         let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
@@ -447,6 +479,143 @@ mod tests {
         let message = error.to_string();
         assert!(message.contains("Failed to parse preferences file"));
         assert!(message.contains(&path.display().to_string()));
+    }
+
+        #[test]
+        fn load_prefs_coerces_plus_state_to_supported_surface() {
+            let _env_guard = env_lock();
+                let sandbox = TestSandbox::new("coerce-plus-state");
+                std::fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
+                let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
+                let _home = ScopedEnvVar::set("HOME", sandbox.root.join("home"));
+
+                let path = ozone_core::paths::preferences_path().expect("prefs path should resolve");
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(
+                        &path,
+                        r#"{
+    "version": 1,
+    "last_model_name": "legacy.gguf",
+    "no_browser": true,
+    "preferred_frontend": "ozone-plus",
+    "preferred_tier": "plus",
+    "saved_launch_profiles": {
+        "legacy.gguf": [
+            {
+                "profile_name": "custom-1",
+                "context_size": 16384,
+                "gpu_layers": 22,
+                "quant_kv": 1,
+                "threads": 6
+            }
+        ]
+    },
+    "default_launch_profiles": {
+        "legacy.gguf": "custom-1"
+    }
+}
+"#,
+                )
+                .unwrap();
+
+                let prefs = tokio::runtime::Runtime::new()
+                        .unwrap()
+                        .block_on(super::load_prefs())
+                        .expect("legacy plus prefs should migrate");
+
+                assert_eq!(prefs.preferred_tier, Some(Tier::Base));
+                assert_eq!(prefs.preferred_frontend, None);
+                assert_eq!(
+                        prefs.default_saved_launch_profile_name_for("legacy.gguf"),
+                        Some("custom-1")
+                );
+        }
+
+        #[test]
+        fn load_prefs_preserves_lite_preference() {
+            let _env_guard = env_lock();
+                let sandbox = TestSandbox::new("preserve-lite-state");
+                std::fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
+                let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
+                let _home = ScopedEnvVar::set("HOME", sandbox.root.join("home"));
+
+                let path = ozone_core::paths::preferences_path().expect("prefs path should resolve");
+                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+                std::fs::write(
+                        &path,
+                        r#"{
+    "version": 1,
+    "last_model_name": "lite.gguf",
+    "preferred_tier": "lite"
+}
+"#,
+                )
+                .unwrap();
+
+                let prefs = tokio::runtime::Runtime::new()
+                        .unwrap()
+                        .block_on(super::load_prefs())
+                        .expect("lite prefs should migrate");
+
+                assert_eq!(prefs.preferred_tier, Some(Tier::Lite));
+        }
+
+    #[test]
+    fn load_prefs_coerces_legacy_backend_to_llamacpp() {
+        let _env_guard = env_lock();
+        let sandbox = TestSandbox::new("coerce-legacy-backend");
+        std::fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
+        let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
+        let _home = ScopedEnvVar::set("HOME", sandbox.root.join("home"));
+
+        let path = ozone_core::paths::preferences_path().expect("prefs path should resolve");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{
+    "version": 1,
+    "last_model_name": "legacy.gguf",
+    "preferred_backend": "ollama"
+}
+"#,
+        )
+        .unwrap();
+
+        let prefs = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(super::load_prefs())
+            .expect("legacy backend prefs should migrate");
+
+        assert_eq!(prefs.preferred_backend, Some(BackendMode::LlamaCpp));
+    }
+
+    #[test]
+    fn load_prefs_coerces_legacy_kobold_backend_to_llamacpp() {
+        let _env_guard = env_lock();
+        let sandbox = TestSandbox::new("coerce-legacy-kobold-backend");
+        std::fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
+        let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
+        let _home = ScopedEnvVar::set("HOME", sandbox.root.join("home"));
+
+        let path = ozone_core::paths::preferences_path().expect("prefs path should resolve");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{
+    "version": 1,
+    "last_model_name": "legacy.gguf",
+    "preferred_backend": "kobold-cpp"
+}
+"#,
+        )
+        .unwrap();
+
+        let prefs = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(super::load_prefs())
+            .expect("legacy kobold backend prefs should migrate");
+
+        assert_eq!(prefs.preferred_backend, Some(BackendMode::LlamaCpp));
     }
 
     #[test]

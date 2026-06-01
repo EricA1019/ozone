@@ -57,7 +57,7 @@ use std::sync::Arc;
 
 // `PendingGeneration` and related types live in `generation.rs` and are re-exported above.
 
-pub struct Phase1dRuntime {
+pub struct OzonePlusRuntime {
     repo: SqliteRepository,
     engine: SingleWriterConversationEngine<crate::store::RepoConversationStore>,
     session_id: SessionId,
@@ -75,13 +75,13 @@ pub struct Phase1dRuntime {
     runtime: Arc<tokio::runtime::Runtime>,
 }
 
-impl Phase1dRuntime {
+impl OzonePlusRuntime {
     pub fn open(repo: SqliteRepository, session_id: SessionId) -> Result<Self, String> {
         repo.get_session(&session_id)
             .map_err(|error| error.to_string())?
             .ok_or_else(|| format!("session {session_id} was not found"))?;
 
-        let instance_id = format!("ozone-plus-phase1d-{}", std::process::id());
+        let instance_id = format!("ozone-plus-runtime-{}", std::process::id());
         repo.acquire_session_lock(&session_id, &instance_id)
             .map_err(|error| match error {
                 PersistError::SessionLocked {
@@ -165,7 +165,7 @@ impl Phase1dRuntime {
         if new_sid != self.session_id {
             let _ = self.release_lock();
 
-            let instance_id = format!("ozone-plus-phase1d-{}", std::process::id());
+            let instance_id = format!("ozone-plus-runtime-{}", std::process::id());
             self.repo
                 .acquire_session_lock(&new_sid, &instance_id)
                 .map_err(|error| format!("failed to lock session {new_sid}: {error}"))?;
@@ -274,7 +274,7 @@ impl Phase1dRuntime {
     }
 }
 
-impl Drop for Phase1dRuntime {
+impl Drop for OzonePlusRuntime {
     fn drop(&mut self) {
         let _ = self
             .repo
@@ -282,7 +282,7 @@ impl Drop for Phase1dRuntime {
     }
 }
 
-impl SessionRuntime for Phase1dRuntime {
+impl SessionRuntime for OzonePlusRuntime {
     type Error = String;
 
     fn bootstrap(&mut self, context: &TuiSessionContext) -> Result<TuiBootstrap, Self::Error> {

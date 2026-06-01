@@ -11,8 +11,6 @@ categories = ["command-line-utilities"]
 
 [workspace]
 members = [
-    "apps/ozone-mcp",
-    "apps/ozone-plus",
     "crates/ozone-core",
     "crates/ozone-engine",
     "crates/ozone-inference",

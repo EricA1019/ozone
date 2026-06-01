@@ -3,9 +3,9 @@ use std::{fs, io::ErrorKind};
 use ozone_persist::SessionId;
 use ozone_tui::DraftState as TuiDraftState;
 
-use super::Phase1dRuntime;
+use super::OzonePlusRuntime;
 
-impl Phase1dRuntime {
+impl OzonePlusRuntime {
     pub(super) fn load_persisted_draft(
         &self,
         session_id: &SessionId,

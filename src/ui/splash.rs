@@ -14,7 +14,6 @@ pub enum SplashTier {
     Lite,
     #[default]
     Base,
-    Plus,
 }
 
 pub fn render(f: &mut Frame, app: &App) {
@@ -188,21 +187,16 @@ fn render_hex_divider(f: &mut Frame, area: Rect) {
     f.render_widget(divider, area);
 }
 
-/// Render the tier preview widget showing all three tiers
+/// Render the tier preview widget showing the available tiers
 fn render_tier_preview(f: &mut Frame, area: Rect, current: SplashTier) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(1),
-            Constraint::Length(1),
-            Constraint::Length(1),
-        ])
+        .constraints([Constraint::Length(1), Constraint::Length(1)])
         .split(area);
 
     let tiers = [
         (TIER_LITE, TIER_LITE_DESC, SplashTier::Lite),
         (TIER_BASE, TIER_BASE_DESC, SplashTier::Base),
-        (TIER_PLUS, TIER_PLUS_DESC, SplashTier::Plus),
     ];
 
     for (i, (name, desc, tier)) in tiers.iter().enumerate() {

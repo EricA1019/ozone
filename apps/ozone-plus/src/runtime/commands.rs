@@ -7,12 +7,12 @@ use super::{
         recent_search_section, tui_context_dry_run_from_build, tui_context_preview_from_plan,
     },
     shell_commands::{format_tags, parse_shell_command, require_non_empty},
-    HooksCommand, MemoryCommand, Phase1dRuntime, SafeModeCommand, SearchCommand,
+    HooksCommand, MemoryCommand, OzonePlusRuntime, SafeModeCommand, SearchCommand,
     SessionCommand, ShellCommand, SummarizeShellCommand, ThinkingCommand, TierBCommand,
     TuiRuntimeContextRefresh, TuiSessionContext,
 };
 
-impl Phase1dRuntime {
+impl OzonePlusRuntime {
     pub(super) fn run_command_impl(
         &mut self,
         context: &TuiSessionContext,

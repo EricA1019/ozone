@@ -217,6 +217,47 @@ fn memories_overlay_model(recall_browser: Option<&RecallBrowser>) -> OverlayRend
     OverlayRenderModel { title, lines }
 }
 
+fn character_overlay_model(detail: &crate::state::CharacterDetail) -> OverlayRenderModel {
+    fn non_empty(value: &str) -> String {
+        if value.trim().is_empty() {
+            "(empty)".to_owned()
+        } else {
+            value.to_owned()
+        }
+    }
+
+    let mut lines = vec![
+        format!("Name: {}", non_empty(&detail.name)),
+        format!("Description: {}", non_empty(&detail.description)),
+        String::new(),
+        "System Prompt:".to_owned(),
+        non_empty(&detail.system_prompt),
+        String::new(),
+        "Personality:".to_owned(),
+        non_empty(&detail.personality),
+        String::new(),
+        "Scenario:".to_owned(),
+        non_empty(&detail.scenario),
+        String::new(),
+        "Greeting:".to_owned(),
+        non_empty(&detail.greeting),
+        String::new(),
+        "Example Dialogue:".to_owned(),
+        non_empty(&detail.example_dialogue),
+        String::new(),
+    ];
+
+    if !detail.card_id.trim().is_empty() {
+        lines.push(format!("Card ID: {}", detail.card_id));
+    }
+    lines.push("Esc/q close".to_owned());
+
+    OverlayRenderModel {
+        title: "Character Card".into(),
+        lines,
+    }
+}
+
 pub fn overlay_model(
     screen: &ScreenState,
     input_mode: InputMode,
@@ -233,7 +274,7 @@ pub fn overlay_model(
         | ScreenState::ModelIntelligence
         | ScreenState::Conversation => None,
         ScreenState::MemoriesOverlay => Some(memories_overlay_model(recall_browser)),
-        ScreenState::CharacterOverlay(_) => None,
+        ScreenState::CharacterOverlay(detail) => Some(character_overlay_model(detail)),
         ScreenState::Help => Some(OverlayRenderModel {
             title: "Help".into(),
             lines: vec![
