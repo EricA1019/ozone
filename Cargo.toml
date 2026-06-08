@@ -29,6 +29,7 @@ path = "src/main.rs"
 anyhow = "1"
 chrono = { version = "0.4", features = ["clock"] }
 clap = { version = "4", features = ["derive"] }
+csv = "1"
 crossterm = "0.28"
 directories = "5"
 libc = "0.2"
@@ -43,6 +44,7 @@ sysinfo = "0.33"
 rusqlite = { version = "0.31", features = ["bundled"], optional = true }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
+toml = "0.8"
 ratatui-braille-bar = "0.2.2"
 
 [dev-dependencies]

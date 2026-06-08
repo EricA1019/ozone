@@ -465,7 +465,7 @@ mod tests {
     #[test]
     fn gateway_builds_llamacpp_from_config() {
         let cfg = BackendConfig {
-            url: "http://127.0.0.1:8080".into(),
+            url: "http://127.0.0.1:8989".into(),
             r#type: "llamacpp".into(),
             ..Default::default()
         };

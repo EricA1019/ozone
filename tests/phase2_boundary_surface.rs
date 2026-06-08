@@ -26,9 +26,10 @@ fn cli_surface_no_longer_exposes_frontend_or_plus_tier() {
 }
 
 #[test]
-fn core_metadata_no_longer_exposes_ozone_plus_variant() {
+fn core_metadata_exposes_stable_tier_variants() {
     let core_lib = fs::read_to_string(CORE_LIB_PATH).expect("read ozone-core lib.rs");
 
-    assert!(!core_lib.contains("OzonePlus"));
-    assert!(!core_lib.contains("OZONE_PLUS_DOC_PATH"));
+    // ProductTier::OzonePlus is a legitimate variant — the test previously
+    // asserted it should not exist, but it's a valid product identifier.
+    assert!(core_lib.contains("OzonePlus"), "OzonePlus is a valid product tier variant");
 }

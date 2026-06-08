@@ -8,7 +8,7 @@ const SIZE_HEURISTIC_LABEL: &str = "Size heuristic";
 
 const MIB_PER_GIB: f64 = 1024.0;
 const VRAM_HEADROOM_RATIO: f64 = 0.9;
-pub const CONFIGURE_CONTEXT_STEPS: [u32; 7] = [4096, 8192, 16384, 24576, 32768, 49152, 65536];
+pub const CONFIGURE_CONTEXT_STEPS: [u32; 8] = [4096, 8192, 16384, 24576, 32768, 49152, 65536, 262144];
 
 pub use ozone_core::planner::{LaunchPlan, RecommendationMode};
 
@@ -359,7 +359,7 @@ pub fn build_configure_warnings(plan: &LaunchPlan, hw: &HardwareProfile) -> Vec<
                 ConfigureWarningSeverity::Warning
             },
             message: if plan.context_size >= 65536 {
-                "Above 32k is experimental here; 64k context can heavily reduce throughput and may force aggressive CPU/RAM fallback."
+                "Above 32k is experimental here; 64k+ context can heavily reduce throughput and may force aggressive CPU/RAM fallback."
                     .to_string()
             } else {
                 "Above 32k is high-risk; expect noticeably slower generations and much higher KV-cache pressure."
@@ -844,6 +844,7 @@ mod configure_tests {
         assert_eq!(step_context_size(4096, 1), 8192);
         assert_eq!(step_context_size(32768, 1), 49152);
         assert_eq!(step_context_size(49152, 1), 65536);
-        assert_eq!(step_context_size(65536, 1), 65536);
+        assert_eq!(step_context_size(65536, 1), 262144);
+        assert_eq!(step_context_size(262144, 1), 262144);
     }
 }

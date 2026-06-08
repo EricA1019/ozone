@@ -14,7 +14,7 @@ edges:
     condition: when setting up the dev environment or running the project for the first time
   - target: patterns/INDEX.md
     condition: when starting a task — check the pattern index for a matching pattern file
-last_updated: 2026-05-18
+last_updated: 2026-06-08
 ---
 
 # Session Bootstrap
@@ -26,6 +26,16 @@ Then read this file fully before doing anything else in this session.
 ## Current Project State
 
 **Working:**
+
+- **TUI Results Viewer landed (2026-06-08)**: Bench + Eval now has a "View Results" action that scans `~/.local/share/ozone/` and `contrib/evals/artifacts/` for past sweep/eval/creative-writing CSV and markdown files. Results are listed with kind labels ([Sweep], [Eval], [Creative], [Report]), model names, and summary metrics. Press Enter to view CSV as an aligned table or markdown as scrollable text. Press `r` to refresh the file list. Navigate with arrows, PgUp/PgDn, Home/End.
+- **Port mismatch bug fixed (2026-06-08)**: `DEFAULT_LLAMACPP_PORT` was 8080 but the managed server launches on 8989. Health checks in `start_llamacpp` were hitting the wrong port, causing all sweep/bench auto-launches to time out. Fixed to 8989.
+- **Bench model path bug fixed (2026-06-08)**: `run_benchmark` ignored `_model_path` and passed the short model name (not full path) to `start_llamacpp`, causing ModelLoadFailed on every auto-launch. Now passes full `model_path.to_string_lossy()`.
+- **Context sweep completed (2026-06-08)**: OmniCoder-9B sweet spot = 2048 context at 33.3 tok/s. Sweep tested ctx=512 (33.2 tok/s, 9160 MiB VRAM) and ctx=2048 (33.3 tok/s, 9209 MiB VRAM) — no degradation.
+
+- **Bench/Eval model resolution fix (2026-06-08)**: `resolve_bench_eval_model()` now resolves from the selected catalog model first (or first saved model), then active plan, then saved `last_model_name` — so eval can pick up saved models without requiring a prior launch. Preview renderer updated to match. 3 new regression tests green.
+- **Missing ozone-core path helpers restored (2026-06-08)**: `catalog_preset_path()` alias (delegates to `presets_path()`) and `llamacpp_launch_state_path()` (points to `launcher-state.json` in the data dir) were added back to `ozone_core::paths`, fixing the compile break in `src/main.rs`, `src/ui/mod.rs`, and `src/processes.rs`.
+- **Eval markdown viewer landed**: Bench + Eval now turns lm-eval JSON and EvalPlus JSONL artifacts into markdown reports, writes the report beside the source artifact, and opens a dedicated in-app viewer with a menu action to reopen the last report.
+- **Eval result-range docs landed**: `docs/eval-result-ranges.md` now explains the normalized score ranges and meanings for the shipped GSM8K, instruction-following, math, and EvalPlus HumanEval probes.
 
 - **Wave 2 hub-file decomposition is complete as of 2026-05-18**: the former closeout items are now landed, with `src/ui/mod.rs` delegating the final `Screen::Splash` / `Screen::Monitor` input flow to `src/ui/splash_flow.rs` and `src/ui/monitor_flow.rs`, `crates/ozone-mcp/src/lib.rs` shedding both its inline test harness and its sandbox/mock-backend lifecycle cluster into `crates/ozone-mcp/src/tests.rs` and `crates/ozone-mcp/src/sandbox.rs`, and ozone+ runtime naming cleaned up from `Phase1dRuntime` to `OzonePlusRuntime`; the final Wave 2 gate passed with `make preflight`, `cargo check --workspace --all-targets --release`, a fresh release build of `ozone` / `ozone-plus` / `ozone-mcp`, and ignored `ozone-mcp` release smoke.
 - **Front-door ozone-mcp fixtures now align with shipped enum spellings**: sandbox preference normalization now canonicalizes known preference enums to the persisted kebab-case form, and the release-smoke/front-door journeys use the real launcher/frontend spellings (`kobold-cpp`, `ozone-plus`, `silly-tavern`) instead of stale roadmap-era display values.

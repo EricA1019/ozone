@@ -79,6 +79,11 @@ pub(super) async fn run_launcher_action(
                 app.screen = super::Screen::ModelPicker;
             }
         }
+        super::LauncherActionId::BenchEval => {
+            app.reset_bench_eval_flow();
+            app.bench_eval_selected = 0;
+            app.screen = super::Screen::BenchEval;
+        }
         #[cfg(feature = "profiling-ui")]
         super::LauncherActionId::ProfileModel => {
             if !app.catalog.is_empty() {

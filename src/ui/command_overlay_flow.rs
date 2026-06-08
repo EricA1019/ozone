@@ -27,6 +27,9 @@ pub(super) fn overlay_supported(screen: &Screen) -> bool {
     matches!(
         screen,
         Screen::Launcher
+            | Screen::BenchEval
+            | Screen::BenchEvalRunning
+            | Screen::BenchEvalReport
             | Screen::ModelPicker
             | Screen::ConfigureHub
             | Screen::Confirm

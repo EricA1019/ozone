@@ -3,6 +3,10 @@ mod analyze;
 #[cfg(feature = "bench")]
 mod bench;
 mod catalog;
+mod creative_writing;
+mod eval;
+mod eval_report;
+mod export_server;
 #[cfg(any(feature = "bench", feature = "analyze", feature = "profiling-ui"))]
 mod db;
 #[cfg(any(feature = "profiling-ui", feature = "sweep"))]
@@ -25,6 +29,7 @@ mod ui;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 /// Product tier for mode selection
 #[derive(Debug, Clone, Copy, ValueEnum)]
@@ -135,6 +140,49 @@ enum Commands {
         max_context: Option<u32>,
         #[arg(long, help = "Quick sweep (fewer configs)")]
         quick: bool,
+        #[arg(long, help = "Run context-size sweep instead of parameter sweep")]
+        context_sweep: bool,
+    },
+    /// Run evaluation probes against a running local server
+    Eval {
+        /// Model filename reported by the local API
+        model: String,
+        #[arg(long, value_enum, default_value = "gsm8k", help = "Evaluation preset to run")]
+        preset: eval::EvalPreset,
+        #[arg(long, default_value = "1", help = "Number of samples/examples to run")]
+        limit: u32,
+        #[arg(
+            long,
+            default_value = "http://127.0.0.1:8989",
+            help = "Base URL for OpenAI-compatible local API"
+        )]
+        base_url: String,
+        #[arg(long, default_value = "0.0", help = "Temperature for generation (0.0 = deterministic)")]
+        temperature: f64,
+        #[arg(long, help = "Compare all models with prior results for this preset")]
+        compare: bool,
+    },
+    /// Generate a standalone launch script for a model
+    ExportServer {
+        /// Model filename
+        model: String,
+        #[arg(long, help = "Saved profile name to use for config")]
+        profile: Option<String>,
+        #[arg(long, help = "Output path (default: ~/models/serve-<model>.sh)")]
+        output: Option<String>,
+        #[arg(long, default_value = "8989", help = "Port for the server")]
+        port: u16,
+    },
+    /// List available evaluation presets
+    EvalList,
+    /// Run creative writing evaluation probe (multi-temperature diversity scoring)
+    CreativeWrite {
+        /// Model filename
+        model: String,
+        #[arg(long, default_value = "http://127.0.0.1:8989", help = "Base URL for OpenAI-compatible local API")]
+        base_url: String,
+        #[arg(long, default_value = "contrib/evals/prompts/creative_writing.toml", help = "Path to prompt bank TOML")]
+        prompts: Option<String>,
     },
     /// Manage local model files (list, add, remove, info)
     #[cfg(feature = "model-mgmt")]
@@ -330,10 +378,22 @@ async fn main() -> Result<()> {
             model,
             max_context,
             quick,
+            context_sweep,
         }) => {
             let model_dir = ozone_core::paths::models_dir();
             let model_path = model_dir.join(&model);
             let server_path = processes::resolved_llamacpp_server_path()?;
+
+            if context_sweep {
+                let (csv_path, sweet_spot) = sweep::run_context_sweep(
+                    &model, &model_path, &server_path, -1, None, quick,
+                ).await?;
+                ozone_core::cli::success(&format!(
+                    "Sweep complete. Sweet spot: context={sweet_spot}. CSV: {}",
+                    csv_path.display()
+                ));
+                return Ok(());
+            }
 
             if !model_path.exists() {
                 ozone_core::cli::error(&format!("Model not found: {}", model_path.display()));
@@ -412,6 +472,86 @@ async fn main() -> Result<()> {
                 let _ = all;
                 analyze::show_benchmarks(None)?;
             }
+            Ok(())
+        }
+        Some(Commands::Eval {
+            model,
+            preset,
+            limit,
+            base_url,
+            temperature,
+            compare,
+        }) => {
+            if compare {
+                eval::print_comparison(preset.cli_name())?;
+                return Ok(());
+            }
+            eval::run_eval(&model, preset, limit, &base_url, temperature)?;
+            Ok(())
+        }
+        Some(Commands::ExportServer { model, profile, output, port }) => {
+            let model_dir = ozone_core::paths::models_dir();
+            let model_path = model_dir.join(&model);
+            if !model_path.exists() {
+                anyhow::bail!("Model not found: {}", model_path.display());
+            }
+
+            let server_path = processes::resolved_llamacpp_server_path()?;
+
+            let plan = if let Some(_profile_name) = &profile {
+                anyhow::bail!("--profile not yet implemented; use the launcher Configure Hub to save a profile first");
+            } else {
+                // Use catalog recommendation as fallback
+                let report = catalog::load_catalog_report(
+                    &model_dir,
+                    &ozone_core::paths::catalog_preset_path(),
+                    &model_dir.join("bench-results.txt"),
+                ).await?;
+                let record = report.records.iter()
+                    .find(|r| r.model_name == model)
+                    .ok_or_else(|| anyhow::anyhow!("Model '{}' not found in catalog", model))?;
+                crate::planner::plan_launch(record, &Default::default())
+            };
+
+            let output_path = output.as_deref().map(PathBuf::from).unwrap_or_default();
+            let written = export_server::generate_serve_script(
+                &plan, &model_path, &server_path, port, &output_path,
+            )?;
+            ozone_core::cli::success(&format!("Server script written to {}", written.display()));
+            Ok(())
+        }
+        Some(Commands::EvalList) => {
+            println!("{:<20} {:<50} KIND", "NAME", "DESCRIPTION");
+            for task in eval::EVAL_TASKS {
+                let kind_label = match task.kind {
+                    eval::EvalTaskKind::LmEval { .. } => "lm-eval",
+                    eval::EvalTaskKind::EvalPlus { .. } => "evalplus",
+                    eval::EvalTaskKind::CreativeWriting => "creative-writing",
+                };
+                println!("{:<20} {:<50} {}", task.cli_name, task.description, kind_label);
+            }
+            Ok(())
+        }
+        Some(Commands::CreativeWrite { model, base_url, prompts: _prompts }) => {
+            let root = crate::eval::resolve_project_root()?;
+            let prompt_bank = creative_writing::load_prompt_bank(&root)?;
+            if prompt_bank.is_empty() {
+                anyhow::bail!("No prompts found in creative writing prompt bank");
+            }
+
+            let artifacts_dir = root.join("contrib/evals/artifacts").join("creative_writing");
+            let csv_path = creative_writing::run_creative_writing_eval(
+                &model, &prompt_bank, &base_url, &artifacts_dir,
+            ).await?;
+
+            // Build and write markdown report
+            let report_md = creative_writing::build_creative_report(&csv_path)?;
+            let report_path = csv_path.with_extension("md");
+            std::fs::write(&report_path, &report_md)?;
+
+            ozone_core::cli::success(&format!("Creative writing eval complete for '{}'", model));
+            ozone_core::cli::field("CSV:", &csv_path.display());
+            ozone_core::cli::field("Report:", &report_path.display());
             Ok(())
         }
         #[cfg(feature = "model-mgmt")]

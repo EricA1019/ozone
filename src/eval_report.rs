@@ -1,0 +1,298 @@
+use anyhow::{Context, Result};
+use serde_json::Value;
+use std::{collections::BTreeMap, fs, path::{Path, PathBuf}};
+
+use crate::eval::EvalPreset;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) struct EvalMarkdownReport {
+    pub title: String,
+    pub markdown: String,
+    pub source_path: PathBuf,
+    pub markdown_path: PathBuf,
+}
+
+pub(crate) fn build_eval_report_for_preset(
+    model: &str,
+    preset: EvalPreset,
+) -> Result<EvalMarkdownReport> {
+    let root = crate::eval::resolve_project_root()?;
+    let artifacts_dir = root.join("contrib/evals/artifacts");
+
+    match preset {
+        EvalPreset::Gsm8k => build_lm_eval_report(
+            &format!("{} eval report", preset.report_label()),
+            &artifacts_dir.join("lm_eval_gsm8k_probe").join(model),
+        ),
+        EvalPreset::Instruction => build_lm_eval_report(
+            &format!("{} eval report", preset.report_label()),
+            &artifacts_dir.join("lm_eval_instruction_probe").join(model),
+        ),
+        EvalPreset::Math => build_lm_eval_report(
+            &format!("{} eval report", preset.report_label()),
+            &artifacts_dir.join("lm_eval_math_probe").join(model),
+        ),
+        EvalPreset::Humaneval => build_evalplus_report(
+            &format!("{} report", preset.report_label()),
+            &artifacts_dir.join("evalplus_probe/humaneval"),
+            model,
+        ),
+    }
+}
+
+pub(crate) fn write_eval_report(report: &EvalMarkdownReport) -> Result<()> {
+    if let Some(parent) = report.markdown_path.parent() {
+        fs::create_dir_all(parent)
+            .with_context(|| format!("failed to create {}", parent.display()))?;
+    }
+    fs::write(&report.markdown_path, &report.markdown)
+        .with_context(|| format!("failed to write {}", report.markdown_path.display()))
+}
+
+fn build_lm_eval_report(title: &str, model_dir: &Path) -> Result<EvalMarkdownReport> {
+    let source_path = latest_json_file(model_dir)?;
+    let markdown_path = source_path.with_extension("md");
+    let json_text = fs::read_to_string(&source_path)
+        .with_context(|| format!("failed to read {}", source_path.display()))?;
+    let json: Value = serde_json::from_str(&json_text)
+        .with_context(|| format!("failed to parse {}", source_path.display()))?;
+
+    let markdown = render_lm_eval_markdown(title, &json, &source_path);
+    Ok(EvalMarkdownReport {
+        title: title.to_string(),
+        markdown,
+        source_path,
+        markdown_path,
+    })
+}
+
+fn build_evalplus_report(title: &str, report_dir: &Path, model: &str) -> Result<EvalMarkdownReport> {
+    let source_path = report_dir.join(format!("{model}_openai_temp_0.0.jsonl"));
+    let markdown_path = source_path.with_extension("md");
+    let jsonl = fs::read_to_string(&source_path)
+        .with_context(|| format!("failed to read {}", source_path.display()))?;
+
+    let markdown = render_evalplus_markdown(title, &jsonl, &source_path);
+    Ok(EvalMarkdownReport {
+        title: title.to_string(),
+        markdown,
+        source_path,
+        markdown_path,
+    })
+}
+
+fn latest_json_file(dir: &Path) -> Result<PathBuf> {
+    let mut entries = Vec::new();
+    for entry in fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))? {
+        let entry = entry.with_context(|| format!("failed to read entry in {}", dir.display()))?;
+        let path = entry.path();
+        let file_name = match path.file_name().and_then(|name| name.to_str()) {
+            Some(name) => name,
+            None => continue,
+        };
+        if path.extension().and_then(|ext| ext.to_str()) == Some("json")
+            && file_name.starts_with("results_")
+        {
+            entries.push(path);
+        }
+    }
+
+    entries.sort();
+    entries
+        .pop()
+        .with_context(|| format!("no lm-eval result JSON found in {}", dir.display()))
+}
+
+fn render_lm_eval_markdown(title: &str, json: &Value, source_path: &Path) -> String {
+    let mut markdown = String::new();
+    markdown.push_str(&format!("# {title}\n\n"));
+    markdown.push_str(&format!("- Source JSON: `{}`\n", source_path.display()));
+
+    if let Some(model_name) = json.get("model_name").and_then(Value::as_str) {
+        markdown.push_str(&format!("- Model: `{model_name}`\n"));
+    }
+    if let Some(version) = json.get("lm_eval_version").and_then(Value::as_str) {
+        markdown.push_str(&format!("- lm-eval version: `{version}`\n"));
+    }
+    if let Some(total_time) = json
+        .get("total_evaluation_time_seconds")
+        .and_then(Value::as_str)
+    {
+        markdown.push_str(&format!("- Total time: `{total_time}` seconds\n"));
+    }
+    if let Some(config) = json.get("config").and_then(Value::as_object) {
+        if let Some(model_args) = config.get("model_args").and_then(Value::as_object) {
+            if let Some(base_url) = model_args.get("base_url").and_then(Value::as_str) {
+                markdown.push_str(&format!("- Base URL: `{base_url}`\n"));
+            }
+        }
+    }
+
+    if let Some(groups) = json.get("group_subtasks").and_then(Value::as_object) {
+        if !groups.is_empty() {
+            markdown.push_str("\n## Group structure\n\n");
+            for (group_name, subtasks) in groups {
+                markdown.push_str(&format!("- **{group_name}**\n"));
+                if let Some(subtasks) = subtasks.as_array() {
+                    for subtask in subtasks {
+                        if let Some(name) = subtask.as_str() {
+                            markdown.push_str(&format!("  - {name}\n"));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if let Some(results) = json.get("results").and_then(Value::as_object) {
+        let ordered: BTreeMap<&String, &Value> = results.iter().collect();
+        markdown.push_str("\n## Metrics\n\n");
+        for (task_name, task_value) in ordered {
+            let Some(task_object) = task_value.as_object() else {
+                continue;
+            };
+
+            let metrics = summarize_numeric_fields(task_object);
+            if metrics.is_empty() {
+                continue;
+            }
+
+            markdown.push_str(&format!("### {task_name}\n\n"));
+            if let Some(sample_len) = task_object.get("sample_len").and_then(Value::as_u64) {
+                markdown.push_str(&format!("- sample_len: `{sample_len}`\n\n"));
+            }
+
+            markdown.push_str("| Metric | Value |\n| --- | --- |\n");
+            for (metric, value) in metrics {
+                markdown.push_str(&format!("| {metric} | {value} |\n"));
+            }
+            markdown.push('\n');
+        }
+    }
+
+    markdown.push_str("## Reading the scale\n\n");
+    markdown.push_str("- All lm-eval metrics here are normalized fractions from `0.0` to `1.0`.\n");
+    markdown.push_str("- Multiply by 100 if you want a percentage-style reading.\n");
+    markdown.push_str("- Compare scores within the same suite, not across different suites.\n");
+
+    markdown
+}
+
+fn summarize_numeric_fields(object: &serde_json::Map<String, Value>) -> Vec<(String, String)> {
+    let mut rows = Vec::new();
+
+    for (key, value) in object {
+        if key == "name"
+            || key == "alias"
+            || key == "sample_len"
+            || key == "sample_count"
+            || key.ends_with("_stderr")
+        {
+            continue;
+        }
+
+        if let Some(number) = value.as_f64() {
+            rows.push((key.clone(), format_fraction(number)));
+        }
+    }
+
+    rows.sort_by(|left, right| left.0.cmp(&right.0));
+    rows
+}
+
+fn render_evalplus_markdown(title: &str, jsonl: &str, source_path: &Path) -> String {
+    let mut markdown = String::new();
+    let raw_path = source_path.with_file_name(
+        source_path
+            .file_name()
+            .and_then(|name| name.to_str())
+            .map(|name| name.replace(".jsonl", ".raw.jsonl"))
+            .unwrap_or_else(|| "raw.jsonl".to_string()),
+    );
+
+    markdown.push_str(&format!("# {title}\n\n"));
+    markdown.push_str(&format!("- Source JSONL: `{}`\n", source_path.display()));
+    markdown.push_str(&format!("- Raw JSONL: `{}`\n", raw_path.display()));
+    markdown.push_str("- Status: generation only. Run `evalplus.evaluate` to score pass@k.\n\n");
+
+    let mut sample_count = 0usize;
+    markdown.push_str("## Generated samples\n\n");
+    for line in jsonl.lines().filter(|line| !line.trim().is_empty()) {
+        let value: Value = match serde_json::from_str(line) {
+            Ok(value) => value,
+            Err(error) => {
+                markdown.push_str(&format!(
+                    "- Could not parse a sample line from `{}`: `{error}`\n",
+                    source_path.display()
+                ));
+                continue;
+            }
+        };
+
+        sample_count += 1;
+        let task_id = value
+            .get("task_id")
+            .and_then(Value::as_str)
+            .unwrap_or("<unknown task>");
+        let solution = value
+            .get("solution")
+            .or_else(|| value.get("completion"))
+            .and_then(Value::as_str)
+            .unwrap_or("<no solution text>");
+
+        markdown.push_str(&format!("### {task_id}\n\n"));
+        markdown.push_str("~~~python\n");
+        markdown.push_str(solution.trim_end());
+        markdown.push_str("\n~~~\n\n");
+    }
+
+    markdown.push_str(&format!("- Samples rendered: `{sample_count}`\n\n"));
+    markdown.push_str("## Reading the output\n\n");
+    markdown.push_str("- This report shows code generation output only.\n");
+    markdown.push_str("- Run `evalplus.evaluate` on the generated JSONL if you want pass@k scores.\n");
+
+    markdown
+}
+
+fn format_fraction(value: f64) -> String {
+    format!("{value:.3} ({:.1}%)", value * 100.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{render_evalplus_markdown, render_lm_eval_markdown};
+    use serde_json::Value;
+    use std::fs;
+    use std::path::Path;
+
+    #[test]
+    fn lm_eval_markdown_includes_metric_values() {
+        let json_text = fs::read_to_string("tests/fixtures/eval/lm-eval-gsm8k-success.json")
+            .expect("read fixture");
+        let json: Value = serde_json::from_str(&json_text).expect("valid fixture json");
+        let markdown = render_lm_eval_markdown(
+            "GSM8K eval report",
+            &json,
+            Path::new("/tmp/results.json"),
+        );
+
+        assert!(markdown.contains("GSM8K eval report"));
+        assert!(markdown.contains("exact_match,strict-match"));
+        assert!(markdown.contains("1.000 (100.0%)"));
+    }
+
+    #[test]
+    fn evalplus_markdown_renders_code_sample() {
+        let jsonl = fs::read_to_string("tests/fixtures/eval/evalplus-humaneval-success.jsonl")
+            .expect("read fixture");
+        let markdown = render_evalplus_markdown(
+            "EvalPlus HumanEval report",
+            &jsonl,
+            Path::new("/tmp/sample.jsonl"),
+        );
+
+        assert!(markdown.contains("EvalPlus HumanEval report"));
+        assert!(markdown.contains("HumanEval/0"));
+        assert!(markdown.contains("~~~python"));
+    }
+}

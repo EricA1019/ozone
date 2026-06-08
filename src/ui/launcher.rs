@@ -48,6 +48,12 @@ fn launcher_actions(_app: &App) -> Vec<LauncherAction> {
             description: "Open Configure Hub before launch".into(),
             command: "configure",
         },
+        LauncherAction {
+            id: LauncherActionId::BenchEval,
+            label: "Bench + Eval".into(),
+            description: "Open benchmark and evaluation menu".into(),
+            command: "bench-eval",
+        },
     ];
     #[cfg(feature = "profiling-ui")]
     actions.push(LauncherAction {
@@ -1959,6 +1965,9 @@ mod tests {
         assert!(actions.iter().any(|action| {
             action.id == LauncherActionId::ConfigureModel && action.command == "configure"
         }));
+        assert!(actions
+            .iter()
+            .any(|action| action.id == LauncherActionId::BenchEval && action.command == "bench-eval"));
         assert!(actions
             .iter()
             .any(|action| action.id == LauncherActionId::Settings && action.command == "settings"));

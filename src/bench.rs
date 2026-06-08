@@ -87,7 +87,7 @@ fn build_llamacpp_bench_args(
 /// Run a single benchmark: clear → launch → generate → measure → kill → store.
 pub async fn run_benchmark(
     model_name: &str,
-    _model_path: &std::path::Path,
+    model_path: &std::path::Path,
     backend: &BenchBackend,
     gpu_layers: i32,
     context_size: u32,
@@ -96,7 +96,7 @@ pub async fn run_benchmark(
 ) -> Result<BenchResult> {
     run_benchmark_with_progress(
         model_name,
-        _model_path,
+        model_path,
         backend,
         gpu_layers,
         context_size,
@@ -109,8 +109,8 @@ pub async fn run_benchmark(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_benchmark_with_progress<F>(
-    model_name: &str,
-    _model_path: &std::path::Path,
+    _model_name: &str,
+    model_path: &std::path::Path,
     backend: &BenchBackend,
     gpu_layers: i32,
     context_size: u32,
@@ -137,7 +137,7 @@ where
         BenchBackend::LlamaCpp { server_path } => {
             let args = build_llamacpp_bench_args(gpu_layers, context_size, threads);
             let _ = quant_kv;
-            processes::start_llamacpp(server_path, model_name, &args)
+            processes::start_llamacpp(server_path, &model_path.to_string_lossy(), &args)
                 .await
                 .map_err(|e| anyhow!("Launch failed: {e}"))?;
         }

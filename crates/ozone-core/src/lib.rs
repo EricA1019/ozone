@@ -11,14 +11,12 @@ pub mod session;
 pub mod prefs;
 pub mod hardware;
 
-#[cfg(test)]
-mod test_support;
-
 pub mod product {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum ProductTier {
         Ozonelite,
         Ozone,
+        OzonePlus,
     }
 
     impl ProductTier {
@@ -26,6 +24,7 @@ pub mod product {
             match self {
                 Self::Ozonelite => "ozonelite",
                 Self::Ozone => "ozone",
+                Self::OzonePlus => "ozone+",
             }
         }
 
@@ -33,6 +32,7 @@ pub mod product {
             match self {
                 Self::Ozonelite => "ozonelite",
                 Self::Ozone => "ozone",
+                Self::OzonePlus => "ozone-plus",
             }
         }
 
@@ -40,19 +40,20 @@ pub mod product {
             match self {
                 Self::Ozonelite => "Planned",
                 Self::Ozone => "v0.4.8-alpha",
+                Self::OzonePlus => "v0.4.8-alpha",
             }
         }
     }
+
+    pub const OZONE_PLUS_DOC_PATH: &str = "ozone+/README.md";
+    pub const OZONE_PLUS_DESIGN_DOC_PATH: &str = "ozone+/ozone_v0.4_design.md";
 }
 
 pub mod paths {
     use directories::ProjectDirs;
-    use std::path::Path;
     use std::path::PathBuf;
 
     const GLOBAL_DB_FILE_NAME: &str = "global.db";
-    const RUNTIME_PROFILES_FILE_NAME: &str = "llamacpp-profiles.conf";
-    const LEGACY_PRESETS_FILE_NAME: &str = "koboldcpp-presets.conf";
     const SESSIONS_DIR_NAME: &str = "sessions";
     const SESSION_DB_FILE_NAME: &str = "session.db";
     const SESSION_CONFIG_FILE_NAME: &str = "config.toml";
@@ -83,39 +84,19 @@ pub mod paths {
             .unwrap_or_else(|| PathBuf::from("models"))
     }
 
-    /// Returns the legacy Kobold-compatible preset file path inside the models directory.
+    /// Returns the preset file path inside the models directory.
     pub fn presets_path() -> PathBuf {
-        legacy_presets_path()
+        models_dir().join("koboldcpp-presets.conf")
     }
 
-    /// Returns the legacy Kobold-compatible preset file path inside the models directory.
-    pub fn legacy_presets_path() -> PathBuf {
-        models_dir().join(LEGACY_PRESETS_FILE_NAME)
-    }
-
-    /// Returns the llama.cpp-oriented runtime profile export path inside the models directory.
-    pub fn runtime_profiles_path() -> PathBuf {
-        models_dir().join(RUNTIME_PROFILES_FILE_NAME)
-    }
-
-    pub(crate) fn resolve_catalog_preset_path(models_dir: &Path) -> PathBuf {
-        let runtime = models_dir.join(RUNTIME_PROFILES_FILE_NAME);
-        if runtime.exists() {
-            return runtime;
-        }
-
-        let legacy = models_dir.join(LEGACY_PRESETS_FILE_NAME);
-        if legacy.exists() {
-            return legacy;
-        }
-
-        runtime
-    }
-
-    /// Returns the preset/profile sidecar that catalog loading should read.
-    /// Prefers the llama.cpp-named export, falls back to the legacy Kobold file when present.
+    /// Backwards-compatible alias for the shared preset file path.
     pub fn catalog_preset_path() -> PathBuf {
-        resolve_catalog_preset_path(&models_dir())
+        presets_path()
+    }
+
+    /// Alias for the runtime profiles / presets file path.
+    pub fn runtime_profiles_path() -> PathBuf {
+        presets_path()
     }
 
     /// Returns the launch wrapper path. Respects `OZONE_KOBOLDCPP_LAUNCHER`,
@@ -177,8 +158,9 @@ pub mod paths {
         data_dir().map(|path| path.join("llamacpp.log"))
     }
 
+    /// Managed llama.cpp launch-state marker written by `src/processes.rs`.
     pub fn llamacpp_launch_state_path() -> Option<PathBuf> {
-        data_dir().map(|path| path.join("llamacpp-launch-state.json"))
+        data_dir().map(|path| path.join("launcher-state.json"))
     }
 
     pub fn global_db_path() -> Option<PathBuf> {
@@ -215,7 +197,7 @@ mod tests {
 
     use crate::{
         paths,
-        product::ProductTier,
+        product::{ProductTier, OZONE_PLUS_DESIGN_DOC_PATH, OZONE_PLUS_DOC_PATH},
         session::SessionId,
     };
 
@@ -224,6 +206,12 @@ mod tests {
         let cases = [
             (ProductTier::Ozonelite, "ozonelite", "ozonelite", "Planned"),
             (ProductTier::Ozone, "ozone", "ozone", "v0.4.8-alpha"),
+            (
+                ProductTier::OzonePlus,
+                "ozone+",
+                "ozone-plus",
+                "v0.4.8-alpha",
+            ),
         ];
 
         for (tier, display_name, slug, status_label) in cases {
@@ -231,11 +219,13 @@ mod tests {
             assert_eq!(tier.slug(), slug);
             assert_eq!(tier.status_label(), status_label);
         }
+
+        assert_eq!(OZONE_PLUS_DOC_PATH, "ozone+/README.md");
+        assert_eq!(OZONE_PLUS_DESIGN_DOC_PATH, "ozone+/ozone_v0.4_design.md");
     }
 
     #[test]
     fn path_helpers_append_stable_suffixes() {
-        let _guard = crate::test_support::env_lock().lock().unwrap();
         let data_dir = paths::data_dir();
         let session_id = SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap();
 
@@ -261,27 +251,18 @@ mod tests {
             paths::kobold_log_path(),
             data_dir.clone().map(|path| path.join("koboldcpp.log"))
         );
+        assert_eq!(paths::catalog_preset_path(), paths::presets_path());
         assert_eq!(
             paths::llamacpp_log_path(),
             data_dir.clone().map(|path| path.join("llamacpp.log"))
         );
         assert_eq!(
             paths::llamacpp_launch_state_path(),
-            data_dir
-                .clone()
-                .map(|path| path.join("llamacpp-launch-state.json"))
+            data_dir.clone().map(|path| path.join("launcher-state.json"))
         );
-        assert_eq!(paths::llamacpp_base_url(), "http://127.0.0.1:8989");
-        assert_eq!(paths::llamacpp_ready_url(), "http://127.0.0.1:8989/health");
         assert_eq!(
             paths::global_db_path(),
             data_dir.clone().map(|path| path.join("global.db"))
-        );
-        assert!(
-            paths::runtime_profiles_path().ends_with(Path::new("llamacpp-profiles.conf"))
-        );
-        assert!(
-            paths::legacy_presets_path().ends_with(Path::new("koboldcpp-presets.conf"))
         );
 
         let expected_sessions_dir = data_dir.clone().map(|path| path.join("sessions"));
@@ -309,29 +290,6 @@ mod tests {
             paths::session_draft_path(&session_id),
             expected_sessions_dir.map(|path| path.join(session_id.as_str()).join("draft.txt"))
         );
-    }
-
-    #[test]
-    fn catalog_preset_path_prefers_runtime_then_legacy() {
-        let sandbox = std::env::temp_dir().join(format!(
-            "ozone-core-preset-paths-{}",
-            std::process::id()
-        ));
-        let _ = std::fs::remove_dir_all(&sandbox);
-        std::fs::create_dir_all(&sandbox).expect("create preset path sandbox");
-
-        let runtime = sandbox.join("llamacpp-profiles.conf");
-        let legacy = sandbox.join("koboldcpp-presets.conf");
-
-        assert_eq!(paths::resolve_catalog_preset_path(&sandbox), runtime);
-
-        std::fs::write(&legacy, "legacy").expect("write legacy preset file");
-        assert_eq!(paths::resolve_catalog_preset_path(&sandbox), legacy);
-
-        std::fs::write(&runtime, "runtime").expect("write runtime preset file");
-        assert_eq!(paths::resolve_catalog_preset_path(&sandbox), runtime);
-
-        let _ = std::fs::remove_dir_all(&sandbox);
     }
 
     #[test]

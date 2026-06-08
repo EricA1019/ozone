@@ -2,6 +2,7 @@
 use std::collections::BTreeMap;
 use std::{
     io,
+    path::PathBuf,
     time::{Duration, Instant},
 };
 
@@ -37,6 +38,9 @@ use tokio_util::sync::CancellationToken;
 use tui_textarea::TextArea;
 
 mod backend_args;
+mod bench_eval;
+mod bench_eval_workflow;
+mod bench_eval_flow;
 mod catalog_flow;
 mod command_overlay_flow;
 mod confirm_flow;
@@ -63,6 +67,8 @@ pub mod tier_picker;
 mod tier_picker_flow;
 
 use self::catalog_flow::apply_catalog_report;
+use self::bench_eval_workflow::{apply_bench_eval_event, BenchEvalWorkflowEvent};
+use self::bench_eval_flow::{handle_bench_eval_key, BenchEvalOutcome};
 #[cfg(test)]
 use self::catalog_flow::{apply_catalog_refresh, selected_catalog_name};
 use self::command_overlay_flow::{
@@ -117,6 +123,10 @@ pub enum Screen {
     ProfileSuccess,
     #[cfg(feature = "profiling-ui")]
     ProfileFailure,
+    BenchEval,
+    BenchEvalRunning,
+    BenchEvalReport,
+    BenchEvalResults,
     Settings,
     Monitor,
 }
@@ -135,6 +145,7 @@ pub enum LauncherActionId {
     ConfigureModel,
     #[cfg(feature = "profiling-ui")]
     ProfileModel,
+    BenchEval,
     Settings,
     ClearGpu,
     Monitor,
@@ -181,6 +192,148 @@ impl<'de> Deserialize<'de> for BackendMode {
     }
 }
 
+/// A discovered result file (CSV or markdown) from an eval/sweep/creative-writing run.
+#[derive(Debug, Clone)]
+pub struct ResultFile {
+    pub path: std::path::PathBuf,
+    pub kind: ResultFileKind,
+    pub model: String,
+    pub summary: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ResultFileKind {
+    Sweep,
+    Eval,
+    CreativeWriting,
+    Report,
+}
+
+impl ResultFileKind {
+    fn label(&self) -> &'static str {
+        match self {
+            ResultFileKind::Sweep => "Sweep",
+            ResultFileKind::Eval => "Eval",
+            ResultFileKind::CreativeWriting => "Creative",
+            ResultFileKind::Report => "Report",
+        }
+    }
+}
+
+/// Read the second line of a CSV (first data row) as a summary.
+fn first_csv_summary(path: &std::path::Path) -> Option<String> {
+    let text = std::fs::read_to_string(path).ok()?;
+    let line = text.lines().nth(1)?;
+    let parts: Vec<&str> = line.split(',').take(4).collect();
+    if parts.len() >= 3 {
+        Some(format!("{} ctx={} → {} tok/s", parts[0], parts.get(1).unwrap_or(&"?"), parts.get(2).unwrap_or(&"?")))
+    } else {
+        Some(line.chars().take(80).collect())
+    }
+}
+
+/// Recursively scan a directory for CSV and MD result files.
+fn scan_result_dir(dir: &std::path::Path, out: &mut Vec<ResultFile>) {
+    if let Ok(entries) = std::fs::read_dir(dir) {
+        for entry in entries.flatten() {
+            let path = entry.path();
+            let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+            if path.is_dir() {
+                scan_result_dir(&path, out);
+            } else if fname.ends_with(".csv") && (fname.contains("eval") || fname.contains("sweep") || fname.contains("creative")) {
+                let kind = if fname.contains("creative") || path.to_string_lossy().contains("creative_writing") {
+                    ResultFileKind::CreativeWriting
+                } else if fname.contains("sweep") {
+                    ResultFileKind::Sweep
+                } else {
+                    ResultFileKind::Eval
+                };
+                let summary = first_csv_summary(&path).unwrap_or_default();
+                let model = path.parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                out.push(ResultFile {
+                    path,
+                    kind,
+                    model,
+                    summary,
+                });
+            } else if fname.ends_with(".md") && fname.contains("creative") {
+                let summary = std::fs::read_to_string(&path)
+                    .ok()
+                    .and_then(|t| t.lines().next().map(|l| l.trim_start_matches("# ").to_string()))
+                    .unwrap_or_default();
+                let model = path.parent()
+                    .and_then(|p| p.file_name())
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown")
+                    .to_string();
+                out.push(ResultFile {
+                    path,
+                    kind: ResultFileKind::Report,
+                    model,
+                    summary,
+                });
+            }
+        }
+    }
+}
+
+/// Format a result file's contents for display in the viewer.
+fn format_result_text(path: &std::path::Path, text: &str, kind: &ResultFileKind) -> String {
+    match kind {
+        ResultFileKind::Report | ResultFileKind::CreativeWriting if path.extension().is_some_and(|e| e == "md") => {
+            text.to_string()
+        }
+        _ => {
+            // CSV → aligned table
+            let mut out = String::new();
+            let lines: Vec<&str> = text.lines().collect();
+            if lines.is_empty() {
+                return "(empty file)".into();
+            }
+            // Compute column widths
+            let headers: Vec<&str> = lines[0].split(',').collect();
+            let mut widths: Vec<usize> = headers.iter().map(|h| h.len()).collect();
+            for line in &lines[1..] {
+                let cols: Vec<&str> = line.split(',').collect();
+                for (i, col) in cols.iter().enumerate() {
+                    if i < widths.len() {
+                        widths[i] = widths[i].max(col.len());
+                    }
+                }
+            }
+            // Header
+            let header_line: String = headers.iter().enumerate()
+                .map(|(i, h)| format!("{:width$}", h, width = widths[i] + 2))
+                .collect();
+            out.push_str(&header_line);
+            out.push('\n');
+            out.push_str(&"-".repeat(header_line.len().min(120)));
+            out.push('\n');
+            // Data rows (limit to 50)
+            for line in lines[1..].iter().take(50) {
+                let cols: Vec<&str> = line.split(',').collect();
+                let row: String = cols.iter().enumerate()
+                    .map(|(i, c)| {
+                        let w = widths.get(i).copied().unwrap_or(10) + 2;
+                        let s = if c.len() > 20 { format!("{}…", &c[..19]) } else { c.to_string() };
+                        format!("{:width$}", s, width = w)
+                    })
+                    .collect();
+                out.push_str(&row);
+                out.push('\n');
+            }
+            if lines.len() > 51 {
+                out.push_str(&format!("\n... {} more rows", lines.len() - 51));
+            }
+            out
+        }
+    }
+}
+
 pub struct App {
     pub screen: Screen,
     pub hardware: Option<HardwareProfile>,
@@ -217,6 +370,24 @@ pub struct App {
     pub exit_confirm_index: usize,
     pub settings_section: usize,
     pub settings_backend_index: usize,
+    bench_eval_selected: usize,
+    bench_eval_progress_title: String,
+    bench_eval_progress: Vec<String>,
+    bench_eval_event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<BenchEvalWorkflowEvent>>,
+    bench_eval_running_model: Option<String>,
+    bench_eval_running_preset: Option<String>,
+    bench_eval_running_limit: Option<u32>,
+    bench_eval_running_command: Option<String>,
+    bench_eval_report_title: String,
+    bench_eval_report_markdown: String,
+    bench_eval_report_source: Option<PathBuf>,
+    bench_eval_report_markdown_path: Option<PathBuf>,
+    bench_eval_report_scroll: u16,
+    bench_eval_results_files: Vec<ResultFile>,
+    bench_eval_results_selected: usize,
+    bench_eval_results_content: String,
+    bench_eval_results_scroll: u16,
+    bench_eval_results_viewing: bool,
     pub command_overlay_open: bool,
     pub command_overlay: TextArea<'static>,
     pub command_overlay_selected: usize,
@@ -287,6 +458,24 @@ impl App {
             exit_confirm_index: 1,
             settings_section: 0,
             settings_backend_index: 0,
+            bench_eval_selected: 0,
+            bench_eval_progress_title: "Ready".into(),
+            bench_eval_progress: Vec::new(),
+            bench_eval_event_rx: None,
+            bench_eval_running_model: None,
+            bench_eval_running_preset: None,
+            bench_eval_running_limit: None,
+            bench_eval_running_command: None,
+            bench_eval_report_title: String::new(),
+            bench_eval_report_markdown: String::new(),
+            bench_eval_report_source: None,
+            bench_eval_report_markdown_path: None,
+            bench_eval_report_scroll: 0,
+            bench_eval_results_files: Vec::new(),
+            bench_eval_results_selected: 0,
+            bench_eval_results_content: String::new(),
+            bench_eval_results_scroll: 0,
+            bench_eval_results_viewing: false,
             command_overlay_open: false,
             command_overlay: new_command_overlay(),
             command_overlay_selected: 0,
@@ -332,6 +521,24 @@ impl App {
             exit_confirm_index: 1,
             settings_section: 0,
             settings_backend_index: 0,
+            bench_eval_selected: 0,
+            bench_eval_progress_title: "Ready".into(),
+            bench_eval_progress: Vec::new(),
+            bench_eval_event_rx: None,
+            bench_eval_running_model: None,
+            bench_eval_running_preset: None,
+            bench_eval_running_limit: None,
+            bench_eval_running_command: None,
+            bench_eval_report_title: String::new(),
+            bench_eval_report_markdown: String::new(),
+            bench_eval_report_source: None,
+            bench_eval_report_markdown_path: None,
+            bench_eval_report_scroll: 0,
+            bench_eval_results_files: Vec::new(),
+            bench_eval_results_selected: 0,
+            bench_eval_results_content: String::new(),
+            bench_eval_results_scroll: 0,
+            bench_eval_results_viewing: false,
             command_overlay_open: false,
             command_overlay: new_command_overlay(),
             command_overlay_selected: 0,
@@ -486,6 +693,107 @@ impl App {
         self.profiling_progress.push(line);
         if self.profiling_progress.len() > 20 {
             self.profiling_progress.remove(0);
+        }
+    }
+
+    fn reset_bench_eval_flow(&mut self) {
+        self.bench_eval_progress_title = "Ready".into();
+        self.bench_eval_progress.clear();
+        self.bench_eval_event_rx = None;
+        self.bench_eval_running_model = None;
+        self.bench_eval_running_preset = None;
+        self.bench_eval_running_limit = None;
+        self.bench_eval_running_command = None;
+    }
+
+    fn start_bench_eval_workflow(
+        &mut self,
+        rx: tokio::sync::mpsc::UnboundedReceiver<BenchEvalWorkflowEvent>,
+        model: String,
+        preset: crate::eval::EvalPreset,
+        limit: u32,
+        command_preview: String,
+    ) {
+        self.bench_eval_event_rx = Some(rx);
+        self.bench_eval_running_model = Some(model);
+        self.bench_eval_running_preset = Some(preset.cli_name().to_string());
+        self.bench_eval_running_limit = Some(limit);
+        self.bench_eval_running_command = Some(command_preview);
+        self.bench_eval_progress_title = "Launching eval".into();
+        self.bench_eval_progress.clear();
+        self.bench_eval_progress
+            .push("Preparing evaluation subprocess...".into());
+        self.screen = Screen::BenchEvalRunning;
+    }
+
+    fn store_bench_eval_report(&mut self, report: crate::eval_report::EvalMarkdownReport) {
+        self.bench_eval_report_title = report.title;
+        self.bench_eval_report_markdown = report.markdown;
+        self.bench_eval_report_source = Some(report.source_path);
+        self.bench_eval_report_markdown_path = Some(report.markdown_path);
+        self.bench_eval_report_scroll = 0;
+    }
+
+    fn open_bench_eval_report(&mut self, report: crate::eval_report::EvalMarkdownReport) {
+        self.store_bench_eval_report(report);
+        self.screen = Screen::BenchEvalReport;
+    }
+
+    fn discover_result_files(&mut self) {
+        self.bench_eval_results_files.clear();
+        let data_dir = ozone_core::paths::data_dir();
+
+        // Scan data dir for sweep CSVs
+        if let Some(ref data) = data_dir {
+            if let Ok(entries) = std::fs::read_dir(data) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                    if fname.starts_with("sweep_") && fname.ends_with(".csv") {
+                        // Parse model name from filename: sweep_{model}_{timestamp}.csv
+                        let rest = fname.strip_prefix("sweep_").unwrap_or(fname);
+                        let model = rest
+                            .rsplit_once('_')
+                            .map(|(prefix, _suffix)| prefix)
+                            .unwrap_or(rest)
+                            .to_string();
+                        let summary = first_csv_summary(&path).unwrap_or_default();
+                        self.bench_eval_results_files.push(ResultFile {
+                            path,
+                            kind: ResultFileKind::Sweep,
+                            model,
+                            summary,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Scan contrib/evals/artifacts for eval CSVs and markdown reports
+        if let Ok(root) = crate::eval::resolve_project_root() {
+            let artifacts = root.join("contrib/evals/artifacts");
+            if artifacts.exists() {
+                scan_result_dir(&artifacts, &mut self.bench_eval_results_files);
+            }
+        }
+    }
+
+    fn load_result_file_content(&mut self, index: usize) {
+        if let Some(file) = self.bench_eval_results_files.get(index) {
+            self.bench_eval_results_viewing = true;
+            self.bench_eval_results_scroll = 0;
+            let content = match std::fs::read_to_string(&file.path) {
+                Ok(text) => format_result_text(&file.path, &text, &file.kind),
+                Err(e) => format!("Could not read {}: {e}", file.path.display()),
+            };
+            self.bench_eval_results_content = content;
+        }
+    }
+
+    fn push_bench_eval_progress(&mut self, line: String) {
+        self.bench_eval_progress.push(line);
+        if self.bench_eval_progress.len() > 24 {
+            self.bench_eval_progress.remove(0);
         }
     }
 
@@ -749,6 +1057,24 @@ pub async fn run_launcher(
             apply_workflow_event(&mut app, event);
         }
 
+        loop {
+            let event = match app.bench_eval_event_rx.as_mut() {
+                Some(rx) => match rx.try_recv() {
+                    Ok(event) => Some(event),
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => None,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        app.bench_eval_event_rx = None;
+                        None
+                    }
+                },
+                None => None,
+            };
+            let Some(event) = event else {
+                break;
+            };
+            apply_bench_eval_event(&mut app, event);
+        }
+
         // Execute a pending launch request queued by the confirm flow.
         if let Some(choice_idx) = app.pending_launch_choice.take() {
             match handle_pending_frontend_launch(&mut app, choice_idx).await {
@@ -782,6 +1108,10 @@ pub async fn run_launcher(
                 Screen::ProfileSuccess => launcher::render_profile_success(f, &app),
                 #[cfg(feature = "profiling-ui")]
                 Screen::ProfileFailure => launcher::render_profile_failure(f, &app),
+                Screen::BenchEval => bench_eval::render(f, &app),
+                Screen::BenchEvalRunning => bench_eval::render_running(f, &app),
+                Screen::BenchEvalReport => bench_eval::render_report(f, &app),
+                Screen::BenchEvalResults => bench_eval::render_results(f, &app),
                 Screen::Settings => launcher::render_settings(f, &app),
                 Screen::Monitor => monitor::render(f, &app),
             }
@@ -868,6 +1198,19 @@ pub async fn run_launcher(
                             continue;
                         }
                     }
+                    Screen::BenchEval => match handle_bench_eval_key(&mut app, key).await {
+                        BenchEvalOutcome::Continue => {}
+                        BenchEvalOutcome::ExitLauncher => break Ok(()),
+                    },
+                    Screen::BenchEvalRunning => {
+                        self::bench_eval_flow::handle_bench_eval_running_key(&mut app, key);
+                    }
+                    Screen::BenchEvalReport => {
+                        self::bench_eval_flow::handle_bench_eval_report_key(&mut app, key);
+                    }
+                    Screen::BenchEvalResults => {
+                        self::bench_eval_flow::handle_bench_eval_results_key(&mut app, key);
+                    }
                     Screen::Monitor => match handle_monitor_key(&mut app, key).await {
                         MonitorOutcome::Continue => {}
                         MonitorOutcome::ExitLauncher => break Ok(()),
@@ -909,6 +1252,8 @@ pub async fn run_launcher(
             let need_catalog_refresh = matches!(
                 app.screen,
                 Screen::Launcher
+                    | Screen::BenchEval
+                    | Screen::BenchEvalRunning
                     | Screen::ModelPicker
                     | Screen::ConfigureHub
                     | Screen::Confirm
@@ -1875,6 +2220,8 @@ mod tests {
     #[test]
     fn overlay_support_targets_launcher_facing_screens() {
         assert!(overlay_supported(&Screen::Launcher));
+        assert!(overlay_supported(&Screen::BenchEval));
+        assert!(overlay_supported(&Screen::BenchEvalRunning));
         assert!(overlay_supported(&Screen::Settings));
         assert!(overlay_supported(&Screen::ConfigureHub));
         assert!(overlay_supported(&Screen::Confirm));

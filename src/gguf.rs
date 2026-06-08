@@ -242,6 +242,67 @@ fn read_i64<R: Read>(reader: &mut R) -> anyhow::Result<i64> {
     Ok(i64::from_le_bytes(buf))
 }
 
+/// Read the model's maximum context length from GGUF metadata.
+/// Falls back to None if the key is not present.
+pub fn read_context_length(path: &Path) -> Option<u32> {
+    read_single_u32_key(path, "llama.context_length")
+        .or_else(|| read_single_u32_key(path, "llama.embedding_length").map(|_| 0))
+        .filter(|v| *v > 0)
+}
+
+/// Read a single u32 metadata value by key name.
+fn read_single_u32_key(path: &Path, target_key: &str) -> Option<u32> {
+    let file = File::open(path).ok()?;
+    let mut reader = BufReader::new(file);
+
+    let mut magic = [0u8; 4];
+    reader.read_exact(&mut magic).ok()?;
+    if &magic != GGUF_MAGIC { return None; }
+
+    read_u32(&mut reader).ok()?; // version
+    read_u64(&mut reader).ok()?; // tensor_count
+    let kv_count = read_u64(&mut reader).ok()?;
+
+    for _ in 0..kv_count {
+        let key = read_string(&mut reader).ok()?;
+        let value_type = read_u32(&mut reader).ok()?;
+
+        if key == target_key && value_type == GGUF_TYPE_UINT32 {
+            return read_u32(&mut reader).ok();
+        }
+        // Skip non-matching keys
+        skip_gguf_value(&mut reader, value_type).ok()?;
+    }
+    None
+}
+
+fn skip_gguf_value<R: Read>(reader: &mut R, value_type: u32) -> anyhow::Result<()> {
+    match value_type {
+        GGUF_TYPE_UINT8 | GGUF_TYPE_BOOL => { let mut b = [0u8; 1]; reader.read_exact(&mut b)?; }
+        GGUF_TYPE_INT8 => { let mut b = [0u8; 1]; reader.read_exact(&mut b)?; }
+        GGUF_TYPE_UINT16 => { let mut b = [0u8; 2]; reader.read_exact(&mut b)?; }
+        GGUF_TYPE_INT16 => { let mut b = [0u8; 2]; reader.read_exact(&mut b)?; }
+        GGUF_TYPE_UINT32 | GGUF_TYPE_FLOAT32 => { let mut b = [0u8; 4]; reader.read_exact(&mut b)?; }
+        GGUF_TYPE_INT32 => { let mut b = [0u8; 4]; reader.read_exact(&mut b)?; }
+        GGUF_TYPE_UINT64 | GGUF_TYPE_FLOAT64 => { let mut b = [0u8; 8]; reader.read_exact(&mut b)?; }
+        GGUF_TYPE_INT64 => { let mut b = [0u8; 8]; reader.read_exact(&mut b)?; }
+        GGUF_TYPE_STRING => {
+            let len = read_u64(reader)?;
+            let mut buf = vec![0u8; len as usize];
+            reader.read_exact(&mut buf)?;
+        }
+        GGUF_TYPE_ARRAY => {
+            let element_type = read_u32(reader)?;
+            let len = read_u64(reader)?;
+            for _ in 0..len {
+                skip_gguf_value(reader, element_type)?;
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

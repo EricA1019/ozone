@@ -27,6 +27,8 @@ Lookup table for all pattern files in this directory. Check here before starting
 | [audit-triage-planning.md](audit-triage-planning.md) | Turning a full-project audit into an ordered remediation plan with explicit waves, scope boundaries, and validation gates |
 | [copilot-skill-customization.md](copilot-skill-customization.md) | Creating or updating reusable local Copilot skills in the user-level Copilot skill library |
 | [env-isolated-tests.md](env-isolated-tests.md) | Writing or debugging tests that depend on config defaults, `OZONE__...` env overrides, or XDG-resolved repo/config paths |
+| [eval-report-viewer.md](eval-report-viewer.md) | Converting eval JSON or JSONL artifacts into markdown reports and surfacing them inside the Bench + Eval TUI |
+| [eval-result-ranges.md](eval-result-ranges.md) | Documenting eval probe score ranges, metric names, and how to read lm-eval or EvalPlus results |
 | [graphify-integration.md](graphify-integration.md) | Installing or refreshing Graphify for Ozone, aligning the user-level Copilot skill, and wiring repo-managed graph refreshes |
 | [graphify-scoped-analysis.md](graphify-scoped-analysis.md) | Rebuilding a narrower Graphify view for one Ozone slice when the repo-root graph is too noisy or generic symbol collisions need verification |
 | [github-actions-release.md](github-actions-release.md) | Debugging or updating this repo's GitHub Actions CI or release automation |
