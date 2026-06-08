@@ -1,4 +1,4 @@
-name: Release
+name: Release (base ozone artifact)
 
 on:
   push:
@@ -9,7 +9,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Release tag (e.g. v0.1.0)'
+        description: 'Base ozone release tag (e.g. v0.1.0)'
         required: true
         default: 'v0.1.0'
 
@@ -59,7 +59,7 @@ jobs:
           fi
 
   build:
-    name: Build Linux x86_64
+    name: Build base ozone Linux x86_64
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
@@ -90,25 +90,26 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
-      - name: Build release binary
-        run: cargo build --release
+      - name: Build base ozone release artifact
+        run: cargo build --release -p ozone --features full
 
       - name: Strip binary
         run: strip target/release/ozone
 
-      - name: Package
+      - name: Package base ozone artifact
+        id: package
         run: |
           VERSION=${{ steps.version.outputs.tag }}
           ARCHIVE="ozone-${VERSION}-linux-x86_64.tar.gz"
           cp target/release/ozone ozone
           tar -czf "$ARCHIVE" ozone contrib/launch-koboldcpp.sh README.md LICENSE
-          echo "ARCHIVE=$ARCHIVE" >> $GITHUB_ENV
+          echo "archive=$ARCHIVE" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
-          files: ${{ env.ARCHIVE }}
+          files: ${{ steps.package.outputs.archive }}
           generate_release_notes: true
           overwrite_files: true
         env:

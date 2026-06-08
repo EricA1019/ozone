@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
@@ -14,9 +14,6 @@ pub struct SweepConfig {
     pub context_sizes: Vec<u32>,
     pub quant_kv_levels: Vec<u8>,
     pub gpu_vram_budget_mb: u32,
-    /// Stored for future mixed-memory sweep improvements.
-    #[allow(dead_code)]
-    pub ram_total_mb: u32,
 }
 
 pub struct SweepResult {
@@ -364,15 +361,109 @@ fn store_quietly(
     bench: &bench::BenchResult,
 ) {
     match bench::store_result(
-        &config.model_name,
-        config.model_size_gb,
-        gpu_layers,
-        context_size,
-        quant_kv as u32,
-        0,
+        bench::BenchmarkStoreRequest {
+            model_name: &config.model_name,
+            model_size_gb: config.model_size_gb,
+            gpu_layers,
+            context_size,
+            quant_kv: quant_kv as u32,
+            threads: 0,
+            launch_profile_name: None,
+        },
         bench,
     ) {
         Ok(_) => {}
         Err(e) => eprintln!("  Warning: failed to store result: {e}"),
     }
+}
+
+/// Context sizes to test in a full sweep (filtered against model max).
+pub const SWEEP_CONTEXT_STEPS: &[u32] = &[
+    512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072,
+];
+
+/// Run a context sweep: test each context size, stop at OOM.
+/// Returns CSV path and sweet-spot context size.
+pub async fn run_context_sweep(
+    model_name: &str,
+    model_path: &Path,
+    server_path: &Path,
+    gpu_layers: i32,
+    threads: Option<u32>,
+    quick: bool,
+) -> Result<(PathBuf, u32)> {
+    let max_context = crate::gguf::read_context_length(model_path)
+        .unwrap_or(4096);
+
+    let steps: Vec<u32> = SWEEP_CONTEXT_STEPS
+        .iter()
+        .copied()
+        .filter(|s| *s <= max_context)
+        .collect();
+
+    let steps = if quick {
+        steps.iter().step_by(2).copied().collect()
+    } else {
+        steps
+    };
+
+    if steps.is_empty() {
+        anyhow::bail!("No valid context steps for model (max_context={max_context})");
+    }
+
+    let csv_path = ozone_core::paths::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(format!("sweep_{model_name}_{}.csv",
+            chrono::Utc::now().format("%Y%m%dT%H%M%S")));
+
+    let mut writer = csv::Writer::from_path(&csv_path)?;
+    writer.write_record(&["model", "context_size", "tok_s", "ttft_ms", "vram_mb", "ram_mb", "status"])?;
+
+    let mut sweet_spot = 0u32;
+    let mut best_tok_s = 0.0f64;
+    let speed_threshold = 10.0f64;
+
+    for &ctx in &steps {
+        eprintln!("  Testing context={ctx}...");
+        let result = bench::run_benchmark(
+            model_name, model_path,
+            &crate::bench::BenchBackend::LlamaCpp { server_path: server_path.to_path_buf() },
+            gpu_layers, ctx, 1, threads,
+        ).await;
+
+        match result {
+            Ok(r) => {
+                if r.status == "ok" && r.tokens_per_sec >= speed_threshold && ctx > sweet_spot {
+                    sweet_spot = ctx;
+                    best_tok_s = r.tokens_per_sec;
+                }
+                writer.write_record(&[
+                    model_name,
+                    &ctx.to_string(),
+                    &r.tokens_per_sec.to_string(),
+                    &r.time_to_first_token_ms.to_string(),
+                    &r.vram_peak_mb.to_string(),
+                    &r.ram_peak_mb.to_string(),
+                    &r.status,
+                ])?;
+                if r.status == "oom" {
+                    eprintln!("  OOM at context={ctx}, stopping sweep.");
+                    break;
+                }
+            }
+            Err(e) => {
+                writer.write_record(&[
+                    model_name, &ctx.to_string(), "0", "0", "0", "0", "launch_failed",
+                ])?;
+                eprintln!("  Failed at context={ctx}: {e}");
+                break;
+            }
+        }
+    }
+
+    writer.flush()?;
+    eprintln!("  Sweet spot: context={sweet_spot} ({best_tok_s:.1} tok/s)");
+    eprintln!("  CSV: {}", csv_path.display());
+
+    Ok((csv_path, sweet_spot))
 }

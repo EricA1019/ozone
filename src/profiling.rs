@@ -1,4 +1,7 @@
-use std::path::{Path, PathBuf};
+use std::{
+    collections::BTreeMap,
+    path::{Path, PathBuf},
+};
 
 use anyhow::{anyhow, Result};
 use ozone_core::paths;
@@ -8,9 +11,10 @@ use tokio_util::sync::CancellationToken;
 use crate::{
     analyze, bench,
     catalog::CatalogRecord,
-    db::{self, ProfileRow},
+    db::{self, BenchmarkRow, ProfileRow},
     hardware::HardwareProfile,
     planner::{self, LaunchPlan, RecommendationMode},
+    prefs::SavedLaunchProfile,
     processes::{self, ServiceStatus},
     sweep,
 };
@@ -18,15 +22,21 @@ use crate::{
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum ProfilingBackend {
     #[default]
-    KoboldCpp,
     LlamaCpp,
 }
 
 impl ProfilingBackend {
+    fn resolve_backend(&self) -> Option<bench::BenchBackend> {
+        match self {
+            ProfilingBackend::LlamaCpp => processes::resolved_llamacpp_server_path()
+                .ok()
+                .map(|server_path| bench::BenchBackend::LlamaCpp { server_path }),
+        }
+    }
+
     pub fn display_name(&self) -> &'static str {
         match self {
-            ProfilingBackend::KoboldCpp => "KoboldCpp",
-            ProfilingBackend::LlamaCpp  => "llama.cpp",
+            ProfilingBackend::LlamaCpp => "llama.cpp",
         }
     }
 }
@@ -36,6 +46,7 @@ pub enum ProfilingAction {
     QuickSweep,
     FullSweep,
     SingleBenchmark,
+    BenchmarkSavedProfile,
     GenerateProfiles,
     ExportPresets,
     LaunchRecommended,
@@ -48,6 +59,7 @@ impl ProfilingAction {
             ProfilingAction::QuickSweep => "Run quick sweep",
             ProfilingAction::FullSweep => "Run full sweep",
             ProfilingAction::SingleBenchmark => "Run single benchmark",
+            ProfilingAction::BenchmarkSavedProfile => "Benchmark saved profile",
             ProfilingAction::GenerateProfiles => "Generate profiles",
             ProfilingAction::ExportPresets => "Export presets",
             ProfilingAction::LaunchRecommended => "Launch recommended profile",
@@ -62,10 +74,15 @@ impl ProfilingAction {
                 "Explore a wider context/quant range for deeper coverage."
             }
             ProfilingAction::SingleBenchmark => "Validate one recommended configuration first.",
+            ProfilingAction::BenchmarkSavedProfile => {
+                "Benchmark the selected saved launch profile and keep its metrics attached."
+            }
             ProfilingAction::GenerateProfiles => {
                 "Create speed/context profiles from benchmark history."
             }
-            ProfilingAction::ExportPresets => "Write the best profile into koboldcpp-presets.conf.",
+            ProfilingAction::ExportPresets => {
+                "Write the best saved profile export for runtime reuse."
+            }
             ProfilingAction::LaunchRecommended => {
                 "Use the best available profile and launch the backend."
             }
@@ -79,6 +96,7 @@ impl ProfilingAction {
             ProfilingAction::QuickSweep
                 | ProfilingAction::FullSweep
                 | ProfilingAction::SingleBenchmark
+                | ProfilingAction::BenchmarkSavedProfile
         )
     }
 }
@@ -122,8 +140,8 @@ impl FailureClass {
         match self {
             FailureClass::InvalidModelPath => "Model path is invalid",
             FailureClass::LauncherMissing => "Configured launcher is missing",
-            FailureClass::LauncherBrokenInstall => "KoboldCpp install is broken",
-            FailureClass::BackendTimeout => "KoboldCpp never became ready",
+            FailureClass::LauncherBrokenInstall => "llama.cpp server install is broken",
+            FailureClass::BackendTimeout => "llama.cpp server never became ready",
             FailureClass::OomOrOvercommit => "Model likely exceeded memory limits",
             FailureClass::GenerationHttpError => "Generation request failed",
             FailureClass::Unknown => "Profiling failed unexpectedly",
@@ -168,6 +186,7 @@ pub struct ProfilingSuccessReport {
     pub profile_count: usize,
     pub best_tokens_per_sec: Option<f64>,
     pub recommended_profile: Option<RecommendedProfile>,
+    pub saved_profile_report: Option<SavedProfileReport>,
     pub suggestions: Vec<String>,
     pub export_detail: Option<String>,
 }
@@ -217,8 +236,8 @@ pub enum WorkflowEvent {
         current: u32,
         total: u32,
     },
-    Completed(ProfilingSuccessReport),
-    Failed(ProfilingFailureReport),
+    Completed(Box<ProfilingSuccessReport>),
+    Failed(Box<ProfilingFailureReport>),
     Cancelled,
 }
 
@@ -228,6 +247,8 @@ pub struct WorkflowRequest {
     pub hardware: HardwareProfile,
     pub action: ProfilingAction,
     pub profiling_backend: ProfilingBackend,
+    pub launch_plan_override: Option<LaunchPlan>,
+    pub launch_profile_name: Option<String>,
 }
 
 #[derive(Debug, Clone, Default)]
@@ -240,27 +261,45 @@ struct ModelHistory {
     newest_benchmark_ts: Option<String>,
 }
 
+#[derive(Debug, Clone)]
+pub struct SavedProfileReport {
+    pub profile_name: String,
+    pub benchmark_count: usize,
+    pub ok_benchmark_count: usize,
+    pub latest_tokens_per_sec: Option<f64>,
+    pub best_tokens_per_sec: Option<f64>,
+    pub latest_time_to_first_token_ms: Option<u32>,
+    pub latest_vram_peak_mb: Option<u32>,
+    pub latest_ram_peak_mb: Option<u32>,
+}
+
+fn send_completed(tx: &UnboundedSender<WorkflowEvent>, report: ProfilingSuccessReport) {
+    let _ = tx.send(WorkflowEvent::Completed(Box::new(report)));
+}
+
+fn send_failed(tx: &UnboundedSender<WorkflowEvent>, report: ProfilingFailureReport) {
+    let _ = tx.send(WorkflowEvent::Failed(Box::new(report)));
+}
+
 pub fn launcher_path() -> PathBuf {
-    processes::resolved_kobold_launcher_path()
+    processes::resolved_llamacpp_server_path().unwrap_or_else(|_| PathBuf::from("llama-server"))
 }
 
 pub fn presets_path() -> PathBuf {
-    models_dir().join("koboldcpp-presets.conf")
+    ozone_core::paths::runtime_profiles_path()
 }
 
-fn models_dir() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_default();
-    PathBuf::from(home).join("models")
-}
-
-fn kobold_log_path() -> Option<PathBuf> {
-    paths::kobold_log_path()
+fn backend_log_path() -> Option<PathBuf> {
+    paths::llamacpp_log_path()
 }
 
 fn llamacpp_export_dir() -> PathBuf {
     paths::data_dir().unwrap_or_else(|| {
         let home = std::env::var("HOME").unwrap_or_default();
-        PathBuf::from(home).join(".local").join("share").join("ozone")
+        PathBuf::from(home)
+            .join(".local")
+            .join("share")
+            .join("ozone")
     })
 }
 
@@ -318,8 +357,8 @@ fn export_llamacpp_profiles(profiles: &[ProfileRow]) -> anyhow::Result<PathBuf> 
     Ok(sh_path)
 }
 
-fn kobold_log_suggestion() -> String {
-    kobold_log_path()
+fn backend_log_suggestion() -> String {
+    backend_log_path()
         .map(|path| format!("Inspect the launcher log at {}.", path.display()))
         .unwrap_or_else(|| {
             "Inspect the launcher log once the ozone data directory is available.".into()
@@ -386,6 +425,55 @@ fn load_history(model_name: &str) -> Result<ModelHistory> {
     })
 }
 
+fn build_saved_profile_report(
+    profile_name: &str,
+    benchmarks: &[BenchmarkRow],
+) -> Option<SavedProfileReport> {
+    let rows: Vec<&BenchmarkRow> = benchmarks
+        .iter()
+        .filter(|row| row.launch_profile_name.as_deref() == Some(profile_name))
+        .collect();
+    if rows.is_empty() {
+        return None;
+    }
+
+    let latest = rows
+        .iter()
+        .max_by(|left, right| left.timestamp.cmp(&right.timestamp))?;
+    let best_tokens_per_sec = rows
+        .iter()
+        .filter(|row| row.status == "ok")
+        .map(|row| row.tokens_per_sec)
+        .max_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+
+    Some(SavedProfileReport {
+        profile_name: profile_name.to_string(),
+        benchmark_count: rows.len(),
+        ok_benchmark_count: rows.iter().filter(|row| row.status == "ok").count(),
+        latest_tokens_per_sec: (latest.status == "ok").then_some(latest.tokens_per_sec),
+        best_tokens_per_sec,
+        latest_time_to_first_token_ms: (latest.status == "ok")
+            .then_some(latest.time_to_first_token_ms),
+        latest_vram_peak_mb: Some(latest.vram_peak_mb),
+        latest_ram_peak_mb: Some(latest.ram_peak_mb),
+    })
+}
+
+pub fn saved_profile_reports(
+    model_name: &str,
+    profiles: &[SavedLaunchProfile],
+) -> Result<BTreeMap<String, SavedProfileReport>> {
+    let conn = db::open()?;
+    let benchmarks = db::get_benchmarks(&conn, model_name)?;
+    let mut reports = BTreeMap::new();
+    for profile in profiles {
+        if let Some(report) = build_saved_profile_report(&profile.profile_name, &benchmarks) {
+            reports.insert(profile.profile_name.clone(), report);
+        }
+    }
+    Ok(reports)
+}
+
 fn profile_rank(name: &str) -> u8 {
     match name {
         "speed" => 0,
@@ -424,7 +512,7 @@ pub fn preferred_launch_plan(
 ) -> Result<LaunchPlan> {
     let fallback_layers = planner::estimate_total_layers(record.model_size_gb);
     let topology = crate::gguf::inspect_model_topology(&record.model_path, fallback_layers);
-    let history = load_history(&record.model_name)?;
+    let history = load_history(&record.model_name).unwrap_or_default();
     if let Some(profile) = pick_recommended_profile(&history.profiles) {
         let total_layers = topology.total_layers;
         let gpu_layers = profile.gpu_layers;
@@ -467,7 +555,7 @@ pub fn build_advisory(
     hardware: Option<&HardwareProfile>,
     services: &ServiceStatus,
 ) -> Result<ProfilingAdvisory> {
-    let history = load_history(&record.model_name)?;
+    let history = load_history(&record.model_name).unwrap_or_default();
     let launcher = launcher_path();
     let model_ok = record.model_path.exists();
     let launcher_ok = launcher.exists() && is_executable(&launcher);
@@ -511,6 +599,7 @@ pub fn build_advisory(
             ProfilingAction::QuickSweep
             | ProfilingAction::FullSweep
             | ProfilingAction::SingleBenchmark => model_ok && launcher_ok,
+            ProfilingAction::BenchmarkSavedProfile => false,
             ProfilingAction::ReviewIssue => false,
         };
         if allowed && !available_actions.contains(&action) {
@@ -532,20 +621,20 @@ pub fn build_advisory(
         warnings.push(ProfilingWarning {
             severity: WarningSeverity::Critical,
             message: format!(
-                "Configured KoboldCpp launcher is missing or not executable: {}.",
+                "Configured llama.cpp server is missing or not executable: {}.",
                 launcher.display()
             ),
         });
     }
-    if services.kobold_running {
+    if services.llamacpp_running {
         warnings.push(ProfilingWarning {
             severity: WarningSeverity::Warning,
-            message: "Profiling will interrupt the currently running KoboldCpp backend.".into(),
+            message: "Profiling will interrupt the currently running managed llama.cpp runtime.".into(),
         });
     } else {
         warnings.push(ProfilingWarning {
             severity: WarningSeverity::Info,
-            message: "Profiling clears KoboldCpp/Ollama runners before it starts.".into(),
+            message: "Profiling clears the managed llama.cpp runtime before it starts.".into(),
         });
     }
     if history.benchmark_count == 0 {
@@ -629,6 +718,9 @@ pub fn build_advisory(
         ProfilingAction::GenerateProfiles => "You already have enough successful benchmarks to generate speed/context profiles without another sweep.".into(),
         ProfilingAction::QuickSweep => "A quick sweep is the fastest way to discover a safe speed/context pair for this model.".into(),
         ProfilingAction::SingleBenchmark => "A single benchmark is the safest first check when GPU guidance is limited.".into(),
+        ProfilingAction::BenchmarkSavedProfile => {
+            "Benchmarking saved profiles starts from Configure Hub after you pick a specific config.".into()
+        }
         ProfilingAction::FullSweep => "A full sweep is useful when you want broader context/quant coverage.".into(),
         ProfilingAction::ExportPresets => "Profiles already exist and can be exported directly into the launcher preset file.".into(),
     };
@@ -662,8 +754,17 @@ pub fn blocking_issue_report(record: &CatalogRecord) -> ProfilingFailureReport {
 fn build_success_report(
     record: &CatalogRecord,
     action: ProfilingAction,
+    launch_profile_name: Option<&str>,
 ) -> Result<ProfilingSuccessReport> {
     let history = load_history(&record.model_name)?;
+    let saved_profile_report = match launch_profile_name {
+        Some(profile_name) => {
+            let conn = db::open()?;
+            let benchmarks = db::get_benchmarks(&conn, &record.model_name)?;
+            build_saved_profile_report(profile_name, &benchmarks)
+        }
+        None => None,
+    };
     let recommended_profile = pick_recommended_profile(&history.profiles);
     let summary = match action {
         ProfilingAction::QuickSweep => {
@@ -675,11 +776,19 @@ fn build_success_report(
         ProfilingAction::SingleBenchmark => {
             "Single benchmark completed and stored its result.".into()
         }
+        ProfilingAction::BenchmarkSavedProfile => {
+            match launch_profile_name {
+                Some(profile_name) => {
+                    format!("Saved profile '{profile_name}' was benchmarked and its report was refreshed.")
+                }
+                None => "Saved profile benchmark completed and its report was refreshed.".into(),
+            }
+        }
         ProfilingAction::GenerateProfiles => {
             "Profiles were generated from successful benchmark history.".into()
         }
         ProfilingAction::ExportPresets => {
-            format!("Preset export completed: {}", presets_path().display())
+            format!("Profile export completed: {}", presets_path().display())
         }
         ProfilingAction::LaunchRecommended | ProfilingAction::ReviewIssue => {
             "Workflow finished.".into()
@@ -687,9 +796,13 @@ fn build_success_report(
     };
 
     let mut suggestions = Vec::new();
+    if let Some(profile_name) = launch_profile_name {
+        suggestions.push(format!(
+            "Review the saved profile report for '{profile_name}' in Configure Hub before launching."
+        ));
+    }
     if history.profile_count > 0 {
-        suggestions
-            .push("Launch the recommended profile or export it to koboldcpp-presets.conf.".into());
+        suggestions.push("Launch the recommended profile or export it for reuse.".into());
     } else if history.ok_benchmark_count >= 2 {
         suggestions.push(
             "Generate profiles now so the launcher can reuse the best speed/context pair.".into(),
@@ -707,6 +820,7 @@ fn build_success_report(
         profile_count: history.profile_count,
         best_tokens_per_sec: history.best_tokens_per_sec,
         recommended_profile,
+        saved_profile_report,
         suggestions,
         export_detail: None,
     })
@@ -733,10 +847,10 @@ fn build_failure_report(
         || lower.contains("core dumped")
     {
         FailureClass::LauncherBrokenInstall
-    } else if !(launcher.exists() && is_executable(&launcher)) {
-        FailureClass::LauncherMissing
     } else if status == Some("oom") || lower.contains("out of memory") || lower.contains("oom") {
         FailureClass::OomOrOvercommit
+    } else if !(launcher.exists() && is_executable(&launcher)) {
+        FailureClass::LauncherMissing
     } else if status == Some("timeout")
         || lower.contains("did not start")
         || lower.contains("timeout")
@@ -759,28 +873,21 @@ fn build_failure_report(
         ],
         FailureClass::LauncherMissing => vec![
             format!(
-                "Restore the configured launcher and make it executable: {}.",
+                "Restore the configured llama.cpp server binary and make it executable: {}.",
                 launcher.display()
             ),
-            format!(
-                "Set {}=/path/to/launch-koboldcpp.sh if you want ozone to use a repaired wrapper elsewhere.",
-                "OZONE_KOBOLDCPP_LAUNCHER"
-            ),
+            "Re-run launcher discovery after fixing the llama.cpp install.".into(),
         ],
         FailureClass::LauncherBrokenInstall => vec![
             format!(
-                "The configured KoboldCpp install behind {} looks broken; repair or replace it before retrying.",
+                "The configured llama.cpp server behind {} looks broken; repair or replace it before retrying.",
                 launcher.display()
             ),
-            format!(
-                "Set {}=/path/to/launch-koboldcpp.sh to point ozone at a repaired launcher.",
-                "OZONE_KOBOLDCPP_LAUNCHER"
-            ),
-            "Run the launcher script manually once to confirm KoboldCpp can start.".into(),
+            "Run llama-server manually once to confirm it can start cleanly.".into(),
         ],
         FailureClass::BackendTimeout => vec![
             "Retry with a single benchmark or a quick sweep instead of the current action.".into(),
-            kobold_log_suggestion(),
+            backend_log_suggestion(),
         ],
         FailureClass::OomOrOvercommit => vec![
             "Lower context size or GPU layers before retrying.".into(),
@@ -789,11 +896,11 @@ fn build_failure_report(
         ],
         FailureClass::GenerationHttpError => vec![
             "Retry a single benchmark to validate the backend before sweeping again.".into(),
-            kobold_log_suggestion(),
+            backend_log_suggestion(),
         ],
         FailureClass::Unknown => vec![
             "Retry the recommended single benchmark first to narrow the failure surface.".into(),
-            kobold_log_suggestion(),
+            backend_log_suggestion(),
         ],
     };
 
@@ -818,7 +925,7 @@ fn build_failure_report(
         detail,
         suggestions,
         retry_action,
-        log_path: kobold_log_path(),
+        log_path: backend_log_path(),
     }
 }
 
@@ -835,7 +942,7 @@ pub async fn run_workflow(
             "The selected model or launcher path is not valid enough to start profiling.".into(),
             None,
         );
-        let _ = tx.send(WorkflowEvent::Failed(report));
+        send_failed(&tx, report);
         return Ok(());
     }
 
@@ -854,18 +961,17 @@ pub async fn run_workflow(
             let sh_path = llamacpp_export_dir().join("llamacpp-profiles.sh");
             let _ = tx.send(WorkflowEvent::Status {
                 title: "Export".into(),
-                detail: format!(
-                    "Exporting llama.cpp profiles to {}…",
-                    sh_path.display()
-                ),
+                detail: format!("Exporting llama.cpp profiles to {}…", sh_path.display()),
             });
             match export_llamacpp_profiles(&profiles) {
                 Ok(out) => {
-                    let mut report =
-                        build_success_report(&request.record, request.action)?;
-                    report.export_detail =
-                        Some(format!("llama.cpp: {}", out.display()));
-                    let _ = tx.send(WorkflowEvent::Completed(report));
+                    let mut report = build_success_report(
+                        &request.record,
+                        request.action,
+                        request.launch_profile_name.as_deref(),
+                    )?;
+                    report.export_detail = Some(format!("llama.cpp: {}", out.display()));
+                    send_completed(&tx, report);
                 }
                 Err(error) => {
                     let report = build_failure_report(
@@ -874,24 +980,24 @@ pub async fn run_workflow(
                         error.to_string(),
                         None,
                     );
-                    let _ = tx.send(WorkflowEvent::Failed(report));
+                    send_failed(&tx, report);
                 }
             }
         } else {
             let _ = tx.send(WorkflowEvent::Status {
                 title: "Export".into(),
-                detail: format!(
-                    "Exporting KoboldCpp presets to {}…",
-                    presets_path().display()
-                ),
+                detail: format!("Exporting saved profiles to {}…", presets_path().display()),
             });
             match analyze::export_presets_conf_quiet(
                 &presets_path(),
                 Some(&request.record.model_name),
             ) {
                 Ok(_count) => {
-                    let mut report =
-                        build_success_report(&request.record, request.action)?;
+                    let mut report = build_success_report(
+                        &request.record,
+                        request.action,
+                        request.launch_profile_name.as_deref(),
+                    )?;
                     if let Ok(content) = std::fs::read_to_string(presets_path()) {
                         let model_lines: Vec<&str> = content
                             .lines()
@@ -901,7 +1007,7 @@ pub async fn run_workflow(
                             report.export_detail = Some(model_lines.join("\n"));
                         }
                     }
-                    let _ = tx.send(WorkflowEvent::Completed(report));
+                    send_completed(&tx, report);
                 }
                 Err(error) => {
                     let report = build_failure_report(
@@ -910,7 +1016,7 @@ pub async fn run_workflow(
                         error.to_string(),
                         None,
                     );
-                    let _ = tx.send(WorkflowEvent::Failed(report));
+                    send_failed(&tx, report);
                 }
             }
         }
@@ -924,7 +1030,7 @@ pub async fn run_workflow(
             "Profiling prerequisites are missing.".into(),
             None,
         );
-        let _ = tx.send(WorkflowEvent::Failed(report));
+        send_failed(&tx, report);
         return Ok(());
     }
 
@@ -947,8 +1053,12 @@ pub async fn run_workflow(
                 .as_ref()
                 .map(|gpu| (gpu.total_mb as f64 * 0.9) as u32)
                 .unwrap_or(0);
-            let backend = processes::resolved_backend_for_profiling()
-                .ok_or_else(|| anyhow!("No profiling backend available (KoboldCpp or llama-server not found)"))?;
+            let backend = request.profiling_backend.resolve_backend().ok_or_else(|| {
+                anyhow!(
+                    "Requested profiling backend unavailable: {}",
+                    request.profiling_backend.display_name()
+                )
+            })?;
             let seed_plan = planner::plan_profiling_launch(&request.record, &request.hardware);
             let config = sweep::SweepConfig {
                 model_name: request.record.model_name.clone(),
@@ -959,7 +1069,6 @@ pub async fn run_workflow(
                 context_sizes,
                 quant_kv_levels,
                 gpu_vram_budget_mb,
-                ram_total_mb: request.hardware.ram_total_mb as u32,
             };
             let _ = tx.send(WorkflowEvent::Status {
                 title: "Profiling".into(),
@@ -993,8 +1102,12 @@ pub async fn run_workflow(
                         detail: "Creating speed/context profiles from benchmark data…".into(),
                     });
                     let _ = analyze::generate_profiles_quiet(&request.record.model_name);
-                    let report = build_success_report(&request.record, request.action)?;
-                    let _ = tx.send(WorkflowEvent::Completed(report));
+                    let report = build_success_report(
+                        &request.record,
+                        request.action,
+                        request.launch_profile_name.as_deref(),
+                    )?;
+                    send_completed(&tx, report);
                 }
                 Ok(_) => {
                     let report = build_failure_report(
@@ -1003,7 +1116,7 @@ pub async fn run_workflow(
                         "Sweep completed without any successful benchmark configurations.".into(),
                         Some("oom"),
                     );
-                    let _ = tx.send(WorkflowEvent::Failed(report));
+                    send_failed(&tx, report);
                 }
                 Err(error) => {
                     let report = build_failure_report(
@@ -1012,20 +1125,34 @@ pub async fn run_workflow(
                         error.to_string(),
                         None,
                     );
-                    let _ = tx.send(WorkflowEvent::Failed(report));
+                    send_failed(&tx, report);
                 }
             }
         }
-        ProfilingAction::SingleBenchmark => {
+        ProfilingAction::SingleBenchmark | ProfilingAction::BenchmarkSavedProfile => {
             if cancel.is_cancelled() {
                 let _ = tx.send(WorkflowEvent::Cancelled);
                 return Ok(());
             }
-            let backend = processes::resolved_backend_for_profiling()
-                .ok_or_else(|| anyhow!("No profiling backend available (KoboldCpp or llama-server not found)"))?;
-            let plan = planner::plan_profiling_launch(&request.record, &request.hardware);
+            let backend = request.profiling_backend.resolve_backend().ok_or_else(|| {
+                anyhow!(
+                    "Requested profiling backend unavailable: {}",
+                    request.profiling_backend.display_name()
+                )
+            })?;
+            let plan = request.launch_plan_override.clone().unwrap_or_else(|| {
+                planner::plan_profiling_launch(&request.record, &request.hardware)
+            });
+            let benchmark_label = match request.action {
+                ProfilingAction::BenchmarkSavedProfile => request
+                    .launch_profile_name
+                    .as_deref()
+                    .map(|profile_name| format!("Benchmarking saved profile '{profile_name}'"))
+                    .unwrap_or_else(|| "Benchmarking saved profile".into()),
+                _ => "Benchmark".into(),
+            };
             let _ = tx.send(WorkflowEvent::Status {
-                title: "Benchmark".into(),
+                title: benchmark_label,
                 detail: format!(
                     "Benchmarking ctx={} gpu={}/{} cpu={} qkv={}",
                     plan.context_size,
@@ -1045,7 +1172,7 @@ pub async fn run_workflow(
                 plan.threads,
                 |progress| {
                     let _ = tx.send(WorkflowEvent::Status {
-                        title: format!("Benchmark · {}", progress.stage),
+                        title: "Benchmark".into(),
                         detail: progress.message,
                     });
                 },
@@ -1056,18 +1183,25 @@ pub async fn run_workflow(
                     let _ = tx.send(WorkflowEvent::Cancelled);
                 }
                 Ok(result) => {
-                    let _ = bench::store_result(
-                        &request.record.model_name,
-                        request.record.model_size_gb,
-                        plan.gpu_layers,
-                        plan.context_size,
-                        plan.quant_kv as u32,
-                        plan.threads.unwrap_or(0),
+                    let _ = bench::store_result_with_profile(
+                        bench::BenchmarkStoreRequest {
+                            model_name: &request.record.model_name,
+                            model_size_gb: request.record.model_size_gb,
+                            gpu_layers: plan.gpu_layers,
+                            context_size: plan.context_size,
+                            quant_kv: plan.quant_kv as u32,
+                            threads: plan.threads.unwrap_or(0),
+                            launch_profile_name: request.launch_profile_name.as_deref(),
+                        },
                         &result,
                     );
                     if result.status == "ok" {
-                        let report = build_success_report(&request.record, request.action)?;
-                        let _ = tx.send(WorkflowEvent::Completed(report));
+                        let report = build_success_report(
+                            &request.record,
+                            request.action,
+                            request.launch_profile_name.as_deref(),
+                        )?;
+                        send_completed(&tx, report);
                     } else {
                         let report = build_failure_report(
                             &request.record,
@@ -1075,7 +1209,7 @@ pub async fn run_workflow(
                             format!("Benchmark ended with status '{}'.", result.status),
                             Some(&result.status),
                         );
-                        let _ = tx.send(WorkflowEvent::Failed(report));
+                        send_failed(&tx, report);
                     }
                 }
                 Err(error) => {
@@ -1085,7 +1219,7 @@ pub async fn run_workflow(
                         error.to_string(),
                         None,
                     );
-                    let _ = tx.send(WorkflowEvent::Failed(report));
+                    send_failed(&tx, report);
                 }
             }
         }
@@ -1096,8 +1230,12 @@ pub async fn run_workflow(
             });
             match analyze::generate_profiles_quiet(&request.record.model_name) {
                 Ok(_) => {
-                    let report = build_success_report(&request.record, request.action)?;
-                    let _ = tx.send(WorkflowEvent::Completed(report));
+                    let report = build_success_report(
+                        &request.record,
+                        request.action,
+                        request.launch_profile_name.as_deref(),
+                    )?;
+                    send_completed(&tx, report);
                 }
                 Err(error) => {
                     let report = build_failure_report(
@@ -1106,7 +1244,7 @@ pub async fn run_workflow(
                         error.to_string(),
                         None,
                     );
-                    let _ = tx.send(WorkflowEvent::Failed(report));
+                    send_failed(&tx, report);
                 }
             }
         }
@@ -1153,7 +1291,6 @@ mod tests {
     fn recommended_profile_prefers_speed() {
         let profiles = vec![
             ProfileRow {
-                id: None,
                 model_name: "sample.gguf".into(),
                 profile_name: "context".into(),
                 gpu_layers: 20,
@@ -1165,7 +1302,6 @@ mod tests {
                 created_at: "now".into(),
             },
             ProfileRow {
-                id: None,
                 model_name: "sample.gguf".into(),
                 profile_name: "speed".into(),
                 gpu_layers: -1,
@@ -1180,6 +1316,63 @@ mod tests {
         let picked = pick_recommended_profile(&profiles).expect("expected a profile");
         assert_eq!(picked.profile_name, "speed");
         assert_eq!(picked.context_size, 4096);
+    }
+
+    #[test]
+    fn saved_profile_report_aggregates_latest_and_best_metrics() {
+        let benchmarks = vec![
+            BenchmarkRow {
+                model_name: "sample.gguf".into(),
+                model_size_gb: 7.0,
+                gpu_layers: 20,
+                context_size: 8192,
+                quant_kv: 1,
+                threads: 8,
+                tokens_per_sec: 11.0,
+                time_to_first_token_ms: 500,
+                vram_peak_mb: 7600,
+                ram_peak_mb: 6200,
+                total_tokens: 100,
+                total_time_ms: 9000,
+                status: "ok".into(),
+                gpu_name: "GPU".into(),
+                gpu_vram_mb: 12000,
+                ram_total_mb: 32000,
+                timestamp: "2026-04-21T00:00:00+00:00".into(),
+                notes: String::new(),
+                launch_profile_name: Some("custom-1".into()),
+            },
+            BenchmarkRow {
+                model_name: "sample.gguf".into(),
+                model_size_gb: 7.0,
+                gpu_layers: 20,
+                context_size: 8192,
+                quant_kv: 1,
+                threads: 8,
+                tokens_per_sec: 13.5,
+                time_to_first_token_ms: 480,
+                vram_peak_mb: 7700,
+                ram_peak_mb: 6300,
+                total_tokens: 100,
+                total_time_ms: 8000,
+                status: "ok".into(),
+                gpu_name: "GPU".into(),
+                gpu_vram_mb: 12000,
+                ram_total_mb: 32000,
+                timestamp: "2026-04-22T00:00:00+00:00".into(),
+                notes: String::new(),
+                launch_profile_name: Some("custom-1".into()),
+            },
+        ];
+
+        let report =
+            build_saved_profile_report("custom-1", &benchmarks).expect("saved profile report");
+
+        assert_eq!(report.profile_name, "custom-1");
+        assert_eq!(report.benchmark_count, 2);
+        assert_eq!(report.latest_tokens_per_sec, Some(13.5));
+        assert_eq!(report.best_tokens_per_sec, Some(13.5));
+        assert_eq!(report.latest_time_to_first_token_ms, Some(480));
     }
 
     #[test]
@@ -1255,12 +1448,8 @@ mod tests {
                 cpu_physical: 4,
             }),
             &ServiceStatus {
-                kobold_running: false,
-                kobold_model: None,
                 llamacpp_running: false,
                 llamacpp_model: None,
-                ollama_running: false,
-                st_running: false,
             },
         )
         .expect("advisory should build");

@@ -5,6 +5,7 @@ pub enum InputMode {
     Normal,
     Insert,
     Command,
+    Visual,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -12,6 +13,8 @@ pub enum KeyAction {
     Noop,
     MoveSelectionUp,
     MoveSelectionDown,
+    ScrollConversationUp,
+    ScrollConversationDown,
     FocusTranscript,
     FocusDraft,
     EnterInsert,
@@ -22,6 +25,8 @@ pub enum KeyAction {
     TriggerContextDryRun,
     ToggleBookmark,
     TogglePinnedMemory,
+    EditSelectedMessage,
+    RerollSelectedMessage,
     HistoryPrevious,
     HistoryNext,
     DraftInsertChar(char),
@@ -41,14 +46,14 @@ pub enum KeyAction {
     MenuBack,
     MenuShortcut(char),
     OpenCommandPalette,
-    CommandPaletteInput(char),
-    CommandPaletteBackspace,
+    CommandPaletteTextAreaInput(KeyEvent),
     CommandPaletteSelect,
     CommandPaletteUp,
     CommandPaletteDown,
     CommandPaletteClose,
     // Character form actions
     CharacterCreate,
+    CharacterEditSelected,
     CharacterImportPrompt,
     FormInsertChar(char),
     FormBackspace,
@@ -66,6 +71,87 @@ pub enum KeyAction {
     // Page navigation
     PageUp,
     PageDown,
+    /// Cycle inspector focus forward (Tab)
+    CycleInspectorFocus,
+    /// Cycle inspector focus backward (Shift+Tab)
+    CycleInspectorFocusReverse,
+    /// Ctrl+W prefix received — next key dispatches pane focus
+    PanePrefix,
+    /// Accumulate a digit toward the Normal-mode count prefix
+    AccumulateCount(u32),
+    /// Focus pane to the left (Ctrl+W h)
+    PaneLeft,
+    /// Focus pane below (Ctrl+W j)
+    PaneDown,
+    /// Focus pane above (Ctrl+W k)
+    PaneUp,
+    /// Focus pane to the right (Ctrl+W l)
+    PaneRight,
+    /// Enter visual mode (v)
+    EnterVisual,
+    /// Move visual selection left (h / Left)
+    VisualMoveLeft,
+    /// Move visual selection right (l / Right)
+    VisualMoveRight,
+    /// Move visual selection up (k / Up)
+    VisualMoveUp,
+    /// Move visual selection down (j / Down)
+    VisualMoveDown,
+    /// Delete selected text in visual mode (d / x)
+    VisualDelete,
+    /// Yank selected text in visual mode (y)
+    VisualYank,
+    /// Change selected text in visual mode (c)
+    VisualChange,
+    // === New variants for refactored key handling ===
+    /// Enter conversation screen
+    EnterConversation,
+    /// Open the main menu
+    OpenMenu,
+    /// Open help screen
+    OpenHelp,
+    /// Toggle settings screen
+    ToggleSettings,
+    /// Open session list
+    OpenSessionList,
+    /// Open character manager
+    OpenCharacterManager,
+    /// Save current session
+    SaveSession,
+    /// Delete current session
+    DeleteSession,
+    /// Confirm action (context-sensitive)
+    Confirm,
+    /// Cancel action (context-sensitive)
+    Cancel,
+    /// Scroll up in conversation
+    ScrollUp,
+    /// Scroll down in conversation
+    ScrollDown,
+    /// Select up (menu/session list)
+    SelectUp,
+    /// Select down (menu/session list)
+    SelectDown,
+    /// Quit application
+    Quit,
+    /// Clear current input
+    Clear,
+    /// Open command palette
+    CommandPaletteOpen,
+    /// Dispatch a key to the draft text area
+    DraftKey(KeyEvent),
+    /// Dispatch a key to the command palette
+    CommandPaletteKey(KeyEvent),
+    /// Dispatch a key to the menu
+    MenuKey(KeyEvent),
+    /// Dispatch a key to a form
+    FormKey(KeyEvent),
+    /// Dispatch a key to the edit mode
+    EditKey(KeyEvent),
+    /// Dispatch a key to settings
+    SettingsKey(KeyEvent),
+    /// Dispatch a key to the inspector
+    InspectorKey(KeyEvent),
 }
 
 pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
@@ -74,6 +160,10 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
     }
 
     if is_ctrl_i(key) {
+        return KeyAction::EditSelectedMessage;
+    }
+
+    if key.code == KeyCode::F(2) {
         return KeyAction::ToggleInspector;
     }
 
@@ -85,19 +175,33 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
         return KeyAction::TogglePinnedMemory;
     }
 
+    if is_ctrl_w(key) {
+        return KeyAction::PanePrefix;
+    }
+
     match input_mode {
         InputMode::Normal => match key.code {
-            KeyCode::Up | KeyCode::Char('k') => KeyAction::MoveSelectionUp,
-            KeyCode::Down | KeyCode::Char('j') => KeyAction::MoveSelectionDown,
+            KeyCode::Up => KeyAction::MoveSelectionUp,
+            KeyCode::Down => KeyAction::MoveSelectionDown,
+            KeyCode::Char('k') => KeyAction::ScrollConversationUp,
+            KeyCode::Char('j') => KeyAction::ScrollConversationDown,
+            KeyCode::Char(ch) if ch.is_ascii_digit() && ch != '0' => {
+                KeyAction::AccumulateCount(ch.to_digit(10).unwrap())
+            }
             KeyCode::Char('i') => KeyAction::EnterInsert,
+            KeyCode::Char('I') => KeyAction::ToggleInspector,
+            KeyCode::Char('v') => KeyAction::EnterVisual,
             KeyCode::Tab => KeyAction::FocusDraft,
+            KeyCode::BackTab => KeyAction::CycleInspectorFocusReverse,
             KeyCode::Char('t') => KeyAction::FocusTranscript,
             KeyCode::Char('b') => KeyAction::ToggleBookmark,
+            KeyCode::Char('r') => KeyAction::RerollSelectedMessage,
             KeyCode::Char('?') => KeyAction::ToggleHelp,
             KeyCode::Char('/') | KeyCode::Char(':') => KeyAction::OpenCommandPalette,
             KeyCode::Esc | KeyCode::Char('q') => KeyAction::ConfirmQuit,
             _ => KeyAction::Noop,
         },
+
         InputMode::Insert => match key.code {
             KeyCode::Esc => KeyAction::LeaveInputMode,
             KeyCode::Enter => KeyAction::SubmitDraft,
@@ -114,6 +218,45 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
             }
             _ => KeyAction::Noop,
         },
+        InputMode::Visual => match key.code {
+            KeyCode::Esc => KeyAction::LeaveInputMode,
+            KeyCode::Char('h') | KeyCode::Left => KeyAction::VisualMoveLeft,
+            KeyCode::Char('l') | KeyCode::Right => KeyAction::VisualMoveRight,
+            KeyCode::Char('k') | KeyCode::Up => KeyAction::VisualMoveUp,
+            KeyCode::Char('j') | KeyCode::Down => KeyAction::VisualMoveDown,
+            KeyCode::Char('d') | KeyCode::Char('x') => KeyAction::VisualDelete,
+            KeyCode::Char('y') => KeyAction::VisualYank,
+            KeyCode::Char('c') => KeyAction::VisualChange,
+            _ => KeyAction::Noop,
+        },
+    }
+}
+
+/// Dispatch keys while editing a persisted transcript message.
+/// Edit mode is a dedicated textarea surface: save/cancel and a few global
+/// toggles stay active, but normal draft history/focus/palette affordances are
+/// suppressed so arrow keys, tab, and punctuation stay with the editor.
+pub fn dispatch_edit_key(key: KeyEvent) -> KeyAction {
+    if is_ctrl_c(key) {
+        return KeyAction::CancelGeneration;
+    }
+
+    if key.code == KeyCode::F(2) {
+        return KeyAction::ToggleInspector;
+    }
+
+    if is_ctrl_d(key) {
+        return KeyAction::TriggerContextDryRun;
+    }
+
+    if is_ctrl_k(key) {
+        return KeyAction::TogglePinnedMemory;
+    }
+
+    match key.code {
+        KeyCode::Esc => KeyAction::LeaveInputMode,
+        KeyCode::Enter => KeyAction::SubmitDraft,
+        _ => KeyAction::TextAreaInput(key),
     }
 }
 
@@ -143,14 +286,16 @@ pub fn dispatch_menu_key(key: KeyEvent, is_root_menu: bool) -> KeyAction {
 
 /// Dispatch keys when the command palette overlay is open.
 pub fn dispatch_command_palette_key(key: KeyEvent) -> Option<KeyAction> {
+    if is_ctrl_c(key) {
+        return Some(KeyAction::ConfirmQuit);
+    }
+
     match key.code {
         KeyCode::Esc => Some(KeyAction::CommandPaletteClose),
         KeyCode::Enter => Some(KeyAction::CommandPaletteSelect),
-        KeyCode::Backspace => Some(KeyAction::CommandPaletteBackspace),
         KeyCode::Up => Some(KeyAction::CommandPaletteUp),
         KeyCode::Down => Some(KeyAction::CommandPaletteDown),
-        KeyCode::Char(c) => Some(KeyAction::CommandPaletteInput(c)),
-        _ => None,
+        _ => Some(KeyAction::CommandPaletteTextAreaInput(key)),
     }
 }
 
@@ -199,11 +344,19 @@ fn is_ctrl_k(key: KeyEvent) -> bool {
         && key.modifiers.contains(KeyModifiers::CONTROL)
 }
 
+fn is_ctrl_w(key: KeyEvent) -> bool {
+    matches!(key.code, KeyCode::Char('w') | KeyCode::Char('W'))
+        && key.modifiers.contains(KeyModifiers::CONTROL)
+}
+
 #[cfg(test)]
 mod tests {
     use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 
-    use super::{dispatch_key, dispatch_menu_key, InputMode, KeyAction};
+    use super::{
+        dispatch_command_palette_key, dispatch_edit_key, dispatch_key, dispatch_menu_key,
+        InputMode, KeyAction,
+    };
 
     #[test]
     fn normal_mode_maps_navigation_and_insert_keys() {
@@ -224,9 +377,23 @@ mod tests {
         assert_eq!(
             dispatch_key(
                 InputMode::Normal,
+                KeyEvent::new(KeyCode::Char('k'), KeyModifiers::NONE)
+            ),
+            KeyAction::ScrollConversationUp
+        );
+        assert_eq!(
+            dispatch_key(
+                InputMode::Normal,
                 KeyEvent::new(KeyCode::Char('b'), KeyModifiers::NONE)
             ),
             KeyAction::ToggleBookmark
+        );
+        assert_eq!(
+            dispatch_key(
+                InputMode::Normal,
+                KeyEvent::new(KeyCode::Char('r'), KeyModifiers::NONE)
+            ),
+            KeyAction::RerollSelectedMessage
         );
     }
 
@@ -251,7 +418,7 @@ mod tests {
                 InputMode::Insert,
                 KeyEvent::new(KeyCode::Char('i'), KeyModifiers::CONTROL)
             ),
-            KeyAction::ToggleInspector
+            KeyAction::EditSelectedMessage
         );
         assert_eq!(
             dispatch_key(
@@ -307,6 +474,58 @@ mod tests {
     }
 
     #[test]
+    fn edit_mode_routes_navigation_keys_to_textarea() {
+        let key_up = KeyEvent::new(KeyCode::Up, KeyModifiers::NONE);
+        let key_tab = KeyEvent::new(KeyCode::Tab, KeyModifiers::NONE);
+        let key_slash = KeyEvent::new(KeyCode::Char('/'), KeyModifiers::NONE);
+
+        assert_eq!(dispatch_edit_key(key_up), KeyAction::TextAreaInput(key_up));
+        assert_eq!(
+            dispatch_edit_key(key_tab),
+            KeyAction::TextAreaInput(key_tab)
+        );
+        assert_eq!(
+            dispatch_edit_key(key_slash),
+            KeyAction::TextAreaInput(key_slash)
+        );
+    }
+
+    #[test]
+    fn edit_mode_keeps_ctrl_i_inside_editor() {
+        let ctrl_i = KeyEvent::new(KeyCode::Char('i'), KeyModifiers::CONTROL);
+        assert_eq!(dispatch_edit_key(ctrl_i), KeyAction::TextAreaInput(ctrl_i));
+    }
+
+    #[test]
+    fn f2_toggles_inspector_in_normal_and_insert() {
+        assert_eq!(
+            dispatch_key(
+                InputMode::Normal,
+                KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE)
+            ),
+            KeyAction::ToggleInspector
+        );
+        assert_eq!(
+            dispatch_key(
+                InputMode::Insert,
+                KeyEvent::new(KeyCode::F(2), KeyModifiers::NONE)
+            ),
+            KeyAction::ToggleInspector
+        );
+    }
+
+    #[test]
+    fn shift_i_toggles_inspector_in_normal_mode() {
+        assert_eq!(
+            dispatch_key(
+                InputMode::Normal,
+                KeyEvent::new(KeyCode::Char('I'), KeyModifiers::SHIFT)
+            ),
+            KeyAction::ToggleInspector
+        );
+    }
+
+    #[test]
     fn menu_dispatch_maps_navigation_and_selection() {
         assert_eq!(
             dispatch_menu_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), true),
@@ -357,6 +576,21 @@ mod tests {
         assert_eq!(
             dispatch_menu_key(KeyEvent::new(KeyCode::Up, KeyModifiers::NONE), false),
             KeyAction::MenuUp
+        );
+    }
+
+    #[test]
+    fn command_palette_routes_text_keys_to_textarea() {
+        let key = KeyEvent::new(KeyCode::Char('h'), KeyModifiers::NONE);
+        assert_eq!(
+            dispatch_command_palette_key(key),
+            Some(KeyAction::CommandPaletteTextAreaInput(key))
+        );
+
+        let backspace = KeyEvent::new(KeyCode::Backspace, KeyModifiers::NONE);
+        assert_eq!(
+            dispatch_command_palette_key(backspace),
+            Some(KeyAction::CommandPaletteTextAreaInput(backspace))
         );
     }
 }

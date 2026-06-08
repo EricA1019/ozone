@@ -274,7 +274,6 @@ fn generate_profiles_impl(model_name: &str, noisy: bool) -> Result<usize> {
             continue;
         }
         let profile = ProfileRow {
-            id: None,
             model_name: model_name.to_string(),
             profile_name: labels[i].clone(),
             gpu_layers: p.gpu_layers,
@@ -303,6 +302,7 @@ pub fn generate_profiles(model_name: &str) -> Result<()> {
     generate_profiles_impl(model_name, true).map(|_| ())
 }
 
+#[cfg(feature = "profiling-ui")]
 pub fn generate_profiles_quiet(model_name: &str) -> Result<usize> {
     generate_profiles_impl(model_name, false)
 }
@@ -383,12 +383,12 @@ fn print_profiles_table(model_name: &str, profiles: &[ProfileRow]) {
     println!();
 }
 
-// ── Presets conf export ─────────────────────────────────────────────────────
+// ── Profile export ──────────────────────────────────────────────────────────
 
 const AUTO_BEGIN: &str = "# >>> ozone auto-generated presets";
 const AUTO_END: &str = "# <<< ozone auto-generated presets";
 
-/// Export the "best" profile per model into `koboldcpp-presets.conf`.
+/// Export the "best" profile per model into the runtime profile export file.
 ///
 /// Preserves any manually-written presets outside the auto-generated markers.
 /// The chosen profile per model is the one labelled "speed" (highest tok/s on the
@@ -515,6 +515,7 @@ pub fn export_presets_conf(conf_path: &Path, model: Option<&str>) -> Result<()> 
     export_presets_conf_impl(conf_path, model, true).map(|_| ())
 }
 
+#[cfg(feature = "profiling-ui")]
 pub fn export_presets_conf_quiet(conf_path: &Path, model: Option<&str>) -> Result<usize> {
     export_presets_conf_impl(conf_path, model, false)
 }

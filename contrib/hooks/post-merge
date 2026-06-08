@@ -1,0 +1,35 @@
+#!/usr/bin/env bash
+# post-merge: rebuild and sync local ozone binaries after a git pull or merge,
+# then refresh the code-only Graphify graph when one already exists.
+# Never blocks the merge.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+SYNC_SCRIPT="$REPO_ROOT/contrib/sync-local-install.sh"
+GRAPHIFY_SCRIPT="$REPO_ROOT/contrib/refresh-graphify.sh"
+GRAPHIFY_LOG_FILE="${TMPDIR:-/tmp}/ozone-graphify-refresh.log"
+
+if [[ -x "$SYNC_SCRIPT" ]]; then
+    printf '\n[ozone] rebuilding and syncing local binaries after merge...\n'
+
+    (
+        cd "$REPO_ROOT"
+        ./contrib/sync-local-install.sh
+    )
+    STATUS=$?
+
+    if [[ $STATUS -ne 0 ]]; then
+        printf '[ozone] sync failed (exit %d) — run ./contrib/sync-local-install.sh manually\n' "$STATUS" >&2
+    fi
+fi
+
+if [[ -x "$GRAPHIFY_SCRIPT" ]]; then
+    "$GRAPHIFY_SCRIPT" --quiet >"$GRAPHIFY_LOG_FILE" 2>&1
+    GRAPHIFY_STATUS=$?
+    if [[ $GRAPHIFY_STATUS -ne 0 ]]; then
+        printf '[ozone] graphify refresh failed (exit %d) — see %s\n' "$GRAPHIFY_STATUS" "$GRAPHIFY_LOG_FILE" >&2
+    fi
+fi
+
+# Never block the merge.
+exit 0

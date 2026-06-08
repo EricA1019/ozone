@@ -1,0 +1,81 @@
+# Creative Writing Probe Prompt Bank
+# Each prompt tests a different aspect of creative writing ability.
+# Prompts are loaded at runtime — add, remove, or reorder without recompiling.
+#
+# Fields:
+#   id:         unique identifier (used in CSV output)
+#   category:   one of dialogue/description/worldbuilding/emotional/action/voice/poetic/technical
+#   prompt:     the text sent to the model
+#   max_tokens: maximum tokens for the completion
+
+[[prompts]]
+id = "dialogue_scene"
+category = "dialogue"
+prompt = "Write a tense dialogue between two siblings who disagree about their elderly parent's care. Each has a valid point. Do not resolve the conflict neatly."
+max_tokens = 300
+
+[[prompts]]
+id = "sensory_description"
+category = "description"
+prompt = "Describe a rainy night in an unfamiliar city using all five senses. Focus on atmosphere and mood rather than plot."
+max_tokens = 250
+
+[[prompts]]
+id = "worldbuilding"
+category = "worldbuilding"
+prompt = "Describe a society where music is the primary form of currency. Explain the daily life of a poor person who cannot produce music, and a wealthy person who can."
+max_tokens = 350
+
+[[prompts]]
+id = "emotional_moment"
+category = "emotional"
+prompt = "Write a scene where a character says goodbye to a childhood home they will never see again. Show, don't tell."
+max_tokens = 250
+
+[[prompts]]
+id = "action_sequence"
+category = "action"
+prompt = "Describe a chase through a crowded marketplace. Use short, urgent sentences. Focus on sensory details — sound, motion, collision."
+max_tokens = 200
+
+[[prompts]]
+id = "first_person_voice"
+category = "voice"
+prompt = "Write a first-person journal entry from the perspective of a bored AI assistant. The entry should reveal personality through complaints and observations."
+max_tokens = 250
+
+[[prompts]]
+id = "poetic_prose"
+category = "poetic"
+prompt = "Write a poetic description of a city at dawn. Use metaphor and rhythm. Avoid clichés."
+max_tokens = 200
+
+[[prompts]]
+id = "technical_description"
+category = "technical"
+prompt = "Explain how a neural network processes an image to a curious child who has never written a line of code. Use an analogy."
+max_tokens = 300
+
+[[prompts]]
+id = "atmosphere"
+category = "description"
+prompt = "Create an atmosphere of creeping dread in a seemingly ordinary suburban street. Use ordinary details that feel slightly wrong."
+max_tokens = 250
+
+[[prompts]]
+id = "character_introduction"
+category = "voice"
+prompt = "Introduce a memorable character in two paragraphs. Reveal personality through action, dialogue, and the character's own thoughts — not physical description."
+max_tokens = 250
+
+[[prompts]]
+id = "twist_ending"
+category = "emotional"
+prompt = "Write a very short story (four paragraphs) with a twist ending. The twist should be surprising but inevitable in retrospect."
+max_tokens = 300
+
+[[prompts]]
+id = "imaginary_landscape"
+category = "worldbuilding"
+prompt = "Describe a landscape that exists only in dreams. The rules of reality do not apply. Make it feel coherent despite its impossibility."
+max_tokens = 250

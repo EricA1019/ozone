@@ -30,6 +30,7 @@ impl SqliteRepository {
         let record = insert_pinned_memory_artifact_in_tx(
             &tx,
             session_id,
+            "pinned_memory",
             content,
             Some(message_id),
             request.provenance,
@@ -54,6 +55,7 @@ impl SqliteRepository {
         let record = insert_pinned_memory_artifact_in_tx(
             &tx,
             session_id,
+            "note_memory",
             request.content,
             None,
             request.provenance,
@@ -88,6 +90,45 @@ impl SqliteRepository {
             .collect())
     }
 
+    pub fn list_note_memories(&self, session_id: &SessionId) -> Result<Vec<PinnedMemoryView>> {
+        let current_message_count = self.current_message_count(session_id)?;
+        let conn = self.open_session_connection(session_id)?;
+        let mut stmt = conn.prepare(
+            "SELECT artifact_id, session_id, content_json, source_start_message_id, source_end_message_id, provenance, created_at, snapshot_version
+             FROM memory_artifacts
+             WHERE session_id = ?1 AND kind = 'note_memory'
+             ORDER BY created_at ASC, artifact_id ASC",
+        )?;
+        let rows = stmt.query_map([session_id.as_str()], read_stored_pinned_memory_artifact)?;
+        let records = rows
+            .collect::<rusqlite::Result<Vec<_>>>()?
+            .into_iter()
+            .map(PinnedMemoryRecord::try_from)
+            .collect::<Result<Vec<_>>>()?;
+
+        Ok(records
+            .into_iter()
+            .map(|record| record.into_view(current_message_count))
+            .collect())
+    }
+
+    pub fn list_saved_memories(&self, session_id: &SessionId) -> Result<Vec<PinnedMemoryView>> {
+        let mut memories = self.list_pinned_memories(session_id)?;
+        memories.extend(self.list_note_memories(session_id)?);
+        memories.sort_by(|left, right| {
+            left.record
+                .created_at
+                .cmp(&right.record.created_at)
+                .then_with(|| {
+                    left.record
+                        .artifact_id
+                        .as_str()
+                        .cmp(right.record.artifact_id.as_str())
+                })
+        });
+        Ok(memories)
+    }
+
     pub fn remove_pinned_memory(
         &self,
         session_id: &SessionId,
@@ -98,6 +139,26 @@ impl SqliteRepository {
         let deleted = conn.execute(
             "DELETE FROM memory_artifacts
              WHERE session_id = ?1 AND artifact_id = ?2 AND kind = 'pinned_memory'",
+            params![session_id.as_str(), artifact_id.as_str()],
+        )? > 0;
+
+        if deleted {
+            self.touch_session_summary(session_id, touched_at, 0)?;
+        }
+
+        Ok(deleted)
+    }
+
+    pub fn remove_saved_memory(
+        &self,
+        session_id: &SessionId,
+        artifact_id: &MemoryArtifactId,
+    ) -> Result<bool> {
+        let touched_at = self.now();
+        let conn = self.open_session_connection(session_id)?;
+        let deleted = conn.execute(
+            "DELETE FROM memory_artifacts
+             WHERE session_id = ?1 AND artifact_id = ?2 AND kind IN ('pinned_memory', 'note_memory')",
             params![session_id.as_str(), artifact_id.as_str()],
         )? > 0;
 
@@ -122,7 +183,7 @@ impl SqliteRepository {
             "SELECT ma.artifact_id, ma.session_id, ma.content_json, ma.source_start_message_id, ma.source_end_message_id, ma.provenance, ma.created_at, ma.snapshot_version, bm25(artifacts_fts)
              FROM artifacts_fts
              JOIN memory_artifacts ma ON ma.rowid = artifacts_fts.rowid
-             WHERE ma.session_id = ?1 AND ma.kind = 'pinned_memory' AND artifacts_fts MATCH ?2
+             WHERE ma.session_id = ?1 AND ma.kind IN ('pinned_memory', 'note_memory') AND artifacts_fts MATCH ?2
              ORDER BY bm25(artifacts_fts), ma.created_at DESC, ma.rowid ASC",
         )?;
         let rows = stmt.query_map(
@@ -234,9 +295,11 @@ impl SqliteRepository {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn insert_pinned_memory_artifact_in_tx(
     tx: &Transaction<'_>,
     session_id: &SessionId,
+    kind: &str,
     content: PinnedMemoryContent,
     source_message_id: Option<&MessageId>,
     provenance: Provenance,
@@ -258,10 +321,11 @@ fn insert_pinned_memory_artifact_in_tx(
     tx.execute(
         "INSERT INTO memory_artifacts (
             artifact_id, session_id, kind, content_json, source_start_message_id, source_end_message_id, provenance, created_at, snapshot_version
-         ) VALUES (?1, ?2, 'pinned_memory', ?3, ?4, ?5, ?6, ?7, ?8)",
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
         params![
             artifact_id.as_str(),
             session_id.as_str(),
+            kind,
             content_json,
             source_message_id_str,
             source_message_id_str,

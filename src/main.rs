@@ -1,28 +1,41 @@
+#[cfg(feature = "analyze")]
 mod analyze;
+#[cfg(feature = "bench")]
 mod bench;
 mod catalog;
+mod creative_writing;
+mod eval;
+mod eval_report;
+mod export_server;
+#[cfg(any(feature = "bench", feature = "analyze", feature = "profiling-ui"))]
 mod db;
+#[cfg(any(feature = "profiling-ui", feature = "sweep"))]
 mod gguf;
 mod hardware;
 mod llama;
+#[cfg(feature = "model-mgmt")]
 mod model;
 mod planner;
 mod prefs;
 mod processes;
+#[cfg(feature = "profiling-ui")]
 mod profiling;
+#[cfg(feature = "sweep")]
 mod sweep;
 mod theme;
+#[cfg(test)]
+mod test_support;
 mod ui;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
+use std::path::PathBuf;
 
 /// Product tier for mode selection
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum TierArg {
     Lite,
     Base,
-    Plus,
 }
 
 impl From<TierArg> for prefs::Tier {
@@ -30,7 +43,6 @@ impl From<TierArg> for prefs::Tier {
         match arg {
             TierArg::Lite => prefs::Tier::Lite,
             TierArg::Base => prefs::Tier::Base,
-            TierArg::Plus => prefs::Tier::Plus,
         }
     }
 }
@@ -43,7 +55,7 @@ fn detect_tier_from_binary_name(name: &str) -> Option<prefs::Tier> {
         || name.contains("ozoneplus")
         || name.contains("plus")
     {
-        Some(prefs::Tier::Plus)
+        Some(prefs::Tier::Base)
     } else {
         None
     }
@@ -53,6 +65,7 @@ fn detect_tier_from_binary_name(name: &str) -> Option<prefs::Tier> {
 #[command(
     name = "ozone",
     about = "⬡ Ozone — local AI stack operator & launcher",
+    after_help = "Source builds keep default features empty. Use `cargo build --release -p ozone --features full` or `./contrib/sync-local-install.sh` for profiling and `ozone model ...` commands in the base binary.",
     version = concat!(env!("CARGO_PKG_VERSION"), "+", env!("OZONE_GIT_HASH"))
 )]
 struct Cli {
@@ -62,13 +75,8 @@ struct Cli {
     #[arg(long, help = "Skip browser launch")]
     no_browser: bool,
 
-    /// Choose the frontend to open after launching the backend.
-    /// Omit to see an interactive choice screen.
-    #[arg(long, value_name = "MODE")]
-    frontend: Option<ui::FrontendMode>,
-
-    /// Override product tier (lite, base, plus).
-    /// Also detectable via binary name (ozone-lite, ozone, ozone+).
+    /// Override product tier (lite, base).
+    /// Also detectable via binary name, including legacy plus aliases.
     #[arg(long, value_enum)]
     mode: Option<TierArg>,
 
@@ -86,9 +94,12 @@ enum Commands {
     },
     /// Clear GPU backends (KoboldCpp, llama.cpp, Ollama)
     Clear,
+    /// Stop the managed llama.cpp model and clear its tracked launch state
+    PurgeLastModel,
     /// Live monitor dashboard
     Monitor,
     /// Benchmark a model with specific settings
+    #[cfg(feature = "bench")]
     Bench {
         /// Model filename (e.g. mn-12b-mag-mell-r1.gguf)
         model: String,
@@ -107,6 +118,7 @@ enum Commands {
         threads: Option<u32>,
     },
     /// Analyze benchmark results and generate profiles
+    #[cfg(feature = "analyze")]
     Analyze {
         /// Model name (omit for summary of all models)
         model: Option<String>,
@@ -116,10 +128,11 @@ enum Commands {
         generate: bool,
         #[arg(long, help = "Show stored profiles")]
         profiles: bool,
-        #[arg(long, help = "Export profiles to koboldcpp-presets.conf")]
+        #[arg(long, help = "Export the recommended runtime profile set")]
         export: bool,
     },
     /// Smart parameter sweep to find optimal settings
+    #[cfg(feature = "sweep")]
     Sweep {
         /// Model filename
         model: String,
@@ -127,8 +140,52 @@ enum Commands {
         max_context: Option<u32>,
         #[arg(long, help = "Quick sweep (fewer configs)")]
         quick: bool,
+        #[arg(long, help = "Run context-size sweep instead of parameter sweep")]
+        context_sweep: bool,
+    },
+    /// Run evaluation probes against a running local server
+    Eval {
+        /// Model filename reported by the local API
+        model: String,
+        #[arg(long, value_enum, default_value = "gsm8k", help = "Evaluation preset to run")]
+        preset: eval::EvalPreset,
+        #[arg(long, default_value = "1", help = "Number of samples/examples to run")]
+        limit: u32,
+        #[arg(
+            long,
+            default_value = "http://127.0.0.1:8989",
+            help = "Base URL for OpenAI-compatible local API"
+        )]
+        base_url: String,
+        #[arg(long, default_value = "0.0", help = "Temperature for generation (0.0 = deterministic)")]
+        temperature: f64,
+        #[arg(long, help = "Compare all models with prior results for this preset")]
+        compare: bool,
+    },
+    /// Generate a standalone launch script for a model
+    ExportServer {
+        /// Model filename
+        model: String,
+        #[arg(long, help = "Saved profile name to use for config")]
+        profile: Option<String>,
+        #[arg(long, help = "Output path (default: ~/models/serve-<model>.sh)")]
+        output: Option<String>,
+        #[arg(long, default_value = "8989", help = "Port for the server")]
+        port: u16,
+    },
+    /// List available evaluation presets
+    EvalList,
+    /// Run creative writing evaluation probe (multi-temperature diversity scoring)
+    CreativeWrite {
+        /// Model filename
+        model: String,
+        #[arg(long, default_value = "http://127.0.0.1:8989", help = "Base URL for OpenAI-compatible local API")]
+        base_url: String,
+        #[arg(long, default_value = "contrib/evals/prompts/creative_writing.toml", help = "Path to prompt bank TOML")]
+        prompts: Option<String>,
     },
     /// Manage local model files (list, add, remove, info)
+    #[cfg(feature = "model-mgmt")]
     Model {
         #[command(subcommand)]
         command: model::ModelCommand,
@@ -155,7 +212,7 @@ async fn main() -> Result<()> {
     });
 
     match cli.command {
-        None => ui::run_launcher(cli.no_browser, cli.frontend, tier_override, cli.pick).await,
+        None => ui::run_launcher(cli.no_browser, tier_override, cli.pick).await,
         Some(Commands::Clear) => {
             let killed = processes::clear_gpu_backends().await?;
             if killed.is_empty() {
@@ -167,18 +224,28 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
+        Some(Commands::PurgeLastModel) => {
+            let killed = processes::purge_last_model().await?;
+            if killed.is_empty() {
+                ozone_core::cli::info("No managed llama.cpp model was running.");
+            } else {
+                for pid in killed {
+                    ozone_core::cli::success(&format!("Stopped managed llama.cpp pid {pid}"));
+                }
+            }
+            Ok(())
+        }
         Some(Commands::Monitor) => ui::run_monitor().await,
         Some(Commands::List { json }) => {
-            if !json {
-                eprintln!("  hint: `ozone list` is deprecated — use `ozone model list` instead.");
-                eprintln!();
-            }
             let model_dir = ozone_core::paths::models_dir();
-            let preset_file = ozone_core::paths::presets_path();
+            let preset_file = ozone_core::paths::catalog_preset_path();
             let bench_file = model_dir.join("bench-results.txt");
-            let records = catalog::load_catalog(&model_dir, &preset_file, &bench_file)
-                .await
-                .unwrap_or_default();
+            let report = catalog::load_catalog_report(&model_dir, &preset_file, &bench_file)
+                .await?;
+            for issue in &report.issues {
+                eprintln!("catalog {}: {}", issue.level.label(), issue.message);
+            }
+            let records = report.records;
             if json {
                 println!("[");
                 for (i, r) in records.iter().enumerate() {
@@ -192,23 +259,56 @@ async fn main() -> Result<()> {
                 }
                 println!("]");
             } else {
-                println!("  {:<6}  {:>8}  MODEL", "SOURCE", "SIZE");
-                for r in &records {
-                    let size = if r.model_size_gb <= 0.0 {
-                        "⚠ broken".to_string()
-                    } else {
-                        format!("{:.1} GB", r.model_size_gb)
-                    };
-                    println!(
-                        "  [{:5}]  {:>8}  {}",
-                        r.recommendation.source.label(),
-                        size,
-                        r.model_name
+                #[cfg(feature = "model-mgmt")]
+                {
+                    eprintln!("  hint: `ozone list` is deprecated — use `ozone model list` instead.");
+                    eprintln!();
+                }
+                #[cfg(not(feature = "model-mgmt"))]
+                {
+                    eprintln!("  note: this build exposes the lightweight `ozone list` catalog only.");
+                    eprintln!(
+                        "        for `ozone model ...`, install via `./contrib/sync-local-install.sh`"
                     );
+                    eprintln!(
+                        "        or build `cargo build --release -p ozone --features full`."
+                    );
+                    eprintln!();
+                }
+                println!("  {:<6}  {:>8}  MODEL", "SOURCE", "SIZE");
+                if records.is_empty() {
+                    println!();
+                    println!("  no models found in {}", model_dir.display());
+                    println!();
+                    #[cfg(feature = "model-mgmt")]
+                    {
+                        println!("  next: add one with `ozone model add --hf <repo> [filename.gguf]`");
+                        println!("        or symlink an existing `.gguf` into `~/models/`.");
+                    }
+                    #[cfg(not(feature = "model-mgmt"))]
+                    {
+                        println!("  next: place a `.gguf` file or symlink in `~/models/`,");
+                        println!("        then rerun `ozone list` or use the installed full base build.");
+                    }
+                } else {
+                    for r in &records {
+                        let size = if r.model_size_gb <= 0.0 {
+                            "⚠ broken".to_string()
+                        } else {
+                            format!("{:.1} GB", r.model_size_gb)
+                        };
+                        println!(
+                            "  [{:5}]  {:>8}  {}",
+                            r.recommendation.source.label(),
+                            size,
+                            r.model_name
+                        );
+                    }
                 }
             }
             Ok(())
         }
+        #[cfg(feature = "bench")]
         Some(Commands::Bench {
             model,
             gpu_layers,
@@ -218,8 +318,8 @@ async fn main() -> Result<()> {
         }) => {
             let model_dir = ozone_core::paths::models_dir();
             let model_path = model_dir.join(&model);
-            let launcher_path = processes::resolved_kobold_launcher_path();
-            let backend = bench::BenchBackend::KoboldCpp { launcher_path };
+            let server_path = processes::resolved_llamacpp_server_path()?;
+            let backend = bench::BenchBackend::LlamaCpp { server_path };
 
             if !model_path.exists() {
                 ozone_core::cli::error(&format!("Model not found: {}", model_path.display()));
@@ -257,12 +357,15 @@ async fn main() -> Result<()> {
             // Store result
             let thread_count = threads.unwrap_or(0);
             match bench::store_result(
-                &model,
-                model_size_gb,
-                gpu_layers,
-                context,
-                quant_kv as u32,
-                thread_count,
+                bench::BenchmarkStoreRequest {
+                    model_name: &model,
+                    model_size_gb,
+                    gpu_layers,
+                    context_size: context,
+                    quant_kv: quant_kv as u32,
+                    threads: thread_count,
+                    launch_profile_name: None,
+                },
                 &result,
             ) {
                 Ok(id) => ozone_core::cli::success(&format!("Stored as benchmark #{id}")),
@@ -270,14 +373,27 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
+        #[cfg(feature = "sweep")]
         Some(Commands::Sweep {
             model,
             max_context,
             quick,
+            context_sweep,
         }) => {
             let model_dir = ozone_core::paths::models_dir();
             let model_path = model_dir.join(&model);
-            let launcher_path = processes::resolved_kobold_launcher_path();
+            let server_path = processes::resolved_llamacpp_server_path()?;
+
+            if context_sweep {
+                let (csv_path, sweet_spot) = sweep::run_context_sweep(
+                    &model, &model_path, &server_path, -1, None, quick,
+                ).await?;
+                ozone_core::cli::success(&format!(
+                    "Sweep complete. Sweet spot: context={sweet_spot}. CSV: {}",
+                    csv_path.display()
+                ));
+                return Ok(());
+            }
 
             if !model_path.exists() {
                 ozone_core::cli::error(&format!("Model not found: {}", model_path.display()));
@@ -294,7 +410,6 @@ async fn main() -> Result<()> {
                 .as_ref()
                 .map(|g| (g.total_mb as f64 * 0.9) as u32)
                 .unwrap_or(0);
-            let ram_total_mb = hw.ram_total_mb as u32;
 
             let (context_sizes, quant_kv_levels) = if quick {
                 (vec![4096, 8192], vec![1u8])
@@ -309,7 +424,7 @@ async fn main() -> Result<()> {
             let sweep_config = sweep::SweepConfig {
                 model_name: model,
                 model_path: model_path.clone(),
-                backend: bench::BenchBackend::KoboldCpp { launcher_path },
+                backend: bench::BenchBackend::LlamaCpp { server_path },
                 model_size_gb,
                 total_layers: gguf::inspect_model_topology(
                     &model_path,
@@ -319,12 +434,12 @@ async fn main() -> Result<()> {
                 context_sizes,
                 quant_kv_levels,
                 gpu_vram_budget_mb,
-                ram_total_mb,
             };
 
             sweep::run_sweep(sweep_config).await?;
             Ok(())
         }
+        #[cfg(feature = "analyze")]
         Some(Commands::Analyze {
             model,
             all,
@@ -333,7 +448,7 @@ async fn main() -> Result<()> {
             export,
         }) => {
             if export {
-                let conf_path = ozone_core::paths::presets_path();
+                let conf_path = ozone_core::paths::runtime_profiles_path();
                 analyze::export_presets_conf(&conf_path, model.as_deref())?;
             } else if profiles {
                 analyze::show_profiles(model.as_deref())?;
@@ -359,6 +474,87 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
+        Some(Commands::Eval {
+            model,
+            preset,
+            limit,
+            base_url,
+            temperature,
+            compare,
+        }) => {
+            if compare {
+                eval::print_comparison(preset.cli_name())?;
+                return Ok(());
+            }
+            eval::run_eval(&model, preset, limit, &base_url, temperature)?;
+            Ok(())
+        }
+        Some(Commands::ExportServer { model, profile, output, port }) => {
+            let model_dir = ozone_core::paths::models_dir();
+            let model_path = model_dir.join(&model);
+            if !model_path.exists() {
+                anyhow::bail!("Model not found: {}", model_path.display());
+            }
+
+            let server_path = processes::resolved_llamacpp_server_path()?;
+
+            let plan = if let Some(_profile_name) = &profile {
+                anyhow::bail!("--profile not yet implemented; use the launcher Configure Hub to save a profile first");
+            } else {
+                // Use catalog recommendation as fallback
+                let report = catalog::load_catalog_report(
+                    &model_dir,
+                    &ozone_core::paths::catalog_preset_path(),
+                    &model_dir.join("bench-results.txt"),
+                ).await?;
+                let record = report.records.iter()
+                    .find(|r| r.model_name == model)
+                    .ok_or_else(|| anyhow::anyhow!("Model '{}' not found in catalog", model))?;
+                crate::planner::plan_launch(record, &Default::default())
+            };
+
+            let output_path = output.as_deref().map(PathBuf::from).unwrap_or_default();
+            let written = export_server::generate_serve_script(
+                &plan, &model_path, &server_path, port, &output_path,
+            )?;
+            ozone_core::cli::success(&format!("Server script written to {}", written.display()));
+            Ok(())
+        }
+        Some(Commands::EvalList) => {
+            println!("{:<20} {:<50} KIND", "NAME", "DESCRIPTION");
+            for task in eval::EVAL_TASKS {
+                let kind_label = match task.kind {
+                    eval::EvalTaskKind::LmEval { .. } => "lm-eval",
+                    eval::EvalTaskKind::EvalPlus { .. } => "evalplus",
+                    eval::EvalTaskKind::CreativeWriting => "creative-writing",
+                };
+                println!("{:<20} {:<50} {}", task.cli_name, task.description, kind_label);
+            }
+            Ok(())
+        }
+        Some(Commands::CreativeWrite { model, base_url, prompts: _prompts }) => {
+            let root = crate::eval::resolve_project_root()?;
+            let prompt_bank = creative_writing::load_prompt_bank(&root)?;
+            if prompt_bank.is_empty() {
+                anyhow::bail!("No prompts found in creative writing prompt bank");
+            }
+
+            let artifacts_dir = root.join("contrib/evals/artifacts").join("creative_writing");
+            let csv_path = creative_writing::run_creative_writing_eval(
+                &model, &prompt_bank, &base_url, &artifacts_dir,
+            ).await?;
+
+            // Build and write markdown report
+            let report_md = creative_writing::build_creative_report(&csv_path)?;
+            let report_path = csv_path.with_extension("md");
+            std::fs::write(&report_path, &report_md)?;
+
+            ozone_core::cli::success(&format!("Creative writing eval complete for '{}'", model));
+            ozone_core::cli::field("CSV:", &csv_path.display());
+            ozone_core::cli::field("Report:", &report_path.display());
+            Ok(())
+        }
+        #[cfg(feature = "model-mgmt")]
         Some(Commands::Model { command }) => match model::run(command).await {
             Ok(()) => Ok(()),
             Err(e) => {
@@ -385,13 +581,13 @@ mod tests {
         );
         assert_eq!(
             detect_tier_from_binary_name("ozone+"),
-            Some(prefs::Tier::Plus)
+            Some(prefs::Tier::Base)
         );
         assert_eq!(
             detect_tier_from_binary_name("ozoneplus"),
-            Some(prefs::Tier::Plus)
+            Some(prefs::Tier::Base)
         );
-        assert_eq!(detect_tier_from_binary_name("oz+"), Some(prefs::Tier::Plus));
+        assert_eq!(detect_tier_from_binary_name("oz+"), Some(prefs::Tier::Base));
         assert_eq!(detect_tier_from_binary_name("ozone"), None);
     }
 }

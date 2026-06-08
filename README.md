@@ -1,4 +1,6 @@
-```
+# Ozone
+
+```text
  ██████  ███████  ██████  ███    ██ ███████
 ██    ██    ███  ██    ██ ████   ██ ██
 ██    ██   ███   ██    ██ ██ ██  ██ █████
@@ -8,7 +10,7 @@
 
 **⬡ Use AI smarter. Not bigger.**
 
-![Version](https://img.shields.io/badge/v0.4.3--alpha-76b7b2?style=for-the-badge)
+![Version](https://img.shields.io/badge/v0.4.8--alpha-2daf82?style=for-the-badge)
 ![License](https://img.shields.io/badge/MIT-7c3aed?style=for-the-badge)
 ![Local-first](https://img.shields.io/badge/local--first-06b6d4?style=for-the-badge)
 
@@ -32,21 +34,24 @@ Local AI users are routinely told to buy more VRAM, download bigger models, and 
 One codebase, three tiers. Choose your level of engagement:
 
 | Tier | Purpose | Best for |
-|---|---|---|
+| --- | --- | --- |
 | **⬡ ozonelite** | Lean backend launcher | Minimal footprint, SSH boxes, direct-control users |
 | **⬡ ozone** | Autoprofile · Bench · Sweep · Analyze | Hardware optimization and repeatable tuning workflows |
 | **⬡ ozone+** | Chat shell with memory & sessions | Full local-LLM conversation experience |
 
-All three ship as a single binary:
+The family currently ships through two end-user binaries plus the launcher tier/handoff path:
 
 ```bash
-ozone --mode=lite   # ozonelite — launch/monitor only
-ozone               # ozone base — launch + profiling
-ozone --mode=plus   # ozone+ — full chat TUI
+ozone --mode=lite   # force the lite tier in the base launcher
+ozone               # base launcher / profiler
+ozone --mode=plus   # preselect the plus tier in the launcher
+ozone-plus          # open the ozone+ chat shell directly
 ozone --pick        # force tier picker
 ```
 
-Binary name detection: symlinking to `ozone-lite`, `ozone+`, or `oz+` auto-selects the tier.
+`./contrib/sync-local-install.sh` installs `ozone`, `ozone-plus`, and `ozone-mcp` together. GitHub Releases currently publish the full-featured base `ozone` artifact only.
+
+If you want one launcher entrypoint, symlinking `ozone` to `ozone-lite`, `ozone+`, or `oz+` still auto-selects the tier from the binary name.
 
 **Choose ozonelite if** you want the smallest possible footprint, you already know your backend settings, or you're running on a constrained or remote system.
 
@@ -62,7 +67,7 @@ Binary name detection: symlinking to `ozone-lite`, `ozone+`, or `oz+` auto-selec
 
 Ozone supports both [KoboldCpp](https://github.com/LostRuins/koboldcpp) and [llama.cpp](https://github.com/ggml-org/llama.cpp) as first-class backends. Both backends support the full profiling workflow (QuickSweep, FullSweep, SingleBenchmark, GenerateProfiles) and are interchangeable for ozone+ chat sessions.
 
-**KoboldCpp setup**
+#### KoboldCpp setup
 
 **Option A — prebuilt release (recommended for most users):**
 
@@ -86,7 +91,7 @@ make LLAMA_CUBLAS=1    # with NVIDIA CUDA
 
 The binary must exist at `~/koboldcpp/koboldcpp`. To use a different path, set `OZONE_KOBOLDCPP_LAUNCHER` (see [Environment Variables](#-environment-variables)).
 
-**llama.cpp setup**
+#### llama.cpp setup
 
 Install `llama-server` and `llama-cli` from a release, package manager, or source build, then make sure both binaries are on your `PATH`.
 
@@ -141,7 +146,7 @@ ln -s /path/to/ollama/blob ~/models/<model-name>.gguf
 
 > Note: Broken symlinks appear in the model picker as "issue report" entries and in `ozone model list` as `⚠ broken` rows. This is expected behavior, not a crash. Ozone reports the broken path so you can fix it.
 
-### 4. Build and Install Ozone
+### 4. Build and Install the Ozone Family
 
 ```bash
 git clone https://github.com/EricA1019/ozone.git
@@ -152,6 +157,18 @@ cd ozone
 This helper builds the current release artifacts for `ozone`, `ozone-plus`, and
 `ozone-mcp`, then updates both `~/.cargo/bin` and `~/.local/bin` only when the
 SHA-256 checksum changed.
+
+GitHub Releases are narrower on purpose: they currently package only the
+full-featured base `ozone` tarball. If you want the whole local family install,
+use the sync script or build the companion binaries from the workspace.
+
+The synced `ozone` binary is the full base launcher artifact, including
+profiling and `ozone model ...` commands.
+
+A plain `cargo build` or `cargo run -p ozone` keeps `default = []`, so source
+builds expose the lightweight launcher surface by default. Use
+`cargo build --release -p ozone --features full` or the sync script when you
+need the installable base command surface.
 
 Once you've synced from a repo once, launching an installed `ozone` or
 `ozone-plus` binary will notice when that repo's `target/release` artifact is
@@ -185,6 +202,10 @@ ozone model add --link /path/to/model.gguf
 ozone model remove <model>.gguf
 ```
 
+If you are running a source-built `ozone` binary directly, use
+`cargo build --release -p ozone --features full` to get the same base command
+surface as the installed launcher artifact.
+
 `ozone model list` is now the canonical model-inventory command. The older `ozone list` view still works as a lightweight catalog output, but it is deprecated in favor of `ozone model list`.
 
 ### 7. Developer automation with `ozone-mcp` (optional)
@@ -197,6 +218,11 @@ ozone-mcp
 cargo run -p ozone-mcp-app --bin ozone-mcp
 ```
 
+After changing `crates/ozone-mcp`, rebuild the real stdio entrypoint with
+`cargo build -p ozone-mcp-app` (or `cargo build --workspace` when your PTY
+flows also depend on fresh `ozone` / `ozone-plus` binaries). The front-door
+smoke helpers prefer `target/debug/*` artifacts when they already exist.
+
 First-cut tools include:
 
 - workspace/repo ops: `workspace_status`, `cargo_tool`, `catalog_list`, `preferences_get`
@@ -206,6 +232,87 @@ First-cut tools include:
 The server prefers direct crate APIs for persistence-heavy session work and uses explicit subprocess wrappers only for seams that still live in the end-user CLIs, such as runtime-backed `send`, `search`, and launcher PTY smoke flows.
 
 `mock_user_tool` is the front-door layer: it launches the real terminal binaries in a PTY and plays named scripted journeys like a user would, using only keys/text plus visible terminal markers instead of repo/API back doors.
+
+For capturable screen targets and the built-in launcher/ozone+ journeys, both
+`mock_user_tool` and `screenshot_tool` can auto-create the recommended temp-XDG
+sandbox when `sandboxId` is omitted. Pass an explicit `sandboxId` only when you
+need to keep custom sandbox state across multiple calls.
+
+### 8. Optional code graph with Graphify
+
+Graphify can map this repo into `graphify-out/` so Copilot can answer architecture and dependency questions from a persistent graph instead of repeatedly walking the full tree.
+
+Install or refresh the CLI and the user-level Copilot skill:
+
+```bash
+uv tool install --upgrade --force graphifyy
+graphify install --platform copilot
+```
+
+Build the first graph from Copilot Chat:
+
+```text
+/graphify .
+```
+
+This repo already ships a `.graphifyignore` tuned for Ozone (`target/`, `.git/`, `.mex/`, `graphify-out/`, `node_modules/`, and lockfiles stay out of the corpus). After the first graph exists, Ozone's existing `post-commit` and `post-merge` hooks will run a code-only `graphify update .` automatically when `graphify` is installed, so you do not need Graphify's separate git-hook installer here.
+
+The repo now leaves shareable `graphify-out/` artifacts trackable in git and ignores only local Graphify runtime files (`manifest.json`, `cost.json`, and `cache/`).
+
+Useful follow-up commands:
+
+```bash
+make graphify-refresh          # manual code-only refresh after refactors
+make graphify-scope SCOPE=ozone-tui-core  # tight production-only TUI core graph in tmp/graphify-scopes/
+graphify export callflow-html  # Mermaid architecture HTML from graphify-out/
+```
+
+For narrower architecture questions, the repo also ships `./contrib/graphify-scope.sh --list` plus `make graphify-scope SCOPE=<scope>` for isolated scoped graphs under `tmp/graphify-scopes/`. The highest-signal production-only TUI slice is `ozone-tui-core`, which sanitizes `lib.rs`, `layout.rs`, and `render/coordinator.rs` by stripping embedded `#[cfg(test)] mod tests` blocks before extraction so the graph emphasizes `run_event_loop()`, `build_layout_for_area()`, and `build_render_model()` instead of test scaffolding.
+
+When markdown docs, papers, or images change, rerun `/graphify . --update` from Copilot Chat so the semantic layer is refreshed too.
+
+---
+
+## ⬡ ozonelite — Backend Control
+
+ozonelite is the leanest tier: a purpose-built backend manager for users who want direct control without profiling suites or conversation UX. It starts fast, runs light, and is comfortable over SSH, tmux, and constrained Linux boxes.
+
+### What it does
+
+- **Launch** a KoboldCpp or llama.cpp backend with saved or one-shot settings
+- **Monitor** backend health, resource usage, and service status
+- **Stop/restart** backends cleanly
+- **Model selection** — pick from discovered models in `~/models/`
+
+### What it doesn't do
+
+ozonelite intentionally excludes:
+
+- Benchmarking, sweep, and autoprofiling workflows (use **ozone** for those)
+- Sessions, memory, character cards, and conversation UX (use **ozone+** for those)
+- Anything that adds overhead for features a backend operator doesn't need
+
+### Install
+
+```bash
+make install-lite    # stripped, LTO'd, panic=abort — smallest possible binary
+```
+
+The `release-lite` profile applies `opt-level="z"`, fat LTO, single codegen unit, symbol stripping, and `panic=abort` for a minimal footprint.
+
+### Run
+
+```bash
+ozone --mode=lite    # explicit mode flag
+ozone-lite           # symlink detection (create: ln -s ozone ozone-lite)
+```
+
+### When to choose ozonelite
+
+- You're on an SSH box or Raspberry Pi and want to manage a backend remotely
+- You already know your model and settings — you just need to launch and monitor
+- You want the smallest binary and fastest startup possible
+- You're scripting backend lifecycle and don't need interactive tuning
 
 ---
 
@@ -225,7 +332,7 @@ From the launcher main menu, choose **Profile**. Ozone will:
 
 ### Reading the advisory
 
-```
+```text
 Model: Pantheon-RP-Pure-22B-Q4_K_M.gguf
 Layers: 56 total
   GPU: 42 layers (fits within 10.2 GB free VRAM)
@@ -259,7 +366,7 @@ ozone clear             # stop GPU backends / runner processes
 
 Create `~/models/koboldcpp-presets.conf` to lock in tested settings:
 
-```
+```text
 # filename | gpu_layers | context_size | quant_kv | note
 my-model-7b.gguf      | -1 | 32768 | 1 | Full VRAM, 32K context
 big-model-22b.gguf    | 42 | 8192  | 1 | Mixed memory — 42/56 on GPU
@@ -270,6 +377,8 @@ big-model-22b.gguf    | 42 | 8192  | 1 | Mixed memory — 42/56 on GPU
 ## ⬡ ozone+ — Chat Shell
 
 ozone+ is a full terminal chat application built for local LLM workflows. It is persistent-first: your conversations, memories, and characters survive restarts.
+
+For chat generation, ozone+ currently supports **KoboldCpp** and **llama.cpp** endpoints. It does not use Ollama as a chat backend, so before your first send you should either start KoboldCpp or llama.cpp from `ozone` or point your ozone+ config/session URL at an already running supported endpoint.
 
 ### Sessions
 
@@ -286,7 +395,7 @@ If you prefer a short shell symlink, pointing `oz+` at the `ozone` binary also s
 ### TUI Keyboard Reference
 
 | Key | Action |
-|---|---|
+| --- | --- |
 | `Enter` | Send message |
 | `Esc` | Normal mode / cancel |
 | `i` | Insert mode (start typing) |
@@ -304,20 +413,18 @@ If you prefer a short shell symlink, pointing `oz+` at the `ozone` binary also s
 Type these in the input box:
 
 | Command | Effect |
-|---|---|
-| `/memory pin <text>` | Pin a freeform fact to persistent memory |
-| `/memory note <text>` | Create a keyword note memory |
-| `/memory list` | Show active pinned memories |
-| `/memory unpin <id>` | Remove a pinned memory |
-| `/search session <query>` | Full-text search this session's transcript |
-| `/search global <query>` | Full-text search across all sessions |
+| --- | --- |
+| `/memory note <text>` | Create a searchable note memory |
+| `/memory list` | Show saved memories, including pinned-message and note memories |
+| `/memory unpin <id>` | Remove a saved memory |
+| `/search session <query>` | Full-text search this session's messages plus saved memory text |
+| `/search global <query>` | Full-text search messages plus saved memory text across all sessions |
 | `/summarize session` | Generate a session synopsis |
-| `/summarize chunk` | Summarize the current context window |
-| `/thinking immersive` | Show AI thinking blocks inline |
+| `/thinking hidden` | Suppress thinking block display |
 | `/thinking assisted` | Show thinking as a collapsed summary |
 | `/thinking debug` | Show raw thinking output |
-| `/tierb on` | Enable Tier B assistive features (importance scoring, keyword extraction) |
-| `/tierb off` | Disable Tier B |
+| `/tierb status` | Show Tier B feature status |
+| `/tierb toggle` | Toggle Tier B features on/off |
 | `/safemode on` | Disable all Tier B and assistive features |
 | `/safemode off` | Re-enable assistive features |
 | `/hooks status` | Show loaded shell hooks |
@@ -328,9 +435,11 @@ Type these in the input box:
 ozone+ memory is **explicit and transparent**. Nothing is automatically retrieved without you seeing it.
 
 - **Pinned memories** persist across sessions and are injected into every prompt context. Use them for facts, character details, or world-state you want the model to always know.
-- **Note memories** are keyword-tagged notes you can search and retrieve on demand.
-- **Session search** finds messages in the current session by keyword.
-- **Global search** finds messages across all sessions, with session attribution.
+- **Note memories** are freeform saved notes. They appear in `/memory list`, stay available for keyword recall, and are retrieved on demand instead of being injected every turn.
+- **Session search** finds messages plus saved memory text in the current session by keyword.
+- **Global search** finds messages plus saved memory text across all sessions, with session attribution.
+
+Pinning an existing message is separate from note creation: use `Ctrl+K` in the TUI on the selected message, or `ozone-plus memory pin <session-id> <message-id>` from the CLI.
 
 All memories show their **provenance** — where they came from, when they were created, and how long they have been active.
 
@@ -349,12 +458,22 @@ ozone-plus export <session-id>            # JSON export
 ozone-plus export <session-id> --format markdown   # Markdown transcript
 ```
 
+### Settings
+
+The in-TUI Settings screen (accessible from the ozone launcher main menu) has **interactive entries** as of v0.4.8-alpha:
+
+- **Appearance** — cycle through theme presets: *Dark Mint* (default, `#2DAF82`), *Ozone Dark*, *High Contrast*
+- **Launch** — toggle side-by-side monitor mode; toggle inspector-on-start
+- **Display** — cycle timestamp style (Relative / Absolute / Off) and message density (Compact / Comfortable)
+
+Press `Enter` on any editable entry to advance its value. Changes persist to `~/.local/share/ozone/preferences.json` immediately.
+
 ---
 
 ## ⬡ Environment Variables
 
 | Variable | Effect |
-|---|---|
+| --- | --- |
 | `OZONE_KOBOLDCPP_LAUNCHER` | Override the KoboldCpp executable path. Use this when your KoboldCpp install is not at `~/koboldcpp/koboldcpp`, or when you need to point at a repaired or alternate build. Example: `OZONE_KOBOLDCPP_LAUNCHER=/opt/koboldcpp/koboldcpp ozone` |
 | `OZONE_LLAMACPP_SERVER` | Override the `llama-server` executable path used by the base launcher when `Backend = LlamaCpp`. Example: `OZONE_LLAMACPP_SERVER=/opt/llama.cpp/bin/llama-server ozone` |
 | `OZONE_LLAMACPP_CLI` | Override the `llama-cli` executable path used by `ozone model add --hf`. Example: `OZONE_LLAMACPP_CLI=/opt/llama.cpp/bin/llama-cli ozone model add --hf ggml-org/gemma-3-1b-it-GGUF` |
@@ -364,7 +483,7 @@ ozone-plus export <session-id> --format markdown   # Markdown transcript
 ## ⬡ Data Locations
 
 | Path | Contents |
-|---|---|
+| --- | --- |
 | `~/.local/share/ozone/` | Preferences, benchmark history, logs |
 | `~/.local/share/ozone-plus/` | Sessions, memory index, vector index |
 | `~/models/` | Model files, launch wrapper, presets |
@@ -373,7 +492,7 @@ ozone-plus export <session-id> --format markdown   # Markdown transcript
 
 ## ⬡ Troubleshooting
 
-**"Model not found" or broken model picker entries**
+### Model not found or broken model picker entries
 
 Your `~/models/` directory probably contains symlinks pointing to files that no longer exist (common with Ollama after a model is removed). Ozone reports these as `⚠ broken` rows in `ozone model list` and as "issue" entries in the picker rather than silently failing. Check the symlink targets:
 
@@ -381,7 +500,7 @@ Your `~/models/` directory probably contains symlinks pointing to files that no 
 ls -la ~/models/
 ```
 
-**KoboldCpp not launching**
+### KoboldCpp not launching
 
 Check the path: ozone expects `~/koboldcpp/koboldcpp` by default. If your install is elsewhere, set `OZONE_KOBOLDCPP_LAUNCHER`. If the binary exists but fails to start, run it directly to see the error:
 
@@ -389,7 +508,7 @@ Check the path: ozone expects `~/koboldcpp/koboldcpp` by default. If your instal
 ~/koboldcpp/koboldcpp --version
 ```
 
-**llama.cpp not launching from the base launcher**
+### llama.cpp not launching from the base launcher
 
 Make sure `llama-server` is available on `PATH` or point ozone at it explicitly:
 
@@ -398,7 +517,7 @@ llama-server --version
 OZONE_LLAMACPP_SERVER=/path/to/llama-server ozone
 ```
 
-**`ozone model add --hf` cannot find llama-cli**
+### `ozone model add --hf` cannot find llama-cli
 
 The HF import path now uses llama.cpp instead of `huggingface_hub`. Make sure `llama-cli` is installed and visible:
 
@@ -407,15 +526,15 @@ llama-cli --version
 OZONE_LLAMACPP_CLI=/path/to/llama-cli ozone model add --hf <repo> <filename>.gguf
 ```
 
-**"VRAM over budget" warning in autoprofiling**
+### VRAM over budget warning in autoprofiling
 
 This is expected for large models — it means the recommended GPU layer count exhausts free VRAM. Ozone shows it so you can lower `gpu_layers` manually. Start the benchmark anyway; KoboldCpp will report the actual VRAM used and you can compare.
 
-**Ollama backend still looks active after `ozone clear`**
+### Ollama backend still looks active after `ozone clear`
 
 `ozone clear` stops KoboldCpp and any directly managed Ollama runner subprocesses, but a supervised `ollama serve` daemon may still be listening afterward. Validate the actual process or port state instead of assuming the listener is gone.
 
-**ozone+ chat is slow or tokens appear one at a time with a long gap**
+### ozone+ chat is slow or tokens appear one at a time with a long gap
 
 This usually means the model is running in mixed-memory or CPU mode. Use autoprofiling to check whether your GPU layer recommendation fits within VRAM, or try a smaller/more quantized model.
 
@@ -448,7 +567,8 @@ See [CHANGELOG.md](CHANGELOG.md) for what changed.
 
 - Linux (tested on Ubuntu 24.04)
 - NVIDIA GPU with `nvidia-smi` in `$PATH` (CPU-only mode works without GPU)
-- KoboldCpp and/or Ollama
+- KoboldCpp and/or llama.cpp for profiling and ozone+ chat
+- Ollama only if you want base-ozone service control or to reuse local Ollama model blobs
 - Rust toolchain for building
 
 ---
@@ -465,4 +585,4 @@ See [CHANGELOG.md](CHANGELOG.md) for what changed.
 
 MIT
 
-**Contact:** ScribeALB@proton.me
+Contact: [ScribeALB@proton.me](mailto:ScribeALB@proton.me)

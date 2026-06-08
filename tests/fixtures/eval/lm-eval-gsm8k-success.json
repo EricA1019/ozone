@@ -1,0 +1,20 @@
+{
+  "results": {
+    "gsm8k": {
+      "name": "gsm8k",
+      "sample_len": 1,
+      "exact_match,strict-match": 1.0,
+      "exact_match,flexible-extract": 1.0
+    }
+  },
+  "config": {
+    "model": "local-completions",
+    "model_args": {
+      "model": "gemma-4-E4B-it-UD-Q8_K_XL.gguf",
+      "base_url": "http://127.0.0.1:8989/v1/completions",
+      "tokenizer_backend": null
+    }
+  },
+  "model_name": "gemma-4-E4B-it-UD-Q8_K_XL.gguf",
+  "lm_eval_version": "0.4.12"
+}

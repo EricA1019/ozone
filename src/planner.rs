@@ -1,11 +1,29 @@
 use crate::catalog::CatalogRecord;
-use crate::gguf;
 use crate::hardware::HardwareProfile;
+use crate::prefs::ModelLaunchOverride;
+
+const GGUF_METADATA_LABEL: &str = "GGUF metadata";
+#[cfg(not(any(feature = "profiling-ui", feature = "sweep")))]
+const SIZE_HEURISTIC_LABEL: &str = "Size heuristic";
 
 const MIB_PER_GIB: f64 = 1024.0;
 const VRAM_HEADROOM_RATIO: f64 = 0.9;
+pub const CONFIGURE_CONTEXT_STEPS: [u32; 8] = [4096, 8192, 16384, 24576, 32768, 49152, 65536, 262144];
 
 pub use ozone_core::planner::{LaunchPlan, RecommendationMode};
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigureWarningSeverity {
+    Info,
+    Warning,
+    Critical,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConfigureWarning {
+    pub severity: ConfigureWarningSeverity,
+    pub message: String,
+}
 
 pub fn estimate_total_layers(size_gb: f64) -> u32 {
     let s = size_gb.max(0.1);
@@ -147,13 +165,41 @@ pub fn recommend_threads(
     }
 }
 
+fn launch_topology(record: &CatalogRecord) -> (u32, String, Option<String>) {
+    let fallback_layers = estimate_total_layers(record.model_size_gb.max(0.1));
+    inspect_launch_topology(&record.model_path, fallback_layers)
+}
+
+#[cfg(any(feature = "profiling-ui", feature = "sweep"))]
+fn inspect_launch_topology(
+    model_path: &std::path::Path,
+    fallback_layers: u32,
+) -> (u32, String, Option<String>) {
+    let topology = crate::gguf::inspect_model_topology(model_path, fallback_layers);
+    (
+        topology.total_layers,
+        topology.source.label().to_string(),
+        topology.note,
+    )
+}
+
+#[cfg(not(any(feature = "profiling-ui", feature = "sweep")))]
+fn inspect_launch_topology(
+    _model_path: &std::path::Path,
+    fallback_layers: u32,
+) -> (u32, String, Option<String>) {
+    (
+        fallback_layers,
+        SIZE_HEURISTIC_LABEL.to_string(),
+        Some(
+            "Fast launch is using the size-based layer estimate because GGUF topology inspection is unavailable in this build."
+                .to_string(),
+        ),
+    )
+}
+
 pub fn plan_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
-    let total_layers = estimate_total_layers(record.model_size_gb.max(0.1));
-    let layer_source_label = gguf::TopologySource::SizeHeuristic.label().to_string();
-    let layer_source_note = Some(
-        "Fast launch still uses the size-based layer estimate; the enhanced layer-aware heuristic is currently scoped to profiling."
-            .to_string(),
-    );
+    let (total_layers, layer_source_label, layer_source_note) = launch_topology(record);
     plan_launch_with_layers(
         record,
         hw,
@@ -164,28 +210,225 @@ pub fn plan_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
     )
 }
 
-pub fn plan_profiling_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
-    let fallback_layers = estimate_total_layers(record.model_size_gb.max(0.1));
-    let topology = gguf::inspect_model_topology(&record.model_path, fallback_layers);
-    plan_launch_with_layers(
-        record,
-        hw,
-        topology.total_layers,
-        topology.source.label().to_string(),
-        topology.note,
-        true,
-    )
+pub fn step_context_size(current: u32, direction: i32) -> u32 {
+    let index = CONFIGURE_CONTEXT_STEPS
+        .iter()
+        .position(|value| *value == current)
+        .unwrap_or_else(|| {
+            CONFIGURE_CONTEXT_STEPS
+                .iter()
+                .position(|value| *value >= current)
+                .unwrap_or(CONFIGURE_CONTEXT_STEPS.len().saturating_sub(1))
+        }) as i32;
+    let next = (index + direction).clamp(0, CONFIGURE_CONTEXT_STEPS.len() as i32 - 1) as usize;
+    CONFIGURE_CONTEXT_STEPS[next]
 }
 
-pub fn plan_llamacpp_profiling_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
-    let fallback_layers = estimate_total_layers(record.model_size_gb.max(0.1));
-    let topology = gguf::inspect_model_topology(&record.model_path, fallback_layers);
+pub fn apply_launch_override(
+    recommended: &LaunchPlan,
+    record: &CatalogRecord,
+    hw: &HardwareProfile,
+    override_state: &ModelLaunchOverride,
+) -> LaunchPlan {
+    let recommended_gpu_layers = if recommended.gpu_layers < 0 {
+        recommended.total_layers as i32
+    } else {
+        recommended.gpu_layers
+    };
+    let context_size = override_state
+        .context_size
+        .unwrap_or(recommended.context_size)
+        .max(1024);
+    let gpu_layers = override_state
+        .gpu_layers
+        .unwrap_or(recommended_gpu_layers)
+        .clamp(0, recommended.total_layers as i32);
+    let mode = classify_mode(gpu_layers, recommended.total_layers);
+    let recommended_threads = recommend_threads(hw, &mode).0;
+    let threads = override_state
+        .threads
+        .or(recommended.threads)
+        .or(recommended_threads);
+    let cpu_layers = estimate_cpu_resident_layers(gpu_layers, recommended.total_layers);
+    let estimated_vram_mb = estimate_vram_mb(
+        context_size,
+        gpu_layers,
+        record.model_size_gb,
+        recommended.quant_kv,
+        recommended.total_layers,
+    );
+    let estimated_ram_mb = estimate_ram_mb(
+        context_size,
+        gpu_layers,
+        record.model_size_gb,
+        recommended.quant_kv,
+        recommended.total_layers,
+    );
+
+    let customized = context_size != recommended.context_size
+        || gpu_layers != recommended.gpu_layers
+        || threads != recommended.threads;
+
+    let rationale = if customized {
+        format!(
+            "Configure Hub override: {context_size} ctx, {gpu_layers} GPU layers, {cpu_layers} CPU-resident layers."
+        )
+    } else {
+        recommended.rationale.clone()
+    };
+
+    LaunchPlan {
+        context_size,
+        gpu_layers,
+        cpu_layers,
+        threads,
+        mode,
+        rationale,
+        estimated: recommended.estimated || customized,
+        estimated_vram_mb,
+        estimated_ram_mb,
+        ..recommended.clone()
+    }
+}
+
+pub fn apply_saved_profile(
+    recommended: &LaunchPlan,
+    record: &CatalogRecord,
+    hw: &HardwareProfile,
+    context_size: u32,
+    gpu_layers: i32,
+    quant_kv: u8,
+    threads: Option<u32>,
+) -> LaunchPlan {
+    let mut plan = apply_launch_override(
+        recommended,
+        record,
+        hw,
+        &ModelLaunchOverride {
+            context_size: Some(context_size),
+            gpu_layers: Some(gpu_layers),
+            threads,
+        },
+    );
+    if plan.quant_kv != quant_kv {
+        plan.quant_kv = quant_kv.max(1);
+        plan.estimated_vram_mb = estimate_vram_mb(
+            plan.context_size,
+            plan.gpu_layers,
+            record.model_size_gb,
+            plan.quant_kv,
+            plan.total_layers,
+        );
+        plan.estimated_ram_mb = estimate_ram_mb(
+            plan.context_size,
+            plan.gpu_layers,
+            record.model_size_gb,
+            plan.quant_kv,
+            plan.total_layers,
+        );
+        plan.rationale = format!(
+            "Saved profile override: {} ctx, {} GPU layers, {} CPU-resident layers, qkv {}.",
+            plan.context_size, plan.gpu_layers, plan.cpu_layers, plan.quant_kv
+        );
+    }
+    plan
+}
+
+pub fn build_configure_warnings(plan: &LaunchPlan, hw: &HardwareProfile) -> Vec<ConfigureWarning> {
+    let mut warnings = Vec::new();
+
+    if plan.context_size >= 16384 {
+        warnings.push(ConfigureWarning {
+            severity: ConfigureWarningSeverity::Info,
+            message: "High context increases KV-cache usage and startup memory pressure."
+                .to_string(),
+        });
+    }
+    if plan.context_size >= 24576 {
+        warnings.push(ConfigureWarning {
+            severity: ConfigureWarningSeverity::Warning,
+            message: "24k-32k context can be slower on smaller GPUs and may lean harder on RAM."
+                .to_string(),
+        });
+    }
+    if plan.context_size > 32768 {
+        warnings.push(ConfigureWarning {
+            severity: if plan.context_size >= 65536 {
+                ConfigureWarningSeverity::Critical
+            } else {
+                ConfigureWarningSeverity::Warning
+            },
+            message: if plan.context_size >= 65536 {
+                "Above 32k is experimental here; 64k+ context can heavily reduce throughput and may force aggressive CPU/RAM fallback."
+                    .to_string()
+            } else {
+                "Above 32k is high-risk; expect noticeably slower generations and much higher KV-cache pressure."
+                    .to_string()
+            },
+        });
+    }
+    if plan.cpu_layers > 0 {
+        warnings.push(ConfigureWarning {
+            severity: if plan.cpu_layers > plan.total_layers / 2 {
+                ConfigureWarningSeverity::Warning
+            } else {
+                ConfigureWarningSeverity::Info
+            },
+            message: format!(
+                "{} of {} layers will stay on CPU; this is slower but can make larger context sizes fit.",
+                plan.cpu_layers, plan.total_layers
+            ),
+        });
+    }
+
+    if let Some(gpu) = hw.gpu.as_ref() {
+        let budget_mb = (gpu.free_mb as f64 * VRAM_HEADROOM_RATIO) as u32;
+        if plan.estimated_vram_mb > gpu.total_mb as u32 {
+            warnings.push(ConfigureWarning {
+                severity: ConfigureWarningSeverity::Critical,
+                message: format!(
+                    "Estimated VRAM {} MiB exceeds total detected GPU memory {} MiB.",
+                    plan.estimated_vram_mb, gpu.total_mb
+                ),
+            });
+        } else if plan.estimated_vram_mb > budget_mb {
+            warnings.push(ConfigureWarning {
+                severity: ConfigureWarningSeverity::Warning,
+                message: format!(
+                    "Estimated VRAM {} MiB is above the safe free-memory budget {} MiB.",
+                    plan.estimated_vram_mb, budget_mb
+                ),
+            });
+        }
+    }
+
+    let safe_ram_budget = (hw.ram_free_mb as f64 * 0.95) as u32;
+    if hw.ram_free_mb > 0 && plan.estimated_ram_mb > safe_ram_budget {
+        warnings.push(ConfigureWarning {
+            severity: if plan.estimated_ram_mb > hw.ram_total_mb as u32 {
+                ConfigureWarningSeverity::Critical
+            } else {
+                ConfigureWarningSeverity::Warning
+            },
+            message: format!(
+                "Estimated RAM {} MiB is close to or above currently free system RAM {} MiB.",
+                plan.estimated_ram_mb, hw.ram_free_mb
+            ),
+        });
+    }
+
+    warnings
+}
+
+#[cfg(feature = "profiling-ui")]
+pub fn plan_profiling_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
+    let (total_layers, layer_source_label, layer_source_note) = launch_topology(record);
     plan_launch_with_layers(
         record,
         hw,
-        topology.total_layers,
-        topology.source.label().to_string(),
-        topology.note,
+        total_layers,
+        layer_source_label,
+        layer_source_note,
         true,
     )
 }
@@ -232,7 +475,7 @@ fn plan_launch_with_layers(
         gpu_layers
     };
 
-    let layer_prefix = if layer_source_label == gguf::TopologySource::GgufMetadata.label() {
+    let layer_prefix = if layer_source_label == GGUF_METADATA_LABEL {
         format!("GGUF metadata reports {total_layers} layers. ")
     } else {
         format!("Ozone estimated {total_layers} total layers from model size. ")
@@ -335,6 +578,7 @@ fn plan_launch_with_layers(
 }
 
 #[cfg(test)]
+#[cfg(feature = "profiling-ui")]
 mod tests {
     use super::*;
     use crate::catalog::{RecSource, Recommendation};
@@ -395,6 +639,32 @@ mod tests {
     }
 
     #[test]
+    fn fast_launch_uses_metadata_layers() {
+        let path = temp_gguf_path();
+        write_metadata_file(&path);
+        let record = sample_record(path.clone(), 7.0);
+        let hw = HardwareProfile {
+            gpu: Some(crate::hardware::GpuMemory {
+                used_mb: 1000,
+                free_mb: 16000,
+                total_mb: 17000,
+            }),
+            ram_total_mb: 32000,
+            ram_free_mb: 24000,
+            ram_used_mb: 8000,
+            cpu_logical: 8,
+            cpu_physical: 4,
+        };
+
+        let plan = plan_launch(&record, &hw);
+        assert_eq!(plan.total_layers, 40);
+        assert_eq!(plan.cpu_layers, 0);
+        assert_eq!(plan.layer_source_label, "GGUF metadata");
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
     fn profiling_plan_uses_metadata_layers() {
         let path = temp_gguf_path();
         write_metadata_file(&path);
@@ -437,5 +707,144 @@ mod tests {
         assert_eq!(plan.cpu_layers, plan.total_layers);
         assert_eq!(plan.mode, RecommendationMode::CpuOnly);
         assert_eq!(plan.layer_source_label, "Size heuristic");
+    }
+}
+
+#[cfg(test)]
+mod configure_tests {
+    use super::{
+        apply_launch_override, apply_saved_profile, build_configure_warnings, classify_mode,
+        step_context_size, ConfigureWarningSeverity, LaunchPlan, RecommendationMode,
+    };
+    use crate::{
+        catalog::{CatalogRecord, RecSource, Recommendation},
+        hardware::{GpuMemory, HardwareProfile},
+        prefs::ModelLaunchOverride,
+    };
+    use std::path::PathBuf;
+
+    fn sample_record() -> CatalogRecord {
+        CatalogRecord {
+            model_name: "sample.gguf".into(),
+            model_path: PathBuf::from("/tmp/sample.gguf"),
+            model_size_gb: 7.0,
+            recommendation: Recommendation {
+                context_size: 4096,
+                gpu_layers: 24,
+                quant_kv: 1,
+                note: "sample".into(),
+                source: RecSource::Heuristic,
+            },
+            benchmark: None,
+            benchmark_count: 0,
+            source_priority: 0,
+        }
+    }
+
+    fn sample_hw() -> HardwareProfile {
+        HardwareProfile {
+            gpu: Some(GpuMemory {
+                used_mb: 1000,
+                free_mb: 9000,
+                total_mb: 12000,
+            }),
+            ram_total_mb: 32000,
+            ram_free_mb: 18000,
+            ram_used_mb: 14000,
+            cpu_logical: 8,
+            cpu_physical: 4,
+        }
+    }
+
+    fn sample_plan() -> LaunchPlan {
+        LaunchPlan {
+            model_name: "sample.gguf".into(),
+            context_size: 4096,
+            gpu_layers: 24,
+            total_layers: 32,
+            cpu_layers: 8,
+            quant_kv: 1,
+            threads: Some(4),
+            blas_threads: Some(2),
+            mode: RecommendationMode::MixedMemory,
+            rationale: "sample".into(),
+            estimated: false,
+            estimated_vram_mb: 4096,
+            estimated_ram_mb: 6144,
+            source: "heuristic".into(),
+            layer_source_label: "Size heuristic".into(),
+            layer_source_note: None,
+        }
+    }
+
+    #[test]
+    fn configure_override_recomputes_context_layers_and_mode() {
+        let record = sample_record();
+        let hw = sample_hw();
+        let plan = apply_launch_override(
+            &sample_plan(),
+            &record,
+            &hw,
+            &ModelLaunchOverride {
+                context_size: Some(16384),
+                gpu_layers: Some(8),
+                threads: None,
+            },
+        );
+
+        assert_eq!(plan.context_size, 16384);
+        assert_eq!(plan.gpu_layers, 8);
+        assert_eq!(plan.cpu_layers, 24);
+        assert_eq!(plan.mode, classify_mode(8, 32));
+        assert!(plan.rationale.contains("Configure Hub override"));
+    }
+
+    #[test]
+    fn configure_warnings_flag_large_context_and_pressure() {
+        let warnings = build_configure_warnings(
+            &LaunchPlan {
+                context_size: 65536,
+                estimated_vram_mb: 14000,
+                estimated_ram_mb: 24000,
+                cpu_layers: 20,
+                ..sample_plan()
+            },
+            &sample_hw(),
+        );
+
+        assert!(warnings
+            .iter()
+            .any(|warning| warning.message.contains("24k-32k context")));
+        assert!(warnings
+            .iter()
+            .any(|warning| warning.message.contains("Above 32k")));
+        assert!(warnings
+            .iter()
+            .any(|warning| warning.severity == ConfigureWarningSeverity::Critical));
+    }
+
+    #[test]
+    fn saved_profile_recomputes_quant_and_memory_estimates() {
+        let record = sample_record();
+        let hw = sample_hw();
+        let plan = apply_saved_profile(&sample_plan(), &record, &hw, 8192, 12, 2, Some(6));
+
+        assert_eq!(plan.context_size, 8192);
+        assert_eq!(plan.gpu_layers, 12);
+        assert_eq!(plan.quant_kv, 2);
+        assert_eq!(plan.threads, Some(6));
+        assert!(plan.rationale.contains("Saved profile override"));
+        assert!(plan.estimated_vram_mb > 0);
+        assert!(plan.estimated_ram_mb > 0);
+    }
+
+    #[test]
+    fn context_stepper_clamps_at_supported_bounds() {
+        assert_eq!(step_context_size(4096, -1), 4096);
+        assert_eq!(step_context_size(4096, 1), 8192);
+        assert_eq!(step_context_size(32768, 1), 49152);
+        assert_eq!(step_context_size(49152, 1), 65536);
+        assert_eq!(step_context_size(65536, 1), 262144);
+        assert_eq!(step_context_size(262144, 1), 262144);
     }
 }

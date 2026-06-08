@@ -1,5 +1,5 @@
 //! Shared CLI output helpers for consistent terminal formatting across
-//! all Ozone binaries (`ozone`, `ozone-plus`).
+//! Ozone binaries.
 //!
 //! Uses Unicode box-drawing characters and the ⬡ brand glyph.
 //! No ANSI color codes — keeps output clean when piped to files or CI logs.

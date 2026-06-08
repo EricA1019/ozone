@@ -7,16 +7,15 @@ use std::time::{Duration, Instant};
 /// Which inference backend to run the benchmark against.
 #[derive(Debug, Clone)]
 pub enum BenchBackend {
-    KoboldCpp { launcher_path: std::path::PathBuf },
-    LlamaCpp  { server_path: std::path::PathBuf },
+    LlamaCpp { server_path: std::path::PathBuf },
 }
+
+const BENCH_LLAMACPP_HOST: &str = "127.0.0.1";
+const BENCH_LLAMACPP_PORT: &str = "8989";
 
 impl BenchBackend {
     pub fn display_name(&self) -> &'static str {
-        match self {
-            BenchBackend::KoboldCpp { .. } => "KoboldCpp",
-            BenchBackend::LlamaCpp  { .. } => "llama.cpp",
-        }
+        "llama.cpp"
     }
 }
 
@@ -40,7 +39,6 @@ const API_TIMEOUT_SECS: u64 = 180;
 
 #[derive(Debug, Clone)]
 pub struct BenchProgress {
-    pub stage: &'static str,
     pub message: String,
 }
 
@@ -56,10 +54,40 @@ pub struct BenchResult {
     pub status: String,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct BenchmarkStoreRequest<'a> {
+    pub model_name: &'a str,
+    pub model_size_gb: f64,
+    pub gpu_layers: i32,
+    pub context_size: u32,
+    pub quant_kv: u32,
+    pub threads: u32,
+    pub launch_profile_name: Option<&'a str>,
+}
+
+fn build_llamacpp_bench_args(
+    gpu_layers: i32,
+    context_size: u32,
+    threads: Option<u32>,
+) -> Vec<String> {
+    vec![
+        "--host".into(),
+        BENCH_LLAMACPP_HOST.into(),
+        "--port".into(),
+        BENCH_LLAMACPP_PORT.into(),
+        "--n-gpu-layers".into(),
+        gpu_layers.to_string(),
+        "--ctx-size".into(),
+        context_size.to_string(),
+        "--threads".into(),
+        threads.unwrap_or(8).to_string(),
+    ]
+}
+
 /// Run a single benchmark: clear → launch → generate → measure → kill → store.
 pub async fn run_benchmark(
     model_name: &str,
-    _model_path: &std::path::Path,
+    model_path: &std::path::Path,
     backend: &BenchBackend,
     gpu_layers: i32,
     context_size: u32,
@@ -68,7 +96,7 @@ pub async fn run_benchmark(
 ) -> Result<BenchResult> {
     run_benchmark_with_progress(
         model_name,
-        _model_path,
+        model_path,
         backend,
         gpu_layers,
         context_size,
@@ -81,8 +109,8 @@ pub async fn run_benchmark(
 
 #[allow(clippy::too_many_arguments)]
 pub async fn run_benchmark_with_progress<F>(
-    model_name: &str,
-    _model_path: &std::path::Path,
+    _model_name: &str,
+    model_path: &std::path::Path,
     backend: &BenchBackend,
     gpu_layers: i32,
     context_size: u32,
@@ -95,7 +123,6 @@ where
 {
     // Step 1: Clear existing backends
     on_progress(BenchProgress {
-        stage: "clear",
         message: "Clearing GPU backends…".into(),
     });
     processes::clear_gpu_backends().await?;
@@ -103,43 +130,14 @@ where
 
     // Step 2: Launch the selected backend
     on_progress(BenchProgress {
-        stage: "launch",
         message: format!("Launching {}…", backend.display_name()),
     });
 
     match backend {
-        BenchBackend::KoboldCpp { launcher_path } => {
-            let mut args: Vec<String> = vec![
-                "--gpulayers".into(),
-                gpu_layers.to_string(),
-                "--contextsize".into(),
-                context_size.to_string(),
-                "--quantkv".into(),
-                quant_kv.to_string(),
-            ];
-            if let Some(t) = threads {
-                args.push("--threads".into());
-                args.push(t.to_string());
-                args.push("--blasthreads".into());
-                args.push(t.to_string());
-            }
-            processes::start_kobold(launcher_path, model_name, &args)
-                .await
-                .map_err(|e| anyhow!("Launch failed: {e}"))?;
-        }
         BenchBackend::LlamaCpp { server_path } => {
-            let mut args: Vec<String> = vec![
-                "--n-gpu-layers".into(),
-                gpu_layers.to_string(),
-                "--ctx-size".into(),
-                context_size.to_string(),
-                "--threads".into(),
-                threads.unwrap_or(8).to_string(),
-            ];
-            // llama.cpp server needs a port argument
-            args.push("--port".into());
-            args.push("8080".into());
-            processes::start_llamacpp(server_path, model_name, &args)
+            let args = build_llamacpp_bench_args(gpu_layers, context_size, threads);
+            let _ = quant_kv;
+            processes::start_llamacpp(server_path, &model_path.to_string_lossy(), &args)
                 .await
                 .map_err(|e| anyhow!("Launch failed: {e}"))?;
         }
@@ -147,15 +145,11 @@ where
 
     // Step 3: Confirm model is loaded
     let loaded_model = match backend {
-        BenchBackend::KoboldCpp { .. } => processes::get_kobold_model()
-            .await
-            .ok_or_else(|| anyhow!("{} launched but model not available via API", backend.display_name()))?,
         BenchBackend::LlamaCpp { .. } => processes::get_llamacpp_model()
             .await
             .ok_or_else(|| anyhow!("llama.cpp launched but model not available via API"))?,
     };
     on_progress(BenchProgress {
-        stage: "ready",
         message: format!("Model loaded: {loaded_model}"),
     });
 
@@ -164,12 +158,10 @@ where
 
     // Step 5: Run generation benchmark
     on_progress(BenchProgress {
-        stage: "generate",
         message: format!("Running generation benchmark ({BENCH_MAX_TOKENS} tokens)…"),
     });
     let gen_result = match backend {
-        BenchBackend::KoboldCpp { .. } => run_kobold_generation().await,
-        BenchBackend::LlamaCpp { .. }  => run_llamacpp_generation().await,
+        BenchBackend::LlamaCpp { .. } => run_llamacpp_generation().await,
     };
 
     // Step 6: Snapshot VRAM during/after generation
@@ -186,7 +178,6 @@ where
 
     // Step 8: Kill backend
     on_progress(BenchProgress {
-        stage: "stop",
         message: format!("Stopping {}…", backend.display_name()),
     });
     processes::clear_gpu_backends().await?;
@@ -228,81 +219,6 @@ struct GenerationResult {
     ttft_ms: u32,
     token_count: u32,
     total_ms: u32,
-}
-
-async fn run_kobold_generation() -> Result<GenerationResult> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(API_TIMEOUT_SECS))
-        .build()?;
-
-    let payload = serde_json::json!({
-        "prompt": BENCH_PROMPT,
-        "max_length": BENCH_MAX_TOKENS,
-        "temperature": 0.7,
-        "top_p": 0.9,
-    });
-
-    let start = Instant::now();
-    let resp = client
-        .post(ozone_core::paths::koboldcpp_generate_url())
-        .json(&payload)
-        .send()
-        .await
-        .map_err(|e| anyhow!("Generation request failed: {e}"))?;
-
-    let total_elapsed = start.elapsed();
-
-    if !resp.status().is_success() {
-        let status = resp.status();
-        let body = resp.text().await.unwrap_or_default();
-        return Err(anyhow!("Generation failed (HTTP {status}): {body}"));
-    }
-
-    let data: serde_json::Value = resp
-        .json()
-        .await
-        .map_err(|e| anyhow!("Failed to parse generation response: {e}"))?;
-
-    // KoboldCpp returns {"results": [{"text": "..."}]}
-    let text = data["results"]
-        .as_array()
-        .and_then(|a| a.first())
-        .and_then(|r| r["text"].as_str())
-        .unwrap_or("");
-
-    // Estimate token count from text length (rough: ~4 chars per token for English)
-    let token_count = (text.len() as f64 / 4.0).round().max(1.0) as u32;
-    let total_ms = total_elapsed.as_millis() as u32;
-
-    // Try to get more accurate perf data from KoboldCpp's perf endpoint
-    let (final_tps, ttft_ms) = if let Some(perf_tps) = processes::get_kobold_perf().await {
-        // Perf endpoint gives us accurate tokens/sec
-        // TTFT estimation: total_time - (tokens / tps * 1000)
-        let gen_time_ms = if perf_tps > 0.0 {
-            (token_count as f64 / perf_tps * 1000.0) as u32
-        } else {
-            total_ms
-        };
-        let ttft = total_ms.saturating_sub(gen_time_ms);
-        (perf_tps, ttft)
-    } else {
-        // Fallback: estimate from wall clock
-        let tps = if total_ms > 0 {
-            token_count as f64 / (total_ms as f64 / 1000.0)
-        } else {
-            0.0
-        };
-        // Rough TTFT: assume first token takes ~20% of total time for small generations
-        let ttft = (total_ms as f64 * 0.15) as u32;
-        (tps, ttft)
-    };
-
-    Ok(GenerationResult {
-        tokens_per_sec: final_tps,
-        ttft_ms,
-        token_count,
-        total_ms,
-    })
 }
 
 async fn run_llamacpp_generation() -> Result<GenerationResult> {
@@ -394,13 +310,12 @@ async fn run_llamacpp_generation() -> Result<GenerationResult> {
 }
 
 /// Store a benchmark result in the database.
-pub fn store_result(
-    model_name: &str,
-    model_size_gb: f64,
-    gpu_layers: i32,
-    context_size: u32,
-    quant_kv: u32,
-    threads: u32,
+pub fn store_result(request: BenchmarkStoreRequest<'_>, result: &BenchResult) -> Result<i64> {
+    store_result_with_profile(request, result)
+}
+
+pub fn store_result_with_profile(
+    request: BenchmarkStoreRequest<'_>,
     result: &BenchResult,
 ) -> Result<i64> {
     let conn = db::open()?;
@@ -409,13 +324,12 @@ pub fn store_result(
     let gpu_vram_mb = hw.gpu.as_ref().map(|g| g.total_mb as u32).unwrap_or(0);
 
     let row = BenchmarkRow {
-        id: None,
-        model_name: model_name.to_string(),
-        model_size_gb,
-        gpu_layers,
-        context_size,
-        quant_kv,
-        threads,
+        model_name: request.model_name.to_string(),
+        model_size_gb: request.model_size_gb,
+        gpu_layers: request.gpu_layers,
+        context_size: request.context_size,
+        quant_kv: request.quant_kv,
+        threads: request.threads,
         tokens_per_sec: result.tokens_per_sec,
         time_to_first_token_ms: result.time_to_first_token_ms,
         vram_peak_mb: result.vram_peak_mb,
@@ -428,6 +342,7 @@ pub fn store_result(
         ram_total_mb: hw.ram_total_mb as u32,
         timestamp: chrono::Local::now().to_rfc3339(),
         notes: String::new(),
+        launch_profile_name: request.launch_profile_name.map(str::to_string),
     };
     db::insert_benchmark(&conn, &row)
 }

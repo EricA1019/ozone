@@ -8,6 +8,8 @@ pub mod engine;
 pub mod install;
 pub mod planner;
 pub mod session;
+pub mod prefs;
+pub mod hardware;
 
 pub mod product {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -37,8 +39,8 @@ pub mod product {
         pub const fn status_label(self) -> &'static str {
             match self {
                 Self::Ozonelite => "Planned",
-                Self::Ozone => "v0.4.2-alpha",
-                Self::OzonePlus => "v0.4.2-alpha",
+                Self::Ozone => "v0.4.8-alpha",
+                Self::OzonePlus => "v0.4.8-alpha",
             }
         }
     }
@@ -61,7 +63,7 @@ pub mod paths {
     const ENV_MODELS_DIR: &str = "OZONE_MODELS_DIR";
     const ENV_KOBOLDCPP_LAUNCHER: &str = "OZONE_KOBOLDCPP_LAUNCHER";
     const DEFAULT_KOBOLDCPP_PORT: u16 = 5001;
-    const DEFAULT_LLAMACPP_PORT: u16 = 8080;
+    const DEFAULT_LLAMACPP_PORT: u16 = 8989;
 
     fn project_dirs() -> Option<ProjectDirs> {
         ProjectDirs::from("", "", "ozone")
@@ -85,6 +87,16 @@ pub mod paths {
     /// Returns the preset file path inside the models directory.
     pub fn presets_path() -> PathBuf {
         models_dir().join("koboldcpp-presets.conf")
+    }
+
+    /// Backwards-compatible alias for the shared preset file path.
+    pub fn catalog_preset_path() -> PathBuf {
+        presets_path()
+    }
+
+    /// Alias for the runtime profiles / presets file path.
+    pub fn runtime_profiles_path() -> PathBuf {
+        presets_path()
     }
 
     /// Returns the launch wrapper path. Respects `OZONE_KOBOLDCPP_LAUNCHER`,
@@ -146,6 +158,11 @@ pub mod paths {
         data_dir().map(|path| path.join("llamacpp.log"))
     }
 
+    /// Managed llama.cpp launch-state marker written by `src/processes.rs`.
+    pub fn llamacpp_launch_state_path() -> Option<PathBuf> {
+        data_dir().map(|path| path.join("launcher-state.json"))
+    }
+
     pub fn global_db_path() -> Option<PathBuf> {
         data_dir().map(|path| path.join(GLOBAL_DB_FILE_NAME))
     }
@@ -188,12 +205,12 @@ mod tests {
     fn product_tiers_expose_stable_metadata() {
         let cases = [
             (ProductTier::Ozonelite, "ozonelite", "ozonelite", "Planned"),
-            (ProductTier::Ozone, "ozone", "ozone", "v0.4.2-alpha"),
+            (ProductTier::Ozone, "ozone", "ozone", "v0.4.8-alpha"),
             (
                 ProductTier::OzonePlus,
                 "ozone+",
                 "ozone-plus",
-                "v0.4.2-alpha",
+                "v0.4.8-alpha",
             ),
         ];
 
@@ -234,9 +251,14 @@ mod tests {
             paths::kobold_log_path(),
             data_dir.clone().map(|path| path.join("koboldcpp.log"))
         );
+        assert_eq!(paths::catalog_preset_path(), paths::presets_path());
         assert_eq!(
             paths::llamacpp_log_path(),
             data_dir.clone().map(|path| path.join("llamacpp.log"))
+        );
+        assert_eq!(
+            paths::llamacpp_launch_state_path(),
+            data_dir.clone().map(|path| path.join("launcher-state.json"))
         );
         assert_eq!(
             paths::global_db_path(),
@@ -277,7 +299,7 @@ mod tests {
             paths::koboldcpp_ready_url(),
             "http://127.0.0.1:5001/api/v1/model"
         );
-        assert_eq!(paths::llamacpp_base_url(), "http://127.0.0.1:8080");
-        assert_eq!(paths::llamacpp_ready_url(), "http://127.0.0.1:8080/health");
+        assert_eq!(paths::llamacpp_base_url(), "http://127.0.0.1:8989");
+        assert_eq!(paths::llamacpp_ready_url(), "http://127.0.0.1:8989/health");
     }
 }

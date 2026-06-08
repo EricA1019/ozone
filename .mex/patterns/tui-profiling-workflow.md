@@ -49,9 +49,11 @@ The profiling path is intentionally separate from the fast launch path.
 - `bench` and `sweep` clear GPU backends before they run; the TUI must warn before destructive profiling steps.
 - Broken `.gguf` symlinks may still appear in the catalog. Validate selected models before starting work and route bad selections into the failure-report screen.
 - The profiling heuristic can now be more detailed than the normal launch heuristic; keep profiling-only topology logic in the profiling path until the fast-launch planner is intentionally upgraded too.
+- The requested profiling backend must flow from UI prefs into `WorkflowRequest.profiling_backend` and be honored inside `run_workflow`; do not silently auto-select a different backend at execution time or the success/failure screens will describe a path the runtime did not actually use.
 - Do not let the TUI parse printed CLI text. Add structured return/progress types instead.
 - Keep the UX review-first: success screens may offer generate/export/launch, but they should not apply those automatically.
 - `tokio::sync::mpsc::UnboundedReceiver` lives in `App`, so event draining must happen before drawing/handling keypresses each loop.
+- The release-truth validation for this slice is the full-feature base artifact, not the lean default build: run `cargo clippy --release -p ozone --features full -- -D warnings` and `cargo test -p ozone --features full` before calling the profiling workflow clean.
 
 ## Verify
 

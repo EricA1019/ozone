@@ -7,6 +7,7 @@ Thanks for wanting to improve Ozone. This is a focused tool family — contribut
 - **Check existing issues first.** If there isn't one for your change, open one so we can discuss before you write code.
 - **Keep it focused.** One fix or feature per PR. If your change touches five unrelated things, split it up.
 - **Test on real hardware.** Ozone's core value is correct mixed-memory planning on an actual NVIDIA + RAM setup. Changes to `src/planner.rs`, `src/hardware.rs`, or `src/processes.rs` need to be tested against a real model, not just compiled.
+- **Target `dev` for feature work.** Branch from `dev` and open your PR back to `dev`. Only release merges from `dev` and urgent hotfixes should target `main`.
 
 ## What's in scope
 
@@ -19,7 +20,7 @@ Thanks for wanting to improve Ozone. This is a focused tool family — contribut
 
 ## What's out of scope
 
-- Support for vLLM, llama.cpp-direct, or other inference backends beyond KoboldCpp and Ollama — this needs an abstraction layer first; open an issue to discuss
+- Support for vLLM, llama.cpp-direct, or other inference backends beyond KoboldCpp, llama.cpp, and Ollama — this needs an abstraction layer first; open an issue to discuss
 - GUI or web frontend
 - Breaking changes to the preset, benchmark, or session file formats without a migration path
 
@@ -45,8 +46,11 @@ crates/
 
 ```bash
 cargo build                            # debug build (all crates)
-cargo build --workspace --release      # release build
+cargo build --workspace --release      # release build (workspace outputs)
+cargo build --release -p ozone --features full
+cargo build --release -p ozone-plus -p ozone-mcp-app
 ./contrib/sync-local-install.sh        # release build + checksum-aware local install sync
+./contrib/prune-build-artifacts.sh     # prune rebuildable build outputs, keep current binaries
 cargo clippy --workspace --all-targets # lints
 cargo test --workspace                 # all tests
 ```
@@ -54,15 +58,36 @@ cargo test --workspace                 # all tests
 Build just one target:
 
 ```bash
-cargo build -p ozone            # base launcher only
+cargo build -p ozone --release --features full   # installable base launcher artifact
 cargo build -p ozone-plus       # ozone+ binary only
+cargo build -p ozone-mcp-app    # ozone-mcp stdio binary only
 ```
+
+For front-door PTY smoke work, prefer `cargo build --workspace` or at least
+`cargo build -p ozone -p ozone-plus -p ozone-mcp-app` so `mock_user_tool` and
+`screenshot_tool` do not reuse stale `target/debug` binaries.
 
 The project uses stable Rust. No nightly features.
 
+## Build artifact hygiene
+
+Cargo outputs in this repo can grow quickly, especially when switching profiles
+or using alternate `RUSTFLAGS` for linker workarounds. Do not keep every old
+artifact forever.
+
+- Use `./contrib/prune-build-artifacts.sh` after big live-test / build sessions
+  or whenever `target/` grows unexpectedly.
+- Default pruning keeps the current top-level binaries in `target/debug` and
+  `target/release`, but removes heavyweight rebuildable state like `deps`,
+  `incremental`, `build`, `.fingerprint`, docs, and `release-lite`.
+- Use `./contrib/prune-build-artifacts.sh --dry-run` first when you want to see
+  what would be reclaimed.
+- Use `--full` only when you intentionally want a near-`cargo clean` reset.
+
 ## Code style
 
-- Run `cargo clippy` before submitting. Fix all warnings.
+- Run `make lint` (or `cargo clippy --workspace --all-targets -- -D warnings`) before submitting. Fix all warnings — **zero warnings is enforced**.
+- Run `make preflight` before every commit — it runs lint + test in sequence and confirms everything passes.
 - No `unwrap()` in paths that can fail at runtime — use `?` or log and continue.
 - Keep `unsafe` out unless there's a real reason.
 - Comments only where the code doesn't speak for itself.
@@ -93,8 +118,7 @@ docs(readme): document CPU-only mode and OZONE_KOBOLDCPP_LAUNCHER
 
 Before marking a PR ready for review:
 
-- [ ] `cargo clippy --workspace` passes with no warnings
-- [ ] `cargo test --workspace` passes
+- [ ] `make preflight` passes (runs lint + test in one command)
 - [ ] Tested against a real model on real hardware (for anything touching planner/hardware/processes/inference)
 - [ ] Commit messages follow the format above
 - [ ] PR description explains what changed and why

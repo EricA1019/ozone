@@ -140,14 +140,21 @@ impl KeywordExtractor {
     pub fn extract(&self, text: &str) -> Vec<String> {
         use std::collections::HashMap;
         let lower = text.to_lowercase();
-        let mut freq: HashMap<&str, usize> = HashMap::new();
-        for word in lower.split(|c: char| !c.is_alphanumeric()) {
+        let mut freq: HashMap<&str, (usize, usize)> = HashMap::new();
+        for (index, word) in lower.split(|c: char| !c.is_alphanumeric()).enumerate() {
             if word.len() >= self.min_word_len && !self.stop_words.contains(&word) {
-                *freq.entry(word).or_insert(0) += 1;
+                let entry = freq.entry(word).or_insert((0, index));
+                entry.0 += 1;
             }
         }
         let mut pairs: Vec<_> = freq.into_iter().collect();
-        pairs.sort_by_key(|b| std::cmp::Reverse(b.1));
+        pairs.sort_by(|left, right| {
+            right
+                .1
+                 .0
+                .cmp(&left.1 .0)
+                .then_with(|| left.1 .1.cmp(&right.1 .1))
+        });
         pairs
             .into_iter()
             .take(self.max_keywords)
@@ -212,5 +219,12 @@ mod tests {
         let ex = KeywordExtractor::new();
         let content = ex.to_retrieval_key("Alice loves chocolate cake");
         assert!(matches!(content, MemoryContent::RetrievalKey { .. }));
+    }
+
+    #[test]
+    fn extractor_preserves_first_seen_order_for_equal_counts() {
+        let ex = KeywordExtractor::new();
+        let kws = ex.extract("koboldcpp launch failure ubuntu koboldcpp cuda launch");
+        assert_eq!(kws[..4], ["koboldcpp", "launch", "failure", "ubuntu"]);
     }
 }

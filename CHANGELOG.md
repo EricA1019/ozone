@@ -1,3 +1,5 @@
+<!-- Versioning: bump PATCH at named sprints; git hash covers small changes; 0.5.x = beta. See .mex/conventions/versioning.md -->
+
 # Changelog
 
 All notable changes to Ozone are documented here.
@@ -6,7 +8,79 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ---
 
+## [0.4.8-alpha] — ozone+ Hardening + MCP Front-Door Automation
+
+### Fixed
+- ozone+ Display settings now map visual entries to the correct backing preferences
+- runtime theme switching applies immediately instead of waiting for restart
+- character management now supports the full 7-field form plus edit flow
+- built-in launcher → ozone+ PTY journeys now reach the real launcher and handoff path reliably in temp-XDG smoke runs
+
+### Added
+- automatic sandbox provisioning for `mock_user_tool` and `screenshot_tool` when `sandboxId` is omitted
+- automatic mock-backend startup for the built-in ozone+ chat journey
+
+### Changed
+- version strings are aligned to `0.4.8-alpha` across workspace crates, product labels, and current docs
+- front-door testing docs now point at `ozone-mcp-app` / workspace debug builds so PTY smoke runs do not reuse stale binaries
+
+---
+
+## [0.4.7-alpha] — ozone-lite Kernel + Branch Setup
+
+### Added
+- Cargo feature flags: `default=[]` (lite), `full` (base), with `bench`, `sweep`, `analyze`, `profiling-ui`, `model-mgmt` sub-features
+- Heavy modules (`bench`, `sweep`, `analyze`, `profiling`, `model`, `db`) gated behind feature flags — ozone-lite builds lean by default
+- `make install-lite` / `make install-base` / `make install-plus` Makefile targets
+- GitHub-fetch install flow: tier picker now offers to download ozone-base/ozone-plus from GitHub releases on demand
+- `[profile.release-lite]` Cargo profile: `opt-level="z"`, `lto="fat"`, `codegen-units=1`, `strip="symbols"`, `panic="abort"`
+- `dev` integration branch created and pushed to origin
+- `.mex/conventions/versioning.md` — versioning rules and bump checklist
+- Branch workflow table in `.mex/ROUTER.md`
+- Session folders: organize sessions into named folders via `folder:<name>` tags; `f` key opens folder picker, `F` removes from folder; grouped rendering with folder headers in session list
+- `make lint` and `make preflight` targets for pre-commit quality checks
+- Dedicated ozonelite section in README.md with install/run/when-to-choose guidance
+- ozonelite launcher UX: header shows "ozonelite", ozone+ actions hidden, `[lite]` badge in status bar
+- Tier badge in launcher status bar for all tiers (`[lite]`, `[ozone+]`)
+
+### Changed
+- Version skips 0.4.6 (never shipped) — goes directly 0.4.5 → 0.4.7
+- `rusqlite` is now an optional dependency, only compiled when `bench`, `analyze`, or `profiling-ui` features are enabled
+- Lite build: 23/23 tests pass; Full build: 37/37 tests pass
+- Dead code removed from base app: unused GGUF parser, stale llama.cpp helpers, unused planner/prefs/processes functions
+- All clippy warnings resolved — workspace is now warning-free
+- `.mex/AGENTS.md` filled in with real project identity, non-negotiables, and commands
+
+### Rules
+See `.mex/conventions/versioning.md` for when to bump vs. rely on git hash.
+
+---
+
 ## [Unreleased]
+
+---
+
+## [0.4.5-alpha] — 2026-04-19
+
+### Fixed
+- Settings crash in ozone+: usize underflow when entry list is empty (render.rs)
+- Settings crash: out-of-bounds category index (app.rs `current_category()`)
+- Settings silent data loss: `"Context"` entries were dropped — now mapped to Model tab
+- Session category entries now visible in settings (was missing from enum)
+
+### Changed
+- Default theme shifted to **Dark Mint** (`#2DAF82`) — away from blue-leaning teal
+- "Open ozone+" launcher action now uses saved side-by-side preference
+- Launcher label adapts: shows `[new window]` when side-by-side pref is on
+
+### Added
+- **Theme presets**: Dark Mint (default), Ozone Dark, High Contrast — selectable in Settings > Appearance
+- **Editable settings**: Settings screen now has interactive Toggle and Cycle entries
+  - Appearance: Theme preset cycle
+  - Launch: Side-by-side monitor toggle, Inspector-on-start toggle
+  - Display: Timestamp style (Relative/Absolute/Off), Message density (Compact/Comfortable)
+- New prefs fields: `theme_preset`, `show_inspector`, `timestamp_style`, `message_density`
+- `[✓]`/`[ ]` toggle indicators and `< val >` cycle indicators in settings render
 
 ---
 
@@ -149,6 +223,7 @@ Initial release. Full Rust rewrite of the original Node.js Ozone TUI.
 - `ozone clear` falsely reported `ollama serve` as stopped when the signal was rejected — now only reports processes that were actually stopped
 - `ollama serve` (system daemon) excluded from the clear target list; only `koboldcpp` and `ollama runner` sub-processes are targeted
 
-[Unreleased]: https://github.com/EricA1019/ozone/compare/v0.4.0-alpha...HEAD
+[Unreleased]: https://github.com/EricA1019/ozone/compare/v0.4.8-alpha...HEAD
+[0.4.8-alpha]: https://github.com/EricA1019/ozone/compare/v0.4.7-alpha...v0.4.8-alpha
 [0.4.0-alpha]: https://github.com/EricA1019/ozone/compare/v0.1.0...v0.4.0-alpha
 [0.1.0]: https://github.com/EricA1019/ozone/releases/tag/v0.1.0

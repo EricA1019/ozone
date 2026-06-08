@@ -1,16 +1,95 @@
 use ratatui::{
-    layout::{Constraint, Direction, Layout, Rect},
+    layout::{Constraint, Direction, Layout, Margin, Rect},
     style::{Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, List, ListItem, ListState, Paragraph},
+    widgets::{
+        Block, Borders, Clear, List, ListItem, ListState, Paragraph, Scrollbar,
+        ScrollbarOrientation, ScrollbarState,
+    },
     Frame,
 };
 
-use ratatui_braille_bar::BrailleBar;
-
-use super::{App, BackendMode, FrontendMode, ModelPickerMode};
+use super::{App, LauncherAction, LauncherActionId, ModelPickerMode};
+use crate::planner::{self, ConfigureWarningSeverity};
+#[cfg(feature = "profiling-ui")]
 use crate::profiling::{ProfilingAction, WarningSeverity};
 use crate::theme::*;
+use ratatui_braille_bar::BrailleBar;
+
+pub(super) fn visible_launcher_actions(app: &App) -> Vec<LauncherAction> {
+    launcher_actions(app)
+}
+
+pub(super) fn filtered_launcher_actions(app: &App) -> Vec<LauncherAction> {
+    let query = app.command_overlay_query();
+    let query = query.to_ascii_lowercase();
+    visible_launcher_actions(app)
+        .into_iter()
+        .filter(|action| {
+            query.is_empty()
+                || action.command.to_ascii_lowercase().contains(&query)
+                || action.label.to_ascii_lowercase().contains(&query)
+                || action.description.to_ascii_lowercase().contains(&query)
+        })
+        .collect()
+}
+
+fn launcher_actions(_app: &App) -> Vec<LauncherAction> {
+    let mut actions = vec![
+        LauncherAction {
+            id: LauncherActionId::Launch,
+            label: "Launch".into(),
+            description: "Pick a model, review config, and launch".into(),
+            command: "launch",
+        },
+        LauncherAction {
+            id: LauncherActionId::ConfigureModel,
+            label: "Configure Model".into(),
+            description: "Open Configure Hub before launch".into(),
+            command: "configure",
+        },
+        LauncherAction {
+            id: LauncherActionId::BenchEval,
+            label: "Bench + Eval".into(),
+            description: "Open benchmark and evaluation menu".into(),
+            command: "bench-eval",
+        },
+    ];
+    #[cfg(feature = "profiling-ui")]
+    actions.push(LauncherAction {
+        id: LauncherActionId::ProfileModel,
+        label: "Profile".into(),
+        description: "Auto-tune GPU layers for a model".into(),
+        command: "profile",
+    });
+    actions.extend([
+        LauncherAction {
+            id: LauncherActionId::Settings,
+            label: "Settings".into(),
+            description: "Configure backend defaults".into(),
+            command: "settings",
+        },
+        LauncherAction {
+            id: LauncherActionId::ClearGpu,
+            label: "Clear GPU".into(),
+            description: "Kill running backends".into(),
+            command: "clear-gpu",
+        },
+        LauncherAction {
+            id: LauncherActionId::Monitor,
+            label: "Monitor".into(),
+            description: "View system resources".into(),
+            command: "monitor",
+        },
+        LauncherAction {
+            id: LauncherActionId::Exit,
+            label: "Exit".into(),
+            description: "Quit launcher".into(),
+            command: "exit",
+        },
+    ]);
+    actions
+}
 
 pub fn render(f: &mut Frame, app: &App) {
     let area = f.area();
@@ -32,6 +111,140 @@ pub fn render(f: &mut Frame, app: &App) {
     render_status_bar(f, chunks[4], app);
 }
 
+pub(super) fn render_command_overlay(f: &mut Frame, app: &App) {
+    let area = f.area();
+    let popup = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Length(10),
+            Constraint::Fill(1),
+        ])
+        .split(area)[1];
+    let popup = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Max(78),
+            Constraint::Fill(1),
+        ])
+        .split(popup)[1];
+
+    let block = chrome_block_with_hint(
+        launcher_title("Quick Command"),
+        "Type to filter · ↑↓ choose · Enter run · Esc close",
+        style_lime(),
+    );
+    let inner = block.inner(popup);
+    f.render_widget(Clear, popup);
+    f.render_widget(block, popup);
+
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Fill(1)])
+        .split(inner);
+
+    let input_block = chrome_block(
+        Line::from(Span::styled(" Command ", style_bold_cyan())),
+        style_gray(),
+    );
+    let input_inner = input_block.inner(rows[0]);
+    f.render_widget(input_block, rows[0]);
+
+    let input_layout = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Length(2), Constraint::Fill(1)])
+        .split(input_inner);
+    f.render_widget(
+        Paragraph::new(Span::styled("/", style_hint_key())),
+        input_layout[0],
+    );
+    f.render_widget(&app.command_overlay, input_layout[1]);
+
+    let commands = filtered_launcher_actions(app);
+    if commands.is_empty() {
+        let empty = Paragraph::new(Line::from(vec![
+            Span::styled("No launcher commands match ", style_muted()),
+            Span::styled(
+                format!("/{}", app.command_overlay_query()),
+                style_hint_key(),
+            ),
+            Span::styled(".", style_muted()),
+        ]))
+        .block(chrome_block(
+            Line::from(Span::styled(" Matches ", style_bold_cyan())),
+            style_gray(),
+        ));
+        f.render_widget(empty, rows[1]);
+        return;
+    }
+
+    let items: Vec<ListItem> = commands
+        .iter()
+        .enumerate()
+        .map(|(index, action)| {
+            let selected = index == app.command_overlay_selected;
+            let command_style = if selected {
+                style_hint_key()
+            } else {
+                style_muted()
+            };
+            let label_style = if selected {
+                Style::default().fg(LIME).add_modifier(Modifier::BOLD)
+            } else {
+                style_gray()
+            };
+            let marker = if selected { HEX_CURSOR } else { " " };
+            ListItem::new(Line::from(vec![
+                Span::styled(
+                    format!("{marker} "),
+                    if selected {
+                        style_lime()
+                    } else {
+                        style_muted()
+                    },
+                ),
+                Span::styled(action.label.clone(), label_style),
+                Span::styled(format!("  {}", action.description), style_muted()),
+                Span::styled(format!("  /{}", action.command), command_style),
+            ]))
+        })
+        .collect();
+
+    let mut state = ListState::default().with_selected(Some(app.command_overlay_selected));
+    let list = List::new(items).block(chrome_block(
+        Line::from(Span::styled(" Matches ", style_bold_cyan())),
+        style_gray(),
+    ));
+    f.render_stateful_widget(list, rows[1], &mut state);
+}
+
+fn launcher_title(section: &str) -> Line<'static> {
+    Line::from(vec![
+        Span::styled(format!(" {} Ozone ", HEX_CURSOR), style_bold_lime()),
+        Span::styled(section.to_string(), style_bold_cyan()),
+    ])
+}
+
+fn launcher_hint(text: impl Into<String>) -> Line<'static> {
+    Line::from(Span::styled(format!(" {}", text.into()), style_gray()))
+}
+
+fn chrome_block(title: Line<'static>, border_style: Style) -> Block<'static> {
+    Block::default()
+        .title(title)
+        .borders(Borders::ALL)
+        .border_style(border_style)
+}
+
+fn chrome_block_with_hint(
+    title: Line<'static>,
+    hint: impl Into<String>,
+    border_style: Style,
+) -> Block<'static> {
+    chrome_block(title, border_style).title_bottom(launcher_hint(hint))
+}
+
 fn render_header(f: &mut Frame, area: Rect, app: &App) {
     let model_count = app.catalog.len();
     let block = Block::default()
@@ -45,30 +258,22 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Length(1), Constraint::Length(1)])
         .split(inner);
 
+    let tier_name = match app.prefs.preferred_tier {
+        Some(crate::prefs::Tier::Lite) => "ozonelite",
+        _ => "Ozone",
+    };
+
     let title = Line::from(vec![
-        Span::styled(format!(" {} Ozone ", HEX_CURSOR), style_bold_lime()),
+        Span::styled(format!(" {} {} ", HEX_CURSOR, tier_name), style_bold_lime()),
         Span::styled(format!("v{} ", VERSION), style_gray()),
         Span::styled("— ", style_gray()),
         Span::styled(format!("{model_count} models"), style_cyan()),
     ]);
 
-    // Backend/frontend badge line
-    let (backend_label, backend_style) = match app.prefs.preferred_backend {
-        Some(BackendMode::KoboldCpp) => ("KoboldCpp", style_cyan()),
-        Some(BackendMode::LlamaCpp) => ("LlamaCpp", style_violet()),
-        Some(BackendMode::Ollama) => ("Ollama", style_green()),
-        None => ("—", style_gray()),
-    };
-    let (frontend_label, frontend_style) = match app.prefs.preferred_frontend {
-        Some(FrontendMode::SillyTavern) => ("SillyTavern", style_cyan()),
-        Some(FrontendMode::OzonePlus) => ("ozone+", style_violet()),
-        None => ("—", style_gray()),
-    };
+    // Backend badge line
     let subtitle = Line::from(vec![
         Span::styled("  Backend: ", style_gray()),
-        Span::styled(backend_label, backend_style),
-        Span::styled("  Frontend: ", style_gray()),
-        Span::styled(frontend_label, frontend_style),
+        Span::styled("llama.cpp", style_violet()),
     ]);
 
     f.render_widget(Paragraph::new(title), text_chunks[0]);
@@ -148,97 +353,64 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let (kc_icon, kc_style) = if app.services.kobold_running {
-        ("●", style_green())
-    } else {
-        ("○", style_gray())
-    };
-    let (st_icon, st_style) = if app.services.st_running {
-        ("●", style_green())
-    } else {
-        ("○", style_gray())
-    };
-    let (ollama_icon, ollama_style) = if app.services.ollama_running {
-        ("●", style_green())
-    } else {
-        ("○", style_gray())
-    };
     let (llama_icon, llama_style) = if app.services.llamacpp_running {
         ("●", style_green())
     } else {
         ("○", style_gray())
     };
 
-    let model_label = app.services.kobold_model.as_deref().unwrap_or("—");
     let llama_model_label = app.services.llamacpp_model.as_deref().unwrap_or("—");
     let lines = vec![
         Line::from(vec![
-            Span::styled(format!("  {kc_icon} KoboldCpp  "), kc_style),
-            Span::styled(model_label, style_cyan()),
-            Span::styled("  :5001", style_gray()),
-        ]),
-        Line::from(vec![
-            Span::styled(format!("  {llama_icon} LlamaCpp   "), llama_style),
+            Span::styled(format!("  {llama_icon} llama.cpp  "), llama_style),
             Span::styled(llama_model_label, style_violet()),
-            Span::styled("  :8080", style_gray()),
-        ]),
-        Line::from(vec![
-            Span::styled(format!("  {ollama_icon} Ollama     "), ollama_style),
-            Span::styled(":11434", style_gray()),
-        ]),
-        Line::from(vec![
-            Span::styled(format!("  {st_icon} SillyTavern  "), st_style),
-            Span::styled(":8000", style_gray()),
+            Span::styled("  :8989", style_gray()),
         ]),
     ];
     f.render_widget(Paragraph::new(lines), inner);
 }
 
 fn render_actions(f: &mut Frame, area: Rect, app: &App) {
-    let block = Block::default()
-        .title(Span::styled("  Actions ", style_bold_cyan()))
-        .title_bottom(Line::from(Span::styled(
-            "  ↑↓ navigate · Enter select · q quit",
-            style_gray(),
-        )))
-        .borders(Borders::ALL)
-        .border_style(style_gray());
+    let block = chrome_block_with_hint(
+        launcher_title("Launcher"),
+        "↑↓ navigate · Enter select · Esc exit · q quit",
+        style_gray(),
+    );
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let actions = [
-        ("Launch", "Start configured backend & frontend"),
-        ("Profile", "Auto-tune GPU layers for a model"),
-        ("Open ozone+", "Direct shell (no model needed)"),
-        ("Launch ozone+ (side-by-side)", "Spawn ozone+ in new terminal, stay in Monitor"),
-        ("Settings", "Configure backend & frontend"),
-        ("Clear GPU", "Kill running backends"),
-        ("Monitor", "View system resources"),
-        ("Exit", "Quit launcher"),
-    ];
-
-    let items: Vec<ListItem> = actions
+    let items: Vec<ListItem> = launcher_actions(app)
         .iter()
         .enumerate()
-        .map(|(i, (label, desc))| {
+        .map(|(i, action)| {
             if i == app.selected_action {
+                let marker = if (app.ticker / 6).is_multiple_of(2) {
+                    HEX_CURSOR
+                } else {
+                    HEX_FILLED
+                };
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("{} ", HEX_CURSOR), style_lime()),
+                    Span::styled(format!("{marker} "), style_lime()),
                     Span::styled(format!("{}", i + 1), style_gray()),
                     Span::raw("  "),
                     Span::styled(
-                        *label,
+                        action.label.clone(),
                         Style::default().fg(LIME).add_modifier(Modifier::BOLD),
                     ),
-                    Span::styled(format!("  {}", desc), style_gray()),
+                    Span::styled(format!("  {}", action.description), style_gray()),
+                    Span::styled(format!("  /{}", action.command), style_hint_key()),
                 ]))
             } else {
                 ListItem::new(Line::from(vec![
                     Span::raw("  "),
                     Span::styled(format!("{}", i + 1), style_gray()),
                     Span::raw("  "),
-                    Span::styled(*label, style_gray()),
-                    Span::styled(format!("  {}", desc), Style::default().fg(GRAY)),
+                    Span::styled(action.label.clone(), style_gray()),
+                    Span::styled(
+                        format!("  {}", action.description),
+                        Style::default().fg(GRAY),
+                    ),
+                    Span::styled(format!("  /{}", action.command), style_muted()),
                 ]))
             }
         })
@@ -247,17 +419,40 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
+    let selected_action = visible_launcher_actions(app)
+        .get(app.selected_action)
+        .cloned();
     let msg = app
         .status_msg
-        .as_deref()
-        .or(app.error_msg.as_deref())
-        .unwrap_or("");
+        .clone()
+        .or_else(|| app.error_msg.clone())
+        .or_else(|| {
+            selected_action
+                .as_ref()
+                .map(|action| format!("{} · /{}", action.description, action.command))
+        })
+        .unwrap_or_default();
     let style = if app.error_msg.is_some() {
         style_red()
-    } else {
+    } else if app.status_msg.is_some() {
         style_gray()
+    } else {
+        style_muted()
     };
-    let bar = Paragraph::new(Line::from(Span::styled(format!("  {msg}"), style)));
+    let tier_badge = match app.prefs.preferred_tier {
+        Some(crate::prefs::Tier::Lite) => Span::styled(" [lite] ", style_cyan()),
+        _ => Span::raw(" "),
+    };
+    let pulse = if (app.ticker / 8).is_multiple_of(2) {
+        HEX_CURSOR
+    } else {
+        HEX_FILLED
+    };
+    let bar = Paragraph::new(Line::from(vec![
+        Span::styled(format!(" {pulse}"), style_hint_key()),
+        tier_badge,
+        Span::styled(format!(" {msg}"), style),
+    ]));
     f.render_widget(bar, area);
 }
 
@@ -269,11 +464,16 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
     let (mode_label, hint_label) = match app.model_picker_mode {
         ModelPickerMode::Launch => (
             "Model Picker · Launch",
-            " ↑↓ scroll · Enter launch plan · Esc back · type to filter",
+            "↑↓ scroll · Enter configure hub · Esc back · type to filter",
         ),
+        ModelPickerMode::Configure => (
+            "Model Picker · Configure",
+            "↑↓ scroll · Enter configure hub · Esc back · type to filter",
+        ),
+        #[cfg(feature = "profiling-ui")]
         ModelPickerMode::Profile => (
             "Model Picker · Profile",
-            " ↑↓ scroll · Enter advisory · Esc back · type to filter",
+            "↑↓ scroll · Enter advisory · Esc back · type to filter",
         ),
     };
 
@@ -296,11 +496,7 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
         ));
     }
 
-    let block = Block::default()
-        .title(Line::from(title_spans))
-        .title_bottom(Line::from(Span::styled(hint_label, style_gray())))
-        .borders(Borders::ALL)
-        .border_style(style_lime());
+    let block = chrome_block_with_hint(Line::from(title_spans), hint_label, style_lime());
     let inner = block.inner(area);
     f.render_widget(block, area);
 
@@ -318,9 +514,14 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
     }
 
     let hw = app.hardware.as_ref();
+    let visible_count = inner.height as usize;
+    let scroll_offset = model_picker_scroll_offset(total, visible_count, app.selected_model);
+
     let items: Vec<ListItem> = filtered
         .iter()
         .enumerate()
+        .skip(scroll_offset)
+        .take(visible_count)
         .map(|(i, rec)| {
             let selected = i == app.selected_model;
             let prefix = if selected {
@@ -376,7 +577,13 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
             };
 
             let base_style = if selected {
-                Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+                if (app.ticker / 6).is_multiple_of(2) {
+                    Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
+                } else {
+                    Style::default()
+                        .fg(VIOLET)
+                        .add_modifier(Modifier::BOLD)
+                }
             } else {
                 style_gray()
             };
@@ -394,8 +601,32 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
         .collect();
 
     let mut list_state = ListState::default();
-    list_state.select(Some(app.selected_model));
+    list_state.select(Some(app.selected_model.saturating_sub(scroll_offset)));
     f.render_stateful_widget(List::new(items), inner, &mut list_state);
+
+    if total > visible_count && visible_count > 0 {
+        let scrollbar = Scrollbar::new(ScrollbarOrientation::VerticalRight)
+            .begin_symbol(Some("↑"))
+            .end_symbol(Some("↓"));
+        let mut scrollbar_state = ScrollbarState::new(total).position(scroll_offset);
+        f.render_stateful_widget(
+            scrollbar,
+            inner.inner(Margin {
+                vertical: 0,
+                horizontal: 0,
+            }),
+            &mut scrollbar_state,
+        );
+    }
+}
+
+fn model_picker_scroll_offset(total: usize, visible_count: usize, selected: usize) -> usize {
+    if visible_count == 0 || total <= visible_count {
+        return 0;
+    }
+    selected
+        .saturating_sub(visible_count.saturating_sub(1))
+        .min(total.saturating_sub(visible_count))
 }
 
 pub fn render_launching(f: &mut Frame, app: &App) {
@@ -431,12 +662,7 @@ pub fn render_launching(f: &mut Frame, app: &App) {
 
     let lines = vec![
         Line::from(Span::styled(
-            match app.prefs.preferred_backend {
-                Some(BackendMode::KoboldCpp) => "  Launching KoboldCpp…",
-                Some(BackendMode::LlamaCpp) => "  Launching llama.cpp…",
-                Some(BackendMode::Ollama) => "  Launching Ollama…",
-                None => "  Launching backend…",
-            },
+            "  Launching llama.cpp…",
             style_bold_violet(),
         )),
         Line::from(Span::styled(format!("  {model}"), style_cyan())),
@@ -444,9 +670,10 @@ pub fn render_launching(f: &mut Frame, app: &App) {
         Line::from(Span::styled(format!("  Loading {dots}"), style_amber())),
     ];
     let block = Block::default()
+        .title(launcher_title("Launching"))
         .borders(Borders::ALL)
         .border_style(style_lime())
-        .title_bottom(Line::from(Span::styled("  loading…", style_gray())));
+        .title_bottom(launcher_hint("loading…"));
     let para = Paragraph::new(lines).block(block);
     f.render_widget(para, center_h);
 }
@@ -497,82 +724,372 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
             ]),
             Line::from(Span::styled(format!("  {}", plan.rationale), style_gray())),
         ];
-        let block = Block::default()
-            .borders(Borders::ALL)
-            .border_style(style_lime())
-            .title_bottom(Line::from(Span::styled(
-                "  Enter launch · Esc cancel",
-                style_gray(),
-            )));
+        let block = chrome_block_with_hint(
+            launcher_title("Confirm Launch"),
+            "Enter launch · Esc back",
+            style_lime(),
+        );
         f.render_widget(Paragraph::new(lines).block(block), center_h);
     }
 }
 
-pub fn render_frontend_choice(f: &mut Frame, app: &App) {
+pub fn render_configure_hub(f: &mut Frame, app: &App) {
+    let Some(recommended) = app.configure_recommended_plan.as_ref() else {
+        return;
+    };
+    let Some(effective) = app.current_plan.as_ref() else {
+        return;
+    };
+
     let area = f.area();
-    let center = Layout::default()
+    let outer = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Fill(1),
-            Constraint::Length(10),
-            Constraint::Fill(1),
+            Constraint::Length(6),
+            Constraint::Length(5),
+            Constraint::Length(5),
+            Constraint::Length(8),
+            Constraint::Length(6),
+            Constraint::Min(5),
         ])
-        .split(area)[1];
-    let center_h = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([
-            Constraint::Fill(1),
-            Constraint::Max(58),
-            Constraint::Fill(1),
-        ])
-        .split(center)[1];
+        .split(area);
 
-    let choices: &[(&str, &str)] = &[
-        ("SillyTavern", "open browser to SillyTavern web UI"),
-        ("ozone+", "launch ozone+ conversation shell"),
+    let header_lines = vec![
+        Line::from(Span::styled("  Configure Hub", style_bold_violet())),
+        Line::from(vec![
+            Span::styled("  Model: ", style_gray()),
+            Span::styled(&effective.model_name, style_cyan()),
+        ]),
+        Line::from(Span::styled(
+            "  Review the recommended profile, then tune context and GPU/CPU split.",
+            style_gray(),
+        )),
     ];
-    let items: Vec<ListItem> = choices
-        .iter()
-        .enumerate()
-        .map(|(i, (label, desc))| {
-            if i == app.frontend_choice_index {
-                ListItem::new(Line::from(vec![
-                    Span::styled(format!("{} ", HEX_CURSOR), style_cyan()),
+    let header_block = chrome_block_with_hint(
+        launcher_title("Configure Hub"),
+        "↑↓ field · ←→ adjust · p/n profile · l load · s save · u update · d delete · f default · b benchmark · Enter confirm",
+        style_lime(),
+    );
+    f.render_widget(Paragraph::new(header_lines).block(header_block), outer[0]);
+
+    let plan_panels = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(outer[1]);
+    render_plan_summary(f, plan_panels[0], "Recommended", recommended);
+    render_plan_summary(f, plan_panels[1], "Customized", effective);
+
+    let context_selected = app.configure_field_index == 0;
+    let layers_selected = app.configure_field_index == 1;
+    let control_lines = vec![
+        Line::from(vec![
+            Span::styled(
+                if context_selected {
+                    format!("{HEX_CURSOR} Context")
+                } else {
+                    "  Context".into()
+                },
+                if context_selected {
+                    style_bold_cyan()
+                } else {
+                    style_gray()
+                },
+            ),
+            Span::styled("  ", style_gray()),
+            Span::styled(context_step_label(effective.context_size), style_amber()),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                if layers_selected {
+                    format!("{HEX_CURSOR} GPU layers")
+                } else {
+                    "  GPU layers".into()
+                },
+                if layers_selected {
+                    style_bold_cyan()
+                } else {
+                    style_gray()
+                },
+            ),
+            Span::styled("  ", style_gray()),
+            Span::styled(
+                format!(
+                    "{} GPU / {} CPU / {} total",
+                    effective.gpu_layers_display(),
+                    effective.cpu_layers,
+                    effective.total_layers
+                ),
+                style_amber(),
+            ),
+        ]),
+    ];
+    let controls_block = Block::default()
+        .title(Span::styled("  Controls ", style_bold_cyan()))
+        .borders(Borders::ALL)
+        .border_style(style_gray());
+    f.render_widget(
+        Paragraph::new(control_lines).block(controls_block),
+        outer[2],
+    );
+
+    let profile_panels = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(45), Constraint::Percentage(55)])
+        .split(outer[3]);
+    render_saved_profiles_panel(f, profile_panels[0], app);
+    render_saved_profile_report_panel(f, profile_panels[1], app);
+
+    let estimate_lines = vec![
+        Line::from(vec![
+            Span::styled("  Estimated VRAM: ", style_gray()),
+            Span::styled(format!("{} MiB", effective.estimated_vram_mb), style_cyan()),
+            Span::styled("  Estimated RAM: ", style_gray()),
+            Span::styled(format!("{} MiB", effective.estimated_ram_mb), style_cyan()),
+        ]),
+        Line::from(vec![
+            Span::styled("  Mode: ", style_gray()),
+            Span::styled(effective.mode.label(), style_amber()),
+            Span::styled("  Layer source: ", style_gray()),
+            Span::styled(&effective.layer_source_label, style_gray()),
+        ]),
+        Line::from(Span::styled(
+            format!("  {}", effective.rationale),
+            style_gray(),
+        )),
+    ];
+    let estimate_block = Block::default()
+        .title(Span::styled("  Effective Plan ", style_bold_cyan()))
+        .borders(Borders::ALL)
+        .border_style(style_gray());
+    f.render_widget(
+        Paragraph::new(estimate_lines).block(estimate_block),
+        outer[4],
+    );
+
+    let warnings = app
+        .hardware
+        .as_ref()
+        .map(|hw| planner::build_configure_warnings(effective, hw))
+        .unwrap_or_default();
+    let warning_lines = if warnings.is_empty() {
+        vec![Line::from(Span::styled(
+            "  No active warnings. This profile fits the current heuristic budget.",
+            style_green(),
+        ))]
+    } else {
+        warnings
+            .into_iter()
+            .map(|warning| {
+                let label = match warning.severity {
+                    ConfigureWarningSeverity::Info => "INFO",
+                    ConfigureWarningSeverity::Warning => "WARN",
+                    ConfigureWarningSeverity::Critical => "RISK",
+                };
+                Line::from(vec![
                     Span::styled(
-                        *label,
-                        Style::default()
-                            .fg(crate::theme::CYAN)
-                            .add_modifier(Modifier::BOLD),
+                        format!("  [{label}] "),
+                        configure_warning_style(warning.severity),
                     ),
-                    Span::styled(format!("  — {desc}"), style_gray()),
-                ]))
+                    Span::styled(warning.message, style_gray()),
+                ])
+            })
+            .collect()
+    };
+    let warning_block = Block::default()
+        .title(Span::styled("  Warnings ", style_bold_cyan()))
+        .borders(Borders::ALL)
+        .border_style(style_gray());
+    f.render_widget(Paragraph::new(warning_lines).block(warning_block), outer[5]);
+}
+
+fn render_plan_summary(f: &mut Frame, area: Rect, title: &str, plan: &planner::LaunchPlan) {
+    let lines = vec![
+        Line::from(vec![
+            Span::styled("  Context: ", style_gray()),
+            Span::styled(plan.context_size.to_string(), style_cyan()),
+        ]),
+        Line::from(vec![
+            Span::styled("  GPU layers: ", style_gray()),
+            Span::styled(plan.gpu_layers_display().to_string(), style_cyan()),
+        ]),
+        Line::from(vec![
+            Span::styled("  CPU layers: ", style_gray()),
+            Span::styled(plan.cpu_layers.to_string(), style_cyan()),
+        ]),
+    ];
+    let block = Block::default()
+        .title(Span::styled(format!("  {title} "), style_bold_cyan()))
+        .borders(Borders::ALL)
+        .border_style(style_gray());
+    f.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn render_saved_profiles_panel(f: &mut Frame, area: Rect, app: &App) {
+    let default_name = app.current_plan.as_ref().and_then(|plan| {
+        app.prefs
+            .default_saved_launch_profile_name_for(&plan.model_name)
+    });
+    let lines = if app.configure_saved_profiles.is_empty() {
+        vec![Line::from(Span::styled(
+            "  No saved launch profiles yet. Press S to save the current config.",
+            style_gray(),
+        ))]
+    } else {
+        app.configure_saved_profiles
+            .iter()
+            .enumerate()
+            .map(|(index, profile)| {
+                let selected = index == app.configure_profile_index;
+                let marker = if selected {
+                    format!("{HEX_CURSOR} ")
+                } else {
+                    "  ".to_string()
+                };
+                let default_badge = if default_name == Some(profile.profile_name.as_str()) {
+                    " ★"
+                } else {
+                    ""
+                };
+                Line::from(vec![
+                    Span::styled(marker, if selected { style_cyan() } else { style_gray() }),
+                    Span::styled(
+                        format!(
+                            "{}{}  {}k  gpu {}",
+                            profile.profile_name,
+                            default_badge,
+                            profile.context_size / 1024,
+                            profile.gpu_layers
+                        ),
+                        if selected {
+                            style_bold_cyan()
+                        } else {
+                            style_gray()
+                        },
+                    ),
+                ])
+            })
+            .collect()
+    };
+    let block = Block::default()
+        .title(Span::styled("  Saved Profiles ", style_bold_cyan()))
+        .borders(Borders::ALL)
+        .border_style(style_gray());
+    f.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn render_saved_profile_report_panel(f: &mut Frame, area: Rect, app: &App) {
+    let lines = if let Some(profile) = app
+        .configure_saved_profiles
+        .get(app.configure_profile_index)
+    {
+        let mut lines = vec![
+            Line::from(vec![
+                Span::styled("  Selected: ", style_gray()),
+                Span::styled(&profile.profile_name, style_cyan()),
+            ]),
+            Line::from(vec![
+                Span::styled("  Config: ", style_gray()),
+                Span::styled(
+                    format!(
+                        "ctx {} · gpu {} · qkv {}",
+                        profile.context_size, profile.gpu_layers, profile.quant_kv
+                    ),
+                    style_cyan(),
+                ),
+            ]),
+        ];
+        #[cfg(feature = "profiling-ui")]
+        {
+            if let Some(report) = app.configure_profile_reports.get(&profile.profile_name) {
+                lines.push(Line::from(vec![
+                    Span::styled("  Benchmarks: ", style_gray()),
+                    Span::styled(report.benchmark_count.to_string(), style_cyan()),
+                    Span::styled("   OK: ", style_gray()),
+                    Span::styled(report.ok_benchmark_count.to_string(), style_cyan()),
+                ]));
+                if let Some(latest) = report.latest_tokens_per_sec {
+                    lines.push(Line::from(vec![
+                        Span::styled("  Latest tok/s: ", style_gray()),
+                        Span::styled(format!("{latest:.2}"), style_cyan()),
+                        Span::styled("   Best: ", style_gray()),
+                        Span::styled(
+                            report
+                                .best_tokens_per_sec
+                                .map(|value| format!("{value:.2}"))
+                                .unwrap_or_else(|| "—".into()),
+                            style_cyan(),
+                        ),
+                    ]));
+                }
+                if let Some(ttft) = report.latest_time_to_first_token_ms {
+                    lines.push(Line::from(vec![
+                        Span::styled("  Latest TTFT: ", style_gray()),
+                        Span::styled(format!("{ttft} ms"), style_cyan()),
+                    ]));
+                }
+                if let Some(vram) = report.latest_vram_peak_mb {
+                    lines.push(Line::from(vec![
+                        Span::styled("  Latest VRAM/RAM: ", style_gray()),
+                        Span::styled(
+                            format!(
+                                "{} / {} MiB",
+                                vram,
+                                report.latest_ram_peak_mb.unwrap_or_default()
+                            ),
+                            style_cyan(),
+                        ),
+                    ]));
+                }
             } else {
-                ListItem::new(Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(*label, style_gray()),
-                    Span::styled(format!("  — {desc}"), style_gray()),
-                ]))
+                lines.push(Line::from(Span::styled(
+                    "  No benchmark report yet. Press B to profile this saved config.",
+                    style_gray(),
+                )));
+            }
+        }
+        #[cfg(not(feature = "profiling-ui"))]
+        lines.push(Line::from(Span::styled(
+            "  Profiling UI is not enabled in this build.",
+            style_gray(),
+        )));
+        lines
+    } else {
+        vec![Line::from(Span::styled(
+            "  Select or save a profile to inspect benchmark results.",
+            style_gray(),
+        ))]
+    };
+    let block = Block::default()
+        .title(Span::styled("  Profile Report ", style_bold_cyan()))
+        .borders(Borders::ALL)
+        .border_style(style_gray());
+    f.render_widget(Paragraph::new(lines).block(block), area);
+}
+
+fn context_step_label(current: u32) -> String {
+    planner::CONFIGURE_CONTEXT_STEPS
+        .iter()
+        .map(|step| {
+            if *step == current {
+                format!("[{}]", format_context_step(*step))
+            } else {
+                format_context_step(*step)
             }
         })
-        .collect();
+        .collect::<Vec<_>>()
+        .join("  ")
+}
 
-    let block = Block::default()
-        .title(Span::styled(
-            format!(" {} Choose Frontend ", HEX_CURSOR),
-            style_bold_violet(),
-        ))
-        .title_bottom(Line::from(Span::styled(
-            "  ↑↓ choose · Enter launch · Esc back",
-            style_gray(),
-        )))
-        .borders(Borders::ALL)
-        .border_style(style_lime());
-    let inner = block.inner(center_h);
-    f.render_widget(block, center_h);
+fn format_context_step(step: u32) -> String {
+    format!("{}k", step / 1024)
+}
 
-    let mut list_state = ListState::default();
-    list_state.select(Some(app.frontend_choice_index));
-    f.render_stateful_widget(List::new(items), inner, &mut list_state);
+fn configure_warning_style(severity: ConfigureWarningSeverity) -> Style {
+    match severity {
+        ConfigureWarningSeverity::Info => style_gray(),
+        ConfigureWarningSeverity::Warning => style_amber(),
+        ConfigureWarningSeverity::Critical => style_red(),
+    }
 }
 
 pub fn render_exit_confirm(f: &mut Frame, app: &App) {
@@ -645,6 +1162,7 @@ pub fn render_exit_confirm(f: &mut Frame, app: &App) {
     f.render_widget(Paragraph::new(lines).block(block), center_h);
 }
 
+#[cfg(feature = "profiling-ui")]
 fn warning_style(severity: &WarningSeverity) -> Style {
     match severity {
         WarningSeverity::Info => style_gray(),
@@ -653,6 +1171,7 @@ fn warning_style(severity: &WarningSeverity) -> Style {
     }
 }
 
+#[cfg(feature = "profiling-ui")]
 fn action_items(actions: &[ProfilingAction], selected: usize) -> (Vec<ListItem<'_>>, ListState) {
     let items: Vec<ListItem> = actions
         .iter()
@@ -681,6 +1200,7 @@ fn action_items(actions: &[ProfilingAction], selected: usize) -> (Vec<ListItem<'
     (items, state)
 }
 
+#[cfg(feature = "profiling-ui")]
 pub fn render_profile_advisory(f: &mut Frame, app: &App) {
     let Some(advisory) = app.profiling_advisory.as_ref() else {
         return;
@@ -844,6 +1364,7 @@ pub fn render_profile_advisory(f: &mut Frame, app: &App) {
     f.render_stateful_widget(List::new(items), inner, &mut state);
 }
 
+#[cfg(feature = "profiling-ui")]
 pub fn render_profile_confirm(f: &mut Frame, app: &App) {
     let Some(action) = app.profiling_pending_action.as_ref() else {
         return;
@@ -883,9 +1404,20 @@ pub fn render_profile_confirm(f: &mut Frame, app: &App) {
     ];
     if action.clears_backends() {
         lines.push(Line::from(Span::styled(
-            "  Warning: this will clear KoboldCpp/Ollama runners before it starts.",
+            "  Warning: this will clear the managed llama.cpp runtime before it starts.",
             style_amber(),
         )));
+    }
+    if matches!(action, ProfilingAction::BenchmarkSavedProfile) {
+        if let Some(profile) = app
+            .configure_saved_profiles
+            .get(app.configure_profile_index)
+        {
+            lines.push(Line::from(vec![
+                Span::styled("  Saved profile: ", style_gray()),
+                Span::styled(&profile.profile_name, style_cyan()),
+            ]));
+        }
     }
     if let Some(advisory) = &app.profiling_advisory {
         if let Some(plan) = &advisory.launch_plan {
@@ -928,6 +1460,7 @@ pub fn render_profile_confirm(f: &mut Frame, app: &App) {
     f.render_widget(Paragraph::new(lines).block(block), center_h);
 }
 
+#[cfg(feature = "profiling-ui")]
 pub fn render_profile_running(f: &mut Frame, app: &App) {
     let area = f.area();
     let center = Layout::default()
@@ -1020,6 +1553,7 @@ pub fn render_profile_running(f: &mut Frame, app: &App) {
     f.render_widget(Paragraph::new(lines).scroll((scroll_offset, 0)), chunks[2]);
 }
 
+#[cfg(feature = "profiling-ui")]
 pub fn render_profile_success(f: &mut Frame, app: &App) {
     let Some(report) = app.profiling_success.as_ref() else {
         return;
@@ -1085,6 +1619,30 @@ pub fn render_profile_success(f: &mut Frame, app: &App) {
             style_gray(),
         )));
     }
+    if let Some(saved_profile_report) = &report.saved_profile_report {
+        report_lines.push(Line::from(vec![
+            Span::styled("  Saved profile: ", style_gray()),
+            Span::styled(&saved_profile_report.profile_name, style_cyan()),
+        ]));
+        report_lines.push(Line::from(vec![
+            Span::styled("  Latest tok/s: ", style_gray()),
+            Span::styled(
+                saved_profile_report
+                    .latest_tokens_per_sec
+                    .map(|value| format!("{value:.2}"))
+                    .unwrap_or_else(|| "—".into()),
+                style_cyan(),
+            ),
+            Span::styled("   Best: ", style_gray()),
+            Span::styled(
+                saved_profile_report
+                    .best_tokens_per_sec
+                    .map(|value| format!("{value:.2}"))
+                    .unwrap_or_else(|| "—".into()),
+                style_cyan(),
+            ),
+        ]));
+    }
     // Export detail (b2)
     if let Some(detail) = &report.export_detail {
         report_lines.push(Line::from(vec![
@@ -1148,6 +1706,7 @@ pub fn render_profile_success(f: &mut Frame, app: &App) {
     }
 }
 
+#[cfg(feature = "profiling-ui")]
 pub fn render_profile_failure(f: &mut Frame, app: &App) {
     let Some(report) = app.profiling_failure.as_ref() else {
         return;
@@ -1232,7 +1791,7 @@ pub fn render_settings(f: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Fill(1),
-            Constraint::Min(16),
+            Constraint::Length(21),
             Constraint::Fill(1),
         ])
         .split(area)[1];
@@ -1240,7 +1799,7 @@ pub fn render_settings(f: &mut Frame, app: &App) {
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Fill(1),
-            Constraint::Max(50),
+            Constraint::Max(64),
             Constraint::Fill(1),
         ])
         .split(center)[1];
@@ -1249,43 +1808,45 @@ pub fn render_settings(f: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // header
+            Constraint::Length(3), // summary
             Constraint::Length(5), // backend block
-            Constraint::Length(5), // frontend block
             Constraint::Length(3), // hint
         ])
         .split(center_h);
 
-    // Header
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled(format!(" {} ", HEX_CURSOR), style_lime()),
-        Span::styled("Settings", style_bold_lime()),
-    ]))
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(style_lime()),
-    );
+    let header = Paragraph::new(Line::from(Span::styled(
+        " tune launcher defaults before model selection",
+        style_muted(),
+    )))
+    .block(chrome_block_with_hint(
+        launcher_title("Settings"),
+        "↑↓ choose · Enter save · Esc back",
+        style_lime(),
+    ));
     f.render_widget(header, chunks[0]);
 
-    // Backend block
-    let backend_border = if app.settings_section == 0 {
-        style_lime()
-    } else {
-        style_gray()
-    };
-    let backend_title = if app.settings_section == 0 {
-        style_bold_lime()
-    } else {
-        style_bold_cyan()
-    };
-    let backend_block = Block::default()
-        .title(Span::styled("  Backend ", backend_title))
-        .borders(Borders::ALL)
-        .border_style(backend_border);
-    let backend_inner = backend_block.inner(chunks[1]);
-    f.render_widget(backend_block, chunks[1]);
+    let summary = Paragraph::new(Line::from(vec![
+        Span::styled(" backend ", style_muted()),
+        Span::styled("llama.cpp", style_cyan()),
+    ]))
+    .block(chrome_block(
+        Line::from(Span::styled(" Active Defaults ", style_bold_cyan())),
+        style_gray(),
+    ));
+    f.render_widget(summary, chunks[1]);
 
-    let backend_options = ["KoboldCpp", "LlamaCpp", "Ollama"];
+    // Backend block
+    let backend_block = chrome_block(
+        Line::from(Span::styled(
+            " Backend ",
+            style_panel_title(app.settings_section == 0),
+        )),
+        style_panel_border(app.settings_section == 0),
+    );
+    let backend_inner = backend_block.inner(chunks[2]);
+    f.render_widget(backend_block, chunks[2]);
+
+    let backend_options = ["llama.cpp"];
     let backend_items: Vec<ListItem> = backend_options
         .iter()
         .enumerate()
@@ -1309,70 +1870,194 @@ pub fn render_settings(f: &mut Frame, app: &App) {
             ListItem::new(Line::from(vec![
                 Span::styled(format!("  {marker} "), style),
                 Span::styled(*label, style),
+                Span::styled(
+                    if selected { "  selected" } else { "" },
+                    if focused {
+                        style_hint_key()
+                    } else {
+                        style_muted()
+                    },
+                ),
             ]))
         })
         .collect();
     f.render_widget(List::new(backend_items), backend_inner);
 
-    // Frontend block
-    let frontend_border = if app.settings_section == 1 {
-        style_lime()
-    } else {
-        style_gray()
-    };
-    let frontend_title = if app.settings_section == 1 {
-        style_bold_lime()
-    } else {
-        style_bold_cyan()
-    };
-    let frontend_block = Block::default()
-        .title(Span::styled("  Frontend ", frontend_title))
-        .borders(Borders::ALL)
-        .border_style(frontend_border);
-    let frontend_inner = frontend_block.inner(chunks[2]);
-    f.render_widget(frontend_block, chunks[2]);
-
-    let frontend_options = ["SillyTavern", "ozone+"];
-    let frontend_items: Vec<ListItem> = frontend_options
-        .iter()
-        .enumerate()
-        .map(|(i, label)| {
-            let selected = i == app.settings_frontend_index;
-            let focused = app.settings_section == 1;
-            let marker = if selected && focused {
-                HEX_CURSOR
-            } else if selected {
-                "●"
-            } else {
-                "○"
-            };
-            let style = if selected {
-                match (*label, focused) {
-                    ("ozone+", true) => style_bold_bright_violet(),
-                    ("ozone+", false) => style_violet(),
-                    (_, true) => style_bold_lime(),
-                    _ => style_bold_cyan(),
-                }
-            } else {
-                style_gray()
-            };
-            ListItem::new(Line::from(vec![
-                Span::styled(format!("  {marker} "), style),
-                Span::styled(*label, style),
-            ]))
-        })
-        .collect();
-    f.render_widget(List::new(frontend_items), frontend_inner);
-
     // Hint
-    let hint = Paragraph::new(Line::from(Span::styled(
-        "  Tab/←→ switch · ↑↓ select · Enter save · Esc back",
+    let hint = Paragraph::new(Line::from(vec![
+        Span::styled("↑↓", style_hint_key()),
+        Span::styled(" choose  ", style_muted()),
+        Span::styled("Enter", style_hint_key()),
+        Span::styled(" save  ", style_muted()),
+        Span::styled("Esc", style_hint_key()),
+        Span::styled(" back", style_muted()),
+    ]))
+    .block(chrome_block(
+        Line::from(Span::styled(" Navigation ", style_bold_cyan())),
         style_gray(),
-    )))
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .border_style(style_gray()),
-    );
+    ));
     f.render_widget(hint, chunks[3]);
+}
+
+#[cfg(test)]
+mod tests {
+    use ratatui::{backend::TestBackend, buffer::Buffer, Terminal};
+
+    use super::*;
+    use crate::catalog::{CatalogRecord, RecSource, Recommendation};
+    use crate::prefs::{Preferences, Tier};
+
+    fn base_app() -> App {
+        App::new(Preferences {
+            preferred_tier: Some(Tier::Base),
+            ..Preferences::default()
+        })
+    }
+
+    fn test_catalog_record(name: &str) -> CatalogRecord {
+        CatalogRecord {
+            model_name: name.to_owned(),
+            model_path: ozone_core::paths::models_dir().join(name),
+            model_size_gb: 8.0,
+            recommendation: Recommendation {
+                context_size: 8192,
+                gpu_layers: -1,
+                quant_kv: 1,
+                note: "test".into(),
+                source: RecSource::Heuristic,
+            },
+            benchmark: None,
+            benchmark_count: 0,
+            source_priority: RecSource::Heuristic.priority(),
+        }
+    }
+
+    fn render_to_string(
+        width: u16,
+        height: u16,
+        draw: impl FnOnce(&mut Frame, &App),
+        app: &App,
+    ) -> String {
+        let backend = TestBackend::new(width, height);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| draw(frame, app)).unwrap();
+        buffer_to_string(terminal.backend().buffer(), width, height)
+    }
+
+    fn buffer_to_string(buffer: &Buffer, width: u16, height: u16) -> String {
+        (0..height)
+            .map(|y| {
+                let mut line = String::new();
+                for x in 0..width {
+                    line.push_str(buffer[(x, y)].symbol());
+                }
+                line
+            })
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn launcher_actions_expose_command_metadata() {
+        let app = base_app();
+        let actions = visible_launcher_actions(&app);
+
+        assert!(actions.iter().any(|action| {
+            action.id == LauncherActionId::ConfigureModel && action.command == "configure"
+        }));
+        assert!(actions
+            .iter()
+            .any(|action| action.id == LauncherActionId::BenchEval && action.command == "bench-eval"));
+        assert!(actions
+            .iter()
+            .any(|action| action.id == LauncherActionId::Settings && action.command == "settings"));
+    }
+
+    #[test]
+    fn launcher_actions_do_not_expose_legacy_plus_commands() {
+        let app = App::new(Preferences {
+            preferred_tier: Some(Tier::Lite),
+            ..Preferences::default()
+        });
+        let actions = visible_launcher_actions(&app);
+
+        assert!(!actions
+            .iter()
+            .any(|action| action.command.contains("ozone-plus")));
+    }
+
+    #[test]
+    fn launcher_status_bar_uses_selected_action_metadata_when_idle() {
+        let mut app = base_app();
+        app.selected_action = visible_launcher_actions(&app)
+            .iter()
+            .position(|action| action.id == LauncherActionId::Settings)
+            .unwrap();
+
+        let rendered = render_to_string(100, 24, render, &app);
+
+        assert!(rendered.contains("Configure backend defaults · /settings"));
+    }
+
+    #[test]
+    fn settings_render_shows_normalized_summary_and_navigation() {
+        let mut app = base_app();
+        app.settings_backend_index = 2;
+
+        let rendered = render_to_string(100, 24, render_settings, &app);
+
+        assert!(rendered.contains("Active Defaults"));
+        assert!(rendered.contains("Navigation"));
+        assert!(rendered.contains("llama.cpp"));
+    }
+
+    #[test]
+    fn filtered_launcher_actions_match_command_query() {
+        let mut app = base_app();
+        app.command_overlay.insert_str("sett");
+
+        let actions = filtered_launcher_actions(&app);
+
+        assert_eq!(actions.len(), 1);
+        assert_eq!(actions[0].id, LauncherActionId::Settings);
+    }
+
+    #[test]
+    fn quick_command_overlay_renders_filtered_matches() {
+        let mut app = base_app();
+        app.command_overlay_open = true;
+        app.command_overlay.insert_str("sett");
+
+        let rendered = render_to_string(100, 24, render_command_overlay, &app);
+
+        assert!(rendered.contains("Quick Command"));
+        assert!(rendered.contains("/settings"));
+        assert!(rendered.contains("Configure backend defaults"));
+    }
+
+    #[test]
+    fn quick_command_overlay_renders_empty_state() {
+        let mut app = base_app();
+        app.command_overlay_open = true;
+        app.command_overlay.insert_str("zzz");
+
+        let rendered = render_to_string(100, 24, render_command_overlay, &app);
+
+        assert!(rendered.contains("No launcher commands match"));
+    }
+
+    #[test]
+    fn model_picker_scrolls_selected_model_into_view() {
+        let mut app = base_app();
+        app.catalog = (0..30)
+            .map(|index| test_catalog_record(&format!("model-{index:02}.gguf")))
+            .collect();
+        app.selected_model = 29;
+
+        let rendered = render_to_string(100, 12, render_model_picker, &app);
+
+        assert!(rendered.contains("model-29.gguf"));
+        assert!(!rendered.contains("model-00.gguf"));
+        assert!(rendered.contains("↑") || rendered.contains("↓"));
+    }
 }

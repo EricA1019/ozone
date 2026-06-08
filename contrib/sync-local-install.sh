@@ -4,9 +4,9 @@ set -euo pipefail
 
 usage() {
     cat <<'EOF'
-Usage: ./contrib/sync-local-install.sh [--no-build]
+Usage: ./contrib/sync-local-install.sh [--no-build] [--verify-only]
 
-Build the current release binaries and sync them into:
+Build the current release binary and sync it into:
   - ~/.cargo/bin
   - ~/.local/bin
 
@@ -14,8 +14,9 @@ Each destination is updated only when its SHA-256 checksum differs from the
 freshly built artifact.
 
 Options:
-  --no-build   Skip cargo build and sync the current target/release artifacts
-  -h, --help   Show this help
+    --no-build      Skip cargo build and use the current target/release artifacts
+    --verify-only   Fail if installed binaries are missing or out of sync; do not modify them
+    -h, --help      Show this help
 EOF
 }
 
@@ -66,23 +67,53 @@ sync_binary() {
     done
 }
 
+verify_binary() {
+    local source="$1"
+    local binary_name="$2"
+    local source_sum="$3"
+    local dest_dir dest_path dest_sum
+
+    for dest_dir in "${DEST_DIRS[@]}"; do
+        dest_path="$dest_dir/$binary_name"
+
+        if [[ ! -f "$dest_path" ]]; then
+            echo "Missing installed binary: $dest_path" >&2
+            return 1
+        fi
+
+        dest_sum="$(checksum_file "$dest_path")"
+        if [[ "$dest_sum" != "$source_sum" ]]; then
+            echo "Installed binary is out of sync: $dest_path" >&2
+            echo "  release artifact: $source" >&2
+            return 1
+        fi
+
+        printf '✓ %s matches %s\n' "$dest_path" "$source"
+    done
+}
+
 NO_BUILD=0
-case "${1:-}" in
-    "")
-        ;;
-    --no-build)
-        NO_BUILD=1
-        ;;
-    -h|--help)
-        usage
-        exit 0
-        ;;
-    *)
-        echo "Unknown argument: $1" >&2
-        usage >&2
-        exit 1
-        ;;
-esac
+VERIFY_ONLY=0
+while [[ $# -gt 0 ]]; do
+    case "$1" in
+        --no-build)
+            NO_BUILD=1
+            ;;
+        --verify-only)
+            VERIFY_ONLY=1
+            ;;
+        -h|--help)
+            usage
+            exit 0
+            ;;
+        *)
+            echo "Unknown argument: $1" >&2
+            usage >&2
+            exit 1
+            ;;
+    esac
+    shift
+done
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -92,19 +123,21 @@ INSTALL_STATE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/ozone"
 INSTALL_SOURCE_ROOT_FILE="$INSTALL_STATE_DIR/install-source-root.txt"
 BINARIES=(
     "ozone:ozone"
-    "ozone-plus:ozone-plus"
-    "ozone-mcp-app:ozone-mcp"
 )
 
 if [[ "$NO_BUILD" -eq 0 ]]; then
     echo "Building release binaries..."
     (
         cd "$REPO_ROOT"
-        cargo build --release -p ozone -p ozone-plus -p ozone-mcp-app
+        cargo build --release -p ozone --features full
     )
 fi
 
-echo "Syncing local installs..."
+if [[ "$VERIFY_ONLY" -eq 1 ]]; then
+    echo "Verifying local install parity..."
+else
+    echo "Syncing local installs..."
+fi
 for spec in "${BINARIES[@]}"; do
     IFS=":" read -r package_name binary_name <<<"$spec"
     source_path="$TARGET_DIR/$binary_name"
@@ -116,12 +149,21 @@ for spec in "${BINARIES[@]}"; do
 
     source_sum="$(checksum_file "$source_path")"
     printf '\n[%s]\n' "$binary_name"
-    sync_binary "$source_path" "$binary_name" "$source_sum"
+    if [[ "$VERIFY_ONLY" -eq 1 ]]; then
+        verify_binary "$source_path" "$binary_name" "$source_sum"
+    else
+        sync_binary "$source_path" "$binary_name" "$source_sum"
+    fi
 done
 
-mkdir -p "$INSTALL_STATE_DIR"
-printf '%s\n' "$REPO_ROOT" > "$INSTALL_SOURCE_ROOT_FILE"
+if [[ "$VERIFY_ONLY" -eq 0 ]]; then
+    mkdir -p "$INSTALL_STATE_DIR"
+    printf '%s\n' "$REPO_ROOT" > "$INSTALL_SOURCE_ROOT_FILE"
 
-echo
-printf 'Recorded install source root at %s\n' "$INSTALL_SOURCE_ROOT_FILE"
-echo "Local install sync complete."
+    echo
+    printf 'Recorded install source root at %s\n' "$INSTALL_SOURCE_ROOT_FILE"
+    echo "Local install sync complete."
+else
+    echo
+    echo "Local install parity verified."
+fi

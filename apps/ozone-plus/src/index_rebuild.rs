@@ -136,6 +136,15 @@ fn collect_sources(repo: &SqliteRepository) -> Result<RebuildSources, String> {
             &session.session_id,
             memories,
         );
+        let note_memories = repo
+            .list_note_memories(&session.session_id)
+            .map_err(|error| error.to_string())?;
+        append_memory_sources(
+            &mut sources,
+            &mut memory_source_count,
+            &session.session_id,
+            note_memories,
+        );
     }
 
     sources.sort_by(|left, right| {

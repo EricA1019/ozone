@@ -69,6 +69,49 @@ pub struct CatalogRecord {
     pub source_priority: u8,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CatalogLoadIssueLevel {
+    Warning,
+    Error,
+}
+
+impl CatalogLoadIssueLevel {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Warning => "warning",
+            Self::Error => "error",
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CatalogLoadIssue {
+    pub level: CatalogLoadIssueLevel,
+    pub message: String,
+}
+
+impl CatalogLoadIssue {
+    fn warning(message: impl Into<String>) -> Self {
+        Self {
+            level: CatalogLoadIssueLevel::Warning,
+            message: message.into(),
+        }
+    }
+
+    fn error(message: impl Into<String>) -> Self {
+        Self {
+            level: CatalogLoadIssueLevel::Error,
+            message: message.into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct CatalogLoadReport {
+    pub records: Vec<CatalogRecord>,
+    pub issues: Vec<CatalogLoadIssue>,
+}
+
 fn normalize_model_key(name: &str) -> String {
     let base = Path::new(name)
         .file_stem()
@@ -85,25 +128,22 @@ pub fn parse_preset_text(text: &str) -> HashMap<String, Recommendation> {
             continue;
         }
         let parts: Vec<&str> = t.splitn(5, '|').collect();
-        if parts.is_empty() {
+        if parts.len() < 4 {
             continue;
         }
         let model_name = parts[0].trim();
         if model_name.is_empty() {
             continue;
         }
-        let gpu_layers: i32 = parts
-            .get(1)
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(-1);
-        let context_size: u32 = parts
-            .get(2)
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(0);
-        let quant_kv: u8 = parts
-            .get(3)
-            .and_then(|s| s.trim().parse().ok())
-            .unwrap_or(1);
+        let Some(gpu_layers) = parts.get(1).and_then(|s| s.trim().parse().ok()) else {
+            continue;
+        };
+        let Some(context_size) = parts.get(2).and_then(|s| s.trim().parse().ok()) else {
+            continue;
+        };
+        let Some(quant_kv) = parts.get(3).and_then(|s| s.trim().parse().ok()) else {
+            continue;
+        };
         let note = parts
             .get(4)
             .map(|s| s.trim().to_string())
@@ -121,6 +161,30 @@ pub fn parse_preset_text(text: &str) -> HashMap<String, Recommendation> {
         );
     }
     presets
+}
+
+fn preset_file_has_entries(text: &str) -> bool {
+    text.lines().any(|line| {
+        let trimmed = line.trim();
+        !trimmed.is_empty() && !trimmed.starts_with('#')
+    })
+}
+
+fn preset_file_has_invalid_entries(text: &str) -> bool {
+    text.lines().any(|line| {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            return false;
+        }
+        let parts: Vec<&str> = trimmed.splitn(5, '|').collect();
+        if parts.len() < 4 {
+            return true;
+        }
+        parts[0].trim().is_empty()
+            || parts[1].trim().parse::<i32>().is_err()
+            || parts[2].trim().parse::<u32>().is_err()
+            || parts[3].trim().parse::<u8>().is_err()
+    })
 }
 
 pub fn parse_benchmark_text(text: &str) -> Vec<(String, BenchmarkRun)> {
@@ -327,14 +391,7 @@ pub fn build_catalog(
     records
 }
 
-pub async fn load_catalog(
-    model_dir: &Path,
-    preset_file: &Path,
-    benchmark_file: &Path,
-) -> Result<Vec<CatalogRecord>> {
-    let preset_text = fs::read_to_string(preset_file).await.unwrap_or_default();
-    let bench_text = fs::read_to_string(benchmark_file).await.unwrap_or_default();
-
+async fn scan_models(model_dir: &Path) -> Result<Vec<(String, PathBuf, f64)>> {
     let mut entries = tokio::fs::read_dir(model_dir).await?;
     let mut models = Vec::new();
     while let Some(entry) = entries.next_entry().await? {
@@ -342,17 +399,108 @@ pub async fn load_catalog(
         if !name.ends_with(".gguf") {
             continue;
         }
-        // Use fs::metadata (follows symlinks); fall back to 0.0 GB for broken symlinks
         let size_gb = match fs::metadata(entry.path()).await {
             Ok(meta) => (meta.len() as f64 / 1_073_741_824.0 * 10.0).round() / 10.0,
             Err(_) => 0.0,
         };
         models.push((name, entry.path(), size_gb));
     }
+    Ok(models)
+}
 
-    let presets = parse_preset_text(&preset_text);
-    let benchmarks = parse_benchmark_text(&bench_text);
-    Ok(build_catalog(models, presets, benchmarks))
+async fn read_optional_sidecar(
+    path: &Path,
+    label: &str,
+    missing_message: &str,
+    read_failure_message: &str,
+    models_present: bool,
+    issues: &mut Vec<CatalogLoadIssue>,
+) -> Option<String> {
+    match fs::read_to_string(path).await {
+        Ok(text) => Some(text),
+        Err(error) if error.kind() == ErrorKind::NotFound => {
+            if models_present {
+                issues.push(CatalogLoadIssue::warning(format!(
+                    "{label} file {} is missing; {missing_message}",
+                    path.display()
+                )));
+            }
+            None
+        }
+        Err(error) => {
+            issues.push(CatalogLoadIssue::error(format!(
+                "Failed to read {label} file {}: {error}; {read_failure_message}",
+                path.display()
+            )));
+            None
+        }
+    }
+}
+
+pub async fn load_catalog_report(
+    model_dir: &Path,
+    preset_file: &Path,
+    benchmark_file: &Path,
+) -> Result<CatalogLoadReport> {
+    let models = scan_models(model_dir).await?;
+    let models_present = !models.is_empty();
+    let mut issues = Vec::new();
+
+    let preset_text = read_optional_sidecar(
+        preset_file,
+        "preset",
+        "using heuristic recommendations instead",
+        "using heuristic recommendations instead",
+        models_present,
+        &mut issues,
+    )
+    .await;
+    let bench_text = read_optional_sidecar(
+        benchmark_file,
+        "benchmark",
+        "benchmark data will be unavailable",
+        "benchmark data will be unavailable",
+        models_present,
+        &mut issues,
+    )
+    .await;
+
+    let presets = preset_text
+        .as_deref()
+        .map(parse_preset_text)
+        .unwrap_or_default();
+    if let Some(text) = preset_text.as_deref() {
+        if preset_file_has_invalid_entries(text) {
+            issues.push(CatalogLoadIssue::error(format!(
+                "Preset file {} contains invalid entries; using only valid preset lines",
+                preset_file.display()
+            )));
+        }
+        if preset_file_has_entries(text) && presets.is_empty() && models_present {
+            issues.push(CatalogLoadIssue::error(format!(
+                "Preset file {} did not produce any usable preset entries",
+                preset_file.display()
+            )));
+        }
+    }
+
+    let benchmarks = bench_text
+        .as_deref()
+        .map(parse_benchmark_text)
+        .unwrap_or_default();
+    if let Some(text) = bench_text.as_deref() {
+        if !text.trim().is_empty() && benchmarks.is_empty() && models_present {
+            issues.push(CatalogLoadIssue::error(format!(
+                "Benchmark file {} did not produce any usable benchmark entries",
+                benchmark_file.display()
+            )));
+        }
+    }
+
+    Ok(CatalogLoadReport {
+        records: build_catalog(models, presets, benchmarks),
+        issues,
+    })
 }
 
 pub async fn catalog_signature(
@@ -451,4 +599,127 @@ async fn hash_optional_path_state(hasher: &mut DefaultHasher, path: &Path) -> Re
         Err(error) => return Err(error.into()),
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{load_catalog_report, CatalogLoadIssueLevel, RecSource};
+    use std::{
+        path::PathBuf,
+        sync::atomic::{AtomicU64, Ordering},
+    };
+
+    static TEST_COUNTER: AtomicU64 = AtomicU64::new(1);
+
+    struct TestSandbox {
+        root: PathBuf,
+    }
+
+    impl TestSandbox {
+        fn new(prefix: &str) -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "ozone-catalog-tests-{prefix}-{}-{}",
+                std::process::id(),
+                TEST_COUNTER.fetch_add(1, Ordering::Relaxed)
+            ));
+            if root.exists() {
+                std::fs::remove_dir_all(&root).unwrap();
+            }
+            std::fs::create_dir_all(&root).unwrap();
+            Self { root }
+        }
+
+        fn model_dir(&self) -> PathBuf {
+            self.root.join("models")
+        }
+
+        fn preset_file(&self) -> PathBuf {
+            self.model_dir().join("koboldcpp-presets.conf")
+        }
+
+        fn benchmark_file(&self) -> PathBuf {
+            self.model_dir().join("bench-results.txt")
+        }
+
+        fn write_model(&self, name: &str) {
+            std::fs::create_dir_all(self.model_dir()).unwrap();
+            std::fs::write(self.model_dir().join(name), []).unwrap();
+        }
+    }
+
+    impl Drop for TestSandbox {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    #[test]
+    fn missing_sidecars_with_models_report_warnings() {
+        let sandbox = TestSandbox::new("missing-sidecars");
+        sandbox.write_model("alpha.gguf");
+
+        let report = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(load_catalog_report(
+                &sandbox.model_dir(),
+                &sandbox.preset_file(),
+                &sandbox.benchmark_file(),
+            ))
+            .expect("catalog report should succeed");
+
+        assert_eq!(report.records.len(), 1);
+        assert_eq!(report.issues.len(), 2);
+        assert!(report
+            .issues
+            .iter()
+            .all(|issue| issue.level == CatalogLoadIssueLevel::Warning));
+    }
+
+    #[test]
+    fn invalid_preset_entries_report_error_and_fall_back_to_heuristics() {
+        let sandbox = TestSandbox::new("invalid-preset");
+        sandbox.write_model("alpha.gguf");
+        std::fs::write(sandbox.preset_file(), "alpha.gguf|oops|4096|1|bad preset\n").unwrap();
+
+        let report = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(load_catalog_report(
+                &sandbox.model_dir(),
+                &sandbox.preset_file(),
+                &sandbox.benchmark_file(),
+            ))
+            .expect("catalog report should succeed");
+
+        assert!(report.issues.iter().any(|issue| {
+            issue.level == CatalogLoadIssueLevel::Error
+                && issue.message.contains("contains invalid entries")
+        }));
+        assert_eq!(report.records.len(), 1);
+        assert_eq!(report.records[0].recommendation.source, RecSource::Heuristic);
+    }
+
+    #[test]
+    fn invalid_benchmark_file_reports_error() {
+        let sandbox = TestSandbox::new("invalid-benchmark");
+        sandbox.write_model("alpha.gguf");
+        std::fs::write(
+            sandbox.benchmark_file(),
+            "--- alpha (2026-05-17)\nStatus: ok\nTotally wrong\n",
+        )
+        .unwrap();
+
+        let report = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(load_catalog_report(
+                &sandbox.model_dir(),
+                &sandbox.preset_file(),
+                &sandbox.benchmark_file(),
+            ))
+            .expect("catalog report should succeed");
+
+        assert!(report.issues.iter().any(|issue| {
+            issue.level == CatalogLoadIssueLevel::Error
+                && issue.message.contains("did not produce any usable benchmark entries")
+        }));
+    }
 }

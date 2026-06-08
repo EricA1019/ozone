@@ -2,14 +2,21 @@ use std::{collections::BTreeMap, convert::Infallible};
 
 use ozone_core::engine::CancelReason;
 
-use crate::{
-    app::{
-        AppBootstrap, BranchItem, DraftCheckpoint, DraftState, GenerationPoll, RuntimeCancellation,
-        RuntimeCompletion, RuntimeContextRefresh, RuntimeSendReceipt, SessionContext,
-        SessionListEntry, TranscriptItem,
-    },
-    input::KeyAction,
-};
+use crate::state::AppBootstrap;
+use crate::state::BranchItem;
+use crate::state::DraftCheckpoint;
+use crate::state::DraftState;
+use crate::state::GenerationPoll;
+use crate::state::RuntimeCancellation;
+use crate::state::RuntimeCompletion;
+use crate::state::RuntimeContextRefresh;
+use crate::state::RuntimeSendReceipt;
+use crate::state::RuntimeSessionLoad;
+use crate::state::SessionContext;
+use crate::state::SessionListEntry;
+use crate::state::SessionMetadata;
+use crate::state::TranscriptItem;
+use crate::input::KeyAction;
 
 pub trait SessionRuntime {
     type Error: std::fmt::Debug;
@@ -28,6 +35,14 @@ pub trait SessionRuntime {
         &mut self,
         _context: &SessionContext,
         _prompt: &str,
+    ) -> Result<Option<RuntimeSendReceipt>, Self::Error> {
+        Ok(None)
+    }
+
+    fn reroll_message(
+        &mut self,
+        _context: &SessionContext,
+        _message_id: &str,
     ) -> Result<Option<RuntimeSendReceipt>, Self::Error> {
         Ok(None)
     }
@@ -100,6 +115,15 @@ pub trait SessionRuntime {
         Ok(None)
     }
 
+    fn edit_message(
+        &mut self,
+        _context: &SessionContext,
+        _message_id: &str,
+        _content: &str,
+    ) -> Result<Option<RuntimeContextRefresh>, Self::Error> {
+        Ok(None)
+    }
+
     fn persist_draft(
         &mut self,
         _context: &SessionContext,
@@ -117,27 +141,72 @@ pub trait SessionRuntime {
 
     /// List imported character cards for the character manager.
     /// Returns an empty list by default.
-    fn list_characters(&mut self) -> Result<Vec<crate::app::CharacterEntry>, Self::Error> {
+    fn list_characters(&mut self) -> Result<Vec<crate::state::CharacterEntry>, Self::Error> {
         Ok(Vec::new())
     }
 
     /// Return current configuration entries for the settings screen.
-    fn get_settings(&mut self) -> Result<Vec<crate::app::SettingsEntry>, Self::Error> {
+    fn get_settings(&mut self) -> Result<Vec<crate::state::SettingsEntry>, Self::Error> {
         Ok(Vec::new())
     }
 
     /// Create a new character card in the global library.
     fn create_character(
         &mut self,
-        _name: String,
-        _system_prompt: String,
-    ) -> Result<crate::app::CharacterEntry, Self::Error>;
+        _detail: crate::state::CharacterDetail,
+    ) -> Result<crate::state::CharacterEntry, Self::Error>;
+
+    /// Update an existing character card.
+    fn update_character(
+        &mut self,
+        _detail: crate::state::CharacterDetail,
+    ) -> Result<crate::state::CharacterEntry, Self::Error>;
+
+    /// Load a character card by ID for editing.
+    fn get_character(
+        &mut self,
+        _card_id: &str,
+    ) -> Result<Option<crate::state::CharacterDetail>, Self::Error>;
 
     /// Import a character card from a JSON file path.
     fn import_character(
         &mut self,
         _path: String,
-    ) -> Result<crate::app::CharacterEntry, Self::Error>;
+    ) -> Result<crate::state::CharacterEntry, Self::Error>;
+
+    /// Persist a changed preference value.
+    /// `pref_key` is the JSON field name (e.g. `"theme_preset"`); `value` is
+    /// the new serialised string value.  The default implementation is a no-op
+    /// so that runtimes that don't manage prefs don't need to implement this.
+    fn save_pref(&mut self, _pref_key: &str, _value: &str) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Assign or remove the folder for a session.
+    /// The default implementation is a no-op.
+    fn set_session_folder(
+        &mut self,
+        _session_id: &str,
+        _folder: Option<&str>,
+    ) -> Result<(), Self::Error> {
+        Ok(())
+    }
+
+    /// Create and switch into a fresh session.
+    fn create_session(
+        &mut self,
+        character_name: Option<&str>,
+    ) -> Result<RuntimeSessionLoad, Self::Error>;
+
+    /// Switch to a different session — release the current lock, open the new
+    /// session, and return its bootstrap data so the TUI can hydrate.
+    /// The default returns `None` (session switching not supported).
+    fn open_session(
+        &mut self,
+        _session_id: &str,
+    ) -> Result<Option<RuntimeSessionLoad>, Self::Error> {
+        Ok(None)
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -157,10 +226,13 @@ pub struct MockRuntime {
     pub cancelled_requests: Vec<String>,
     pub polled_requests: Vec<String>,
     pub persisted_drafts: BTreeMap<String, String>,
+    pub edited_messages: Vec<(String, String)>,
     pub toggled_pinned_messages: Vec<String>,
     pub available_sessions: Vec<SessionListEntry>,
-    pub available_characters: Vec<crate::app::CharacterEntry>,
+    pub available_characters: Vec<crate::state::CharacterEntry>,
     pub active_generation: Option<MockGeneration>,
+    /// Per-session bootstrap data for `open_session()` testing.
+    pub session_bootstraps: BTreeMap<String, AppBootstrap>,
     next_request_number: u64,
 }
 
@@ -175,10 +247,12 @@ impl Default for MockRuntime {
             cancelled_requests: Vec::new(),
             polled_requests: Vec::new(),
             persisted_drafts: BTreeMap::new(),
+            edited_messages: Vec::new(),
             toggled_pinned_messages: Vec::new(),
             available_sessions: Vec::new(),
             available_characters: Vec::new(),
             active_generation: None,
+            session_bootstraps: BTreeMap::new(),
             next_request_number: 1,
         }
     }
@@ -275,6 +349,48 @@ impl SessionRuntime for MockRuntime {
             user_message,
             context_preview: None,
             context_dry_run: None,
+            refresh: None,
+            context_compression: None,
+        }))
+    }
+
+    fn reroll_message(
+        &mut self,
+        _context: &SessionContext,
+        message_id: &str,
+    ) -> Result<Option<RuntimeSendReceipt>, Self::Error> {
+        let Some(index) = self
+            .bootstrap_state
+            .transcript
+            .iter()
+            .position(|item| item.message_id.as_deref() == Some(message_id))
+        else {
+            return Ok(None);
+        };
+        let Some(parent_user) = self.bootstrap_state.transcript[..index]
+            .iter()
+            .rev()
+            .find(|item| item.author == "user")
+            .cloned()
+        else {
+            return Ok(None);
+        };
+
+        let request_id = self.next_request_id();
+        self.sent_prompts.push(parent_user.content.clone());
+        self.active_generation = Some(MockGeneration {
+            request_id: request_id.clone(),
+            prompt: parent_user.content.clone(),
+            response: format!("Mock reroll to: {}", parent_user.content),
+        });
+
+        Ok(Some(RuntimeSendReceipt {
+            request_id,
+            user_message: parent_user,
+            context_preview: None,
+            context_dry_run: None,
+            refresh: None,
+            context_compression: None,
         }))
     }
 
@@ -295,7 +411,9 @@ impl SessionRuntime for MockRuntime {
 
         Ok(Some(RuntimeCompletion {
             request_id: generation.request_id,
-            assistant_message,
+            message: assistant_message,
+            session_title: None,
+            refresh: None,
         }))
     }
 
@@ -353,6 +471,29 @@ impl SessionRuntime for MockRuntime {
         Ok(())
     }
 
+    fn edit_message(
+        &mut self,
+        _context: &SessionContext,
+        message_id: &str,
+        content: &str,
+    ) -> Result<Option<RuntimeContextRefresh>, Self::Error> {
+        self.edited_messages
+            .push((message_id.to_owned(), content.to_owned()));
+        if let Some(item) = self
+            .bootstrap_state
+            .transcript
+            .iter_mut()
+            .find(|item| item.message_id.as_deref() == Some(message_id))
+        {
+            item.content = content.to_owned();
+        }
+        Ok(Some(RuntimeContextRefresh {
+            transcript: Some(self.bootstrap_state.transcript.clone()),
+            status_line: Some("Updated selected message".into()),
+            ..RuntimeContextRefresh::default()
+        }))
+    }
+
     fn toggle_pinned_memory(
         &mut self,
         _context: &SessionContext,
@@ -366,37 +507,135 @@ impl SessionRuntime for MockRuntime {
         Ok(self.available_sessions.clone())
     }
 
-    fn list_characters(&mut self) -> Result<Vec<crate::app::CharacterEntry>, Self::Error> {
+    fn list_characters(&mut self) -> Result<Vec<crate::state::CharacterEntry>, Self::Error> {
         Ok(self.available_characters.clone())
     }
 
     fn create_character(
         &mut self,
-        name: String,
-        _system_prompt: String,
-    ) -> Result<crate::app::CharacterEntry, Self::Error> {
-        let entry = crate::app::CharacterEntry {
+        detail: crate::state::CharacterDetail,
+    ) -> Result<crate::state::CharacterEntry, Self::Error> {
+        let entry = crate::state::CharacterEntry {
             card_id: format!("mock-char-{}", self.available_characters.len() + 1),
-            name: name.clone(),
+            name: detail.name.clone(),
             description: String::new(),
+            greeting: detail.greeting.clone(),
             session_count: 0,
         };
         self.available_characters.push(entry.clone());
         Ok(entry)
     }
 
+    fn update_character(
+        &mut self,
+        detail: crate::state::CharacterDetail,
+    ) -> Result<crate::state::CharacterEntry, Self::Error> {
+        if let Some(entry) = self
+            .available_characters
+            .iter_mut()
+            .find(|e| e.card_id == detail.card_id)
+        {
+            entry.name = detail.name.clone();
+            entry.description = detail.description.clone();
+            entry.greeting = detail.greeting.clone();
+        }
+        Ok(crate::state::CharacterEntry {
+            card_id: detail.card_id,
+            name: detail.name,
+            description: detail.description,
+            greeting: detail.greeting,
+            session_count: 0,
+        })
+    }
+
+    fn get_character(
+        &mut self,
+        card_id: &str,
+    ) -> Result<Option<crate::state::CharacterDetail>, Self::Error> {
+        let entry = self
+            .available_characters
+            .iter()
+            .find(|e| e.card_id == card_id);
+        Ok(entry.map(|e| crate::state::CharacterDetail {
+            card_id: e.card_id.clone(),
+            name: e.name.clone(),
+            description: e.description.clone(),
+            greeting: e.greeting.clone(),
+            ..Default::default()
+        }))
+    }
+
     fn import_character(
         &mut self,
         _path: String,
-    ) -> Result<crate::app::CharacterEntry, Self::Error> {
-        let entry = crate::app::CharacterEntry {
+    ) -> Result<crate::state::CharacterEntry, Self::Error> {
+        let entry = crate::state::CharacterEntry {
             card_id: format!("mock-import-{}", self.available_characters.len() + 1),
             name: "Imported Character".into(),
             description: "Imported from file".into(),
+            greeting: String::new(),
             session_count: 0,
         };
         self.available_characters.push(entry.clone());
         Ok(entry)
+    }
+
+    fn create_session(
+        &mut self,
+        character_name: Option<&str>,
+    ) -> Result<RuntimeSessionLoad, Self::Error> {
+        let session_number = self.available_sessions.len() + self.session_bootstraps.len() + 1;
+        let session_id = format!("00000000-0000-0000-0000-{session_number:012}");
+        let session_name = format!("New Conversation {session_number}");
+        let character_name = character_name.map(str::to_owned);
+        let bootstrap = AppBootstrap {
+            status_line: Some("New conversation started".into()),
+            session_metadata: Some(SessionMetadata {
+                character_name: character_name.clone(),
+                tags: Vec::new(),
+                pinned_count: None,
+                greeting: None,
+                memory_metadata: None,
+            }),
+            ..AppBootstrap::default()
+        };
+        self.available_sessions.push(SessionListEntry {
+            session_id: session_id.clone(),
+            name: session_name.clone(),
+            character_name,
+            message_count: 0,
+            last_active: None,
+            folder: None,
+            last_message_preview: None,
+        });
+        self.session_bootstraps
+            .insert(session_id.clone(), bootstrap.clone());
+        Ok(RuntimeSessionLoad {
+            session_id,
+            session_name,
+            bootstrap,
+        })
+    }
+
+    fn open_session(
+        &mut self,
+        session_id: &str,
+    ) -> Result<Option<RuntimeSessionLoad>, Self::Error> {
+        if let Some(bootstrap) = self.session_bootstraps.get(session_id) {
+            let session_name = self
+                .available_sessions
+                .iter()
+                .find(|entry| entry.session_id == session_id)
+                .map(|entry| entry.name.clone())
+                .unwrap_or_else(|| "Mock Session".into());
+            Ok(Some(RuntimeSessionLoad {
+                session_id: session_id.to_owned(),
+                session_name,
+                bootstrap: bootstrap.clone(),
+            }))
+        } else {
+            Ok(None)
+        }
     }
 }
 
@@ -405,7 +644,7 @@ mod tests {
     use ozone_core::{engine::CancelReason, session::SessionId};
 
     use super::{MockRuntime, SessionRuntime};
-    use crate::app::{DraftState, GenerationPoll, SessionContext, TranscriptItem};
+    use crate::state::{DraftState, GenerationPoll, SessionContext, TranscriptItem};
 
     fn session_context() -> SessionContext {
         let session_id = SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap();
@@ -435,7 +674,7 @@ mod tests {
         let completion = runtime.complete_generation(&context).unwrap().unwrap();
         assert_eq!(completion.request_id, "mock-request-1");
         assert_eq!(
-            completion.assistant_message,
+            completion.message,
             TranscriptItem::new("assistant", "Mock response to: hello mock")
         );
         assert!(runtime.active_generation.is_none());
@@ -534,5 +773,79 @@ mod tests {
         let poll = runtime.poll_generation(&context).unwrap();
         assert!(poll.is_none());
         assert!(runtime.polled_requests.is_empty());
+    }
+
+    #[test]
+    fn open_session_returns_registered_bootstrap() {
+        use crate::state::{AppBootstrap, BranchItem};
+
+        let mut runtime = MockRuntime::seeded();
+        let other_bootstrap = AppBootstrap {
+            transcript: vec![
+                TranscriptItem::new("user", "hello from other session"),
+                TranscriptItem::new("assistant", "hi there"),
+            ],
+            branches: vec![BranchItem::new("main", "main", true)],
+            status_line: Some("other session ready".into()),
+            ..AppBootstrap::default()
+        };
+        runtime
+            .session_bootstraps
+            .insert("other-session-id".into(), other_bootstrap);
+
+        let result = runtime.open_session("other-session-id").unwrap();
+        assert!(result.is_some());
+        let session = result.unwrap();
+        assert_eq!(session.session_id, "other-session-id");
+        assert_eq!(session.bootstrap.transcript.len(), 2);
+        assert_eq!(
+            session.bootstrap.transcript[0].content,
+            "hello from other session"
+        );
+
+        // Unknown session returns None.
+        let result = runtime.open_session("unknown-id").unwrap();
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn create_session_registers_a_fresh_empty_bootstrap() {
+        let mut runtime = MockRuntime::seeded();
+
+        let session = runtime.create_session(None).unwrap();
+
+        assert!(session.session_id.starts_with("00000000-0000-0000-0000-"));
+        assert_eq!(session.bootstrap.transcript.len(), 0);
+        assert_eq!(
+            runtime
+                .available_sessions
+                .last()
+                .map(|entry| entry.session_id.as_str()),
+            Some(session.session_id.as_str())
+        );
+        assert!(runtime.session_bootstraps.contains_key(&session.session_id));
+    }
+
+    #[test]
+    fn create_session_carries_requested_character_name() {
+        let mut runtime = MockRuntime::seeded();
+
+        let session = runtime.create_session(Some("Aster")).unwrap();
+
+        assert_eq!(
+            runtime
+                .available_sessions
+                .last()
+                .and_then(|entry| entry.character_name.as_deref()),
+            Some("Aster")
+        );
+        assert_eq!(
+            session
+                .bootstrap
+                .session_metadata
+                .as_ref()
+                .and_then(|metadata| metadata.character_name.as_deref()),
+            Some("Aster")
+        );
     }
 }

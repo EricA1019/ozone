@@ -113,22 +113,29 @@ fn pending_install_update(binary_name: &str) -> io::Result<Option<PendingInstall
     }
 
     let Some(repo_root) = read_install_source_root()? else {
-        debug("skipped: no repo root found (no marker file and cwd not in repo)");
+        debug("skipped: no recorded install source root found");
         return Ok(None);
     };
     debug(&format!("repo_root={}", repo_root.display()));
     let sync_script = repo_root.join("contrib/sync-local-install.sh");
     if !sync_script.is_file() {
-        debug(&format!("skipped: sync script not found at {}", sync_script.display()));
+        debug(&format!(
+            "skipped: sync script not found at {}",
+            sync_script.display()
+        ));
         return Ok(None);
     }
 
-    let Some(source_artifact) = stale_release_artifact(&current_exe, &repo_root, binary_name, &home_dir)?
+    let Some(source_artifact) =
+        stale_release_artifact(&current_exe, &repo_root, binary_name, &home_dir)?
     else {
         debug("skipped: installed binary matches release artifact (checksums equal)");
         return Ok(None);
     };
-    debug(&format!("stale! source_artifact={}", source_artifact.display()));
+    debug(&format!(
+        "stale! source_artifact={}",
+        source_artifact.display()
+    ));
 
     Ok(Some(PendingInstallUpdate {
         repo_root,
@@ -139,30 +146,18 @@ fn pending_install_update(binary_name: &str) -> io::Result<Option<PendingInstall
 
 fn read_install_source_root() -> io::Result<Option<PathBuf>> {
     let Some(path) = crate::paths::install_source_root_path() else {
-        return discover_repo_root_from_cwd();
+        return Ok(None);
     };
     if !path.is_file() {
-        return discover_repo_root_from_cwd();
+        return Ok(None);
     }
 
     let contents = fs::read_to_string(path)?;
     let trimmed = contents.trim();
     if trimmed.is_empty() {
-        return discover_repo_root_from_cwd();
+        return Ok(None);
     }
     Ok(Some(PathBuf::from(trimmed)))
-}
-
-fn discover_repo_root_from_cwd() -> io::Result<Option<PathBuf>> {
-    let current_dir = env::current_dir()?;
-    for candidate in current_dir.ancestors() {
-        if candidate.join("Cargo.toml").is_file()
-            && candidate.join("contrib/sync-local-install.sh").is_file()
-        {
-            return Ok(Some(candidate.to_path_buf()));
-        }
-    }
-    Ok(None)
 }
 
 fn stale_release_artifact(
@@ -214,12 +209,12 @@ fn sha256_file(path: &Path) -> io::Result<[u8; 32]> {
 
 fn env_truthy(name: &str) -> bool {
     matches!(
-        env::var(name),
-        Ok(value)
-            if value == "1"
-                || value.eq_ignore_ascii_case("true")
-                || value.eq_ignore_ascii_case("yes")
-        )
+    env::var(name),
+    Ok(value)
+        if value == "1"
+            || value.eq_ignore_ascii_case("true")
+            || value.eq_ignore_ascii_case("yes")
+    )
 }
 
 fn answer_is_yes(answer: &str) -> bool {
@@ -229,12 +224,57 @@ fn answer_is_yes(answer: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
-    use super::{is_managed_install_path, stale_release_artifact};
+    use super::{is_managed_install_path, read_install_source_root, stale_release_artifact};
     use std::{
         fs,
         path::{Path, PathBuf},
+        sync::Mutex,
         time::{SystemTime, UNIX_EPOCH},
     };
+
+    fn env_lock() -> &'static Mutex<()> {
+        crate::test_support::env_lock()
+    }
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        previous: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: impl AsRef<Path>) -> Self {
+            let previous = std::env::var(key).ok();
+            std::env::set_var(key, value.as_ref());
+            Self { key, previous }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            match self.previous.as_ref() {
+                Some(previous) => std::env::set_var(self.key, previous),
+                None => std::env::remove_var(self.key),
+            }
+        }
+    }
+
+    struct ScopedCurrentDir {
+        previous: PathBuf,
+    }
+
+    impl ScopedCurrentDir {
+        fn set(path: &Path) -> Self {
+            let previous = std::env::current_dir().unwrap();
+            std::env::set_current_dir(path).unwrap();
+            Self { previous }
+        }
+    }
+
+    impl Drop for ScopedCurrentDir {
+        fn drop(&mut self) {
+            let _ = std::env::set_current_dir(&self.previous);
+        }
+    }
 
     fn unique_temp_dir(name: &str) -> PathBuf {
         let nonce = SystemTime::now()
@@ -259,7 +299,7 @@ mod tests {
             &home
         ));
         assert!(is_managed_install_path(
-            &home.join(".local/bin/ozone-plus"),
+            &home.join(".local/bin/ozone"),
             &home
         ));
         assert!(!is_managed_install_path(
@@ -290,13 +330,13 @@ mod tests {
         let root = unique_temp_dir("match");
         let home = root.join("home");
         let repo = root.join("repo");
-        let current = home.join(".cargo/bin/ozone-plus");
-        let release = repo.join("target/release/ozone-plus");
+        let current = home.join(".cargo/bin/ozone");
+        let release = repo.join("target/release/ozone");
 
         write_file(&current, b"same-binary");
         write_file(&release, b"same-binary");
 
-        let detected = stale_release_artifact(&current, &repo, "ozone-plus", &home).unwrap();
+        let detected = stale_release_artifact(&current, &repo, "ozone", &home).unwrap();
         assert!(detected.is_none());
 
         let _ = fs::remove_dir_all(root);
@@ -315,6 +355,50 @@ mod tests {
 
         let detected = stale_release_artifact(&current, &repo, "ozone", &home).unwrap();
         assert!(detected.is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn read_install_source_root_requires_recorded_marker() {
+        let _guard = env_lock().lock().unwrap();
+        let root = unique_temp_dir("marker-required");
+        let repo = root.join("repo");
+        let nested = repo.join("nested/worktree");
+        fs::create_dir_all(&nested).unwrap();
+        write_file(&repo.join("Cargo.toml"), b"[package]\nname = \"dummy\"\n");
+        write_file(
+            &repo.join("contrib/sync-local-install.sh"),
+            b"#!/usr/bin/env bash\n",
+        );
+
+        let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", root.join("xdg-data"));
+        let _home = ScopedEnvVar::set("HOME", root.join("home"));
+        let _cwd = ScopedCurrentDir::set(&nested);
+
+        let detected = read_install_source_root().unwrap();
+        assert!(detected.is_none());
+
+        let _ = fs::remove_dir_all(root);
+    }
+
+    #[test]
+    fn read_install_source_root_uses_recorded_marker() {
+        let _guard = env_lock().lock().unwrap();
+        let root = unique_temp_dir("marker-present");
+        let repo = root.join("repo");
+        let xdg_data_home = root.join("xdg-data");
+        fs::create_dir_all(&repo).unwrap();
+        fs::create_dir_all(&xdg_data_home).unwrap();
+
+        let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", &xdg_data_home);
+        let _home = ScopedEnvVar::set("HOME", root.join("home"));
+
+        let marker_path = crate::paths::install_source_root_path().unwrap();
+        write_file(&marker_path, repo.display().to_string().as_bytes());
+
+        let detected = read_install_source_root().unwrap();
+        assert_eq!(detected, Some(repo));
 
         let _ = fs::remove_dir_all(root);
     }

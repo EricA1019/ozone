@@ -38,11 +38,12 @@ fn render_header(f: &mut Frame, area: Rect, _app: &App) {
     let now = Local::now().format("%H:%M:%S");
     let title = Line::from(vec![
         Span::styled(
-            format!(" {} Ozone Monitor ", crate::theme::HEX_CURSOR),
+            format!(" {} Ozone ", crate::theme::HEX_CURSOR),
             style_bold_lime(),
         ),
-        Span::styled("—", style_gray()),
-        Span::styled(" live ", style_green()),
+        Span::styled("Monitor", style_bold_cyan()),
+        Span::styled("  ·  ", style_muted()),
+        Span::styled("live", style_green()),
         Span::styled(format!("  {now}"), style_gray()),
     ]);
     let block = Block::default()
@@ -178,28 +179,12 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let (kc_icon, kc_style) = if app.services.kobold_running {
-        ("●", style_green())
-    } else {
-        ("○", style_gray())
-    };
-    let (st_icon, st_style) = if app.services.st_running {
-        ("●", style_green())
-    } else {
-        ("○", style_gray())
-    };
-    let (ollama_icon, ollama_style) = if app.services.ollama_running {
-        ("●", style_green())
-    } else {
-        ("○", style_gray())
-    };
     let (llama_icon, llama_style) = if app.services.llamacpp_running {
         ("●", style_green())
     } else {
         ("○", style_gray())
     };
 
-    let model_str = app.services.kobold_model.as_deref().unwrap_or("—");
     let llama_model_str = app.services.llamacpp_model.as_deref().unwrap_or("—");
     let tps_str = app
         .tokens_per_sec
@@ -208,22 +193,10 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
 
     let lines = vec![
         Line::from(vec![
-            Span::styled(format!("  {kc_icon} KoboldCpp  "), kc_style),
-            Span::styled(model_str, style_cyan()),
-            Span::styled(tps_str, style_green()),
-        ]),
-        Line::from(vec![
-            Span::styled(format!("  {llama_icon} LlamaCpp   "), llama_style),
+            Span::styled(format!("  {llama_icon} llama.cpp  "), llama_style),
             Span::styled(llama_model_str, style_violet()),
-            Span::styled("  :8080", style_gray()),
-        ]),
-        Line::from(vec![
-            Span::styled(format!("  {ollama_icon} Ollama     "), ollama_style),
-            Span::styled(":11434", style_gray()),
-        ]),
-        Line::from(vec![
-            Span::styled(format!("  {st_icon} SillyTavern  "), st_style),
-            Span::styled(":8000", style_gray()),
+            Span::styled("  :8989", style_gray()),
+            Span::styled(tps_str, style_green()),
         ]),
     ];
     f.render_widget(Paragraph::new(lines), inner);
@@ -231,12 +204,12 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_hints(f: &mut Frame, area: Rect) {
     let hints = Paragraph::new(Line::from(vec![
-        Span::styled("  Esc/r", style_cyan()),
-        Span::styled(" back  ", style_gray()),
-        Span::styled("s", style_cyan()),
-        Span::styled(" stop all  ", style_gray()),
-        Span::styled("q", style_cyan()),
-        Span::styled(" exit", style_gray()),
+        Span::styled("  Esc/r", style_hint_key()),
+        Span::styled(" back  ", style_muted()),
+        Span::styled("s", style_hint_key()),
+        Span::styled(" stop all  ", style_muted()),
+        Span::styled("q", style_hint_key()),
+        Span::styled(" exit", style_muted()),
     ]));
     f.render_widget(hints, area);
 }

@@ -1,6 +1,6 @@
 [package]
 name = "ozone-core"
-version = "0.4.3-alpha"
+version = "0.4.8-alpha"
 edition = "2021"
 publish = false
 description = "Shared core foundations for the Ozone product family"
@@ -11,3 +11,6 @@ directories = "5"
 dirs = "5"
 serde = { version = "1", features = ["derive"] }
 sha2 = "0.10"
+anyhow = "1"
+serde_json = "1"
+sysinfo = "0.33"

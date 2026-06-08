@@ -1,13 +1,30 @@
 use anyhow::{anyhow, Result};
 use ozone_core::paths;
+use serde::{Deserialize, Serialize};
+use std::hash::{Hash, Hasher};
+use std::net::{SocketAddr, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::Duration;
 use tokio::time::sleep;
 
-const KOBOLD_START_TIMEOUT_SECS: u64 = 120;
 const LLAMACPP_START_TIMEOUT_SECS: u64 = 120;
+const LLAMACPP_MANAGED_PORT: u16 = 8989;
+const LLAMACPP_LAUNCH_STATE_VERSION: u32 = 1;
+const LLAMACPP_GRACEFUL_STOP_TIMEOUT_MILLIS: u64 = 2_000;
+const LLAMACPP_PORT_RELEASE_TIMEOUT_MILLIS: u64 = 4_000;
 
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+struct ManagedLlamaCppLaunchState {
+    version: u32,
+    pid: u32,
+    port: u16,
+    model_id: String,
+    profile_name: Option<String>,
+    config_fingerprint: String,
+}
+
+#[cfg(test)]
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum KoboldStartupFailureKind {
     PyInstallerExtraction,
@@ -33,8 +50,6 @@ pub enum LlamaCppStartupFailure {
     RuntimeCrash { exit_code: Option<i32> },
     /// Health endpoint never responded within timeout
     Timeout,
-    /// Unknown failure
-    Unknown,
 }
 
 pub async fn is_url_ready(url: &str) -> bool {
@@ -51,32 +66,6 @@ pub async fn is_url_ready(url: &str) -> bool {
         .await
         .map(|r| r.status().is_success())
         .unwrap_or(false)
-}
-
-pub async fn get_kobold_model() -> Option<String> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()
-        .ok()?;
-    let resp = client.get(paths::koboldcpp_ready_url()).send().await.ok()?;
-    let data: serde_json::Value = resp.json().await.ok()?;
-    data["result"].as_str().map(|s| s.to_string())
-}
-
-pub async fn get_kobold_perf() -> Option<f64> {
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_millis(800))
-        .build()
-        .ok()?;
-    let resp = client.get(paths::koboldcpp_perf_url()).send().await.ok()?;
-    let data: serde_json::Value = resp.json().await.ok()?;
-    let last_ms = data["last_process_time_ms"].as_f64().unwrap_or(0.0);
-    let last_tok = data["last_token_count"].as_f64().unwrap_or(0.0);
-    if last_ms > 0.0 && last_tok > 0.0 {
-        Some(last_tok / (last_ms / 1000.0))
-    } else {
-        None
-    }
 }
 
 pub async fn get_llamacpp_model() -> Option<String> {
@@ -110,42 +99,181 @@ pub async fn get_llamacpp_model() -> Option<String> {
     )
 }
 
+fn llamacpp_config_fingerprint(model_name: &str, args: &[String]) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    model_name.hash(&mut hasher);
+    args.hash(&mut hasher);
+    format!("{:#016x}", hasher.finish())
+}
+
+async fn load_llamacpp_launch_state() -> Result<Option<ManagedLlamaCppLaunchState>> {
+    let Some(path) = paths::llamacpp_launch_state_path() else {
+        return Ok(None);
+    };
+    match tokio::fs::read_to_string(&path).await {
+        Ok(text) => Ok(Some(serde_json::from_str(&text)?)),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(None),
+        Err(error) => Err(error.into()),
+    }
+}
+
+async fn save_llamacpp_launch_state(state: &ManagedLlamaCppLaunchState) -> Result<()> {
+    let Some(path) = paths::llamacpp_launch_state_path() else {
+        return Ok(());
+    };
+    if let Some(parent) = path.parent() {
+        tokio::fs::create_dir_all(parent).await?;
+    }
+    let contents = serde_json::to_string_pretty(state)?;
+    tokio::fs::write(path, format!("{contents}\n")).await?;
+    Ok(())
+}
+
+async fn clear_llamacpp_launch_state() -> Result<()> {
+    let Some(path) = paths::llamacpp_launch_state_path() else {
+        return Ok(());
+    };
+    match tokio::fs::remove_file(path).await {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error.into()),
+    }
+}
+
+fn pid_is_live(pid: u32) -> bool {
+    let result = unsafe { libc::kill(pid as i32, 0) };
+    if result == 0 {
+        return true;
+    }
+    std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
+}
+
+fn signal_pid(pid: u32, signal: i32) -> bool {
+    unsafe { libc::kill(pid as i32, signal) == 0 }
+}
+
+async fn wait_for_pid_exit(pid: u32, timeout: Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if !pid_is_live(pid) {
+            return true;
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    !pid_is_live(pid)
+}
+
+fn is_port_listening(port: u16) -> bool {
+    let address = SocketAddr::from(([127, 0, 0, 1], port));
+    TcpStream::connect_timeout(&address, Duration::from_millis(250)).is_ok()
+}
+
+async fn wait_for_port_release(port: u16, timeout: Duration) -> bool {
+    let deadline = std::time::Instant::now() + timeout;
+    while std::time::Instant::now() < deadline {
+        if !is_port_listening(port) {
+            return true;
+        }
+        sleep(Duration::from_millis(100)).await;
+    }
+    !is_port_listening(port)
+}
+
+fn strict_llamacpp_pids_on_port(port: u16) -> Result<Vec<u32>> {
+    let port_flag = format!("--port {port}");
+    let port_equals_flag = format!("--port={port}");
+    let output = std::process::Command::new("ps")
+        .args(["-eo", "pid=,args="])
+        .output()?;
+    let text = String::from_utf8_lossy(&output.stdout);
+    let mut pids = Vec::new();
+    for raw_line in text.lines() {
+        let line = raw_line.trim();
+        let parts: Vec<&str> = line.splitn(2, ' ').collect();
+        if parts.len() < 2 {
+            continue;
+        }
+        let Ok(pid) = parts[0].trim().parse::<u32>() else {
+            continue;
+        };
+        let args = parts[1];
+        if args.contains("llama-server")
+            && (args.contains(&port_flag) || args.contains(&port_equals_flag))
+        {
+            pids.push(pid);
+        }
+    }
+    Ok(pids)
+}
+
+async fn stop_tracked_llamacpp_pid(pid: u32) -> bool {
+    if !pid_is_live(pid) {
+        return true;
+    }
+    let _ = signal_pid(pid, libc::SIGTERM);
+    if wait_for_pid_exit(
+        pid,
+        Duration::from_millis(LLAMACPP_GRACEFUL_STOP_TIMEOUT_MILLIS),
+    )
+    .await
+    {
+        return true;
+    }
+    let _ = signal_pid(pid, libc::SIGKILL);
+    wait_for_pid_exit(
+        pid,
+        Duration::from_millis(LLAMACPP_GRACEFUL_STOP_TIMEOUT_MILLIS),
+    )
+    .await
+}
+
+pub async fn purge_last_model() -> Result<Vec<u32>> {
+    let mut stopped_pids = Vec::new();
+    let mut fallback_needed = true;
+
+    if let Some(state) = load_llamacpp_launch_state().await? {
+        fallback_needed = !stop_tracked_llamacpp_pid(state.pid).await;
+        if !fallback_needed {
+            stopped_pids.push(state.pid);
+        }
+    }
+
+    if fallback_needed {
+        for pid in strict_llamacpp_pids_on_port(LLAMACPP_MANAGED_PORT)? {
+            if stop_tracked_llamacpp_pid(pid).await {
+                stopped_pids.push(pid);
+            }
+        }
+    }
+
+    let _ = wait_for_port_release(
+        LLAMACPP_MANAGED_PORT,
+        Duration::from_millis(LLAMACPP_PORT_RELEASE_TIMEOUT_MILLIS),
+    )
+    .await;
+    clear_llamacpp_launch_state().await?;
+    stopped_pids.sort_unstable();
+    stopped_pids.dedup();
+    Ok(stopped_pids)
+}
+
 #[derive(Debug, Clone)]
 pub struct ServiceStatus {
-    pub kobold_running: bool,
-    pub kobold_model: Option<String>,
     pub llamacpp_running: bool,
     pub llamacpp_model: Option<String>,
-    pub ollama_running: bool,
-    pub st_running: bool,
 }
 
 pub async fn get_service_status() -> ServiceStatus {
-    let kobold_url = paths::koboldcpp_ready_url();
     let llama_url = paths::llamacpp_ready_url();
-    let (kobold_ready, llamacpp_ready, ollama_ready, st_ready) = tokio::join!(
-        is_url_ready(&kobold_url),
-        is_url_ready(&llama_url),
-        is_url_ready("http://127.0.0.1:11434/api/tags"),
-        is_url_ready("http://127.0.0.1:8000"),
-    );
-    let kobold_model = if kobold_ready {
-        get_kobold_model().await
-    } else {
-        None
-    };
+    let llamacpp_ready = is_url_ready(&llama_url).await;
     let llamacpp_model = if llamacpp_ready {
         get_llamacpp_model().await
     } else {
         None
     };
     ServiceStatus {
-        kobold_running: kobold_ready,
-        kobold_model,
         llamacpp_running: llamacpp_ready,
         llamacpp_model,
-        ollama_running: ollama_ready,
-        st_running: st_ready,
     }
 }
 
@@ -190,101 +318,13 @@ fn nix_kill(pid: u32) -> bool {
         .unwrap_or(false)
 }
 
+#[cfg(test)]
 pub fn resolved_kobold_launcher_path() -> PathBuf {
     paths::launcher_path()
 }
 
 pub fn resolved_llamacpp_server_path() -> Result<PathBuf> {
     crate::llama::discover_llama_server_binary()
-}
-
-/// Resolves which backend to use for profiling. Prefers KoboldCpp if available,
-/// falls back to llama.cpp if the kobold launcher is not found but llama-server is.
-/// Returns None if neither is available.
-pub fn resolved_backend_for_profiling() -> Option<crate::bench::BenchBackend> {
-    let p = resolved_kobold_launcher_path();
-    if p.exists() {
-        return Some(crate::bench::BenchBackend::KoboldCpp { launcher_path: p });
-    }
-    if let Ok(p) = resolved_llamacpp_server_path() {
-        return Some(crate::bench::BenchBackend::LlamaCpp { server_path: p });
-    }
-    None
-}
-
-pub async fn start_kobold(launcher_path: &Path, model_name: &str, args: &[String]) -> Result<()> {
-    if !launcher_path.exists() {
-        return Err(anyhow!(
-            "KoboldCpp launcher not found: {}\nSet OZONE_KOBOLDCPP_LAUNCHER=/path/to/launch-koboldcpp.sh to use a repaired launcher.",
-            launcher_path.display(),
-        ));
-    }
-    if is_url_ready(&paths::koboldcpp_ready_url()).await {
-        return Ok(()); // already running
-    }
-
-    let log_path = paths::kobold_log_path()
-        .ok_or_else(|| anyhow!("could not determine ozone data directory"))?;
-    if let Some(parent) = log_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let log_file = std::fs::OpenOptions::new()
-        .create(true)
-        .write(true)
-        .truncate(true)
-        .open(&log_path)?;
-    let log_file2 = log_file.try_clone()?;
-
-    let mut cmd = std::process::Command::new(launcher_path);
-    cmd.arg(model_name)
-        .args(args)
-        .stdin(Stdio::null())
-        .stdout(log_file)
-        .stderr(log_file2);
-
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        unsafe {
-            cmd.pre_exec(|| {
-                libc::setsid();
-                Ok(())
-            });
-        }
-    }
-
-    let mut child = cmd.spawn()?;
-    let deadline = std::time::Instant::now() + Duration::from_secs(KOBOLD_START_TIMEOUT_SECS);
-    loop {
-        if is_url_ready(&paths::koboldcpp_ready_url()).await {
-            return Ok(());
-        }
-
-        if let Some(status) = child.try_wait()? {
-            let tail = tail_file(&log_path, 40).await;
-            return Err(anyhow!(format_startup_failure(
-                launcher_path,
-                Some(status),
-                &tail,
-                classify_startup_failure(&tail),
-            )));
-        }
-
-        if std::time::Instant::now() >= deadline {
-            let _ = child.kill();
-            let _ = child.wait();
-            let tail = tail_file(&log_path, 40).await;
-            return Err(anyhow!(format_startup_failure(
-                launcher_path,
-                None,
-                &tail,
-                KoboldStartupFailureKind::Timeout,
-            )));
-        }
-
-        sleep(Duration::from_millis(800)).await;
-    }
 }
 
 pub async fn start_llamacpp(server_path: &Path, model_name: &str, args: &[String]) -> Result<()> {
@@ -334,6 +374,15 @@ pub async fn start_llamacpp(server_path: &Path, model_name: &str, args: &[String
     let deadline = std::time::Instant::now() + Duration::from_secs(LLAMACPP_START_TIMEOUT_SECS);
     loop {
         if is_url_ready(&paths::llamacpp_ready_url()).await {
+            let state = ManagedLlamaCppLaunchState {
+                version: LLAMACPP_LAUNCH_STATE_VERSION,
+                pid: child.id(),
+                port: LLAMACPP_MANAGED_PORT,
+                model_id: model_name.to_string(),
+                profile_name: None,
+                config_fingerprint: llamacpp_config_fingerprint(model_name, args),
+            };
+            save_llamacpp_launch_state(&state).await?;
             return Ok(());
         }
 
@@ -376,6 +425,7 @@ async fn tail_file(path: &std::path::Path, n: usize) -> String {
         .unwrap_or_default()
 }
 
+#[cfg(test)]
 fn classify_startup_failure(log_tail: &str) -> KoboldStartupFailureKind {
     let lower = log_tail.to_lowercase();
     if lower.contains("failed to extract")
@@ -456,97 +506,10 @@ pub fn llamacpp_failure_suggestion(failure: &LlamaCppStartupFailure) -> &'static
         LlamaCppStartupFailure::Timeout => {
             "llama-server did not become ready within the timeout. It may still be loading a large model — try again or reduce context size."
         }
-        LlamaCppStartupFailure::Unknown => {
-            "llama-server failed for an unknown reason. Check the log file for details."
-        }
     }
 }
 
-fn format_startup_failure(
-    launcher_path: &Path,
-    status: Option<std::process::ExitStatus>,
-    log_tail: &str,
-    classified: KoboldStartupFailureKind,
-) -> String {
-    let headline = match classified {
-        KoboldStartupFailureKind::PyInstallerExtraction => {
-            "KoboldCpp failed during packaged-binary extraction."
-        }
-        KoboldStartupFailureKind::MissingSharedLibrary => {
-            "KoboldCpp is missing a required shared library."
-        }
-        KoboldStartupFailureKind::RuntimeCrash => "KoboldCpp crashed before its API became ready.",
-        KoboldStartupFailureKind::Timeout => {
-            "KoboldCpp did not become ready before the startup timeout."
-        }
-        KoboldStartupFailureKind::Unknown => "KoboldCpp exited before its API became ready.",
-    };
-    let mut message = String::from(headline);
-    if let Some(status) = status {
-        message.push_str(&format!(
-            "\nProcess status: {}",
-            describe_exit_status(status)
-        ));
-    }
-    message.push_str(&format!("\nLauncher: {}", launcher_path.display()));
-    for suggestion in remediation_steps(classified, launcher_path) {
-        message.push_str("\n- ");
-        message.push_str(&suggestion);
-    }
-    if !log_tail.trim().is_empty() {
-        message.push_str("\n\nLauncher log tail:\n");
-        message.push_str(log_tail.trim());
-    }
-    message
-}
-
-fn remediation_steps(kind: KoboldStartupFailureKind, launcher_path: &Path) -> Vec<String> {
-    let mut steps = match kind {
-        KoboldStartupFailureKind::PyInstallerExtraction => vec![
-            "The installed packaged KoboldCpp binary looks corrupt or incomplete; replace it or point ozone at a repaired launcher.".to_owned(),
-            format!(
-                "If you have a working wrapper elsewhere, set {}=/path/to/launch-koboldcpp.sh before launching ozone.",
-                "OZONE_KOBOLDCPP_LAUNCHER"
-            ),
-        ],
-        KoboldStartupFailureKind::MissingSharedLibrary => vec![
-            "The configured KoboldCpp install is missing one of its bundled .so files.".to_owned(),
-            format!(
-                "Repair the install behind {} or override it with {}.",
-                launcher_path.display(),
-                "OZONE_KOBOLDCPP_LAUNCHER"
-            ),
-        ],
-        KoboldStartupFailureKind::RuntimeCrash => vec![
-            "Retry with a repaired launcher or a CPU-safe fallback wrapper before profiling or handing off into ozone+.".to_owned(),
-            format!(
-                "You can override the launcher path temporarily with {}.",
-                "OZONE_KOBOLDCPP_LAUNCHER"
-            ),
-        ],
-        KoboldStartupFailureKind::Timeout => vec![
-            "Inspect the launcher log for backend startup progress or crashes.".to_owned(),
-            "Retry with a smaller context or lower GPU layers if the backend is just slow to load."
-                .to_owned(),
-        ],
-        KoboldStartupFailureKind::Unknown => vec![
-            "Run the configured launcher manually once to confirm the backend can start outside ozone."
-                .to_owned(),
-            format!(
-                "If the configured launcher is bad, set {} to a repaired wrapper and retry.",
-                "OZONE_KOBOLDCPP_LAUNCHER"
-            ),
-        ],
-    };
-    if let Some(log_path) = paths::kobold_log_path() {
-        steps.push(format!(
-            "Inspect the launcher log at {}.",
-            log_path.display()
-        ));
-    }
-    steps
-}
-
+#[cfg(test)]
 fn describe_exit_status(status: std::process::ExitStatus) -> String {
     if let Some(code) = status.code() {
         format!("exit code {code}")
@@ -560,25 +523,6 @@ fn describe_exit_status(status: std::process::ExitStatus) -> String {
         }
         "terminated without an exit code".to_owned()
     }
-}
-
-/// Build llama-server CLI args from a profiled launch plan.
-pub fn build_llamacpp_args(
-    gpu_layers: i32,
-    context_size: u32,
-    threads: Option<u32>,
-) -> Vec<String> {
-    let mut args = vec![
-        "--n-gpu-layers".into(),
-        gpu_layers.to_string(),
-        "--ctx-size".into(),
-        context_size.to_string(),
-    ];
-    if let Some(t) = threads {
-        args.push("--threads".into());
-        args.push(t.to_string());
-    }
-    args
 }
 
 pub fn open_browser_app(url: &str) {
@@ -617,22 +561,130 @@ fn which_exists(cmd: &str) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use crate::test_support::env_lock;
     use std::path::PathBuf;
-    use std::sync::{Mutex, OnceLock};
 
     use super::{
-        classify_startup_failure, describe_exit_status, resolved_kobold_launcher_path,
-        KoboldStartupFailureKind,
+        classify_startup_failure, clear_llamacpp_launch_state, describe_exit_status,
+        load_llamacpp_launch_state, resolved_kobold_launcher_path,
+        save_llamacpp_launch_state, KoboldStartupFailureKind,
+        ManagedLlamaCppLaunchState, LLAMACPP_LAUNCH_STATE_VERSION,
     };
 
-    fn env_lock() -> &'static Mutex<()> {
-        static LOCK: OnceLock<Mutex<()>> = OnceLock::new();
-        LOCK.get_or_init(|| Mutex::new(()))
+    #[tokio::test]
+    async fn managed_launch_state_round_trips_to_canonical_path() {
+        let _guard = env_lock();
+        let sandbox = StateTestSandbox::new("round-trip");
+        let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
+        let _home = ScopedEnvVar::set("HOME", sandbox.root());
+
+        let state = ManagedLlamaCppLaunchState {
+            version: LLAMACPP_LAUNCH_STATE_VERSION,
+            pid: std::process::id(),
+            port: 8989,
+            model_id: "gemma-4-E4B-it-UD-Q8_K_XL.gguf".to_string(),
+            profile_name: Some("balanced".to_string()),
+            config_fingerprint: "fingerprint".to_string(),
+        };
+
+        save_llamacpp_launch_state(&state)
+            .await
+            .expect("save managed state");
+
+        let loaded = load_llamacpp_launch_state()
+            .await
+            .expect("load managed state");
+
+        assert_eq!(loaded, Some(state));
+    }
+
+    #[tokio::test]
+    async fn clear_managed_launch_state_removes_state_file() {
+        let _guard = env_lock();
+        let sandbox = StateTestSandbox::new("clear-state");
+        let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
+        let _home = ScopedEnvVar::set("HOME", sandbox.root());
+
+        let state = ManagedLlamaCppLaunchState {
+            version: LLAMACPP_LAUNCH_STATE_VERSION,
+            pid: std::process::id(),
+            port: 8989,
+            model_id: "gemma-4-E4B-it-UD-Q8_K_XL.gguf".to_string(),
+            profile_name: None,
+            config_fingerprint: "fingerprint".to_string(),
+        };
+
+        save_llamacpp_launch_state(&state)
+            .await
+            .expect("save managed state");
+        clear_llamacpp_launch_state()
+            .await
+            .expect("clear managed state");
+
+        assert_eq!(
+            load_llamacpp_launch_state()
+                .await
+                .expect("load managed state after clear"),
+            None
+        );
+    }
+
+    struct StateTestSandbox {
+        root: PathBuf,
+    }
+
+    impl StateTestSandbox {
+        fn new(prefix: &str) -> Self {
+            let root = std::env::temp_dir().join(format!(
+                "ozone-process-state-tests-{prefix}-{}",
+                std::process::id()
+            ));
+            let _ = std::fs::remove_dir_all(&root);
+            std::fs::create_dir_all(&root).expect("create process state sandbox");
+            Self { root }
+        }
+
+        fn root(&self) -> &PathBuf {
+            &self.root
+        }
+
+        fn xdg_data_home(&self) -> PathBuf {
+            self.root.join("xdg-data")
+        }
+    }
+
+    impl Drop for StateTestSandbox {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.root);
+        }
+    }
+
+    struct ScopedEnvVar {
+        key: &'static str,
+        original: Option<String>,
+    }
+
+    impl ScopedEnvVar {
+        fn set(key: &'static str, value: impl AsRef<std::path::Path>) -> Self {
+            let original = std::env::var(key).ok();
+            std::env::set_var(key, value.as_ref());
+            Self { key, original }
+        }
+    }
+
+    impl Drop for ScopedEnvVar {
+        fn drop(&mut self) {
+            if let Some(original) = self.original.as_ref() {
+                std::env::set_var(self.key, original);
+            } else {
+                std::env::remove_var(self.key);
+            }
+        }
     }
 
     #[test]
     fn launcher_override_env_wins_when_present() {
-        let _guard = env_lock().lock().unwrap();
+        let _guard = env_lock();
         std::env::set_var("OZONE_KOBOLDCPP_LAUNCHER", "/tmp/custom-kobold-launcher.sh");
         let path = resolved_kobold_launcher_path();
         std::env::remove_var("OZONE_KOBOLDCPP_LAUNCHER");

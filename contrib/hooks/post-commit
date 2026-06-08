@@ -1,0 +1,33 @@
+#!/usr/bin/env bash
+# post-commit: sync local ozone binaries from the current release build and
+# refresh the code-only Graphify graph when one already exists.
+# Never blocks a commit.
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+RELEASE_BIN="$REPO_ROOT/target/release/ozone"
+SYNC_SCRIPT="$REPO_ROOT/contrib/sync-local-install.sh"
+GRAPHIFY_SCRIPT="$REPO_ROOT/contrib/refresh-graphify.sh"
+SYNC_LOG_FILE="${TMPDIR:-/tmp}/ozone-install-sync.log"
+GRAPHIFY_LOG_FILE="${TMPDIR:-/tmp}/ozone-graphify-refresh.log"
+
+# Run in background so the terminal is not held up; log any errors.
+(
+    if [[ -x "$RELEASE_BIN" && -x "$SYNC_SCRIPT" ]]; then
+        cd "$REPO_ROOT"
+        ./contrib/sync-local-install.sh --no-build >"$SYNC_LOG_FILE" 2>&1
+        if [[ $? -ne 0 ]]; then
+            printf '\n[ozone post-commit] install sync failed — see %s\n' "$SYNC_LOG_FILE" >&2
+        fi
+    fi
+
+    if [[ -x "$GRAPHIFY_SCRIPT" ]]; then
+        "$GRAPHIFY_SCRIPT" --quiet >"$GRAPHIFY_LOG_FILE" 2>&1
+        if [[ $? -ne 0 ]]; then
+            printf '\n[ozone post-commit] graphify refresh failed — see %s\n' "$GRAPHIFY_LOG_FILE" >&2
+        fi
+    fi
+) &
+
+# Never block the commit.
+exit 0

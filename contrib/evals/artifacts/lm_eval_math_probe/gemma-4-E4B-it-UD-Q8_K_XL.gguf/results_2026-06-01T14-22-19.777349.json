@@ -1,0 +1,634 @@
+{
+  "results": {
+    "leaderboard_math_algebra_hard": {
+      "name": "leaderboard_math_algebra_hard",
+      "alias": "leaderboard_math_algebra_hard",
+      "sample_len": 1,
+      "exact_match,none": 1.0,
+      "exact_match_stderr,none": "N/A",
+      "exact_match_original,none": 1.0,
+      "exact_match_original_stderr,none": "N/A"
+    },
+    "leaderboard_math_counting_and_prob_hard": {
+      "name": "leaderboard_math_counting_and_prob_hard",
+      "alias": "leaderboard_math_counting_and_prob_hard",
+      "sample_len": 1,
+      "exact_match,none": 0.0,
+      "exact_match_stderr,none": "N/A",
+      "exact_match_original,none": 0.0,
+      "exact_match_original_stderr,none": "N/A"
+    },
+    "leaderboard_math_geometry_hard": {
+      "name": "leaderboard_math_geometry_hard",
+      "alias": "leaderboard_math_geometry_hard",
+      "sample_len": 1,
+      "exact_match,none": 0.0,
+      "exact_match_stderr,none": "N/A",
+      "exact_match_original,none": 0.0,
+      "exact_match_original_stderr,none": "N/A"
+    },
+    "leaderboard_math_intermediate_algebra_hard": {
+      "name": "leaderboard_math_intermediate_algebra_hard",
+      "alias": "leaderboard_math_intermediate_algebra_hard",
+      "sample_len": 1,
+      "exact_match,none": 0.0,
+      "exact_match_stderr,none": "N/A",
+      "exact_match_original,none": 0.0,
+      "exact_match_original_stderr,none": "N/A"
+    },
+    "leaderboard_math_num_theory_hard": {
+      "name": "leaderboard_math_num_theory_hard",
+      "alias": "leaderboard_math_num_theory_hard",
+      "sample_len": 1,
+      "exact_match,none": 0.0,
+      "exact_match_stderr,none": "N/A",
+      "exact_match_original,none": 0.0,
+      "exact_match_original_stderr,none": "N/A"
+    },
+    "leaderboard_math_prealgebra_hard": {
+      "name": "leaderboard_math_prealgebra_hard",
+      "alias": "leaderboard_math_prealgebra_hard",
+      "sample_len": 1,
+      "exact_match,none": 1.0,
+      "exact_match_stderr,none": "N/A",
+      "exact_match_original,none": 1.0,
+      "exact_match_original_stderr,none": "N/A"
+    },
+    "leaderboard_math_precalculus_hard": {
+      "name": "leaderboard_math_precalculus_hard",
+      "alias": "leaderboard_math_precalculus_hard",
+      "sample_len": 1,
+      "exact_match,none": 1.0,
+      "exact_match_stderr,none": "N/A",
+      "exact_match_original,none": 1.0,
+      "exact_match_original_stderr,none": "N/A"
+    },
+    "leaderboard_math_hard": {
+      "alias": "leaderboard_math_hard",
+      "name": "leaderboard_math_hard",
+      "sample_len": 7,
+      "exact_match,none": 0.42857142857142855,
+      "exact_match_stderr,none": "N/A",
+      "sample_count": {
+        "exact_match,none": 7
+      }
+    }
+  },
+  "groups": {
+    "leaderboard_math_hard": {
+      "alias": "leaderboard_math_hard",
+      "name": "leaderboard_math_hard",
+      "sample_len": 7,
+      "exact_match,none": 0.42857142857142855,
+      "exact_match_stderr,none": "N/A",
+      "sample_count": {
+        "exact_match,none": 7
+      }
+    }
+  },
+  "group_subtasks": {
+    "leaderboard_math_hard": [
+      "leaderboard_math_algebra_hard",
+      "leaderboard_math_counting_and_prob_hard",
+      "leaderboard_math_geometry_hard",
+      "leaderboard_math_intermediate_algebra_hard",
+      "leaderboard_math_num_theory_hard",
+      "leaderboard_math_prealgebra_hard",
+      "leaderboard_math_precalculus_hard"
+    ]
+  },
+  "configs": {
+    "leaderboard_math_algebra_hard": {
+      "task": "leaderboard_math_algebra_hard",
+      "dataset_path": "DigitalLearningGmbH/MATH-lighteval",
+      "dataset_name": "algebra",
+      "training_split": "train",
+      "test_split": "test",
+      "process_docs": "def process_docs(dataset: datasets.Dataset) -> datasets.Dataset:\n    def _process_doc(doc: dict) -> dict:\n        out_doc = {\n            \"problem\": doc[\"problem\"],\n            \"solution\": doc[\"solution\"],\n            \"answer\": remove_boxed(last_boxed_only_string(doc[\"solution\"])),\n        }\n        if getattr(doc, \"few_shot\", None) is not None:\n            out_doc[\"few_shot\"] = True\n        return out_doc\n\n    return dataset.filter(lambda x: x[\"level\"] == \"Level 5\").map(_process_doc)\n",
+      "doc_to_text": "def doc_to_text(doc: dict) -> str:\n    return \"Problem:\" + \"\\n\" + doc[\"problem\"] + \"\\n\\n\" + \"Solution:\"\n",
+      "doc_to_target": "{{answer if few_shot is undefined else solution}}",
+      "unsafe_code": false,
+      "process_results": "def process_results(doc: dict, results: List[str]) -> Dict[str, int]:\n    candidates = results[0]\n    parsed_candidate = parse(candidates)\n    parsed_answer = parse(doc[\"solution\"], extraction_config=[LatexExtractionConfig()])\n    if verify(parsed_answer, parsed_candidate):\n        retval = 1\n    else:\n        retval = 0\n\n    try:\n        original = process_result_v1(doc, candidates)\n    except:  # noqa: E722\n        original = 0\n\n    output = {\n        \"exact_match\": retval,\n        \"exact_match_original\": original,\n    }\n    return output\n",
+      "description": "",
+      "target_delimiter": " ",
+      "fewshot_delimiter": "\n\n",
+      "fewshot_config": {
+        "sampler": "first_n",
+        "split": null,
+        "process_docs": "<function process_docs at 0x74038f0b7a30>",
+        "fewshot_indices": null,
+        "samples": "<function list_fewshot_samples at 0x74038f0b7b50>",
+        "doc_to_text": "<function doc_to_text at 0x74039069a8c0>",
+        "doc_to_choice": null,
+        "doc_to_target": "{{answer if few_shot is undefined else solution}}",
+        "gen_prefix": null,
+        "fewshot_delimiter": "\n\n",
+        "target_delimiter": " "
+      },
+      "num_fewshot": 4,
+      "metric_list": [
+        {
+          "metric": "exact_match",
+          "aggregation": "mean",
+          "higher_is_better": true
+        },
+        {
+          "metric": "exact_match_original",
+          "aggregation": "mean",
+          "higher_is_better": true
+        }
+      ],
+      "output_type": "generate_until",
+      "generation_kwargs": {
+        "until": [
+          "Problem:"
+        ],
+        "do_sample": false,
+        "temperature": 0.0,
+        "max_gen_toks": 1024
+      },
+      "repeats": 1,
+      "should_decontaminate": false,
+      "metadata": {
+        "version": 3.0,
+        "model": "gemma-4-E4B-it-UD-Q8_K_XL.gguf",
+        "base_url": "http://127.0.0.1:8989/v1/completions",
+        "tokenizer_backend": null,
+        "config_source": "/home/eric/projects/ozone/contrib/evals/.venv/lib/python3.10/site-packages/lm_eval/tasks/leaderboard/math/math_algebra.yaml"
+      }
+    },
+    "leaderboard_math_counting_and_prob_hard": {
+      "task": "leaderboard_math_counting_and_prob_hard",
+      "dataset_path": "DigitalLearningGmbH/MATH-lighteval",
+      "dataset_name": "counting_and_probability",
+      "training_split": "train",
+      "test_split": "test",
+      "process_docs": "def process_docs(dataset: datasets.Dataset) -> datasets.Dataset:\n    def _process_doc(doc: dict) -> dict:\n        out_doc = {\n            \"problem\": doc[\"problem\"],\n            \"solution\": doc[\"solution\"],\n            \"answer\": remove_boxed(last_boxed_only_string(doc[\"solution\"])),\n        }\n        if getattr(doc, \"few_shot\", None) is not None:\n            out_doc[\"few_shot\"] = True\n        return out_doc\n\n    return dataset.filter(lambda x: x[\"level\"] == \"Level 5\").map(_process_doc)\n",
+      "doc_to_text": "def doc_to_text(doc: dict) -> str:\n    return \"Problem:\" + \"\\n\" + doc[\"problem\"] + \"\\n\\n\" + \"Solution:\"\n",
+      "doc_to_target": "{{answer if few_shot is undefined else solution}}",
+      "unsafe_code": false,
+      "process_results": "def process_results(doc: dict, results: List[str]) -> Dict[str, int]:\n    candidates = results[0]\n    parsed_candidate = parse(candidates)\n    parsed_answer = parse(doc[\"solution\"], extraction_config=[LatexExtractionConfig()])\n    if verify(parsed_answer, parsed_candidate):\n        retval = 1\n    else:\n        retval = 0\n\n    try:\n        original = process_result_v1(doc, candidates)\n    except:  # noqa: E722\n        original = 0\n\n    output = {\n        \"exact_match\": retval,\n        \"exact_match_original\": original,\n    }\n    return output\n",
+      "description": "",
+      "target_delimiter": " ",
+      "fewshot_delimiter": "\n\n",
+      "fewshot_config": {
+        "sampler": "first_n",
+        "split": null,
+        "process_docs": "<function process_docs at 0x74038f0b7a30>",
+        "fewshot_indices": null,
+        "samples": "<function list_fewshot_samples at 0x74038f0b7b50>",
+        "doc_to_text": "<function doc_to_text at 0x74039069a8c0>",
+        "doc_to_choice": null,
+        "doc_to_target": "{{answer if few_shot is undefined else solution}}",
+        "gen_prefix": null,
+        "fewshot_delimiter": "\n\n",
+        "target_delimiter": " "
+      },
+      "num_fewshot": 4,
+      "metric_list": [
+        {
+          "metric": "exact_match",
+          "aggregation": "mean",
+          "higher_is_better": true
+        },
+        {
+          "metric": "exact_match_original",
+          "aggregation": "mean",
+          "higher_is_better": true
+        }
+      ],
+      "output_type": "generate_until",
+      "generation_kwargs": {
+        "until": [
+          "Problem:"
+        ],
+        "do_sample": false,
+        "temperature": 0.0,
+        "max_gen_toks": 1024
+      },
+      "repeats": 1,
+      "should_decontaminate": false,
+      "metadata": {
+        "version": 3.0,
+        "model": "gemma-4-E4B-it-UD-Q8_K_XL.gguf",
+        "base_url": "http://127.0.0.1:8989/v1/completions",
+        "tokenizer_backend": null,
+        "config_source": "/home/eric/projects/ozone/contrib/evals/.venv/lib/python3.10/site-packages/lm_eval/tasks/leaderboard/math/math_counting_and_prob.yaml"
+      }
+    },
+    "leaderboard_math_geometry_hard": {
+      "task": "leaderboard_math_geometry_hard",
+      "dataset_path": "DigitalLearningGmbH/MATH-lighteval",
+      "dataset_name": "geometry",
+      "training_split": "train",
+      "test_split": "test",
+      "process_docs": "def process_docs(dataset: datasets.Dataset) -> datasets.Dataset:\n    def _process_doc(doc: dict) -> dict:\n        out_doc = {\n            \"problem\": doc[\"problem\"],\n            \"solution\": doc[\"solution\"],\n            \"answer\": remove_boxed(last_boxed_only_string(doc[\"solution\"])),\n        }\n        if getattr(doc, \"few_shot\", None) is not None:\n            out_doc[\"few_shot\"] = True\n        return out_doc\n\n    return dataset.filter(lambda x: x[\"level\"] == \"Level 5\").map(_process_doc)\n",
+      "doc_to_text": "def doc_to_text(doc: dict) -> str:\n    return \"Problem:\" + \"\\n\" + doc[\"problem\"] + \"\\n\\n\" + \"Solution:\"\n",
+      "doc_to_target": "{{answer if few_shot is undefined else solution}}",
+      "unsafe_code": false,
+      "process_results": "def process_results(doc: dict, results: List[str]) -> Dict[str, int]:\n    candidates = results[0]\n    parsed_candidate = parse(candidates)\n    parsed_answer = parse(doc[\"solution\"], extraction_config=[LatexExtractionConfig()])\n    if verify(parsed_answer, parsed_candidate):\n        retval = 1\n    else:\n        retval = 0\n\n    try:\n        original = process_result_v1(doc, candidates)\n    except:  # noqa: E722\n        original = 0\n\n    output = {\n        \"exact_match\": retval,\n        \"exact_match_original\": original,\n    }\n    return output\n",
+      "description": "",
+      "target_delimiter": " ",
+      "fewshot_delimiter": "\n\n",
+      "fewshot_config": {
+        "sampler": "first_n",
+        "split": null,
+        "process_docs": "<function process_docs at 0x74038f0b7a30>",
+        "fewshot_indices": null,
+        "samples": "<function list_fewshot_samples at 0x74038f0b7b50>",
+        "doc_to_text": "<function doc_to_text at 0x74039069a8c0>",
+        "doc_to_choice": null,
+        "doc_to_target": "{{answer if few_shot is undefined else solution}}",
+        "gen_prefix": null,
+        "fewshot_delimiter": "\n\n",
+        "target_delimiter": " "
+      },
+      "num_fewshot": 4,
+      "metric_list": [
+        {
+          "metric": "exact_match",
+          "aggregation": "mean",
+          "higher_is_better": true
+        },
+        {
+          "metric": "exact_match_original",
+          "aggregation": "mean",
+          "higher_is_better": true
+        }
+      ],
+      "output_type": "generate_until",
+      "generation_kwargs": {
+        "until": [
+          "Problem:"
+        ],
+        "do_sample": false,
+        "temperature": 0.0,
+        "max_gen_toks": 1024
+      },
+      "repeats": 1,
+      "should_decontaminate": false,
+      "metadata": {
+        "version": 3.0,
+        "model": "gemma-4-E4B-it-UD-Q8_K_XL.gguf",
+        "base_url": "http://127.0.0.1:8989/v1/completions",
+        "tokenizer_backend": null,
+        "config_source": "/home/eric/projects/ozone/contrib/evals/.venv/lib/python3.10/site-packages/lm_eval/tasks/leaderboard/math/math_geometry.yaml"
+      }
+    },
+    "leaderboard_math_intermediate_algebra_hard": {
+      "task": "leaderboard_math_intermediate_algebra_hard",
+      "dataset_path": "DigitalLearningGmbH/MATH-lighteval",
+      "dataset_name": "intermediate_algebra",
+      "training_split": "train",
+      "test_split": "test",
+      "process_docs": "def process_docs(dataset: datasets.Dataset) -> datasets.Dataset:\n    def _process_doc(doc: dict) -> dict:\n        out_doc = {\n            \"problem\": doc[\"problem\"],\n            \"solution\": doc[\"solution\"],\n            \"answer\": remove_boxed(last_boxed_only_string(doc[\"solution\"])),\n        }\n        if getattr(doc, \"few_shot\", None) is not None:\n            out_doc[\"few_shot\"] = True\n        return out_doc\n\n    return dataset.filter(lambda x: x[\"level\"] == \"Level 5\").map(_process_doc)\n",
+      "doc_to_text": "def doc_to_text(doc: dict) -> str:\n    return \"Problem:\" + \"\\n\" + doc[\"problem\"] + \"\\n\\n\" + \"Solution:\"\n",
+      "doc_to_target": "{{answer if few_shot is undefined else solution}}",
+      "unsafe_code": false,
+      "process_results": "def process_results(doc: dict, results: List[str]) -> Dict[str, int]:\n    candidates = results[0]\n    parsed_candidate = parse(candidates)\n    parsed_answer = parse(doc[\"solution\"], extraction_config=[LatexExtractionConfig()])\n    if verify(parsed_answer, parsed_candidate):\n        retval = 1\n    else:\n        retval = 0\n\n    try:\n        original = process_result_v1(doc, candidates)\n    except:  # noqa: E722\n        original = 0\n\n    output = {\n        \"exact_match\": retval,\n        \"exact_match_original\": original,\n    }\n    return output\n",
+      "description": "",
+      "target_delimiter": " ",
+      "fewshot_delimiter": "\n\n",
+      "fewshot_config": {
+        "sampler": "first_n",
+        "split": null,
+        "process_docs": "<function process_docs at 0x74038f0b7a30>",
+        "fewshot_indices": null,
+        "samples": "<function list_fewshot_samples at 0x74038f0b7b50>",
+        "doc_to_text": "<function doc_to_text at 0x74039069a8c0>",
+        "doc_to_choice": null,
+        "doc_to_target": "{{answer if few_shot is undefined else solution}}",
+        "gen_prefix": null,
+        "fewshot_delimiter": "\n\n",
+        "target_delimiter": " "
+      },
+      "num_fewshot": 4,
+      "metric_list": [
+        {
+          "metric": "exact_match",
+          "aggregation": "mean",
+          "higher_is_better": true
+        },
+        {
+          "metric": "exact_match_original",
+          "aggregation": "mean",
+          "higher_is_better": true
+        }
+      ],
+      "output_type": "generate_until",
+      "generation_kwargs": {
+        "until": [
+          "Problem:"
+        ],
+        "do_sample": false,
+        "temperature": 0.0,
+        "max_gen_toks": 1024
+      },
+      "repeats": 1,
+      "should_decontaminate": false,
+      "metadata": {
+        "version": 3.0,
+        "model": "gemma-4-E4B-it-UD-Q8_K_XL.gguf",
+        "base_url": "http://127.0.0.1:8989/v1/completions",
+        "tokenizer_backend": null,
+        "config_source": "/home/eric/projects/ozone/contrib/evals/.venv/lib/python3.10/site-packages/lm_eval/tasks/leaderboard/math/math_intermediate_algebra.yaml"
+      }
+    },
+    "leaderboard_math_num_theory_hard": {
+      "task": "leaderboard_math_num_theory_hard",
+      "dataset_path": "DigitalLearningGmbH/MATH-lighteval",
+      "dataset_name": "number_theory",
+      "training_split": "train",
+      "test_split": "test",
+      "process_docs": "def process_docs(dataset: datasets.Dataset) -> datasets.Dataset:\n    def _process_doc(doc: dict) -> dict:\n        out_doc = {\n            \"problem\": doc[\"problem\"],\n            \"solution\": doc[\"solution\"],\n            \"answer\": remove_boxed(last_boxed_only_string(doc[\"solution\"])),\n        }\n        if getattr(doc, \"few_shot\", None) is not None:\n            out_doc[\"few_shot\"] = True\n        return out_doc\n\n    return dataset.filter(lambda x: x[\"level\"] == \"Level 5\").map(_process_doc)\n",
+      "doc_to_text": "def doc_to_text(doc: dict) -> str:\n    return \"Problem:\" + \"\\n\" + doc[\"problem\"] + \"\\n\\n\" + \"Solution:\"\n",
+      "doc_to_target": "{{answer if few_shot is undefined else solution}}",
+      "unsafe_code": false,
+      "process_results": "def process_results(doc: dict, results: List[str]) -> Dict[str, int]:\n    candidates = results[0]\n    parsed_candidate = parse(candidates)\n    parsed_answer = parse(doc[\"solution\"], extraction_config=[LatexExtractionConfig()])\n    if verify(parsed_answer, parsed_candidate):\n        retval = 1\n    else:\n        retval = 0\n\n    try:\n        original = process_result_v1(doc, candidates)\n    except:  # noqa: E722\n        original = 0\n\n    output = {\n        \"exact_match\": retval,\n        \"exact_match_original\": original,\n    }\n    return output\n",
+      "description": "",
+      "target_delimiter": " ",
+      "fewshot_delimiter": "\n\n",
+      "fewshot_config": {
+        "sampler": "first_n",
+        "split": null,
+        "process_docs": "<function process_docs at 0x74038f0b7a30>",
+        "fewshot_indices": null,
+        "samples": "<function list_fewshot_samples at 0x74038f0b7b50>",
+        "doc_to_text": "<function doc_to_text at 0x74039069a8c0>",
+        "doc_to_choice": null,
+        "doc_to_target": "{{answer if few_shot is undefined else solution}}",
+        "gen_prefix": null,
+        "fewshot_delimiter": "\n\n",
+        "target_delimiter": " "
+      },
+      "num_fewshot": 4,
+      "metric_list": [
+        {
+          "metric": "exact_match",
+          "aggregation": "mean",
+          "higher_is_better": true
+        },
+        {
+          "metric": "exact_match_original",
+          "aggregation": "mean",
+          "higher_is_better": true
+        }
+      ],
+      "output_type": "generate_until",
+      "generation_kwargs": {
+        "until": [
+          "Problem:"
+        ],
+        "do_sample": false,
+        "temperature": 0.0,
+        "max_gen_toks": 1024
+      },
+      "repeats": 1,
+      "should_decontaminate": false,
+      "metadata": {
+        "version": 3.0,
+        "model": "gemma-4-E4B-it-UD-Q8_K_XL.gguf",
+        "base_url": "http://127.0.0.1:8989/v1/completions",
+        "tokenizer_backend": null,
+        "config_source": "/home/eric/projects/ozone/contrib/evals/.venv/lib/python3.10/site-packages/lm_eval/tasks/leaderboard/math/math_num_theory.yaml"
+      }
+    },
+    "leaderboard_math_prealgebra_hard": {
+      "task": "leaderboard_math_prealgebra_hard",
+      "dataset_path": "DigitalLearningGmbH/MATH-lighteval",
+      "dataset_name": "prealgebra",
+      "training_split": "train",
+      "test_split": "test",
+      "process_docs": "def process_docs(dataset: datasets.Dataset) -> datasets.Dataset:\n    def _process_doc(doc: dict) -> dict:\n        out_doc = {\n            \"problem\": doc[\"problem\"],\n            \"solution\": doc[\"solution\"],\n            \"answer\": remove_boxed(last_boxed_only_string(doc[\"solution\"])),\n        }\n        if getattr(doc, \"few_shot\", None) is not None:\n            out_doc[\"few_shot\"] = True\n        return out_doc\n\n    return dataset.filter(lambda x: x[\"level\"] == \"Level 5\").map(_process_doc)\n",
+      "doc_to_text": "def doc_to_text(doc: dict) -> str:\n    return \"Problem:\" + \"\\n\" + doc[\"problem\"] + \"\\n\\n\" + \"Solution:\"\n",
+      "doc_to_target": "{{answer if few_shot is undefined else solution}}",
+      "unsafe_code": false,
+      "process_results": "def process_results(doc: dict, results: List[str]) -> Dict[str, int]:\n    candidates = results[0]\n    parsed_candidate = parse(candidates)\n    parsed_answer = parse(doc[\"solution\"], extraction_config=[LatexExtractionConfig()])\n    if verify(parsed_answer, parsed_candidate):\n        retval = 1\n    else:\n        retval = 0\n\n    try:\n        original = process_result_v1(doc, candidates)\n    except:  # noqa: E722\n        original = 0\n\n    output = {\n        \"exact_match\": retval,\n        \"exact_match_original\": original,\n    }\n    return output\n",
+      "description": "",
+      "target_delimiter": " ",
+      "fewshot_delimiter": "\n\n",
+      "fewshot_config": {
+        "sampler": "first_n",
+        "split": null,
+        "process_docs": "<function process_docs at 0x74038f0b7a30>",
+        "fewshot_indices": null,
+        "samples": "<function list_fewshot_samples at 0x74038f0b7b50>",
+        "doc_to_text": "<function doc_to_text at 0x74039069a8c0>",
+        "doc_to_choice": null,
+        "doc_to_target": "{{answer if few_shot is undefined else solution}}",
+        "gen_prefix": null,
+        "fewshot_delimiter": "\n\n",
+        "target_delimiter": " "
+      },
+      "num_fewshot": 4,
+      "metric_list": [
+        {
+          "metric": "exact_match",
+          "aggregation": "mean",
+          "higher_is_better": true
+        },
+        {
+          "metric": "exact_match_original",
+          "aggregation": "mean",
+          "higher_is_better": true
+        }
+      ],
+      "output_type": "generate_until",
+      "generation_kwargs": {
+        "until": [
+          "Problem:"
+        ],
+        "do_sample": false,
+        "temperature": 0.0,
+        "max_gen_toks": 1024
+      },
+      "repeats": 1,
+      "should_decontaminate": false,
+      "metadata": {
+        "version": 3.0,
+        "model": "gemma-4-E4B-it-UD-Q8_K_XL.gguf",
+        "base_url": "http://127.0.0.1:8989/v1/completions",
+        "tokenizer_backend": null,
+        "config_source": "/home/eric/projects/ozone/contrib/evals/.venv/lib/python3.10/site-packages/lm_eval/tasks/leaderboard/math/math_prealgebra.yaml"
+      }
+    },
+    "leaderboard_math_precalculus_hard": {
+      "task": "leaderboard_math_precalculus_hard",
+      "dataset_path": "DigitalLearningGmbH/MATH-lighteval",
+      "dataset_name": "precalculus",
+      "training_split": "train",
+      "test_split": "test",
+      "process_docs": "def process_docs(dataset: datasets.Dataset) -> datasets.Dataset:\n    def _process_doc(doc: dict) -> dict:\n        out_doc = {\n            \"problem\": doc[\"problem\"],\n            \"solution\": doc[\"solution\"],\n            \"answer\": remove_boxed(last_boxed_only_string(doc[\"solution\"])),\n        }\n        if getattr(doc, \"few_shot\", None) is not None:\n            out_doc[\"few_shot\"] = True\n        return out_doc\n\n    return dataset.filter(lambda x: x[\"level\"] == \"Level 5\").map(_process_doc)\n",
+      "doc_to_text": "def doc_to_text(doc: dict) -> str:\n    return \"Problem:\" + \"\\n\" + doc[\"problem\"] + \"\\n\\n\" + \"Solution:\"\n",
+      "doc_to_target": "{{answer if few_shot is undefined else solution}}",
+      "unsafe_code": false,
+      "process_results": "def process_results(doc: dict, results: List[str]) -> Dict[str, int]:\n    candidates = results[0]\n    parsed_candidate = parse(candidates)\n    parsed_answer = parse(doc[\"solution\"], extraction_config=[LatexExtractionConfig()])\n    if verify(parsed_answer, parsed_candidate):\n        retval = 1\n    else:\n        retval = 0\n\n    try:\n        original = process_result_v1(doc, candidates)\n    except:  # noqa: E722\n        original = 0\n\n    output = {\n        \"exact_match\": retval,\n        \"exact_match_original\": original,\n    }\n    return output\n",
+      "description": "",
+      "target_delimiter": " ",
+      "fewshot_delimiter": "\n\n",
+      "fewshot_config": {
+        "sampler": "first_n",
+        "split": null,
+        "process_docs": "<function process_docs at 0x74038f0b7a30>",
+        "fewshot_indices": null,
+        "samples": "<function list_fewshot_samples at 0x74038f0b7b50>",
+        "doc_to_text": "<function doc_to_text at 0x74039069a8c0>",
+        "doc_to_choice": null,
+        "doc_to_target": "{{answer if few_shot is undefined else solution}}",
+        "gen_prefix": null,
+        "fewshot_delimiter": "\n\n",
+        "target_delimiter": " "
+      },
+      "num_fewshot": 4,
+      "metric_list": [
+        {
+          "metric": "exact_match",
+          "aggregation": "mean",
+          "higher_is_better": true
+        },
+        {
+          "metric": "exact_match_original",
+          "aggregation": "mean",
+          "higher_is_better": true
+        }
+      ],
+      "output_type": "generate_until",
+      "generation_kwargs": {
+        "until": [
+          "Problem:"
+        ],
+        "do_sample": false,
+        "temperature": 0.0,
+        "max_gen_toks": 1024
+      },
+      "repeats": 1,
+      "should_decontaminate": false,
+      "metadata": {
+        "version": 3.0,
+        "model": "gemma-4-E4B-it-UD-Q8_K_XL.gguf",
+        "base_url": "http://127.0.0.1:8989/v1/completions",
+        "tokenizer_backend": null,
+        "config_source": "/home/eric/projects/ozone/contrib/evals/.venv/lib/python3.10/site-packages/lm_eval/tasks/leaderboard/math/math_precalculus.yaml"
+      }
+    }
+  },
+  "versions": {
+    "leaderboard_math_algebra_hard": 3.0,
+    "leaderboard_math_counting_and_prob_hard": 3.0,
+    "leaderboard_math_geometry_hard": 3.0,
+    "leaderboard_math_hard": "N/A",
+    "leaderboard_math_intermediate_algebra_hard": 3.0,
+    "leaderboard_math_num_theory_hard": 3.0,
+    "leaderboard_math_prealgebra_hard": 3.0,
+    "leaderboard_math_precalculus_hard": 3.0
+  },
+  "n-shot": {
+    "leaderboard_math_algebra_hard": 4,
+    "leaderboard_math_counting_and_prob_hard": 4,
+    "leaderboard_math_geometry_hard": 4,
+    "leaderboard_math_hard": 4,
+    "leaderboard_math_intermediate_algebra_hard": 4,
+    "leaderboard_math_num_theory_hard": 4,
+    "leaderboard_math_prealgebra_hard": 4,
+    "leaderboard_math_precalculus_hard": 4
+  },
+  "higher_is_better": {
+    "leaderboard_math_algebra_hard": {
+      "exact_match": true,
+      "exact_match_original": true
+    },
+    "leaderboard_math_counting_and_prob_hard": {
+      "exact_match": true,
+      "exact_match_original": true
+    },
+    "leaderboard_math_geometry_hard": {
+      "exact_match": true,
+      "exact_match_original": true
+    },
+    "leaderboard_math_hard": {
+      "exact_match": true,
+      "exact_match_original": true
+    },
+    "leaderboard_math_intermediate_algebra_hard": {
+      "exact_match": true,
+      "exact_match_original": true
+    },
+    "leaderboard_math_num_theory_hard": {
+      "exact_match": true,
+      "exact_match_original": true
+    },
+    "leaderboard_math_prealgebra_hard": {
+      "exact_match": true,
+      "exact_match_original": true
+    },
+    "leaderboard_math_precalculus_hard": {
+      "exact_match": true,
+      "exact_match_original": true
+    }
+  },
+  "n-samples": {
+    "leaderboard_math_algebra_hard": {
+      "original": 307,
+      "effective": 1
+    },
+    "leaderboard_math_counting_and_prob_hard": {
+      "original": 123,
+      "effective": 1
+    },
+    "leaderboard_math_geometry_hard": {
+      "original": 132,
+      "effective": 1
+    },
+    "leaderboard_math_intermediate_algebra_hard": {
+      "original": 280,
+      "effective": 1
+    },
+    "leaderboard_math_num_theory_hard": {
+      "original": 154,
+      "effective": 1
+    },
+    "leaderboard_math_prealgebra_hard": {
+      "original": 193,
+      "effective": 1
+    },
+    "leaderboard_math_precalculus_hard": {
+      "original": 135,
+      "effective": 1
+    }
+  },
+  "config": {
+    "model": "local-completions",
+    "model_args": {
+      "model": "gemma-4-E4B-it-UD-Q8_K_XL.gguf",
+      "base_url": "http://127.0.0.1:8989/v1/completions",
+      "tokenizer_backend": null
+    },
+    "batch_size": 1,
+    "batch_sizes": [],
+    "device": "cuda:0",
+    "use_cache": null,
+    "limit": 1.0,
+    "bootstrap_iters": 100000,
+    "gen_kwargs": {},
+    "random_seed": 0,
+    "numpy_seed": 1234,
+    "torch_seed": 1234,
+    "fewshot_seed": 1234
+  },
+  "git_hash": null,
+  "date": 1780337965.0685148,
+  "pretty_env_info": "N/A (torch not installed)",
+  "transformers_version": "5.9.0",
+  "lm_eval_version": "0.4.12",
+  "upper_git_hash": null,
+  "task_hashes": {},
+  "model_source": "local-completions",
+  "model_name": "gemma-4-E4B-it-UD-Q8_K_XL.gguf",
+  "model_name_sanitized": "gemma-4-E4B-it-UD-Q8_K_XL.gguf",
+  "system_instruction": null,
+  "system_instruction_sha": null,
+  "fewshot_as_multiturn": null,
+  "chat_template": null,
+  "chat_template_sha": null,
+  "total_evaluation_time_seconds": "181.52662763700027"
+}

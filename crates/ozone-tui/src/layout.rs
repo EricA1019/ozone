@@ -1,9 +1,9 @@
 use ratatui::layout::{Constraint, Direction, Layout, Rect};
 
-use crate::{
-    app::{FocusTarget, ScreenState, ShellState},
-    input::InputMode,
-};
+use crate::state::FocusTarget;
+use crate::state::ScreenState;
+use crate::app::ShellState;
+use crate::input::InputMode;
 
 pub const DEFAULT_VIEWPORT_WIDTH: u16 = 120;
 pub const DEFAULT_VIEWPORT_HEIGHT: u16 = 40;
@@ -76,7 +76,7 @@ pub fn build_layout(state: &ShellState) -> LayoutModel {
 
 pub fn build_layout_for_area(state: &ShellState, viewport: Rect) -> LayoutModel {
     // For menu screens, use a full-screen centered layout
-    if is_menu_screen(state.screen) {
+    if is_menu_screen(&state.screen) {
         return build_menu_layout(state, viewport);
     }
 
@@ -130,19 +130,20 @@ pub fn build_layout_for_area(state: &ShellState, viewport: Rect) -> LayoutModel 
             area: rows[2],
         },
         inspector,
-        overlay: overlay_for_screen(state.screen, viewport),
+        overlay: overlay_for_screen(&state.screen, viewport),
         menu_area: None,
         focused: focused_pane(state.focus),
     }
 }
 
-fn is_menu_screen(screen: ScreenState) -> bool {
+fn is_menu_screen(screen: &ScreenState) -> bool {
     matches!(
         screen,
         ScreenState::MainMenu
             | ScreenState::SessionList
             | ScreenState::CharacterManager
             | ScreenState::CharacterCreate
+            | ScreenState::CharacterEdit
             | ScreenState::CharacterImport
             | ScreenState::Settings
     )
@@ -186,7 +187,7 @@ fn build_menu_layout(state: &ShellState, viewport: Rect) -> LayoutModel {
             area: zero_area,
         },
         inspector: None,
-        overlay: overlay_for_screen(state.screen, viewport),
+        overlay: overlay_for_screen(&state.screen, viewport),
         menu_area,
         focused: PaneId::FullScreen,
     }
@@ -197,6 +198,7 @@ fn focused_pane(focus: FocusTarget) -> PaneId {
         FocusTarget::Transcript => PaneId::Conversation,
         FocusTarget::Draft => PaneId::Composer,
         FocusTarget::Status => PaneId::Status,
+        FocusTarget::Inspector => PaneId::Inspector,
     }
 }
 
@@ -205,6 +207,7 @@ fn composer_height(input_mode: InputMode, viewport_height: u16) -> u16 {
         InputMode::Normal => 3,
         InputMode::Insert => 5,
         InputMode::Command => 4,
+        InputMode::Visual => 3,
     };
 
     if viewport_height >= 36 {
@@ -223,27 +226,40 @@ fn inspector_width(viewport_width: u16) -> u16 {
         .clamp(INSPECTOR_MIN_WIDTH as u32, INSPECTOR_MAX_WIDTH as u32) as u16
 }
 
-fn overlay_for_screen(screen: ScreenState, viewport: Rect) -> Option<PaneLayout> {
+fn overlay_for_screen(screen: &ScreenState, viewport: Rect) -> Option<PaneLayout> {
     let pane = match screen {
         ScreenState::MainMenu
         | ScreenState::SessionList
         | ScreenState::CharacterManager
         | ScreenState::CharacterCreate
+        | ScreenState::CharacterEdit
         | ScreenState::CharacterImport
         | ScreenState::Settings
         | ScreenState::ModelIntelligence
         | ScreenState::Conversation => return None,
         ScreenState::Help => PaneId::HelpOverlay,
         ScreenState::Quit => PaneId::QuitOverlay,
+        ScreenState::MemoriesOverlay | ScreenState::CharacterOverlay(_) => PaneId::FullScreen,
+    };
+
+    let (width, height) = match screen {
+        ScreenState::MemoriesOverlay => (
+            viewport.width.saturating_sub(8).clamp(40, 100),
+            viewport.height.saturating_sub(8).clamp(12, 36),
+        ),
+        ScreenState::CharacterOverlay(_) => (
+            viewport.width.saturating_sub(8).clamp(60, 90),
+            viewport.height.saturating_sub(8).clamp(16, 32),
+        ),
+        _ => (
+            viewport.width.saturating_sub(8).clamp(32, 72),
+            viewport.height.saturating_sub(8).clamp(8, 12),
+        ),
     };
 
     Some(PaneLayout {
         pane,
-        area: centered_rect(
-            viewport,
-            viewport.width.saturating_sub(8).clamp(32, 72),
-            viewport.height.saturating_sub(8).clamp(8, 12),
-        ),
+        area: centered_rect(viewport, width, height),
     })
 }
 
@@ -305,7 +321,8 @@ mod tests {
     #[test]
     fn help_overlay_is_centered_and_insert_mode_expands_composer() {
         let mut state = seeded_state();
-        state.apply_action(KeyAction::ToggleHelp);
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
+        state.apply_action_with_layout(KeyAction::ToggleHelp, &layout);
         state.input_mode = InputMode::Insert;
 
         let layout = build_layout_for_area(&state, Rect::new(0, 0, 80, 24));
@@ -315,6 +332,18 @@ mod tests {
         assert_eq!(overlay.pane, PaneId::HelpOverlay);
         assert_eq!(layout.composer.area.height, 5);
         assert_eq!(overlay.area, Rect::new(4, 6, 72, 12));
+    }
+
+    #[test]
+    fn character_edit_uses_menu_layout_instead_of_live_shell() {
+        let mut state = seeded_state();
+        state.screen = ScreenState::CharacterEdit;
+
+        let layout = build_layout_for_area(&state, Rect::new(0, 0, 120, 40));
+
+        assert!(layout.menu_area.is_some());
+        assert_eq!(layout.conversation.area.height, 0);
+        assert_eq!(layout.composer.area.height, 0);
     }
 
     #[test]

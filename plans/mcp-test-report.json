@@ -1,0 +1,193 @@
+{
+  "bugs": [
+    {
+      "tool": "session_tool list",
+      "status": "pass",
+      "detail": "All fields present",
+      "severity": "bug"
+    },
+    {
+      "tool": "session_tool list",
+      "status": "pass",
+      "detail": "MCP-Auto-Test found: 00000000-0000-4001-98ab-8c391aec8a70",
+      "severity": "bug"
+    },
+    {
+      "tool": "session_tool rename",
+      "status": "pass",
+      "detail": "Rename succeeded",
+      "severity": "bug"
+    },
+    {
+      "tool": "session_tool delete",
+      "status": "exists",
+      "detail": "Tool call failed: session IDs must be UUID strings in 8-4-4-4-12 format",
+      "severity": "bug"
+    },
+    {
+      "tool": "session_list",
+      "status": "ok",
+      "detail": "Message count tracking works (9 msgs)",
+      "severity": "bug"
+    },
+    {
+      "tool": "message_tool send",
+      "status": "ok",
+      "detail": "Tool call failed: missing required string field `content`",
+      "severity": "bug"
+    },
+    {
+      "tool": "message_tool get_messages",
+      "status": "broken",
+      "detail": "Message action failed\n{\n  \"error\": \"unsupported message action `get_messages`\"\n}",
+      "severity": "bug"
+    },
+    {
+      "tool": "memory_tool pin",
+      "status": "ok",
+      "detail": "Tool call failed: message 00000000-0000-4001-98a1-000000000001 was not found",
+      "severity": "bug"
+    },
+    {
+      "tool": "memory_tool list",
+      "status": "ok",
+      "detail": "Listed memories\n{\n  \"found\": 0,\n  \"kind\": \"pinned\",\n  \"memories\": []\n}",
+      "severity": "bug"
+    },
+    {
+      "tool": "memory_tool note",
+      "status": "ok",
+      "detail": "Tool call failed: missing required string field `content`",
+      "severity": "bug"
+    },
+    {
+      "tool": "branch_tool list",
+      "status": "ok",
+      "detail": "Found 1 branches",
+      "severity": "bug"
+    },
+    {
+      "tool": "swipe_tool list",
+      "status": "ok",
+      "detail": "Found 0 swipes",
+      "severity": "bug"
+    },
+    {
+      "tool": "search_tool global",
+      "status": "ok",
+      "detail": "4 hits, mode=fts_only, status=FTS mode \u2014 configure embedding provider ",
+      "severity": "bug"
+    },
+    {
+      "tool": "search_tool session",
+      "status": "ok",
+      "detail": "4 hits",
+      "severity": "bug"
+    },
+    {
+      "tool": "import_card",
+      "status": "broken",
+      "detail": "Tool call failed: invalid persisted data: character card field 'name' must be a non-empty string",
+      "severity": "bug"
+    },
+    {
+      "tool": "export_tool session",
+      "status": "ok",
+      "detail": "Clean export",
+      "severity": "bug"
+    },
+    {
+      "tool": "workspace_status",
+      "status": "ok",
+      "detail": "prefs=N/A, models=/home/eric/models",
+      "severity": "bug"
+    },
+    {
+      "tool": "preferences_get",
+      "status": "ok",
+      "detail": "backend=KoboldCpp, frontend=OzonePlus",
+      "severity": "bug"
+    },
+    {
+      "tool": "cli create",
+      "status": "ok",
+      "detail": "exit=0, 22 lines output",
+      "severity": "bug"
+    },
+    {
+      "tool": "cli list",
+      "status": "fail",
+      "detail": "error: unexpected argument '--json' found\n\nUsage: ozone-plus list\n\nFor more information, try '--help",
+      "severity": "bug"
+    },
+    {
+      "tool": "cli transcript",
+      "status": "ok",
+      "detail": "exit=0, 115 lines output",
+      "severity": "bug"
+    },
+    {
+      "tool": "cli memory-list",
+      "status": "ok",
+      "detail": "exit=0, 5 lines output",
+      "severity": "bug"
+    },
+    {
+      "tool": "cli branch-list",
+      "status": "ok",
+      "detail": "exit=0, 8 lines output",
+      "severity": "bug"
+    },
+    {
+      "tool": "cli search-global",
+      "status": "ok",
+      "detail": "exit=0, 95 lines output",
+      "severity": "bug"
+    }
+  ],
+  "warnings": [
+    {
+      "tool": "session_tool list",
+      "status": "missing",
+      "detail": "no last message preview in list",
+      "severity": "warning"
+    },
+    {
+      "tool": "session_tool get",
+      "status": "missing",
+      "detail": "session_tool has no 'get' action - user can't inspect a session's details",
+      "severity": "warning"
+    },
+    {
+      "tool": "message_tool list",
+      "status": "missing",
+      "detail": "Action 'list' not supported",
+      "severity": "warning"
+    },
+    {
+      "tool": "message_tool get",
+      "status": "missing",
+      "detail": "Action 'get' not supported",
+      "severity": "warning"
+    },
+    {
+      "tool": "message_tool delete",
+      "status": "missing",
+      "detail": "Action 'delete' not supported",
+      "severity": "warning"
+    },
+    {
+      "tool": "branch_tool",
+      "status": "incomplete",
+      "detail": "Branch missing fields: ['isActive']",
+      "severity": "warning"
+    }
+  ],
+  "passes": [],
+  "summary": {
+    "total_tests": 30,
+    "bugs": 24,
+    "warnings": 6,
+    "passes": 0
+  }
+}

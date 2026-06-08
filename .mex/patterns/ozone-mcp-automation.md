@@ -36,11 +36,16 @@ last_updated: 2026-04-16
    - use real `target/debug/ozone` / `target/debug/ozone-plus` binaries when available
    - drive them with PTY keys/text only after setup
    - assert against recent-screen terminal markers, not repo internals
-6. Validate both layers:
+   - let `mock_user_tool` / `screenshot_tool` auto-create the recommended sandbox when the default capturable-screen setup is enough; pass `sandboxId` only when a test needs custom persistent state across calls
+6. If the task is **release-readiness smoke**, keep the same ozone-mcp sandbox/orchestration layer but switch the launched app surface to shipped artifacts:
+  - use `target/release` binaries by setting `OZONE_MCP_FRONT_DOOR_PROFILE=release` for PTY front-door journeys
+  - prefer release CLI commands inside the same temp-XDG sandbox for ozone+ persistence/data-path assertions instead of relying on PTY main-menu navigation alone
+  - seed at least one mock model when base Ozone smoke must get past splash; `splash_ready` stays false when hardware is ready but the catalog is empty
+7. Validate both layers:
    - cargo compile/tests for the crate
    - at least one real stdio MCP smoke (`initialize`, `tools/list`, one or more `tools/call` flows)
    - when `mock_user_tool` changes, run at least one named journey end-to-end
-7. Update docs and `.mex` state once the tool surface or automation boundary changes materially.
+8. Update docs and `.mex` state once the tool surface or automation boundary changes materially.
 
 ## Gotchas
 
@@ -49,13 +54,18 @@ last_updated: 2026-04-16
 - PTY-driven launcher smoke is noisy and partial by nature; report concrete findings like launcher invocation, created sessions, and captured tail text instead of pretending it is a perfect UI oracle.
 - A sandboxed HOME can break cargo/rustup if you do not preserve the real toolchain env vars.
 - A sandboxed HOME also hides user-site Python modules from the VTE screenshot helper; if `screenshot_tool` reports missing `pyte` or Pillow in temp-XDG runs, export the real site-packages path through `PYTHONPATH` or install those modules system-wide.
+- The MCP library crate (`crates/ozone-mcp`) is not the executable that PTY flows launch; after changing that crate, rebuild `-p ozone-mcp-app` or the workspace so `target/debug/ozone-mcp` actually refreshes.
+- Release smoke can be green in-crate while `make release-gates` still fails on `verify-install-parity`; if `ozone-mcp` changed, resync the installed binary and rerun the same gate.
 - For front-door journeys, matching against the entire accumulated capture can create false positives; prefer a recent-screen window or step-local view so old launcher text does not satisfy a later ozone+ assertion.
 - `cargo run` is less reliable than directly launching the built binary for PTY-style mock-user flows; prefer `target/debug/...` when it exists.
+- Journey builder registries use typed function pointers; when extracting methods out of `lib.rs`, either update the pointer type everywhere or keep thin delegating wrappers on `OzoneMcpServer` so registries stay type-compatible.
+- For shipped-artifact release smoke, the most stable split is base Ozone front-door PTY coverage plus ozone+ release CLI persistence coverage; trying to prove both entirely through PTY menu navigation is more brittle than the product behavior under test.
 
 ## Verify
 
 - `cargo check -p ozone-mcp -p ozone-mcp-app`
 - `cargo test -p ozone-mcp`
+- `cargo test -p ozone-mcp release_smoke_gate -- --ignored --nocapture --test-threads=1`
 - real stdio MCP smoke for:
   - `initialize`
   - `tools/list`

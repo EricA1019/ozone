@@ -1,5 +1,6 @@
 use std::fmt::Write as _;
 
+use crate::cli::util::now_timestamp_ms;
 use crate::inference_adapter::{InferenceAdapter, TranscriptRole, TranscriptTurn};
 use ozone_core::engine::ConversationMessage;
 use ozone_core::session::UnixTimestamp;
@@ -124,7 +125,7 @@ impl AppContextBridge {
         self.latest_plan_preview = Some(preview);
         if result.is_dry_run {
             self.latest_dry_run = Some(DryRunContextBuild {
-                built_at: crate::now_timestamp_ms(),
+                built_at: now_timestamp_ms(),
                 result: result.clone(),
             });
         }
@@ -168,7 +169,7 @@ impl AppContextBridge {
             true,
         )?;
         let dry_run = DryRunContextBuild {
-            built_at: crate::now_timestamp_ms(),
+            built_at: now_timestamp_ms(),
             result,
         };
         self.latest_dry_run = Some(dry_run.clone());
@@ -204,6 +205,10 @@ impl AppContextBridge {
             .render_prompt(&turns)
             .map_err(|error| error.to_string())?;
 
+        // Estimate token count using heuristic: ~3.5 chars per token for English text.
+        let used_tokens = u32::try_from(prompt.chars().count() * 10 / 35)
+            .unwrap_or(u32::MAX);
+
         let preview = ContextPlanPreview {
             source: ContextPlanSource::TranscriptFallback,
             summary: context_preview_summary(
@@ -228,7 +233,7 @@ impl AppContextBridge {
             ),
             omitted_items: Some(0),
             token_budget: Some(ContextTokenBudgetPreview {
-                used_tokens: 0,
+                used_tokens,
                 max_tokens: u32::try_from(inference.config().context.max_tokens)
                     .unwrap_or(u32::MAX),
             }),

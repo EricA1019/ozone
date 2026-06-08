@@ -98,6 +98,77 @@ impl SqliteRepository {
         })
     }
 
+    /// Seed the character greeting into a session if the session has a character
+    /// with a non-empty greeting and the transcript is currently empty.
+    /// Returns the greeting text if seeded, or None if no greeting was injected.
+    /// This enables greetings to fire when loading pre-existing sessions.
+    /// Seed the character greeting into a session if the session has a character
+    /// with a non-empty greeting and the transcript is currently empty.
+    /// Returns the greeting text if seeded, or None if no greeting was injected.
+    /// This enables greetings to fire when loading pre-existing sessions.
+    pub fn maybe_seed_character_greeting(
+        &self,
+        session_id: &SessionId,
+    ) -> Result<Option<String>> {
+        // Get session record (not summary — we need character_name from the full record)
+        let session = self
+            .get_session(session_id)?
+            .ok_or_else(|| PersistError::SessionNotFound(session_id.to_string()))?;
+        let character_name = match session.character_name.as_deref() {
+            Some(name) if !name.is_empty() => name,
+            _ => return Ok(None),
+        };
+
+        // Look up the character — if not in catalog, skip gracefully
+        let character = match self.get_character_by_name(character_name)? {
+            Some(c) => c,
+            None => return Ok(None),
+        };
+
+        let greeting_text = character.greeting.trim();
+        if greeting_text.is_empty() {
+            return Ok(None);
+        }
+
+        // Check if transcript is empty (don't double-inject)
+        let messages = self.get_active_branch_transcript(session_id)?;
+        if !messages.is_empty() {
+            return Ok(None);
+        }
+
+        // Insert greeting as assistant message
+        let message = self.insert_message(
+            session_id,
+            CreateMessageRequest {
+                parent_id: None,
+                author_kind: "assistant".to_owned(),
+                author_name: Some(character_name.to_owned()),
+                content: greeting_text.to_owned(),
+            },
+        )?;
+
+        let message_id = MessageId::parse(message.message_id)?;
+        let now = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as i64;
+
+        let branch = ConversationBranch::new(
+            BranchId::parse(generate_uuid_like())?,
+            session_id.clone(),
+            "main",
+            message_id.clone(),
+            now,
+        );
+
+        self.create_branch(CreateBranchCommand {
+            branch,
+            forked_from: message_id,
+        })?;
+
+        Ok(Some(greeting_text.to_owned()))
+    }
+
     pub fn list_sessions(&self) -> Result<Vec<SessionSummary>> {
         let conn = self.ensure_global_connection()?;
         let mut stmt = conn.prepare(
@@ -154,6 +225,26 @@ impl SqliteRepository {
         let conn = self.ensure_global_connection()?;
         upsert_session_summary(&conn, &summary)?;
         Ok(summary)
+    }
+
+    /// Assign or remove the folder for a session.
+    /// Folder membership is stored as a `folder:<name>` tag on the session.
+    /// Pass `None` to remove from any folder.
+    pub fn set_session_folder(
+        &self,
+        session_id: &SessionId,
+        folder: Option<&str>,
+    ) -> Result<SessionRecord> {
+        let mut summary = self
+            .get_session(session_id)?
+            .ok_or_else(|| PersistError::SessionNotFound(session_id.to_string()))?;
+        summary.set_folder(folder);
+        let request = UpdateSessionRequest {
+            name: None,
+            character_name: None,
+            tags: Some(summary.tags),
+        };
+        self.update_session_metadata(session_id, request)
     }
 
     pub fn acquire_session_lock(
@@ -240,6 +331,42 @@ impl SqliteRepository {
         let conn = self.open_session_connection(session_id)?;
         let rows = conn.execute("DELETE FROM session_lock WHERE id = 1", [])?;
         Ok(rows != 0)
+    }
+
+    /// Rename a session by updating its name in the global index.
+    pub fn rename_session(&self, session_id: &SessionId, new_name: &str) -> Result<SessionRecord> {
+        let request = UpdateSessionRequest {
+            name: Some(new_name.to_owned()),
+            character_name: None,
+            tags: None,
+        };
+        self.update_session_metadata(session_id, request)
+    }
+
+    /// Delete a session: removes it from the global index and deletes its on-disk database and directory.
+    pub fn delete_session(&self, session_id: &SessionId) -> Result<()> {
+        // Verify the session exists first
+        let _ = self
+            .get_session(session_id)?
+            .ok_or_else(|| PersistError::SessionNotFound(session_id.to_string()))?;
+
+        // Remove from global sessions table
+        let global_conn = self.ensure_global_connection()?;
+        let rows = global_conn.execute(
+            "DELETE FROM sessions WHERE session_id = ?1",
+            [session_id.as_str()],
+        )?;
+        if rows == 0 {
+            return Err(PersistError::SessionNotFound(session_id.to_string()));
+        }
+
+        // Delete the session directory and all its contents
+        let session_dir = self.paths.session_dir(session_id);
+        if session_dir.exists() {
+            fs::remove_dir_all(&session_dir)?;
+        }
+
+        Ok(())
     }
 }
 

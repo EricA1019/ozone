@@ -1,2 +1,13 @@
-/target/
-graphify-out/
+target/
+*.bak
+tmp/graphify-scopes/
+src/**/graphify-out/
+crates/**/graphify-out/
+apps/**/graphify-out/
+# Keep shareable graph outputs in git; skip only local Graphify runtime files.
+graphify-out/manifest.json
+graphify-out/cost.json
+graphify-out/cache/
+
+# Local eval tooling environments
+contrib/evals/.venv/
