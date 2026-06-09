@@ -4,6 +4,9 @@ use super::configure_profile_flow::build_override_from_plans;
 use super::{selected_record, App};
 
 const CONFIGURE_FIELD_CONTEXT_SIZE: usize = 0;
+const CONFIGURE_FIELD_QUANT_KV: usize = 2;
+const CONFIGURE_FIELD_THREADS: usize = 3;
+const CONFIGURE_FIELD_BATCH_THREADS: usize = 4;
 
 pub(super) fn adjust_configure_plan(app: &mut App, direction: i32) {
     let Some(record) = selected_record(app) else {
@@ -28,6 +31,39 @@ pub(super) fn adjust_configure_plan(app: &mut App, direction: i32) {
                 .map(|plan| plan.context_size)
                 .unwrap_or(recommended.context_size);
             override_state.context_size = Some(crate::planner::step_context_size(current, direction));
+        }
+        CONFIGURE_FIELD_THREADS => {
+            let current = app
+                .current_plan
+                .as_ref()
+                .and_then(|p| p.threads)
+                .unwrap_or(8);
+            let next = (current as i32 + direction).clamp(1, 32) as u32;
+            if next != current {
+                override_state.threads = Some(next);
+            }
+        }
+        CONFIGURE_FIELD_BATCH_THREADS => {
+            let current = app
+                .current_plan
+                .as_ref()
+                .and_then(|p| p.blas_threads)
+                .unwrap_or(8);
+            let next = (current as i32 + direction).clamp(1, 32) as u32;
+            if next != current {
+                override_state.blas_threads = Some(next);
+            }
+        }
+        CONFIGURE_FIELD_QUANT_KV => {
+            let current = app
+                .current_plan
+                .as_ref()
+                .map(|plan| plan.quant_kv)
+                .unwrap_or(recommended.quant_kv);
+            let next = (current as i32 + direction).clamp(1, 3) as u8;
+            if next != current {
+                override_state.quant_kv = Some(next);
+            }
         }
         _ => {
             let current = app

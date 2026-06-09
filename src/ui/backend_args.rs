@@ -46,7 +46,13 @@ pub(super) fn build_llama_args(plan: &LaunchPlan) -> Vec<String> {
         args.push("--threads".to_string());
         args.push(t.to_string());
     }
+    if let Some(bt) = plan.blas_threads {
+        args.push("--threads-batch".to_string());
+        args.push(bt.to_string());
+    }
     args.extend(kv_cache_args(plan.quant_kv));
+    // Flash attention is always beneficial on CUDA GPUs — enable on by default
+    args.push("--flash-attn".to_string());
     args
 }
 
@@ -117,10 +123,13 @@ mod tests {
                 "--gpu-layers",
                 "all",
                 "--no-webui",
+                "--threads-batch",
+                "4",
                 "--cache-type-k",
                 "q8_0",
                 "--cache-type-v",
                 "q8_0",
+                "--flash-attn",
             ]
         );
     }

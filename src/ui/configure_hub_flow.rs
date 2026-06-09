@@ -26,7 +26,7 @@ pub(super) async fn handle_configure_hub_key(app: &mut App, key: KeyEvent) {
         KeyCode::Up if app.configure_field_index > 0 => {
             app.configure_field_index -= 1;
         }
-        KeyCode::Down if app.configure_field_index < 1 => {
+        KeyCode::Down if app.configure_field_index < 4 => {
             app.configure_field_index += 1;
         }
         KeyCode::Left => adjust_configure_plan(app, -1),
@@ -84,6 +84,18 @@ pub(super) async fn handle_configure_hub_key(app: &mut App, key: KeyEvent) {
             }
         }
         KeyCode::Char('r') | KeyCode::Char('R') => reset_configure_plan(app),
+        KeyCode::Char(ch) if ch.is_ascii_digit() && ch != '0' => {
+            // Jump directly to a saved profile by number (1-9)
+            let idx = (ch as u8 - b'1') as usize;
+            if idx < app.configure_saved_profiles.len() {
+                app.configure_profile_index = idx;
+                if let Some(profile_name) = apply_selected_saved_profile(app) {
+                    app.set_status(format!("Loaded saved profile '{profile_name}'."));
+                }
+            } else {
+                app.set_error(format!("Profile #{ch} does not exist (have {}).", app.configure_saved_profiles.len()));
+            }
+        }
         KeyCode::Enter => {
             if let (Some(recommended), Some(effective)) = (
                 app.configure_recommended_plan.clone(),

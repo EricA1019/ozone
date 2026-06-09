@@ -1,3 +1,4 @@
+use serde::{Deserialize, Serialize};
 use std::process::Command;
 use std::sync::Mutex;
 use std::time::{Duration, Instant};
@@ -7,14 +8,16 @@ use sysinfo::System;
 const HARDWARE_CACHE_TTL: Duration = Duration::from_secs(30);
 const HARDWARE_LIVE_CACHE_TTL: Duration = Duration::from_secs(2);
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct GpuMemory {
     pub used_mb: u64,
     pub free_mb: u64,
     pub total_mb: u64,
 }
 
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
 pub struct HardwareProfile {
     pub gpu: Option<GpuMemory>,
     pub ram_total_mb: u64,
@@ -159,6 +162,22 @@ pub fn load_hardware_live() -> HardwareProfile {
     }
 
     result
+}
+
+/// Cached hardware is saved to disk so we can skip polling on every startup.
+pub fn load_cached_hardware() -> Option<HardwareProfile> {
+    let path = crate::paths::data_dir()?.join("hardware-cache.json");
+    let text = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+pub fn save_hardware_profile(profile: &HardwareProfile) {
+    let Some(data_dir) = crate::paths::data_dir() else { return };
+    let path = data_dir.join("hardware-cache.json");
+    if let Ok(text) = serde_json::to_string_pretty(profile) {
+        let _ = std::fs::create_dir_all(&data_dir);
+        let _ = std::fs::write(&path, text);
+    }
 }
 
 pub fn load_hardware() -> HardwareProfile {

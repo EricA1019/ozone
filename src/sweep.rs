@@ -451,6 +451,10 @@ pub async fn run_context_sweep(
                     eprintln!("  OOM at context={ctx}, stopping sweep.");
                     break;
                 }
+                if r.status == "garbage" {
+                    eprintln!("  Garbage output at context={ctx}, stopping sweep.");
+                    break;
+                }
             }
             Err(e) => {
                 writer.write_record([

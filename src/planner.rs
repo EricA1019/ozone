@@ -249,29 +249,38 @@ pub fn apply_launch_override(
         .threads
         .or(recommended.threads)
         .or(recommended_threads);
+    let quant_kv = override_state
+        .quant_kv
+        .unwrap_or(recommended.quant_kv);
+    let blas_threads = override_state
+        .blas_threads
+        .or(recommended.blas_threads);
     let cpu_layers = estimate_cpu_resident_layers(gpu_layers, recommended.total_layers);
     let estimated_vram_mb = estimate_vram_mb(
         context_size,
         gpu_layers,
         record.model_size_gb,
-        recommended.quant_kv,
+        quant_kv,
         recommended.total_layers,
     );
     let estimated_ram_mb = estimate_ram_mb(
         context_size,
         gpu_layers,
         record.model_size_gb,
-        recommended.quant_kv,
+        quant_kv,
         recommended.total_layers,
     );
 
     let customized = context_size != recommended.context_size
         || gpu_layers != recommended.gpu_layers
-        || threads != recommended.threads;
+        || threads != recommended.threads
+        || blas_threads != recommended.blas_threads
+        || quant_kv != recommended.quant_kv;
 
     let rationale = if customized {
         format!(
-            "Configure Hub override: {context_size} ctx, {gpu_layers} GPU layers, {cpu_layers} CPU-resident layers."
+            "Configure Hub override: {context_size} ctx, {gpu_layers} GPU layers, \
+             {cpu_layers} CPU-resident layers, KV cache q{quant_kv}."
         )
     } else {
         recommended.rationale.clone()
@@ -282,6 +291,8 @@ pub fn apply_launch_override(
         gpu_layers,
         cpu_layers,
         threads,
+        blas_threads,
+        quant_kv,
         mode,
         rationale,
         estimated: recommended.estimated || customized,
@@ -308,6 +319,8 @@ pub fn apply_saved_profile(
             context_size: Some(context_size),
             gpu_layers: Some(gpu_layers),
             threads,
+            blas_threads: None,
+            quant_kv: None,
         },
     );
     if plan.quant_kv != quant_kv {
@@ -789,6 +802,8 @@ mod configure_tests {
                 context_size: Some(16384),
                 gpu_layers: Some(8),
                 threads: None,
+                blas_threads: None,
+                quant_kv: None,
             },
         );
 

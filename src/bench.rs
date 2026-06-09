@@ -185,15 +185,22 @@ where
     processes::clear_gpu_backends().await?;
 
     match gen_result {
-        Ok(gen) => Ok(BenchResult {
-            tokens_per_sec: gen.tokens_per_sec,
-            time_to_first_token_ms: gen.ttft_ms,
-            vram_peak_mb,
-            ram_peak_mb,
-            total_tokens: gen.token_count,
-            total_time_ms: gen.total_ms,
-            status: "ok".into(),
-        }),
+        Ok(gen) => {
+            let status = if output_is_garbage(&gen.content) {
+                "garbage"
+            } else {
+                "ok"
+            };
+            Ok(BenchResult {
+                tokens_per_sec: gen.tokens_per_sec,
+                time_to_first_token_ms: gen.ttft_ms,
+                vram_peak_mb,
+                ram_peak_mb,
+                total_tokens: gen.token_count,
+                total_time_ms: gen.total_ms,
+                status: status.into(),
+            })
+        },
         Err(e) => {
             let status = if e.to_string().contains("OOM") || e.to_string().contains("out of memory")
             {
@@ -221,6 +228,7 @@ struct GenerationResult {
     ttft_ms: u32,
     token_count: u32,
     total_ms: u32,
+    content: String,
 }
 
 async fn run_llamacpp_generation() -> Result<GenerationResult> {
@@ -270,6 +278,7 @@ async fn run_llamacpp_generation() -> Result<GenerationResult> {
         .json()
         .await
         .map_err(|e| anyhow!("Failed to parse llama.cpp completion response: {e}"))?;
+    let generated_text = data.content.clone().unwrap_or_default();
 
     let total_ms = total_elapsed.as_millis() as u32;
 
@@ -291,6 +300,7 @@ async fn run_llamacpp_generation() -> Result<GenerationResult> {
             ttft_ms,
             token_count: timings.predicted_n,
             total_ms,
+            content: generated_text.clone(),
         })
     } else {
         // Fallback: estimate from wall clock and text length
@@ -307,6 +317,7 @@ async fn run_llamacpp_generation() -> Result<GenerationResult> {
             ttft_ms,
             token_count,
             total_ms,
+            content: text,
         })
     }
 }
@@ -386,4 +397,52 @@ pub fn print_result(
         println!("  Benchmark failed: {}", result.status);
     }
     println!();
+}
+
+/// Detect garbage output from a struggling model.
+/// Returns true if the output looks like random/looping tokens rather
+/// than coherent text. Used to skip further testing on broken configs.
+pub fn output_is_garbage(text: &str) -> bool {
+    if text.is_empty() || text.len() < 20 {
+        return true;
+    }
+    let tokens: Vec<&str> = text.split_whitespace().collect();
+    if tokens.len() < 5 {
+        return true;
+    }
+    // Repetition check: if >80% of tokens repeat, it's looping
+    use std::collections::HashSet;
+    let unique: HashSet<_> = tokens.iter().collect();
+    let unique_ratio = unique.len() as f64 / tokens.len() as f64;
+    if unique_ratio < 0.2 {
+        return true;
+    }
+    false
+}
+
+#[cfg(test)]
+mod garbage_tests {
+    use super::output_is_garbage;
+
+    #[test]
+    fn empty_text_is_garbage() {
+        assert!(output_is_garbage(""));
+    }
+
+    #[test]
+    fn short_text_is_garbage() {
+        assert!(output_is_garbage("a"));
+    }
+
+    #[test]
+    fn repetitive_looping_is_garbage() {
+        let looping = "the the the the the the the the the the the the the the the the the the the the";
+        assert!(output_is_garbage(looping));
+    }
+
+    #[test]
+    fn coherent_text_is_not_garbage() {
+        let coherent = "The relationship between computational complexity and software engineering is a fascinating topic. Big O notation helps programmers understand algorithm scaling.";
+        assert!(!output_is_garbage(coherent));
+    }
 }

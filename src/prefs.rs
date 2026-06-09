@@ -79,6 +79,10 @@ pub struct ModelLaunchOverride {
     pub gpu_layers: Option<i32>,
     #[serde(default)]
     pub threads: Option<u32>,
+    #[serde(default)]
+    pub blas_threads: Option<u32>,
+    #[serde(default)]
+    pub quant_kv: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -114,7 +118,11 @@ fn coerce_supported_backend(_backend: Option<BackendMode>) -> Option<BackendMode
 
 impl ModelLaunchOverride {
     pub fn is_empty(&self) -> bool {
-        self.context_size.is_none() && self.gpu_layers.is_none() && self.threads.is_none()
+        self.context_size.is_none()
+            && self.gpu_layers.is_none()
+            && self.threads.is_none()
+            && self.blas_threads.is_none()
+            && self.quant_kv.is_none()
     }
 }
 
@@ -269,6 +277,8 @@ impl Preferences {
             context_size: self.llamacpp_context_size,
             gpu_layers: self.llamacpp_gpu_layers,
             threads: self.llamacpp_threads,
+            blas_threads: None,
+            quant_kv: None,
         };
         (!override_state.is_empty()).then_some(override_state)
     }
@@ -377,6 +387,8 @@ mod tests {
                 context_size: Some(16384),
                 gpu_layers: Some(28),
                 threads: None,
+                blas_threads: None,
+                quant_kv: None,
             },
         );
 
@@ -386,6 +398,8 @@ mod tests {
                 context_size: Some(16384),
                 gpu_layers: Some(28),
                 threads: None,
+                blas_threads: None,
+                quant_kv: None,
             })
         );
     }
@@ -406,6 +420,8 @@ mod tests {
                 context_size: Some(8192),
                 gpu_layers: Some(18),
                 threads: Some(6),
+                blas_threads: None,
+                quant_kv: None,
             })
         );
     }

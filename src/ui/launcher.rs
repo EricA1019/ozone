@@ -765,7 +765,7 @@ pub fn render_configure_hub(f: &mut Frame, app: &App) {
     ];
     let header_block = chrome_block_with_hint(
         launcher_title("Configure Hub"),
-        "↑↓ field · ←→ adjust · p/n profile · l load · s save · u update · d delete · f default · b benchmark · Enter confirm",
+        "↑↓ field · ←→ adjust · 1-9 profile · p/n cycle · l load · s save · u update · d delete · f default · b benchmark · Enter confirm",
         style_lime(),
     );
     f.render_widget(Paragraph::new(header_lines).block(header_block), outer[0]);
@@ -779,6 +779,16 @@ pub fn render_configure_hub(f: &mut Frame, app: &App) {
 
     let context_selected = app.configure_field_index == 0;
     let layers_selected = app.configure_field_index == 1;
+    let quant_selected = app.configure_field_index == 2;
+    let threads_selected = app.configure_field_index == 3;
+    let batch_selected = app.configure_field_index == 4;
+    let quant_label = match effective.quant_kv {
+        1 => "f16 (default)",
+        2 => "q8_0",
+        3 => "q4_0",
+        _ => "unknown",
+    };
+
     let control_lines = vec![
         Line::from(vec![
             Span::styled(
@@ -817,6 +827,60 @@ pub fn render_configure_hub(f: &mut Frame, app: &App) {
                     effective.cpu_layers,
                     effective.total_layers
                 ),
+                style_amber(),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                if quant_selected {
+                    format!("{HEX_CURSOR} KV cache")
+                } else {
+                    "  KV cache".into()
+                },
+                if quant_selected {
+                    style_bold_cyan()
+                } else {
+                    style_gray()
+                },
+            ),
+            Span::styled("  ", style_gray()),
+            Span::styled(quant_label, style_amber()),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                if threads_selected {
+                    format!("{HEX_CURSOR} Threads")
+                } else {
+                    "  Threads".into()
+                },
+                if threads_selected {
+                    style_bold_cyan()
+                } else {
+                    style_gray()
+                },
+            ),
+            Span::styled("  ", style_gray()),
+            Span::styled(
+                format!("{}", effective.threads.unwrap_or(8)),
+                style_amber(),
+            ),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                if batch_selected {
+                    format!("{HEX_CURSOR} Batch threads")
+                } else {
+                    "  Batch threads".into()
+                },
+                if batch_selected {
+                    style_bold_cyan()
+                } else {
+                    style_gray()
+                },
+            ),
+            Span::styled("  ", style_gray()),
+            Span::styled(
+                format!("{}", effective.blas_threads.unwrap_or(8)),
                 style_amber(),
             ),
         ]),

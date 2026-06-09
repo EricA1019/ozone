@@ -110,6 +110,8 @@ enum Commands {
         quant_kv: u8,
         #[arg(long, help = "CPU threads (auto if omitted)")]
         threads: Option<u32>,
+        #[arg(long, help = "Save the tested config as a named profile in launcher prefs")]
+        save_profile: Option<String>,
     },
     /// Analyze benchmark results and generate profiles
     #[cfg(feature = "analyze")]
@@ -138,6 +140,8 @@ enum Commands {
         context_sweep: bool,
         #[arg(long, default_value = "1", help = "KV cache quantization: 1=f16, 2=q8_0, 3=q4_0")]
         quant_kv: u8,
+        #[arg(long, help = "When set, sweep across multiple KV cache quant levels (1,2,3) per context")]
+        sweep_quant: bool,
     },
     /// Run evaluation probes against a running local server
     Eval {
@@ -184,6 +188,8 @@ enum Commands {
         #[command(subcommand)]
         command: model::ModelCommand,
     },
+    /// List saved launch profiles from preferences
+    Profiles,
 }
 
 #[tokio::main]
@@ -309,6 +315,7 @@ async fn main() -> Result<()> {
             context,
             quant_kv,
             threads,
+            save_profile,
         }) => {
             let model_dir = ozone_core::paths::models_dir();
             let model_path = model_dir.join(&model);
@@ -365,6 +372,19 @@ async fn main() -> Result<()> {
                 Ok(id) => ozone_core::cli::success(&format!("Stored as benchmark #{id}")),
                 Err(e) => ozone_core::cli::warn(&format!("Failed to store result: {e}")),
             }
+            // Save config as a named launch profile if requested
+            if let Some(ref profile_name) = save_profile {
+                let mut prefs = crate::prefs::load_prefs().await?;
+                prefs.upsert_saved_launch_profile(&model, crate::prefs::SavedLaunchProfile {
+                    profile_name: profile_name.clone(),
+                    context_size: context,
+                    gpu_layers,
+                    quant_kv,
+                    threads,
+                });
+                crate::prefs::save_prefs(&prefs).await?;
+                ozone_core::cli::success(&format!("Saved profile '{profile_name}' for {model}"));
+            }
             Ok(())
         }
         #[cfg(feature = "sweep")]
@@ -374,12 +394,23 @@ async fn main() -> Result<()> {
             quick,
             context_sweep,
             quant_kv,
+            sweep_quant,
         }) => {
             let model_dir = ozone_core::paths::models_dir();
             let model_path = model_dir.join(&model);
             let server_path = processes::resolved_llamacpp_server_path()?;
 
             if context_sweep {
+                if sweep_quant {
+                    // Test each quant_kv level (1=f16, 2=q8_0, 3=q4_0) at each context
+                    for &qkv in &[1u8, 2u8, 3u8] {
+                        eprintln!("\n  --- Sweep with quant_kv={qkv} ---");
+                        let _ = sweep::run_context_sweep(
+                            &model, &model_path, &server_path, -1, qkv, None, quick,
+                        ).await;
+                    }
+                    return Ok(());
+                }
                 let (csv_path, sweet_spot) = sweep::run_context_sweep(
                     &model, &model_path, &server_path, -1, quant_kv, None, quick,
                 ).await?;
@@ -555,6 +586,33 @@ async fn main() -> Result<()> {
                 std::process::exit(1);
             }
         },
+        Some(Commands::Profiles) => {
+            let prefs = crate::prefs::load_prefs().await?;
+            let profs = &prefs.saved_launch_profiles;
+            if profs.is_empty() {
+                ozone_core::cli::info("No saved launch profiles found.");
+            } else {
+                println!("Saved launch profiles:");
+                for (model, profiles) in profs {
+                    for p in profiles {
+                        let default_marker = prefs.default_saved_launch_profile_name_for(model)
+                            .filter(|d| d == &p.profile_name)
+                            .map(|_| " [default]")
+                            .unwrap_or("");
+                        println!(
+                            "  {:<20}  {:>7} ctx  {:>3} gpu  qkv={}  threads={}{}",
+                            p.profile_name,
+                            p.context_size,
+                            p.gpu_layers,
+                            p.quant_kv,
+                            p.threads.map(|t| t.to_string()).unwrap_or_else(|| "auto".into()),
+                            default_marker,
+                        );
+                    }
+                }
+            }
+            Ok(())
+        }
     }
 }
 

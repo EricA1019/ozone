@@ -202,5 +202,10 @@ pub(super) fn build_override_from_plans(
         threads: (effective.threads != recommended.threads)
             .then_some(effective.threads)
             .flatten(),
+        blas_threads: (effective.blas_threads != recommended.blas_threads)
+            .then_some(effective.blas_threads)
+            .flatten(),
+        quant_kv: (effective.quant_kv != recommended.quant_kv)
+            .then_some(effective.quant_kv),
     }
 }
