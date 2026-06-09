@@ -51,8 +51,26 @@ pub(super) fn build_llama_args(plan: &LaunchPlan) -> Vec<String> {
         args.push(bt.to_string());
     }
     args.extend(kv_cache_args(plan.quant_kv));
-    // Flash attention is always beneficial on CUDA GPUs — enable on by default
-    args.push("--flash-attn".to_string());
+    // Only enable flash attention if CUDA GPU is available (requires compute 8.0+)
+    // Check via nvidia-smi — if CUDA isn't available, the flag would crash
+    if std::process::Command::new("nvidia-smi")
+        .arg("--query-gpu=compute_cap")
+        .arg("--format=csv,noheader")
+        .output()
+        .map(|o| {
+            let caps = String::from_utf8_lossy(&o.stdout);
+            caps.lines().any(|l| {
+                if let Some(major) = l.trim().split('.').next() {
+                    major.parse::<u32>().unwrap_or(0) >= 8
+                } else {
+                    false
+                }
+            })
+        })
+        .unwrap_or(false)
+    {
+        args.push("--flash-attn".to_string());
+    }
     args
 }
 

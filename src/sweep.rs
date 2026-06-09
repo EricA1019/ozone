@@ -452,8 +452,8 @@ pub async fn run_context_sweep(
                     break;
                 }
                 if r.status == "garbage" {
-                    eprintln!("  Garbage output at context={ctx}, stopping sweep.");
-                    break;
+                    eprintln!("  Garbage output at context={ctx} — noting but continuing sweep (may be prompt-specific).");
+                    // Don't stop — garbage detection can have false positives
                 }
             }
             Err(e) => {

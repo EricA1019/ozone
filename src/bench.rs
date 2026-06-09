@@ -401,21 +401,34 @@ pub fn print_result(
 
 /// Detect garbage output from a struggling model.
 /// Returns true if the output looks like random/looping tokens rather
-/// than coherent text. Used to skip further testing on broken configs.
+/// than coherent text. Used to flag (not stop) further testing on broken configs.
 pub fn output_is_garbage(text: &str) -> bool {
-    if text.is_empty() || text.len() < 20 {
+    if text.is_empty() || text.len() < 10 {
         return true;
     }
     let tokens: Vec<&str> = text.split_whitespace().collect();
-    if tokens.len() < 5 {
+    if tokens.len() < 3 {
         return true;
     }
-    // Repetition check: if >80% of tokens repeat, it's looping
+    // Character-level loop check: if any single char dominates, it's gibberish
+    let total_chars = text.chars().count() as f64;
+    if total_chars > 0.0 {
+        use std::collections::HashMap;
+        let mut char_counts: HashMap<char, usize> = HashMap::new();
+        for c in text.chars() {
+            *char_counts.entry(c).or_insert(0) += 1;
+        }
+        let max_char_ratio = char_counts.values().max().map(|&c| c as f64 / total_chars).unwrap_or(0.0);
+        if max_char_ratio > 0.5 {
+            return true; // e.g. "aaaaaaaaaaaaaaaaaaaaaaaa"
+        }
+    }
+    // N-gram repetition: check for excessive token-level looping (>90% duplicates)
     use std::collections::HashSet;
     let unique: HashSet<_> = tokens.iter().collect();
     let unique_ratio = unique.len() as f64 / tokens.len() as f64;
-    if unique_ratio < 0.2 {
-        return true;
+    if unique_ratio < 0.1 {
+        return true; // >90% duplicate tokens is near-certain looping
     }
     false
 }
@@ -441,8 +454,21 @@ mod garbage_tests {
     }
 
     #[test]
+    fn char_loop_is_garbage() {
+        let char_loop = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaa";
+        assert!(output_is_garbage(char_loop));
+    }
+
+    #[test]
     fn coherent_text_is_not_garbage() {
         let coherent = "The relationship between computational complexity and software engineering is a fascinating topic. Big O notation helps programmers understand algorithm scaling.";
         assert!(!output_is_garbage(coherent));
+    }
+
+    #[test]
+    fn short_coherent_phrase_is_not_garbage() {
+        // Short but coherent benchmark output should NOT be flagged
+        let short = "Model loaded successfully.";
+        assert!(!output_is_garbage(short));
     }
 }
