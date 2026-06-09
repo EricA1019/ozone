@@ -244,7 +244,44 @@ async fn start_eval_with_cli_name(app: &mut App, cli_name: &str) {
 
     app.start_bench_eval_workflow(rx, model_name.clone(), preset, limit, command_preview);
     let cli_name_owned = cli_name.to_string();
+
+    // Resolve server and model paths so the spawned task can auto-launch
+    // the model if llama.cpp isn't already serving it.
+    let model_path = ozone_core::paths::models_dir().join(&model_name);
+    let server_path = crate::processes::resolved_llamacpp_server_path().ok();
+
     tokio::spawn(async move {
+        // Auto-launch the model if llama.cpp isn't running
+        if let Some(sp) = &server_path {
+            let mp = &model_path;
+            let ready_url = ozone_core::paths::llamacpp_ready_url();
+            if !crate::processes::is_url_ready(&ready_url).await {
+                let _ = error_tx.send(super::bench_eval_workflow::BenchEvalWorkflowEvent::Status {
+                    title: "Launching model…".into(),
+                    detail: format!("Starting {} for eval", model_name),
+                });
+                // Use minimal default args for the eval context
+                let args: Vec<String> = vec![
+                    "--host".into(), "127.0.0.1".into(),
+                    "--port".into(), "8989".into(),
+                    "--ctx-size".into(), "4096".into(),
+                    "--no-webui".into(),
+                ];
+                match crate::processes::start_llamacpp(sp, &mp.to_string_lossy(), &args).await {
+                    Ok(_) => {
+                        // Give the server a moment to become ready
+                        tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
+                    }
+                    Err(e) => {
+                        let _ = error_tx.send(super::bench_eval_workflow::BenchEvalWorkflowEvent::Output {
+                            is_stderr: true,
+                            line: format!("Model launch warning: {e}"),
+                        });
+                    }
+                }
+            }
+        }
+
         if let Err(error) = super::bench_eval_workflow::run_bench_eval_workflow_with_cli_name(
             model_name,
             preset,

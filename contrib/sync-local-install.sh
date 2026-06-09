@@ -140,7 +140,8 @@ else
 fi
 for spec in "${BINARIES[@]}"; do
     IFS=":" read -r package_name binary_name <<<"$spec"
-    source_path="$TARGET_DIR/$binary_name"
+    # The Cargo build produces a binary named after the package
+    source_path="$TARGET_DIR/$package_name"
 
     if [[ ! -x "$source_path" ]]; then
         echo "Missing built binary for $package_name at $source_path" >&2
