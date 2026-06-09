@@ -69,7 +69,9 @@ pub(super) fn build_llama_args(plan: &LaunchPlan) -> Vec<String> {
         })
         .unwrap_or(false)
     {
+        // Pass explicit "on" — bare --flash-attn would consume the next arg as its value
         args.push("--flash-attn".to_string());
+        args.push("on".to_string());
     }
     args
 }
@@ -148,6 +150,7 @@ mod tests {
                 "--cache-type-v",
                 "q8_0",
                 "--flash-attn",
+                "on",
             ]
         );
     }
