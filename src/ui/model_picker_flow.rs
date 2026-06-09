@@ -34,6 +34,14 @@ pub(super) fn handle_model_picker_key(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             if let Some(record) = app.filtered_catalog_get(app.selected_model) {
                 match app.model_picker_mode {
+                    ModelPickerMode::BenchEval => {
+                        // Return directly to Bench+Eval — the selected model
+                        // is already reflected in app.selected_model and will
+                        // be picked up by resolve_bench_eval_model on the next action.
+                        app.current_plan = None;
+                        app.configure_recommended_plan = None;
+                        app.screen = Screen::BenchEval;
+                    }
                     ModelPickerMode::Launch | ModelPickerMode::Configure => {
                         if let Some(hw) = &app.hardware {
                             let recommended = crate::planner::plan_launch(&record, hw);

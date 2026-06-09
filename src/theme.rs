@@ -80,8 +80,8 @@ pub const VERSION: &str = env!("CARGO_PKG_VERSION");
 pub const LICENSE: &str = "MIT";
 
 /// Tier names for display
-pub const TIER_LITE: &str = "ozonelite";
-pub const TIER_BASE: &str = "ozone";
+pub const TIER_LITE: &str = "oz";
+pub const TIER_BASE: &str = "oz";
 
 /// Tier descriptions
 pub const TIER_LITE_DESC: &str = "lean backend control";

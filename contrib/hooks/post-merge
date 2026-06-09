@@ -10,7 +10,7 @@ GRAPHIFY_SCRIPT="$REPO_ROOT/contrib/refresh-graphify.sh"
 GRAPHIFY_LOG_FILE="${TMPDIR:-/tmp}/ozone-graphify-refresh.log"
 
 if [[ -x "$SYNC_SCRIPT" ]]; then
-    printf '\n[ozone] rebuilding and syncing local binaries after merge...\n'
+    printf '\n[oz] rebuilding and syncing local binaries after merge...\n'
 
     (
         cd "$REPO_ROOT"
@@ -19,7 +19,7 @@ if [[ -x "$SYNC_SCRIPT" ]]; then
     STATUS=$?
 
     if [[ $STATUS -ne 0 ]]; then
-        printf '[ozone] sync failed (exit %d) — run ./contrib/sync-local-install.sh manually\n' "$STATUS" >&2
+        printf '[oz] sync failed (exit %d) — run ./contrib/sync-local-install.sh manually\n' "$STATUS" >&2
     fi
 fi
 
@@ -27,7 +27,7 @@ if [[ -x "$GRAPHIFY_SCRIPT" ]]; then
     "$GRAPHIFY_SCRIPT" --quiet >"$GRAPHIFY_LOG_FILE" 2>&1
     GRAPHIFY_STATUS=$?
     if [[ $GRAPHIFY_STATUS -ne 0 ]]; then
-        printf '[ozone] graphify refresh failed (exit %d) — see %s\n' "$GRAPHIFY_STATUS" "$GRAPHIFY_LOG_FILE" >&2
+        printf '[oz] graphify refresh failed (exit %d) — see %s\n' "$GRAPHIFY_STATUS" "$GRAPHIFY_LOG_FILE" >&2
     fi
 fi
 

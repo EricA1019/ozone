@@ -245,9 +245,7 @@ fn read_i64<R: Read>(reader: &mut R) -> anyhow::Result<i64> {
 /// Read the model's maximum context length from GGUF metadata.
 /// Falls back to None if the key is not present.
 pub fn read_context_length(path: &Path) -> Option<u32> {
-    read_single_u32_key(path, "llama.context_length")
-        .or_else(|| read_single_u32_key(path, "llama.embedding_length").map(|_| 0))
-        .filter(|v| *v > 0)
+    read_single_u32_key(path, "llama.context_length").filter(|v| *v > 0)
 }
 
 /// Read a single u32 metadata value by key name.
@@ -381,6 +379,26 @@ mod tests {
         assert_eq!(topology.total_layers, 48);
         assert_eq!(topology.source, TopologySource::SizeHeuristic);
         assert!(topology.note.is_some());
+
+        let _ = fs::remove_file(path);
+    }
+
+    #[test]
+    fn read_context_length_returns_none_when_key_missing() {
+        let path = temp_gguf_path("no-ctx-length");
+        // Write a GGUF with only a general.name key (no llama.context_length)
+        write_test_gguf(
+            &path,
+            |buf| write_kv_string(buf, "general.architecture", "llama"),
+            1,
+        );
+
+        let result = read_context_length(&path);
+        assert_eq!(
+            result,
+            None,
+            "read_context_length should return None when 'llama.context_length' key is absent"
+        );
 
         let _ = fs::remove_file(path);
     }

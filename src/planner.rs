@@ -478,7 +478,7 @@ fn plan_launch_with_layers(
     let layer_prefix = if layer_source_label == GGUF_METADATA_LABEL {
         format!("GGUF metadata reports {total_layers} layers. ")
     } else {
-        format!("Ozone estimated {total_layers} total layers from model size. ")
+        format!("oz estimated {total_layers} total layers from model size. ")
     };
 
     if should_adapt_to_hardware {

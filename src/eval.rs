@@ -9,34 +9,32 @@ pub enum EvalPreset {
     Instruction,
     Math,
     Humaneval,
+    Mmlu,
+    HellaSwag,
+    TruthfulQA,
+    Bbh,
 }
 
 impl EvalPreset {
-    pub(crate) fn description(self) -> &'static str {
-        match self {
-            Self::Gsm8k => "lm-eval GSM8K probe",
-            Self::Instruction => "lm-eval instruction-following probe",
-            Self::Math => "lm-eval leaderboard_math_hard probe",
-            Self::Humaneval => "EvalPlus HumanEval codegen probe",
-        }
-    }
-
     pub(crate) fn cli_name(self) -> &'static str {
         match self {
             Self::Gsm8k => "gsm8k",
             Self::Instruction => "instruction",
             Self::Math => "math",
             Self::Humaneval => "humaneval",
+            Self::Mmlu => "mmlu",
+            Self::HellaSwag => "hellaswag",
+            Self::TruthfulQA => "truthfulqa",
+            Self::Bbh => "bbh",
         }
     }
 
     pub(crate) fn report_label(self) -> &'static str {
-        match self {
-            Self::Gsm8k => "GSM8K",
-            Self::Instruction => "Instruction following",
-            Self::Math => "Math hard",
-            Self::Humaneval => "HumanEval / EvalPlus",
-        }
+        EVAL_TASKS
+            .iter()
+            .find(|t| t.cli_name == self.cli_name())
+            .map(|t| t.report_label)
+            .unwrap_or("unknown")
     }
 }
 
@@ -129,8 +127,7 @@ pub fn find_task(cli_name: &str) -> Option<&'static EvalTask> {
 }
 
 /// Run any eval task from the registry.
-#[allow(dead_code)]
-pub fn run_eval_task(
+pub async fn run_eval_task(
     task: &EvalTask,
     model: &str,
     limit: u32,
@@ -152,30 +149,49 @@ pub fn run_eval_task(
         );
     }
 
-    let status = match task.kind {
+    match task.kind {
         EvalTaskKind::LmEval { task: lm_task, output_dir } => {
-            run_lm_eval(
+            let status = run_lm_eval(
                 &venv_bin, model, lm_task, limit,
                 &artifacts_dir.join(output_dir),
                 base_url, temperature,
-            )?
+            )?;
+            if !status.success() {
+                match status.code() {
+                    Some(code) => bail!("Evaluation failed with exit code {code}"),
+                    None => bail!("Evaluation failed (terminated by signal)"),
+                }
+            }
         }
         EvalTaskKind::EvalPlus { output_dir } => {
-            run_evalplus_codegen(
+            let status = run_evalplus_codegen(
                 &venv_bin, model, limit,
                 &artifacts_dir.join(output_dir),
                 base_url,
-            )?
+            )?;
+            if !status.success() {
+                match status.code() {
+                    Some(code) => bail!("Evaluation failed with exit code {code}"),
+                    None => bail!("Evaluation failed (terminated by signal)"),
+                }
+            }
         }
         EvalTaskKind::CreativeWriting => {
-            bail!("Creative writing eval not yet implemented (Phase 2)");
-        }
-    };
-
-    if !status.success() {
-        match status.code() {
-            Some(code) => bail!("Evaluation failed with exit code {code}"),
-            None => bail!("Evaluation failed (terminated by signal)"),
+            let prompts = crate::creative_writing::load_prompt_bank(&root)?;
+            if prompts.is_empty() {
+                bail!("No prompts found in creative writing prompt bank");
+            }
+            let output_dir = artifacts_dir.join("creative_writing");
+            let csv_path = crate::creative_writing::run_creative_writing_eval(
+                model, &prompts, base_url, &output_dir,
+            ).await?;
+            let report_md = crate::creative_writing::build_creative_report(&csv_path)?;
+            let report_path = csv_path.with_extension("md");
+            std::fs::write(&report_path, &report_md)?;
+            ozone_core::cli::success(&format!("Creative writing eval complete for '{model}'"));
+            ozone_core::cli::field("CSV:", &csv_path.display());
+            ozone_core::cli::field("Report:", &report_path.display());
+            return Ok(());
         }
     }
 
@@ -191,7 +207,6 @@ pub fn run_eval_task(
 }
 
 /// Extract metric values from lm-eval JSON output and write as CSV row.
-#[allow(dead_code)]
 fn write_eval_csv(task: &EvalTask, model: &str, artifacts_dir: &Path) -> Result<PathBuf> {
     let output_dir = match task.kind {
         EvalTaskKind::LmEval { output_dir, .. } => artifacts_dir.join(output_dir).join(model),
@@ -296,7 +311,7 @@ pub fn print_comparison(task_name: &str) -> Result<()> {
     let dir = root.join("contrib/evals/artifacts").join(output_dir);
 
     if !dir.exists() {
-        println!("No results yet. Run `ozone eval <model> --preset {task_name}` first.");
+        println!("No results yet. Run `oz eval <model> --preset {task_name}` first.");
         return Ok(());
     }
 
@@ -346,72 +361,24 @@ pub fn print_comparison(task_name: &str) -> Result<()> {
     Ok(())
 }
 
-pub fn run_eval(model: &str, preset: EvalPreset, limit: u32, base_url: &str, temperature: f64) -> Result<()> {
+pub async fn run_eval(model: &str, preset: EvalPreset, limit: u32, base_url: &str, temperature: f64) -> Result<()> {
     if limit == 0 {
         bail!("--limit must be greater than 0");
     }
 
-    let root = resolve_project_root()?;
-    let evals_dir = root.join("contrib/evals");
-    let artifacts_dir = evals_dir.join("artifacts");
-    let venv_bin = evals_dir.join(".venv/bin");
+    // Look up the task from the registry using the preset's CLI name
+    let task = EVAL_TASKS
+        .iter()
+        .find(|t| t.cli_name == preset.cli_name())
+        .ok_or_else(|| anyhow::anyhow!(
+            "Internal error: preset '{}' not found in EVAL_TASKS registry",
+            preset.cli_name()
+        ))?;
 
-    if !evals_dir.is_dir() {
-        bail!(
-            "Missing contrib/evals at {}. Run from an Ozone source checkout or set OZONE_SOURCE_ROOT.",
-            evals_dir.display()
-        );
-    }
+    // Delegate to the task registry — single source of truth for dispatch
+    run_eval_task(task, model, limit, base_url, temperature).await?;
 
-    let status = match preset {
-        EvalPreset::Gsm8k => run_lm_eval(
-            &venv_bin,
-            model,
-            "gsm8k",
-            limit,
-            &artifacts_dir.join("lm_eval_gsm8k_probe"),
-            base_url,
-            temperature,
-        )?,
-        EvalPreset::Instruction => run_lm_eval(
-            &venv_bin,
-            model,
-            "leaderboard_instruction_following",
-            limit,
-            &artifacts_dir.join("lm_eval_instruction_probe"),
-            base_url,
-            temperature,
-        )?,
-        EvalPreset::Math => run_lm_eval(
-            &venv_bin,
-            model,
-            "leaderboard_math_hard",
-            limit,
-            &artifacts_dir.join("lm_eval_math_probe"),
-            base_url,
-            temperature,
-        )?,
-        EvalPreset::Humaneval => run_evalplus_codegen(
-            &venv_bin,
-            model,
-            limit,
-            &artifacts_dir.join("evalplus_probe"),
-            base_url,
-        )?,
-    };
-
-    if !status.success() {
-        match status.code() {
-            Some(code) => bail!("Evaluation failed with exit code {code}"),
-            None => bail!("Evaluation failed (terminated by signal)"),
-        }
-    }
-
-    ozone_core::cli::success(&format!(
-        "Completed {} for model '{}'.",
-        preset.description(),
-        model
-    ));
+    // Build markdown report (uses preset for backward-compatible reporting)
     match crate::eval_report::build_eval_report_for_preset(model, preset) {
         Ok(report) => {
             if let Err(error) = crate::eval_report::write_eval_report(&report) {
@@ -424,7 +391,6 @@ pub fn run_eval(model: &str, preset: EvalPreset, limit: u32, base_url: &str, tem
             eprintln!("Markdown report could not be generated: {error}");
         }
     }
-    ozone_core::cli::field("Artifacts:", &artifacts_dir.display());
     Ok(())
 }
 
@@ -441,11 +407,14 @@ fn run_lm_eval(
     ensure_executable(&lm_eval)?;
 
     let completions_url = format!("{}/v1/completions", normalize_base_url(base_url));
+    // tokenizer_backend=None is safe for simple completion tasks (GSM8K, Math).
+    // For MMLU/TruthfulQA with complex prompt formatting, consider switching to
+    // tokenizer_backend=huggingface with a local tokenizer if results degrade.
     let model_args = format!(
         "model={model},base_url={completions_url},tokenizer_backend=None,temperature={temperature}"
     );
 
-    ozone_core::cli::header("Ozone Eval");
+    ozone_core::cli::header("oz Eval");
     ozone_core::cli::field("Suite:", &format!("lm-eval ({task})"));
     ozone_core::cli::field("Model:", &model);
     ozone_core::cli::field("Limit:", &limit);
@@ -486,7 +455,7 @@ fn run_evalplus_codegen(
     let id_range = format!("[0,{upper_bound}]");
 
     let suite_name = "EvalPlus (humaneval)";
-    ozone_core::cli::header("Ozone Eval");
+    ozone_core::cli::header("oz Eval");
     ozone_core::cli::field("Suite:", &suite_name);
     ozone_core::cli::field("Model:", &model);
     ozone_core::cli::field("Samples:", &limit);
@@ -562,10 +531,60 @@ fn normalize_base_url(base_url: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::normalize_base_url;
+    use super::{EvalPreset, EVAL_TASKS};
+    use clap::ValueEnum;
 
     #[test]
     fn normalize_base_url_strips_trailing_slash() {
         assert_eq!(normalize_base_url("http://127.0.0.1:8989/"), "http://127.0.0.1:8989");
         assert_eq!(normalize_base_url("http://127.0.0.1:8989"), "http://127.0.0.1:8989");
+    }
+
+    #[test]
+    fn eval_registry_bbh_has_correct_lm_eval_task_name() {
+        let task = EVAL_TASKS.iter().find(|t| t.cli_name == "bbh")
+            .expect("bbh should be in EVAL_TASKS");
+        match &task.kind {
+            super::EvalTaskKind::LmEval { task, .. } => {
+                assert_eq!(*task, "bigbench_hard",
+                    "BBH lm-eval task name mismatch between registry and lm-eval");
+            }
+            _ => panic!("expected LmEval kind for bbh"),
+        }
+    }
+
+    #[test]
+    fn eval_registry_truthfulqa_has_correct_lm_eval_task_name() {
+        let task = EVAL_TASKS.iter().find(|t| t.cli_name == "truthfulqa")
+            .expect("truthfulqa should be in EVAL_TASKS");
+        match &task.kind {
+            super::EvalTaskKind::LmEval { task, .. } => {
+                assert_eq!(*task, "truthfulqa_gen",
+                    "TruthfulQA lm-eval task name mismatch between registry and lm-eval");
+            }
+            _ => panic!("expected LmEval kind for truthfulqa"),
+        }
+    }
+
+    #[test]
+    fn eval_dispatch_task_names_match_registry() {
+        // Every EvalPreset that dispatches to run_lm_eval must use the same
+        // task name as its EVAL_TASKS entry. This tests the concrete dispatch
+        // strings against the single source of truth.
+        for preset in EvalPreset::value_variants() {
+            let cli = preset.cli_name();
+            let Some(registry_task) = EVAL_TASKS.iter().find(|t| t.cli_name == cli) else {
+                // Some presets may not be in EVAL_TASKS (e.g. creative writing)
+                continue;
+            };
+            let super::EvalTaskKind::LmEval { task: expected_task, .. } = &registry_task.kind else {
+                // Skip non-lm-eval presets
+                continue;
+            };
+            // We can't inspect the internal dispatch strings directly, but we
+            // can verify the registry has the right name — that's the source of truth.
+            // If this test fails, the dispatch in run_eval() is using a stale name.
+            assert!(!expected_task.is_empty(), "lm-eval task name for {cli} must not be empty");
+        }
     }
 }

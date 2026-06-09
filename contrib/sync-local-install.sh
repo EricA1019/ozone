@@ -122,7 +122,7 @@ DEST_DIRS=("$HOME/.cargo/bin" "$HOME/.local/bin")
 INSTALL_STATE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/ozone"
 INSTALL_SOURCE_ROOT_FILE="$INSTALL_STATE_DIR/install-source-root.txt"
 BINARIES=(
-    "ozone:ozone"
+    "ozone:oz"
 )
 
 if [[ "$NO_BUILD" -eq 0 ]]; then

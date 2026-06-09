@@ -1,4 +1,5 @@
 use crate::planner::LaunchPlan;
+use crate::processes::kv_cache_args;
 
 #[cfg(test)]
 pub(super) fn build_kc_args(plan: &LaunchPlan) -> Vec<String> {
@@ -45,6 +46,7 @@ pub(super) fn build_llama_args(plan: &LaunchPlan) -> Vec<String> {
         args.push("--threads".to_string());
         args.push(t.to_string());
     }
+    args.extend(kv_cache_args(plan.quant_kv));
     args
 }
 
@@ -115,6 +117,10 @@ mod tests {
                 "--gpu-layers",
                 "all",
                 "--no-webui",
+                "--cache-type-k",
+                "q8_0",
+                "--cache-type-v",
+                "q8_0",
             ]
         );
     }

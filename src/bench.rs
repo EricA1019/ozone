@@ -68,9 +68,10 @@ pub struct BenchmarkStoreRequest<'a> {
 fn build_llamacpp_bench_args(
     gpu_layers: i32,
     context_size: u32,
+    quant_kv: u8,
     threads: Option<u32>,
 ) -> Vec<String> {
-    vec![
+    let mut args = vec![
         "--host".into(),
         BENCH_LLAMACPP_HOST.into(),
         "--port".into(),
@@ -81,7 +82,9 @@ fn build_llamacpp_bench_args(
         context_size.to_string(),
         "--threads".into(),
         threads.unwrap_or(8).to_string(),
-    ]
+    ];
+    args.extend(crate::processes::kv_cache_args(quant_kv));
+    args
 }
 
 /// Run a single benchmark: clear → launch → generate → measure → kill → store.
@@ -135,8 +138,7 @@ where
 
     match backend {
         BenchBackend::LlamaCpp { server_path } => {
-            let args = build_llamacpp_bench_args(gpu_layers, context_size, threads);
-            let _ = quant_kv;
+            let args = build_llamacpp_bench_args(gpu_layers, context_size, quant_kv, threads);
             processes::start_llamacpp(server_path, &model_path.to_string_lossy(), &args)
                 .await
                 .map_err(|e| anyhow!("Launch failed: {e}"))?;

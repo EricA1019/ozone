@@ -48,13 +48,7 @@ impl From<TierArg> for prefs::Tier {
 }
 
 fn detect_tier_from_binary_name(name: &str) -> Option<prefs::Tier> {
-    if name.contains("lite") || name.contains("ozone-lite") || name.contains("ozonelite") {
-        Some(prefs::Tier::Lite)
-    } else if name == "oz+"
-        || name.contains("ozone+")
-        || name.contains("ozoneplus")
-        || name.contains("plus")
-    {
+    if name == "oz" {
         Some(prefs::Tier::Base)
     } else {
         None
@@ -63,9 +57,9 @@ fn detect_tier_from_binary_name(name: &str) -> Option<prefs::Tier> {
 
 #[derive(Parser)]
 #[command(
-    name = "ozone",
-    about = "⬡ Ozone — local AI stack operator & launcher",
-    after_help = "Source builds keep default features empty. Use `cargo build --release -p ozone --features full` or `./contrib/sync-local-install.sh` for profiling and `ozone model ...` commands in the base binary.",
+    name = "oz",
+    about = "⬡ oz — local AI stack operator & launcher",
+    after_help = "Source builds keep default features empty. Use `cargo build --release -p ozone --features full` or `./contrib/sync-local-install.sh` for profiling and `oz model ...` commands in the base binary.",
     version = concat!(env!("CARGO_PKG_VERSION"), "+", env!("OZONE_GIT_HASH"))
 )]
 struct Cli {
@@ -76,7 +70,7 @@ struct Cli {
     no_browser: bool,
 
     /// Override product tier (lite, base).
-    /// Also detectable via binary name, including legacy plus aliases.
+    /// Also detectable via binary name (e.g. `oz`).
     #[arg(long, value_enum)]
     mode: Option<TierArg>,
 
@@ -142,6 +136,8 @@ enum Commands {
         quick: bool,
         #[arg(long, help = "Run context-size sweep instead of parameter sweep")]
         context_sweep: bool,
+        #[arg(long, default_value = "1", help = "KV cache quantization: 1=f16, 2=q8_0, 3=q4_0")]
+        quant_kv: u8,
     },
     /// Run evaluation probes against a running local server
     Eval {
@@ -166,8 +162,6 @@ enum Commands {
     ExportServer {
         /// Model filename
         model: String,
-        #[arg(long, help = "Saved profile name to use for config")]
-        profile: Option<String>,
         #[arg(long, help = "Output path (default: ~/models/serve-<model>.sh)")]
         output: Option<String>,
         #[arg(long, default_value = "8989", help = "Port for the server")]
@@ -194,7 +188,7 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
-    if ozone_core::install::maybe_prompt_for_local_install_update("ozone")? {
+    if ozone_core::install::maybe_prompt_for_local_install_update("oz")? {
         ozone_core::install::relaunch_current_process()?;
     }
 
@@ -261,14 +255,14 @@ async fn main() -> Result<()> {
             } else {
                 #[cfg(feature = "model-mgmt")]
                 {
-                    eprintln!("  hint: `ozone list` is deprecated — use `ozone model list` instead.");
+                    eprintln!("  hint: `oz list` is deprecated — use `oz model list` instead.");
                     eprintln!();
                 }
                 #[cfg(not(feature = "model-mgmt"))]
                 {
-                    eprintln!("  note: this build exposes the lightweight `ozone list` catalog only.");
+                    eprintln!("  note: this build exposes the lightweight `oz list` catalog only.");
                     eprintln!(
-                        "        for `ozone model ...`, install via `./contrib/sync-local-install.sh`"
+                        "        for `oz model ...`, install via `./contrib/sync-local-install.sh`"
                     );
                     eprintln!(
                         "        or build `cargo build --release -p ozone --features full`."
@@ -282,13 +276,13 @@ async fn main() -> Result<()> {
                     println!();
                     #[cfg(feature = "model-mgmt")]
                     {
-                        println!("  next: add one with `ozone model add --hf <repo> [filename.gguf]`");
+                        println!("  next: add one with `oz model add --hf <repo> [filename.gguf]`");
                         println!("        or symlink an existing `.gguf` into `~/models/`.");
                     }
                     #[cfg(not(feature = "model-mgmt"))]
                     {
                         println!("  next: place a `.gguf` file or symlink in `~/models/`,");
-                        println!("        then rerun `ozone list` or use the installed full base build.");
+                        println!("        then rerun `oz list` or use the installed full base build.");
                     }
                 } else {
                     for r in &records {
@@ -331,7 +325,7 @@ async fn main() -> Result<()> {
                 .map(|m| m.len() as f64 / 1_073_741_824.0)
                 .unwrap_or(0.0);
 
-            ozone_core::cli::header("Ozone Bench");
+            ozone_core::cli::header("oz Bench");
             ozone_core::cli::field("Model:", &model);
             ozone_core::cli::field("GPU Layers:", &gpu_layers);
             ozone_core::cli::field("Context:", &context);
@@ -379,6 +373,7 @@ async fn main() -> Result<()> {
             max_context,
             quick,
             context_sweep,
+            quant_kv,
         }) => {
             let model_dir = ozone_core::paths::models_dir();
             let model_path = model_dir.join(&model);
@@ -386,7 +381,7 @@ async fn main() -> Result<()> {
 
             if context_sweep {
                 let (csv_path, sweet_spot) = sweep::run_context_sweep(
-                    &model, &model_path, &server_path, -1, None, quick,
+                    &model, &model_path, &server_path, -1, quant_kv, None, quick,
                 ).await?;
                 ozone_core::cli::success(&format!(
                     "Sweep complete. Sweet spot: context={sweet_spot}. CSV: {}",
@@ -486,10 +481,10 @@ async fn main() -> Result<()> {
                 eval::print_comparison(preset.cli_name())?;
                 return Ok(());
             }
-            eval::run_eval(&model, preset, limit, &base_url, temperature)?;
+            eval::run_eval(&model, preset, limit, &base_url, temperature).await?;
             Ok(())
         }
-        Some(Commands::ExportServer { model, profile, output, port }) => {
+        Some(Commands::ExportServer { model, output, port }) => {
             let model_dir = ozone_core::paths::models_dir();
             let model_path = model_dir.join(&model);
             if !model_path.exists() {
@@ -498,10 +493,8 @@ async fn main() -> Result<()> {
 
             let server_path = processes::resolved_llamacpp_server_path()?;
 
-            let plan = if let Some(_profile_name) = &profile {
-                anyhow::bail!("--profile not yet implemented; use the launcher Configure Hub to save a profile first");
-            } else {
-                // Use catalog recommendation as fallback
+            // Use catalog recommendation as the launch plan
+            let plan = {
                 let report = catalog::load_catalog_report(
                     &model_dir,
                     &ozone_core::paths::catalog_preset_path(),
@@ -571,23 +564,9 @@ mod tests {
 
     #[test]
     fn detects_tier_from_binary_name() {
-        assert_eq!(
-            detect_tier_from_binary_name("ozone-lite"),
-            Some(prefs::Tier::Lite)
-        );
-        assert_eq!(
-            detect_tier_from_binary_name("ozonelite"),
-            Some(prefs::Tier::Lite)
-        );
-        assert_eq!(
-            detect_tier_from_binary_name("ozone+"),
-            Some(prefs::Tier::Base)
-        );
-        assert_eq!(
-            detect_tier_from_binary_name("ozoneplus"),
-            Some(prefs::Tier::Base)
-        );
-        assert_eq!(detect_tier_from_binary_name("oz+"), Some(prefs::Tier::Base));
+        assert_eq!(detect_tier_from_binary_name("oz"), Some(prefs::Tier::Base));
         assert_eq!(detect_tier_from_binary_name("ozone"), None);
+        assert_eq!(detect_tier_from_binary_name("ozone-lite"), None);
+        assert_eq!(detect_tier_from_binary_name("oz+"), None);
     }
 }

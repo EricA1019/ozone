@@ -19,24 +19,41 @@ pub(crate) fn build_eval_report_for_preset(
     let root = crate::eval::resolve_project_root()?;
     let artifacts_dir = root.join("contrib/evals/artifacts");
 
-    match preset {
-        EvalPreset::Gsm8k => build_lm_eval_report(
-            &format!("{} eval report", preset.report_label()),
-            &artifacts_dir.join("lm_eval_gsm8k_probe").join(model),
-        ),
-        EvalPreset::Instruction => build_lm_eval_report(
-            &format!("{} eval report", preset.report_label()),
-            &artifacts_dir.join("lm_eval_instruction_probe").join(model),
-        ),
-        EvalPreset::Math => build_lm_eval_report(
-            &format!("{} eval report", preset.report_label()),
-            &artifacts_dir.join("lm_eval_math_probe").join(model),
-        ),
-        EvalPreset::Humaneval => build_evalplus_report(
-            &format!("{} report", preset.report_label()),
-            &artifacts_dir.join("evalplus_probe/humaneval"),
-            model,
-        ),
+    // Look up output directory from the task registry
+    let task = crate::eval::EVAL_TASKS
+        .iter()
+        .find(|t| t.cli_name == preset.cli_name())
+        .with_context(|| format!("preset '{}' not in registry", preset.cli_name()))?;
+
+    let output_dir = match task.kind {
+        crate::eval::EvalTaskKind::LmEval { output_dir, .. } => output_dir,
+        crate::eval::EvalTaskKind::EvalPlus { output_dir } => output_dir,
+        crate::eval::EvalTaskKind::CreativeWriting => "creative_writing",
+    };
+
+    let title = format!("{} eval report", preset.report_label());
+
+    match task.kind {
+        crate::eval::EvalTaskKind::LmEval { .. } => {
+            build_lm_eval_report(&title, &artifacts_dir.join(output_dir).join(model))
+        }
+        crate::eval::EvalTaskKind::EvalPlus { .. } => {
+            build_evalplus_report(&title, &artifacts_dir.join(output_dir).join("humaneval"), model)
+        }
+        crate::eval::EvalTaskKind::CreativeWriting => {
+            // Creative writing reports are generated alongside the CSV by the runner
+            let csv_path = artifacts_dir
+                .join(output_dir)
+                .join(format!("{model}_creative.csv"));
+            let markdown = crate::creative_writing::build_creative_report(&csv_path)?;
+            let markdown_path = csv_path.with_extension("md");
+            Ok(EvalMarkdownReport {
+                title,
+                markdown,
+                source_path: csv_path,
+                markdown_path,
+            })
+        }
     }
 }
 

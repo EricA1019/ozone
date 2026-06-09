@@ -258,10 +258,7 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         .constraints([Constraint::Length(1), Constraint::Length(1)])
         .split(inner);
 
-    let tier_name = match app.prefs.preferred_tier {
-        Some(crate::prefs::Tier::Lite) => "ozonelite",
-        _ => "Ozone",
-    };
+    let tier_name = "oz";
 
     let title = Line::from(vec![
         Span::styled(format!(" {} {} ", HEX_CURSOR, tier_name), style_bold_lime()),
@@ -439,10 +436,7 @@ fn render_status_bar(f: &mut Frame, area: Rect, app: &App) {
     } else {
         style_muted()
     };
-    let tier_badge = match app.prefs.preferred_tier {
-        Some(crate::prefs::Tier::Lite) => Span::styled(" [lite] ", style_cyan()),
-        _ => Span::raw(" "),
-    };
+    let tier_badge = Span::raw(" ");
     let pulse = if (app.ticker / 8).is_multiple_of(2) {
         HEX_CURSOR
     } else {
@@ -469,6 +463,10 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
         ModelPickerMode::Configure => (
             "Model Picker · Configure",
             "↑↓ scroll · Enter configure hub · Esc back · type to filter",
+        ),
+        ModelPickerMode::BenchEval => (
+            "Model Picker · Bench+Eval",
+            "↑↓ scroll · Enter select model · Esc back · type to filter",
         ),
         #[cfg(feature = "profiling-ui")]
         ModelPickerMode::Profile => (
