@@ -14,6 +14,8 @@ edges:
     condition: when setting up the dev environment or running the project for the first time
   - target: patterns/INDEX.md
     condition: when starting a task — check the pattern index for a matching pattern file
+  - target: docs/bug-reports/BUGLOG.md
+    condition: when finding a bug, logging a defect, or checking known issues before starting work
 last_updated: 2026-06-08
 ---
 
@@ -26,6 +28,11 @@ Then read this file fully before doing anything else in this session.
 ## Current Project State
 
 **Working:**
+
+- **Detailed Phase 1+2 bug fix plan created (2026-06-08)**: `docs/bug-reports/PHASE-1-2-PLAN.md` contains exact line-accurate diffs and TDD test cases for all 7 fixes in Phase 1 (BUG-001 TruthfulQA name, BUG-002 BBH name, BUG-009 export threads, STRUCT-005 dead gguf fallback) and Phase 2 (SILENT-001 eval report .ok() swallowing, BUG-008 is_url_ready timeout, SILENT-003 --profile dead flag). **Phase 1+2 COMPLETE** — 7 fixes, 8 new tests, 0 regressions, clippy clean on default + full features. 15 bugs remain in `docs/bug-reports/BUGLOG.md`.
+- **Phase 5 COMPLETE (2026-06-08)**: Eval architecture unification. All 7 remaining bugs fixed (BUG-007, SILENT-004, STRUCT-001/002/003/004, UX-002). `run_eval()` now delegates to `EVAL_TASKS` registry. CreativeWriting wired in `run_eval_task()`. `build_eval_report_for_preset()` uses registry metadata. TUI entries generated from registry. 4 `#[allow(dead_code)]` removed, 2 dead functions deleted. ~120 lines net reduction. **Zero active bugs remaining.**
+
+- **Phase 3 COMPLETE (2026-06-08)**: All 5 KV cache bugs fixed. `kv_cache_args()` helper in `processes.rs` translates quant_kv (1=f16, 2=q8_0, 3=q4_0) to `--cache-type-k`/`--cache-type-v` flags. Wired into bench, launcher TUI, context sweep, full sweep, and export server.
 
 - **TUI Results Viewer landed (2026-06-08)**: Bench + Eval now has a "View Results" action that scans `~/.local/share/ozone/` and `contrib/evals/artifacts/` for past sweep/eval/creative-writing CSV and markdown files. Results are listed with kind labels ([Sweep], [Eval], [Creative], [Report]), model names, and summary metrics. Press Enter to view CSV as an aligned table or markdown as scrollable text. Press `r` to refresh the file list. Navigate with arrows, PgUp/PgDn, Home/End.
 - **Port mismatch bug fixed (2026-06-08)**: `DEFAULT_LLAMACPP_PORT` was 8080 but the managed server launches on 8989. Health checks in `start_llamacpp` were hitting the wrong port, causing all sweep/bench auto-launches to time out. Fixed to 8989.

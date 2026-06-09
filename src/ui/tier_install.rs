@@ -3,12 +3,8 @@
 use std::path::PathBuf;
 
 /// Returns the binary name for a given tier (the executable that should be on PATH).
-pub fn binary_name_for_tier(tier: crate::prefs::Tier) -> &'static str {
-    match tier {
-        crate::prefs::Tier::Lite => "ozone-lite",
-        crate::prefs::Tier::Base => "ozone",
-        crate::prefs::Tier::Plus => "ozone",
-    }
+pub fn binary_name_for_tier(_tier: crate::prefs::Tier) -> &'static str {
+    "oz"
 }
 
 /// Returns true if the named binary is accessible on PATH.

@@ -17,14 +17,14 @@ GRAPHIFY_LOG_FILE="${TMPDIR:-/tmp}/ozone-graphify-refresh.log"
         cd "$REPO_ROOT"
         ./contrib/sync-local-install.sh --no-build >"$SYNC_LOG_FILE" 2>&1
         if [[ $? -ne 0 ]]; then
-            printf '\n[ozone post-commit] install sync failed — see %s\n' "$SYNC_LOG_FILE" >&2
+            printf '\n[oz post-commit] install sync failed — see %s\n' "$SYNC_LOG_FILE" >&2
         fi
     fi
 
     if [[ -x "$GRAPHIFY_SCRIPT" ]]; then
         "$GRAPHIFY_SCRIPT" --quiet >"$GRAPHIFY_LOG_FILE" 2>&1
         if [[ $? -ne 0 ]]; then
-            printf '\n[ozone post-commit] graphify refresh failed — see %s\n' "$GRAPHIFY_LOG_FILE" >&2
+            printf '\n[oz post-commit] graphify refresh failed — see %s\n' "$GRAPHIFY_LOG_FILE" >&2
         fi
     fi
 ) &

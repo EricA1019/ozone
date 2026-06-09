@@ -389,6 +389,7 @@ pub async fn run_context_sweep(
     model_path: &Path,
     server_path: &Path,
     gpu_layers: i32,
+    quant_kv: u8,
     threads: Option<u32>,
     quick: bool,
 ) -> Result<(PathBuf, u32)> {
@@ -417,7 +418,7 @@ pub async fn run_context_sweep(
             chrono::Utc::now().format("%Y%m%dT%H%M%S")));
 
     let mut writer = csv::Writer::from_path(&csv_path)?;
-    writer.write_record(&["model", "context_size", "tok_s", "ttft_ms", "vram_mb", "ram_mb", "status"])?;
+    writer.write_record(["model", "context_size", "tok_s", "ttft_ms", "vram_mb", "ram_mb", "status"])?;
 
     let mut sweet_spot = 0u32;
     let mut best_tok_s = 0.0f64;
@@ -428,7 +429,7 @@ pub async fn run_context_sweep(
         let result = bench::run_benchmark(
             model_name, model_path,
             &crate::bench::BenchBackend::LlamaCpp { server_path: server_path.to_path_buf() },
-            gpu_layers, ctx, 1, threads,
+            gpu_layers, ctx, quant_kv, threads,
         ).await;
 
         match result {
@@ -437,7 +438,7 @@ pub async fn run_context_sweep(
                     sweet_spot = ctx;
                     best_tok_s = r.tokens_per_sec;
                 }
-                writer.write_record(&[
+                writer.write_record([
                     model_name,
                     &ctx.to_string(),
                     &r.tokens_per_sec.to_string(),
@@ -452,7 +453,7 @@ pub async fn run_context_sweep(
                 }
             }
             Err(e) => {
-                writer.write_record(&[
+                writer.write_record([
                     model_name, &ctx.to_string(), "0", "0", "0", "0", "launch_failed",
                 ])?;
                 eprintln!("  Failed at context={ctx}: {e}");

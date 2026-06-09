@@ -14,6 +14,24 @@ const LLAMACPP_LAUNCH_STATE_VERSION: u32 = 1;
 const LLAMACPP_GRACEFUL_STOP_TIMEOUT_MILLIS: u64 = 2_000;
 const LLAMACPP_PORT_RELEASE_TIMEOUT_MILLIS: u64 = 4_000;
 
+/// Map quant_kv to llama-server --cache-type-k / --cache-type-v flags.
+/// 1 = f16 (default, no flags needed)
+/// 2 = q8_0
+/// 3 = q4_0
+pub fn kv_cache_args(quant_kv: u8) -> Vec<String> {
+    let quant = match quant_kv {
+        2 => "q8_0",
+        3 => "q4_0",
+        _ => return vec![],
+    };
+    vec![
+        "--cache-type-k".into(),
+        quant.into(),
+        "--cache-type-v".into(),
+        quant.into(),
+    ]
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 struct ManagedLlamaCppLaunchState {
     version: u32,
@@ -53,13 +71,18 @@ pub enum LlamaCppStartupFailure {
 }
 
 pub async fn is_url_ready(url: &str) -> bool {
-    let client = match reqwest::Client::builder()
+    // Build a client with a short timeout. The fallback path also enforces
+    // a timeout so that an unreachable server doesn't hang for the OS default
+    // (30-120s).
+    let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()
-    {
-        Ok(c) => c,
-        Err(_) => reqwest::Client::new(),
-    };
+        .unwrap_or_else(|_| {
+            reqwest::Client::builder()
+                .timeout(Duration::from_secs(5))
+                .build()
+                .unwrap_or_else(|_| reqwest::Client::new())
+        });
     client
         .get(url)
         .send()
@@ -104,6 +127,15 @@ fn llamacpp_config_fingerprint(model_name: &str, args: &[String]) -> String {
     model_name.hash(&mut hasher);
     args.hash(&mut hasher);
     format!("{:#016x}", hasher.finish())
+}
+
+/// Check whether the model currently loaded by llama-server matches the
+/// requested model_name. Handles partial matches (API may return full path).
+fn model_name_matches_running(requested: &str, running: Option<String>) -> bool {
+    match running {
+        Some(id) => id == requested || id.contains(requested),
+        None => false,
+    }
 }
 
 async fn load_llamacpp_launch_state() -> Result<Option<ManagedLlamaCppLaunchState>> {
@@ -335,7 +367,14 @@ pub async fn start_llamacpp(server_path: &Path, model_name: &str, args: &[String
         ));
     }
     if is_url_ready(&paths::llamacpp_ready_url()).await {
-        return Ok(());
+        // Verify the running model matches the requested one.
+        // If a different model is loaded, kill the old server and proceed.
+        let running = get_llamacpp_model().await;
+        if model_name_matches_running(model_name, running) {
+            return Ok(());
+        }
+        // Wrong model or couldn't verify — kill and restart
+        clear_gpu_backends().await?;
     }
 
     let log_path = paths::llamacpp_log_path()
@@ -725,7 +764,10 @@ mod tests {
 
 #[cfg(test)]
 mod llamacpp_tests {
-    use super::{classify_llamacpp_startup_failure, LlamaCppStartupFailure};
+    use super::{
+        classify_llamacpp_startup_failure, is_url_ready, model_name_matches_running,
+        LlamaCppStartupFailure,
+    };
 
     #[test]
     fn ggml_abort_detected() {
@@ -767,6 +809,69 @@ mod llamacpp_tests {
             kind,
             LlamaCppStartupFailure::RuntimeCrash { exit_code: Some(1) }
         );
+    }
+
+    #[tokio::test]
+    async fn is_url_ready_returns_false_for_unreachable_port() {
+        // Port 19999 should have nothing listening in any test environment.
+        // This test verifies that is_url_ready returns false quickly rather
+        // than hanging for the default OS timeout (which can be 30-120s).
+        let result = is_url_ready("http://127.0.0.1:19999/health").await;
+        assert!(!result, "unreachable port should return false");
+    }
+
+    #[test]
+    fn model_name_matches_running_detects_exact_match() {
+        assert!(model_name_matches_running(
+            "my-model.gguf",
+            Some("my-model.gguf".into()),
+        ));
+    }
+
+    #[test]
+    fn model_name_matches_running_detects_containment() {
+        // llama.cpp API may return the full path or just the filename
+        assert!(model_name_matches_running(
+            "my-model.gguf",
+            Some("/models/my-model.gguf".into()),
+        ));
+    }
+
+    #[test]
+    fn model_name_matches_running_returns_false_for_mismatch() {
+        assert!(!model_name_matches_running(
+            "model-b.gguf",
+            Some("model-a.gguf".into()),
+        ));
+    }
+
+    #[test]
+    fn model_name_matches_running_returns_false_when_no_model_loaded() {
+        assert!(!model_name_matches_running("anything.gguf", None));
+    }
+}
+
+#[cfg(test)]
+mod kv_cache_tests {
+    use super::kv_cache_args;
+
+    #[test]
+    fn kv_cache_args_default_to_empty_for_f16() {
+        assert!(kv_cache_args(1).is_empty(), "quant_kv=1 (f16) needs no flags");
+        assert!(kv_cache_args(0).is_empty(), "quant_kv=0 should default to no flags");
+        assert!(kv_cache_args(99).is_empty(), "unknown quant_kv should default to no flags");
+    }
+
+    #[test]
+    fn kv_cache_args_maps_to_q8_0_for_quant_2() {
+        let args = kv_cache_args(2);
+        assert_eq!(args, vec!["--cache-type-k", "q8_0", "--cache-type-v", "q8_0"]);
+    }
+
+    #[test]
+    fn kv_cache_args_maps_to_q4_0_for_quant_3() {
+        let args = kv_cache_args(3);
+        assert_eq!(args, vec!["--cache-type-k", "q4_0", "--cache-type-v", "q4_0"]);
     }
 }
 

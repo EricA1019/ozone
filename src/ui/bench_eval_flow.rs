@@ -3,7 +3,7 @@ use tokio::sync::mpsc::unbounded_channel;
 
 use super::{
     bench_eval::{entries, BenchEvalAction},
-    App, Screen,
+    App, ModelPickerMode, Screen,
 };
 use crate::eval::EvalPreset;
 
@@ -39,6 +39,14 @@ pub(super) async fn handle_bench_eval_key(app: &mut App, key: KeyEvent) -> Bench
                     app.bench_eval_selected = index - 1;
                     activate_selected(app).await;
                 }
+            }
+        }
+        KeyCode::Char('m') => {
+            if !app.catalog.is_empty() {
+                app.model_picker_mode = ModelPickerMode::BenchEval;
+                app.screen = Screen::ModelPicker;
+            } else {
+                app.set_error("No models available. Add models first.".into());
             }
         }
         KeyCode::Enter => {
@@ -88,14 +96,85 @@ async fn activate_selected(app: &mut App) {
                 app.set_error("No model selected. Select or launch a model first.".into());
                 return;
             };
-            app.set_status(format!("Use CLI: ozone creative-write \"{model_name}\""));
+            let model = model_name.to_string();
+            app.set_status("Running creative writing eval…".into());
+            tokio::spawn(async move {
+                let root = match crate::eval::resolve_project_root() {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("creative writing: failed to resolve project root: {e}");
+                        return;
+                    }
+                };
+                let prompts = match crate::creative_writing::load_prompt_bank(&root) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("creative writing: failed to load prompt bank: {e}");
+                        return;
+                    }
+                };
+                let artifacts_dir = root
+                    .join("contrib/evals/artifacts")
+                    .join("creative_writing");
+                let base_url = ozone_core::paths::llamacpp_base_url();
+                eprintln!("Creative writing eval starting for {model}…");
+                match crate::creative_writing::run_creative_writing_eval(
+                    &model, &prompts, &base_url, &artifacts_dir,
+                )
+                .await
+                {
+                    Ok(csv_path) => {
+                        eprintln!("Creative writing eval complete: {}", csv_path.display());
+                    }
+                    Err(e) => {
+                        eprintln!("Creative writing eval failed: {e}");
+                    }
+                }
+            });
         }
         BenchEvalAction::ExportServer => {
-            if let Some(model_name) = resolve_bench_eval_model(app) {
-                app.set_status(format!("Use CLI: ozone export-server \"{model_name}\""));
-            } else {
+            let Some(model_name) = resolve_bench_eval_model(app) else {
                 app.set_error("No model selected. Launch or select a model first.".into());
-            }
+                return;
+            };
+            let model = model_name.to_string();
+            app.set_status("Generating server script…".into());
+            tokio::spawn(async move {
+                let model_dir = ozone_core::paths::models_dir();
+                let model_path = model_dir.join(&model);
+                let server_path = match crate::processes::resolved_llamacpp_server_path() {
+                    Ok(p) => p,
+                    Err(e) => {
+                        eprintln!("export server: failed to resolve server path: {e}");
+                        return;
+                    }
+                };
+                let report = match crate::catalog::load_catalog_report(
+                    &model_dir,
+                    &ozone_core::paths::catalog_preset_path(),
+                    &model_dir.join("bench-results.txt"),
+                )
+                .await
+                {
+                    Ok(r) => r,
+                    Err(e) => {
+                        eprintln!("export server: failed to load catalog: {e}");
+                        return;
+                    }
+                };
+                let Some(record) = report.records.iter().find(|r| r.model_name == model) else {
+                    eprintln!("export server: model '{model}' not found in catalog");
+                    return;
+                };
+                let plan = crate::planner::plan_launch(record, &Default::default());
+                let output = model_dir.join(format!("serve-{model}.sh"));
+                match crate::export_server::generate_serve_script(
+                    &plan, &model_path, &server_path, 8989, &output,
+                ) {
+                    Ok(path) => eprintln!("Server script written to {}", path.display()),
+                    Err(e) => eprintln!("export server: failed to generate script: {e}"),
+                }
+            });
         }
         BenchEvalAction::ViewResults => {
             app.discover_result_files();
@@ -127,45 +206,6 @@ pub(super) fn resolve_bench_eval_model(app: &App) -> Option<String> {
         .or_else(|| (!app.prefs.last_model_name.is_empty()).then(|| app.prefs.last_model_name.clone()))
 }
 
-#[allow(dead_code)]
-async fn start_eval(app: &mut App, preset: EvalPreset) {
-    let Some(model_name) = resolve_bench_eval_model(app) else {
-        app.set_error("Launch a model first so Bench + Eval knows which model to evaluate.".into());
-        return;
-    };
-
-    if app.bench_eval_event_rx.is_some() {
-        app.set_error("An evaluation is already running.".into());
-        return;
-    }
-
-    let limit = 1;
-    let preset_name = preset.cli_name().to_string();
-    let base_url = ozone_core::paths::llamacpp_base_url();
-    let command_preview = format!(
-        "ozone eval {} --preset {} --limit {} --base-url {}",
-        model_name, preset_name, limit, base_url
-    );
-    let (tx, rx) = unbounded_channel();
-    let error_tx = tx.clone();
-    app.start_bench_eval_workflow(rx, model_name.clone(), preset, limit, command_preview);
-    tokio::spawn(async move {
-        if let Err(error) = super::bench_eval_workflow::run_bench_eval_workflow(
-            model_name,
-            preset,
-            limit,
-            base_url,
-            tx,
-        )
-        .await
-        {
-            let _ = error_tx.send(super::bench_eval_workflow::BenchEvalWorkflowEvent::Failed {
-                message: format!("Failed to run eval: {error}"),
-            });
-        }
-    });
-}
-
 /// Start an eval using a CLI task name string (works with the task registry).
 async fn start_eval_with_cli_name(app: &mut App, cli_name: &str) {
     let Some(model_name) = resolve_bench_eval_model(app) else {
@@ -181,7 +221,7 @@ async fn start_eval_with_cli_name(app: &mut App, cli_name: &str) {
     let limit = 1;
     let base_url = ozone_core::paths::llamacpp_base_url();
     let command_preview = format!(
-        "ozone eval {model_name} --preset {cli_name} --limit {limit} --base-url {base_url}"
+        "oz eval {model_name} --preset {cli_name} --limit {limit} --base-url {base_url}"
     );
     let (tx, rx) = unbounded_channel();
     let error_tx = tx.clone();
@@ -192,7 +232,10 @@ async fn start_eval_with_cli_name(app: &mut App, cli_name: &str) {
         "instruction" => EvalPreset::Instruction,
         "math" => EvalPreset::Math,
         "humaneval" => EvalPreset::Humaneval,
-        "mmlu" | "hellaswag" | "truthfulqa" | "bbh" => EvalPreset::Gsm8k,
+        "mmlu" => EvalPreset::Mmlu,
+        "hellaswag" => EvalPreset::HellaSwag,
+        "truthfulqa" => EvalPreset::TruthfulQA,
+        "bbh" => EvalPreset::Bbh,
         _ => {
             app.set_error(format!("Unknown eval preset: {cli_name}"));
             return;

@@ -456,7 +456,7 @@ fn export_presets_conf_impl(conf_path: &Path, model: Option<&str>, noisy: bool) 
     auto_lines.push("# Format: model|gpu_layers|contextsize|quantkv|note".to_string());
     for (model_name, profile) in &best_per_model {
         let note = format!(
-            "Ozone {} profile ({:.1} t/s, ~{} MB VRAM)",
+            "oz {} profile ({:.1} t/s, ~{} MB VRAM)",
             profile.profile_name, profile.tokens_per_sec, profile.vram_mb,
         );
         auto_lines.push(format!(

@@ -137,6 +137,8 @@ pub enum ModelPickerMode {
     Configure,
     #[cfg(feature = "profiling-ui")]
     Profile,
+    /// Opened from Bench+Eval — returns to BenchEval after selection.
+    BenchEval,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

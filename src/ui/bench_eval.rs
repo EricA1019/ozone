@@ -36,22 +36,40 @@ pub(super) struct BenchEvalEntry {
 }
 
 pub(super) fn entries() -> Vec<BenchEvalEntry> {
-    vec![
-        BenchEvalEntry { action: BenchEvalAction::EvalGsm8k, label: "Eval GSM8K", description: "lm-eval arithmetic reasoning probe", command: "eval-gsm8k" },
-        BenchEvalEntry { action: BenchEvalAction::EvalMath, label: "Eval Math", description: "lm-eval leaderboard_math_hard probe", command: "eval-math" },
-        BenchEvalEntry { action: BenchEvalAction::EvalBbh, label: "Eval BBH", description: "BIG-Bench Hard (23 multi-step tasks)", command: "eval-bbh" },
-        BenchEvalEntry { action: BenchEvalAction::EvalMmlu, label: "Eval MMLU", description: "Massive Multitask Language Understanding", command: "eval-mmlu" },
-        BenchEvalEntry { action: BenchEvalAction::EvalTruthfulQA, label: "Eval TruthfulQA", description: "Misconception resistance probe", command: "eval-truthfulqa" },
-        BenchEvalEntry { action: BenchEvalAction::EvalInstruction, label: "Eval Instruction", description: "lm-eval instruction-following probe", command: "eval-instruction" },
-        BenchEvalEntry { action: BenchEvalAction::EvalHellaSwag, label: "Eval HellaSwag", description: "Commonsense narrative completion", command: "eval-hellaswag" },
-        BenchEvalEntry { action: BenchEvalAction::EvalHumaneval, label: "Eval HumanEval", description: "EvalPlus codegen probe", command: "eval-humaneval" },
-        BenchEvalEntry { action: BenchEvalAction::EvalCreativeWriting, label: "Eval Creative Writing", description: "Diversity & coherence probe", command: "eval-creative" },
-        BenchEvalEntry { action: BenchEvalAction::ProfileModel, label: "Profile Model", description: "Benchmark/sweep workflow", command: "profile" },
-        BenchEvalEntry { action: BenchEvalAction::ExportServer, label: "Export Server", description: "Generate standalone launch script", command: "export-server" },
-        BenchEvalEntry { action: BenchEvalAction::ViewResults, label: "View Results", description: "Browse past eval/sweep/creative results", command: "results" },
-        BenchEvalEntry { action: BenchEvalAction::ViewReport, label: "View Report", description: "Open latest eval markdown report", command: "report" },
-        BenchEvalEntry { action: BenchEvalAction::Back, label: "Back", description: "Return to launcher menu", command: "back" },
-    ]
+    let mut entries: Vec<BenchEvalEntry> = Vec::new();
+
+    // Generate eval entries from the task registry
+    for task in crate::eval::EVAL_TASKS {
+        entries.push(BenchEvalEntry {
+            action: eval_action_for_cli_name(task.cli_name),
+            label: task.report_label,
+            description: task.description,
+            command: task.cli_name,
+        });
+    }
+
+    // Add non-eval entries
+    entries.push(BenchEvalEntry { action: BenchEvalAction::EvalCreativeWriting, label: "Eval Creative Writing", description: "Diversity & coherence probe", command: "eval-creative" });
+    entries.push(BenchEvalEntry { action: BenchEvalAction::ProfileModel, label: "Profile Model", description: "Benchmark/sweep workflow", command: "profile" });
+    entries.push(BenchEvalEntry { action: BenchEvalAction::ExportServer, label: "Export Server", description: "Generate standalone launch script", command: "export-server" });
+    entries.push(BenchEvalEntry { action: BenchEvalAction::ViewResults, label: "View Results", description: "Browse past eval/sweep/creative results", command: "results" });
+    entries.push(BenchEvalEntry { action: BenchEvalAction::ViewReport, label: "View Report", description: "Open latest eval markdown report", command: "report" });
+    entries.push(BenchEvalEntry { action: BenchEvalAction::Back, label: "Back", description: "Return to launcher menu", command: "back" });
+    entries
+}
+
+fn eval_action_for_cli_name(name: &str) -> BenchEvalAction {
+    match name {
+        "gsm8k" => BenchEvalAction::EvalGsm8k,
+        "instruction" => BenchEvalAction::EvalInstruction,
+        "math" => BenchEvalAction::EvalMath,
+        "humaneval" => BenchEvalAction::EvalHumaneval,
+        "mmlu" => BenchEvalAction::EvalMmlu,
+        "hellaswag" => BenchEvalAction::EvalHellaSwag,
+        "truthfulqa" => BenchEvalAction::EvalTruthfulQA,
+        "bbh" => BenchEvalAction::EvalBbh,
+        _ => BenchEvalAction::Back,
+    }
 }
 
 pub(super) fn render(f: &mut Frame, app: &App) {
@@ -94,7 +112,7 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
         .split(center_h);
 
     let header = Paragraph::new(Line::from(vec![
-        Span::styled(format!(" {} Ozone ", HEX_CURSOR), style_bold_lime()),
+        Span::styled(format!(" {} oz ", HEX_CURSOR), style_bold_lime()),
         Span::styled("Bench + Eval Running", style_bold_cyan()),
         Span::styled("  ·  subprocess output", style_muted()),
     ]))
@@ -203,7 +221,7 @@ pub(super) fn render_report(f: &mut Frame, app: &App) {
         .split(center_h);
 
     let header = Paragraph::new(Line::from(vec![
-        Span::styled(format!(" {} Ozone ", HEX_CURSOR), style_bold_lime()),
+        Span::styled(format!(" {} oz ", HEX_CURSOR), style_bold_lime()),
         Span::styled("Bench + Eval Report", style_bold_cyan()),
         Span::styled("  ·  markdown view", style_muted()),
     ]))
@@ -275,7 +293,7 @@ pub(super) fn render_report(f: &mut Frame, app: &App) {
 
 fn render_header(f: &mut Frame, area: Rect) {
     let title = Line::from(vec![
-        Span::styled(format!(" {} Ozone ", HEX_CURSOR), style_bold_lime()),
+        Span::styled(format!(" {} oz ", HEX_CURSOR), style_bold_lime()),
         Span::styled("Bench + Eval", style_bold_cyan()),
         Span::styled("  ·  dedicated tuning menu", style_muted()),
     ]);
@@ -345,34 +363,34 @@ fn render_preview(f: &mut Frame, area: Rect, app: &App) {
             "Enter opens model picker with profiling workflow (bench/sweep/analyze).".to_string()
         }
         BenchEvalAction::EvalGsm8k => {
-            format!("ozone eval {model_hint} --preset gsm8k --limit 1")
+            format!("oz eval {model_hint} --preset gsm8k --limit 1")
         }
         BenchEvalAction::EvalInstruction => {
-            format!("ozone eval {model_hint} --preset instruction --limit 1")
+            format!("oz eval {model_hint} --preset instruction --limit 1")
         }
         BenchEvalAction::EvalMath => {
-            format!("ozone eval {model_hint} --preset math --limit 1")
+            format!("oz eval {model_hint} --preset math --limit 1")
         }
         BenchEvalAction::EvalHumaneval => {
-            format!("ozone eval {model_hint} --preset humaneval --limit 1")
+            format!("oz eval {model_hint} --preset humaneval --limit 1")
         }
         BenchEvalAction::EvalMmlu => {
-            format!("ozone eval {model_hint} --preset mmlu --limit 1")
+            format!("oz eval {model_hint} --preset mmlu --limit 1")
         }
         BenchEvalAction::EvalHellaSwag => {
-            format!("ozone eval {model_hint} --preset hellaswag --limit 1")
+            format!("oz eval {model_hint} --preset hellaswag --limit 1")
         }
         BenchEvalAction::EvalTruthfulQA => {
-            format!("ozone eval {model_hint} --preset truthfulqa --limit 1")
+            format!("oz eval {model_hint} --preset truthfulqa --limit 1")
         }
         BenchEvalAction::EvalBbh => {
-            format!("ozone eval {model_hint} --preset bbh --limit 1")
+            format!("oz eval {model_hint} --preset bbh --limit 1")
         }
         BenchEvalAction::EvalCreativeWriting => {
-            format!("ozone eval {model_hint} --preset creative-writing --limit 3 --temperature 0.7")
+            format!("oz eval {model_hint} --preset creative-writing --limit 3 --temperature 0.7")
         }
         BenchEvalAction::ExportServer => {
-            format!("ozone export-server {model_hint}")
+            format!("oz export-server {model_hint}")
         }
         BenchEvalAction::ViewResults => {
             let count = app.bench_eval_results_files.len();
@@ -424,6 +442,8 @@ fn render_preview(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_hints(f: &mut Frame, area: Rect) {
     let hints = Paragraph::new(Line::from(vec![
+        Span::styled("m", style_hint_key()),
+        Span::styled(" model  ", style_muted()),
         Span::styled("↑↓", style_hint_key()),
         Span::styled(" choose  ", style_muted()),
         Span::styled("Enter", style_hint_key()),
@@ -461,7 +481,7 @@ fn render_results_list(f: &mut Frame, area: Rect, app: &App) {
 
     // Header
     let header = Paragraph::new(Line::from(vec![
-        Span::styled(format!(" {} Ozone ", HEX_CURSOR), style_bold_lime()),
+        Span::styled(format!(" {} oz ", HEX_CURSOR), style_bold_lime()),
         Span::styled("Results", style_bold_cyan()),
         Span::styled("  ·  past eval / sweep / creative runs", style_muted()),
     ]))
@@ -556,7 +576,7 @@ fn render_results_content(f: &mut Frame, area: Rect, app: &App) {
         "  Result File".into()
     };
     let header = Paragraph::new(Line::from(vec![
-        Span::styled(format!(" {} Ozone ", HEX_CURSOR), style_bold_lime()),
+        Span::styled(format!(" {} oz ", HEX_CURSOR), style_bold_lime()),
         Span::styled("Result Viewer", style_bold_cyan()),
         Span::styled("  ·  ", style_muted()),
         Span::styled(&header_title, style_cyan()),
