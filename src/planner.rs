@@ -43,6 +43,13 @@ fn quant_kv_memory_factor(quant_kv: u8) -> f64 {
     1.0 / (1.0 + (level - 1.0) * 0.35)
 }
 
+/// Average memory factor for asymmetric K/V quantization.
+fn asymmetric_kv_factor(quant_k: u8, quant_v: u8) -> f64 {
+    let k = quant_kv_memory_factor(quant_k);
+    let v = quant_kv_memory_factor(quant_v);
+    (k + v) / 2.0
+}
+
 fn gpu_layer_fraction(gpu_layers: i32, total_layers: u32) -> f64 {
     if gpu_layers < 0 {
         return 1.0;
@@ -66,7 +73,8 @@ pub fn estimate_vram_mb(
     context_size: u32,
     gpu_layers: i32,
     size_gb: f64,
-    quant_kv: u8,
+    quant_k: u8,
+    quant_v: u8,
     total_layers: u32,
 ) -> u32 {
     let safe_size = size_gb.max(0.1);
@@ -80,7 +88,7 @@ pub fn estimate_vram_mb(
     if layer_frac <= 0.0 {
         return 0;
     }
-    let quant_factor = quant_kv_memory_factor(quant_kv);
+    let quant_factor = asymmetric_kv_factor(quant_k, quant_v);
     let ctx_mult = safe_ctx / 4096.0;
     let model_weights_mb = safe_size * MIB_PER_GIB * layer_frac;
     let kv_per_4k_mb = (safe_size * 20.0).max(96.0);
@@ -93,12 +101,13 @@ pub fn estimate_ram_mb(
     context_size: u32,
     gpu_layers: i32,
     size_gb: f64,
-    quant_kv: u8,
+    quant_k: u8,
+    quant_v: u8,
     total_layers: u32,
 ) -> u32 {
     let safe_size = size_gb.max(0.1);
     let safe_ctx = context_size.max(1024) as f64;
-    let quant_factor = quant_kv_memory_factor(quant_kv);
+    let quant_factor = asymmetric_kv_factor(quant_k, quant_v);
     let ctx_mult = safe_ctx / 4096.0;
     let clamp_layers = if gpu_layers < 0 {
         total_layers as i32
@@ -117,7 +126,8 @@ pub fn estimate_ram_mb(
 pub fn fit_gpu_layers_to_budget(
     context_size: u32,
     size_gb: f64,
-    quant_kv: u8,
+    quant_k: u8,
+    quant_v: u8,
     total_layers: u32,
     budget_mb: u32,
 ) -> Option<i32> {
@@ -127,7 +137,7 @@ pub fn fit_gpu_layers_to_budget(
 
     while lo <= hi {
         let mid = lo + (hi - lo) / 2;
-        let est = estimate_vram_mb(context_size, mid, size_gb, quant_kv, total_layers);
+        let est = estimate_vram_mb(context_size, mid, size_gb, quant_k, quant_v, total_layers);
         if est <= budget_mb {
             best = Some(mid);
             lo = mid + 1;
@@ -249,9 +259,12 @@ pub fn apply_launch_override(
         .threads
         .or(recommended.threads)
         .or(recommended_threads);
-    let quant_kv = override_state
-        .quant_kv
-        .unwrap_or(recommended.quant_kv);
+    let quant_k = override_state
+        .quant_k
+        .unwrap_or(recommended.quant_k);
+    let quant_v = override_state
+        .quant_v
+        .unwrap_or(recommended.quant_v);
     let blas_threads = override_state
         .blas_threads
         .or(recommended.blas_threads);
@@ -260,14 +273,16 @@ pub fn apply_launch_override(
         context_size,
         gpu_layers,
         record.model_size_gb,
-        quant_kv,
+        quant_k,
+        quant_v,
         recommended.total_layers,
     );
     let estimated_ram_mb = estimate_ram_mb(
         context_size,
         gpu_layers,
         record.model_size_gb,
-        quant_kv,
+        quant_k,
+        quant_v,
         recommended.total_layers,
     );
 
@@ -275,12 +290,13 @@ pub fn apply_launch_override(
         || gpu_layers != recommended.gpu_layers
         || threads != recommended.threads
         || blas_threads != recommended.blas_threads
-        || quant_kv != recommended.quant_kv;
+        || quant_k != recommended.quant_k
+        || quant_v != recommended.quant_v;
 
     let rationale = if customized {
         format!(
             "Configure Hub override: {context_size} ctx, {gpu_layers} GPU layers, \
-             {cpu_layers} CPU-resident layers, KV cache q{quant_kv}."
+             {cpu_layers} CPU-resident layers, KV cache K=q{quant_k} V=q{quant_v}."
         )
     } else {
         recommended.rationale.clone()
@@ -292,7 +308,9 @@ pub fn apply_launch_override(
         cpu_layers,
         threads,
         blas_threads,
-        quant_kv,
+        quant_k,
+        quant_v,
+        n_parallel: recommended.n_parallel,
         mode,
         rationale,
         estimated: recommended.estimated || customized,
@@ -308,7 +326,8 @@ pub fn apply_saved_profile(
     hw: &HardwareProfile,
     context_size: u32,
     gpu_layers: i32,
-    quant_kv: u8,
+    quant_k: u8,
+    quant_v: u8,
     threads: Option<u32>,
 ) -> LaunchPlan {
     let mut plan = apply_launch_override(
@@ -320,28 +339,32 @@ pub fn apply_saved_profile(
             gpu_layers: Some(gpu_layers),
             threads,
             blas_threads: None,
-            quant_kv: None,
+            quant_k: None,
+            quant_v: None,
         },
     );
-    if plan.quant_kv != quant_kv {
-        plan.quant_kv = quant_kv.max(1);
+    if plan.quant_k != quant_k || plan.quant_v != quant_v {
+        plan.quant_k = quant_k.max(1);
+        plan.quant_v = quant_v.max(1);
         plan.estimated_vram_mb = estimate_vram_mb(
             plan.context_size,
             plan.gpu_layers,
             record.model_size_gb,
-            plan.quant_kv,
+            plan.quant_k,
+            plan.quant_v,
             plan.total_layers,
         );
         plan.estimated_ram_mb = estimate_ram_mb(
             plan.context_size,
             plan.gpu_layers,
             record.model_size_gb,
-            plan.quant_kv,
+            plan.quant_k,
+            plan.quant_v,
             plan.total_layers,
         );
         plan.rationale = format!(
-            "Saved profile override: {} ctx, {} GPU layers, {} CPU-resident layers, qkv {}.",
-            plan.context_size, plan.gpu_layers, plan.cpu_layers, plan.quant_kv
+            "Saved profile override: {} ctx, {} GPU layers, {} CPU-resident layers, K=q{} V=q{}.",
+            plan.context_size, plan.gpu_layers, plan.cpu_layers, plan.quant_k, plan.quant_v
         );
     }
     plan
@@ -463,7 +486,8 @@ fn plan_launch_with_layers(
     } else {
         rec.gpu_layers.min(total_layers as i32)
     };
-    let mut quant_kv = rec.quant_kv.max(1);
+    let mut quant_k = rec.quant_k.max(1);
+    let mut quant_v = rec.quant_v.max(1);
     let mut rationale = match rec.source {
         crate::catalog::RecSource::Tuned => format!("Using tuned preset: {}", rec.note),
         crate::catalog::RecSource::Benchmarked => {
@@ -476,9 +500,10 @@ fn plan_launch_with_layers(
         profiling_mode || matches!(rec.source, crate::catalog::RecSource::Heuristic);
 
     if should_adapt_to_hardware {
-        let ram_need = estimate_ram_mb(context_size, gpu_layers, size_gb, quant_kv, total_layers);
+        let ram_need = estimate_ram_mb(context_size, gpu_layers, size_gb, quant_k, quant_v, total_layers);
         if hw.ram_free_mb > 0 && hw.ram_free_mb < (ram_need as f64 * 1.15) as u64 {
-            quant_kv = quant_kv.max(2);
+            quant_k = quant_k.max(2);
+            quant_v = quant_v.max(2);
         }
     }
 
@@ -502,14 +527,16 @@ fn plan_launch_with_layers(
                     context_size,
                     preferred_layers,
                     size_gb,
-                    quant_kv,
+                    quant_k,
+                    quant_v,
                     total_layers,
                 );
                 if preferred_vram > gpu_budget {
                     let selected_layers = fit_gpu_layers_to_budget(
                         context_size,
                         size_gb,
-                        quant_kv,
+                        quant_k,
+                        quant_v,
                         total_layers,
                         gpu_budget,
                     )
@@ -563,10 +590,10 @@ fn plan_launch_with_layers(
         .map(|b| b.vram_mb)
         .filter(|&v| v > 0)
         .unwrap_or_else(|| {
-            estimate_vram_mb(context_size, gpu_layers, size_gb, quant_kv, total_layers)
+            estimate_vram_mb(context_size, gpu_layers, size_gb, quant_k, quant_v, total_layers)
         });
     let estimated_ram_mb =
-        estimate_ram_mb(context_size, gpu_layers, size_gb, quant_kv, total_layers);
+        estimate_ram_mb(context_size, gpu_layers, size_gb, quant_k, quant_v, total_layers);
 
     let (threads, blas_threads) = recommend_threads(hw, &mode);
 
@@ -576,7 +603,9 @@ fn plan_launch_with_layers(
         gpu_layers,
         total_layers,
         cpu_layers,
-        quant_kv,
+        quant_k,
+        quant_v,
+        n_parallel: 1,
         threads,
         blas_threads,
         mode,
@@ -607,7 +636,8 @@ mod tests {
             recommendation: Recommendation {
                 context_size: 4096,
                 gpu_layers: -1,
-                quant_kv: 1,
+                quant_k: 1,
+                quant_v: 1,
                 note: "sample".into(),
                 source: RecSource::Heuristic,
             },
@@ -667,6 +697,7 @@ mod tests {
             ram_used_mb: 8000,
             cpu_logical: 8,
             cpu_physical: 4,
+            ..Default::default()
         };
 
         let plan = plan_launch(&record, &hw);
@@ -693,6 +724,7 @@ mod tests {
             ram_used_mb: 8000,
             cpu_logical: 8,
             cpu_physical: 4,
+            ..Default::default()
         };
 
         let plan = plan_profiling_launch(&record, &hw);
@@ -713,6 +745,7 @@ mod tests {
             ram_used_mb: 8000,
             cpu_logical: 8,
             cpu_physical: 4,
+            ..Default::default()
         };
 
         let plan = plan_profiling_launch(&record, &hw);
@@ -744,7 +777,8 @@ mod configure_tests {
             recommendation: Recommendation {
                 context_size: 4096,
                 gpu_layers: 24,
-                quant_kv: 1,
+                quant_k: 1,
+                quant_v: 1,
                 note: "sample".into(),
                 source: RecSource::Heuristic,
             },
@@ -766,6 +800,7 @@ mod configure_tests {
             ram_used_mb: 14000,
             cpu_logical: 8,
             cpu_physical: 4,
+            ..Default::default()
         }
     }
 
@@ -776,7 +811,9 @@ mod configure_tests {
             gpu_layers: 24,
             total_layers: 32,
             cpu_layers: 8,
-            quant_kv: 1,
+            quant_k: 1,
+            quant_v: 1,
+            n_parallel: 1,
             threads: Some(4),
             blas_threads: Some(2),
             mode: RecommendationMode::MixedMemory,
@@ -803,7 +840,8 @@ mod configure_tests {
                 gpu_layers: Some(8),
                 threads: None,
                 blas_threads: None,
-                quant_kv: None,
+                quant_k: None,
+                quant_v: None,
             },
         );
 
@@ -842,11 +880,12 @@ mod configure_tests {
     fn saved_profile_recomputes_quant_and_memory_estimates() {
         let record = sample_record();
         let hw = sample_hw();
-        let plan = apply_saved_profile(&sample_plan(), &record, &hw, 8192, 12, 2, Some(6));
+        let plan = apply_saved_profile(&sample_plan(), &record, &hw, 8192, 12, 2, 2, Some(6));
 
         assert_eq!(plan.context_size, 8192);
         assert_eq!(plan.gpu_layers, 12);
-        assert_eq!(plan.quant_kv, 2);
+        assert_eq!(plan.quant_k, 2);
+        assert_eq!(plan.quant_v, 2);
         assert_eq!(plan.threads, Some(6));
         assert!(plan.rationale.contains("Saved profile override"));
         assert!(plan.estimated_vram_mb > 0);

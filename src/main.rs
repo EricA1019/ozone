@@ -90,6 +90,8 @@ enum Commands {
     Clear,
     /// Stop the managed llama.cpp model and clear its tracked launch state
     PurgeLastModel,
+    /// Capture and save system hardware specs for offline reuse
+    ImportSpecs,
     /// Live monitor dashboard
     Monitor,
     /// Benchmark a model with specific settings
@@ -106,8 +108,12 @@ enum Commands {
         gpu_layers: i32,
         #[arg(long, default_value = "4096", help = "Context size")]
         context: u32,
-        #[arg(long, default_value = "1", help = "KV cache quantization level")]
-        quant_kv: u8,
+        #[arg(long, default_value = "1", help = "K-cache quantization: 1=f16, 2=q8_0, 3=q4_0")]
+        quant_k: u8,
+        #[arg(long, default_value = "1", help = "V-cache quantization: 1=f16, 2=q8_0, 3=q4_0 (defaults to quant-k)")]
+        quant_v: Option<u8>,
+        #[arg(long, default_value = "1", help = "Shorthand to set both K and V cache quantization at once")]
+        quant_kv: Option<u8>,
         #[arg(long, help = "CPU threads (auto if omitted)")]
         threads: Option<u32>,
         #[arg(long, help = "Save the tested config as a named profile in launcher prefs")]
@@ -138,10 +144,26 @@ enum Commands {
         quick: bool,
         #[arg(long, help = "Run context-size sweep instead of parameter sweep")]
         context_sweep: bool,
-        #[arg(long, default_value = "1", help = "KV cache quantization: 1=f16, 2=q8_0, 3=q4_0")]
+        #[arg(long, default_value = "1", help = "KV cache quantization: 1=f16, 2=q8_0, 3=q4_0 (sets both K and V)")]
         quant_kv: u8,
         #[arg(long, help = "When set, sweep across multiple KV cache quant levels (1,2,3) per context")]
         sweep_quant: bool,
+    },
+    /// Sweep thread counts to find the optimal setting for a model
+    #[cfg(feature = "bench")]
+    ThreadSweep {
+        /// Model filename
+        model: String,
+        #[arg(long, default_value = "-1", allow_hyphen_values = true, help = "GPU layers (-1 = all)")]
+        gpu_layers: i32,
+        #[arg(long, default_value = "4096", help = "Context size")]
+        context: u32,
+        #[arg(long, default_value = "1", help = "K-cache quantization")]
+        quant_k: u8,
+        #[arg(long, default_value = "1", help = "V-cache quantization")]
+        quant_v: u8,
+        #[arg(long, help = "Sweep batch threads instead of main threads")]
+        batch: bool,
     },
     /// Run evaluation probes against a running local server
     Eval {
@@ -235,6 +257,36 @@ async fn main() -> Result<()> {
             }
             Ok(())
         }
+        Some(Commands::ImportSpecs) => {
+            ozone_core::cli::header("Import System Specs");
+            ozone_core::cli::info("Capturing GPU, CPU, RAM, and CUDA info…");
+            let profile = hardware::import_system_specs();
+            if let Some(ref name) = profile.gpu_name {
+                ozone_core::cli::field("GPU:", name);
+            }
+            if let Some(ref gpu) = profile.gpu {
+                ozone_core::cli::field("VRAM:", &format!("{} MB", gpu.total_mb));
+            }
+            ozone_core::cli::field("CUDA:", &if profile.cuda_available {
+                format!("✓ v{}", profile.cuda_version.as_deref().unwrap_or("?"))
+            } else {
+                "✗".to_string()
+            });
+            if let Some(ref cap) = profile.compute_capability {
+                ozone_core::cli::field("Compute Cap:", cap);
+            }
+            ozone_core::cli::field("Flash Attn:", &if profile.flash_attn_supported { "✓".to_string() } else { "✗".to_string() });
+            ozone_core::cli::field(
+                "CPU:",
+                &format!(
+                    "{} logical / {} physical",
+                    profile.cpu_logical, profile.cpu_physical
+                ),
+            );
+            ozone_core::cli::field("RAM:", &format!("{} MB total", profile.ram_total_mb));
+            ozone_core::cli::success("Saved to system-profile.json");
+            Ok(())
+        }
         Some(Commands::Monitor) => ui::run_monitor().await,
         Some(Commands::List { json }) => {
             let model_dir = ozone_core::paths::models_dir();
@@ -313,6 +365,8 @@ async fn main() -> Result<()> {
             model,
             gpu_layers,
             context,
+            quant_k,
+            quant_v,
             quant_kv,
             threads,
             save_profile,
@@ -327,6 +381,10 @@ async fn main() -> Result<()> {
                 std::process::exit(1);
             }
 
+            // Resolve quant_k and quant_v: --quant-kv sets both, --quant-v overrides V only
+            let effective_k = quant_kv.unwrap_or(quant_k);
+            let effective_v = quant_v.or(quant_kv).unwrap_or(quant_k);
+
             // Get model size for storage
             let model_size_gb = std::fs::metadata(&model_path)
                 .map(|m| m.len() as f64 / 1_073_741_824.0)
@@ -336,7 +394,8 @@ async fn main() -> Result<()> {
             ozone_core::cli::field("Model:", &model);
             ozone_core::cli::field("GPU Layers:", &gpu_layers);
             ozone_core::cli::field("Context:", &context);
-            ozone_core::cli::field("Quant KV:", &quant_kv);
+            ozone_core::cli::field("Quant K:", &effective_k);
+            ozone_core::cli::field("Quant V:", &effective_v);
             if let Some(t) = threads {
                 ozone_core::cli::field("Threads:", &t);
             }
@@ -348,12 +407,14 @@ async fn main() -> Result<()> {
                 &backend,
                 gpu_layers,
                 context,
-                quant_kv,
+                effective_k,
+                effective_v,
                 threads,
+                bench::BenchMode::Precise,
             )
             .await?;
 
-            bench::print_result(&model, gpu_layers, context, quant_kv, &result);
+            bench::print_result(&model, gpu_layers, context, effective_k, effective_v, &result);
 
             // Store result
             let thread_count = threads.unwrap_or(0);
@@ -363,7 +424,8 @@ async fn main() -> Result<()> {
                     model_size_gb,
                     gpu_layers,
                     context_size: context,
-                    quant_kv: quant_kv as u32,
+                    quant_k: effective_k as u32,
+                    quant_v: effective_v as u32,
                     threads: thread_count,
                     launch_profile_name: None,
                 },
@@ -379,7 +441,8 @@ async fn main() -> Result<()> {
                     profile_name: profile_name.clone(),
                     context_size: context,
                     gpu_layers,
-                    quant_kv,
+                    quant_k: effective_k,
+                    quant_v: effective_v,
                     threads,
                 });
                 crate::prefs::save_prefs(&prefs).await?;
@@ -402,17 +465,17 @@ async fn main() -> Result<()> {
 
             if context_sweep {
                 if sweep_quant {
-                    // Test each quant_kv level (1=f16, 2=q8_0, 3=q4_0) at each context
+                    // Test each quant level (1=f16, 2=q8_0, 3=q4_0) at each context
                     for &qkv in &[1u8, 2u8, 3u8] {
-                        eprintln!("\n  --- Sweep with quant_kv={qkv} ---");
+                        eprintln!("\n  --- Sweep with quant_k={qkv} quant_v={qkv} ---");
                         let _ = sweep::run_context_sweep(
-                            &model, &model_path, &server_path, -1, qkv, None, quick,
+                            &model, &model_path, &server_path, -1, qkv, qkv, None, quick,
                         ).await;
                     }
                     return Ok(());
                 }
                 let (csv_path, sweet_spot) = sweep::run_context_sweep(
-                    &model, &model_path, &server_path, -1, quant_kv, None, quick,
+                    &model, &model_path, &server_path, -1, quant_kv, quant_kv, None, quick,
                 ).await?;
                 ozone_core::cli::success(&format!(
                     "Sweep complete. Sweet spot: context={sweet_spot}. CSV: {}",
@@ -440,15 +503,15 @@ async fn main() -> Result<()> {
             let (context_sizes, quant_kv_levels) = if quick {
                 (vec![4096, 8192], vec![1u8])
             } else {
-                let mut ctxs = vec![2048, 4096, 8192, 16384];
-                if let Some(max) = max_context {
-                    ctxs.retain(|&c| c <= max);
-                }
+                // Read the model's native max context from GGUF metadata
+                let native_max = gguf::read_context_length(&model_path).unwrap_or(65536);
+                let max = max_context.unwrap_or(native_max).min(native_max);
+                let ctxs = sweep::generate_context_steps(max);
                 (ctxs, vec![1u8, 2])
             };
 
             let sweep_config = sweep::SweepConfig {
-                model_name: model,
+                model_name: model.clone(),
                 model_path: model_path.clone(),
                 backend: bench::BenchBackend::LlamaCpp { server_path },
                 model_size_gb,
@@ -462,7 +525,76 @@ async fn main() -> Result<()> {
                 gpu_vram_budget_mb,
             };
 
-            sweep::run_sweep(sweep_config).await?;
+            let result = sweep::run_sweep(sweep_config).await?;
+
+            // Auto-save the optimal profile for quick loading
+            if let Some(optimal) = sweep::pick_optimal_profile(
+                &model,
+                &result.pareto_frontier,
+                None,
+            ) {
+                let mut prefs = crate::prefs::load_prefs().await?;
+                prefs.upsert_saved_launch_profile(&model, optimal.clone());
+                prefs.set_default_saved_launch_profile(&model, "auto-optimal");
+                crate::prefs::save_prefs(&prefs).await?;
+                ozone_core::cli::success(&format!(
+                    "Auto-saved 'auto-optimal' profile: ctx={}, gpu={}, K=q{}, V=q{}",
+                    optimal.context_size, optimal.gpu_layers, optimal.quant_k, optimal.quant_v,
+                ));
+            }
+
+            if let Some(ref csv_path) = result.csv_path {
+                ozone_core::cli::info(&format!("CSV: {}", csv_path.display()));
+            }
+
+            Ok(())
+        }
+        #[cfg(feature = "bench")]
+        Some(Commands::ThreadSweep {
+            model,
+            gpu_layers,
+            context,
+            quant_k,
+            quant_v,
+            batch,
+        }) => {
+            let model_dir = ozone_core::paths::models_dir();
+            let model_path = model_dir.join(&model);
+            let server_path = processes::resolved_llamacpp_server_path()?;
+            let backend = bench::BenchBackend::LlamaCpp { server_path };
+
+            if !model_path.exists() {
+                ozone_core::cli::error(&format!("Model not found: {}", model_path.display()));
+                std::process::exit(1);
+            }
+
+            if batch {
+                ozone_core::cli::header("oz Batch Thread Sweep");
+                ozone_core::cli::field("Model:", &model);
+                ozone_core::cli::field("Context:", &context);
+                ozone_core::cli::spacer();
+
+                let results = bench::run_batch_thread_sweep(
+                    &model, &model_path, &backend,
+                    gpu_layers, context, quant_k, quant_v, 6,
+                )
+                .await?;
+                bench::print_thread_sweep_summary(&results);
+            } else {
+                ozone_core::cli::header("oz Thread Sweep");
+                ozone_core::cli::field("Model:", &model);
+                ozone_core::cli::field("Context:", &context);
+                ozone_core::cli::field("Quant K:", &quant_k);
+                ozone_core::cli::field("Quant V:", &quant_v);
+                ozone_core::cli::spacer();
+
+                let results = bench::run_thread_sweep(
+                    &model, &model_path, &backend,
+                    gpu_layers, context, quant_k, quant_v,
+                )
+                .await?;
+                bench::print_thread_sweep_summary(&results);
+            }
             Ok(())
         }
         #[cfg(feature = "analyze")]
@@ -600,11 +732,12 @@ async fn main() -> Result<()> {
                             .map(|_| " [default]")
                             .unwrap_or("");
                         println!(
-                            "  {:<20}  {:>7} ctx  {:>3} gpu  qkv={}  threads={}{}",
+                            "  {:<20}  {:>7} ctx  {:>3} gpu  K=q{} V=q{}  threads={}{}",
                             p.profile_name,
                             p.context_size,
                             p.gpu_layers,
-                            p.quant_kv,
+                            p.quant_k,
+                            p.quant_v,
                             p.threads.map(|t| t.to_string()).unwrap_or_else(|| "auto".into()),
                             default_marker,
                         );

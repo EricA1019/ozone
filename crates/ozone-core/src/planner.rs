@@ -42,9 +42,14 @@ pub struct LaunchPlan {
     pub gpu_layers: i32,
     pub total_layers: u32,
     pub cpu_layers: u32,
-    pub quant_kv: u8,
+    /// K-cache quantization: 1=f16, 2=q8_0, 3=q4_0
+    pub quant_k: u8,
+    /// V-cache quantization: 1=f16, 2=q8_0, 3=q4_0
+    pub quant_v: u8,
     pub threads: Option<u32>,
     pub blas_threads: Option<u32>,
+    /// Number of parallel sequence slots (--parallel). Default 1 to avoid VRAM exhaustion.
+    pub n_parallel: u32,
     pub mode: RecommendationMode,
     pub rationale: String,
     pub estimated: bool,
@@ -62,5 +67,10 @@ impl LaunchPlan {
         } else {
             self.gpu_layers.max(0) as u32
         }
+    }
+
+    /// Convenience: returns the max of quant_k and quant_v for backward-compat display/estimation.
+    pub fn quant_kv(&self) -> u8 {
+        self.quant_k.max(self.quant_v)
     }
 }

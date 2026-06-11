@@ -26,7 +26,7 @@ pub(super) async fn handle_configure_hub_key(app: &mut App, key: KeyEvent) {
         KeyCode::Up if app.configure_field_index > 0 => {
             app.configure_field_index -= 1;
         }
-        KeyCode::Down if app.configure_field_index < 4 => {
+        KeyCode::Down if app.configure_field_index < 5 => {
             app.configure_field_index += 1;
         }
         KeyCode::Left => adjust_configure_plan(app, -1),

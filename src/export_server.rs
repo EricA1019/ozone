@@ -38,7 +38,7 @@ pub fn generate_serve_script(
     };
 
     let cache_flags = {
-        let args = kv_cache_args(plan.quant_kv);
+        let args = kv_cache_args(plan.quant_k, plan.quant_v);
         if args.is_empty() {
             String::new()
         } else {
@@ -136,7 +136,9 @@ mod tests {
             gpu_layers: 32,
             total_layers: 40,
             cpu_layers: 8,
-            quant_kv: 1,
+            quant_k: 1,
+            quant_v: 1,
+            n_parallel: 1,
             threads,
             blas_threads: None,
             mode: RecommendationMode::MixedMemory,
@@ -218,7 +220,8 @@ mod tests {
         let model = dir.join("test.gguf");
         std::fs::write(&model, "dummy").ok();
         let mut plan = test_plan(Some(4));
-        plan.quant_kv = 2;
+        plan.quant_k = 2;
+        plan.quant_v = 2;
 
         let script = generate_serve_script(
             &plan,
@@ -245,7 +248,7 @@ mod tests {
         let _ = std::fs::create_dir_all(&dir);
         let model = dir.join("test.gguf");
         std::fs::write(&model, "dummy").ok();
-        let plan = test_plan(Some(4)); // quant_kv defaults to 1 (f16)
+        let plan = test_plan(Some(4)); // quant_k/quant_v default to 1 (f16)
 
         let script = generate_serve_script(
             &plan,

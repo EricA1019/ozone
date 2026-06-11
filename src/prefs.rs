@@ -31,7 +31,12 @@ pub struct Preferences {
     pub last_model_name: String,
     pub last_context_size: Option<u32>,
     pub last_gpu_layers: Option<i32>,
-    pub last_quant_kv: Option<u8>,
+    pub last_quant_k: Option<u8>,
+    #[serde(default)]
+    pub last_quant_v: Option<u8>,
+    /// Deprecated: preserved for backward compat. Use last_quant_k/last_quant_v.
+    #[serde(default, alias = "last_quant_kv")]
+    pub _last_quant_kv_compat: Option<u8>,
     pub last_threads: Option<u32>,
     pub last_blas_threads: Option<u32>,
     pub no_browser: bool,
@@ -82,7 +87,9 @@ pub struct ModelLaunchOverride {
     #[serde(default)]
     pub blas_threads: Option<u32>,
     #[serde(default)]
-    pub quant_kv: Option<u8>,
+    pub quant_k: Option<u8>,
+    #[serde(default)]
+    pub quant_v: Option<u8>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -90,8 +97,10 @@ pub struct SavedLaunchProfile {
     pub profile_name: String,
     pub context_size: u32,
     pub gpu_layers: i32,
-    #[serde(default = "default_quant_kv")]
-    pub quant_kv: u8,
+    #[serde(default = "default_quant_k")]
+    pub quant_k: u8,
+    #[serde(default = "default_quant_k")]
+    pub quant_v: u8,
     #[serde(default)]
     pub threads: Option<u32>,
 }
@@ -122,11 +131,12 @@ impl ModelLaunchOverride {
             && self.gpu_layers.is_none()
             && self.threads.is_none()
             && self.blas_threads.is_none()
-            && self.quant_kv.is_none()
+            && self.quant_k.is_none()
+            && self.quant_v.is_none()
     }
 }
 
-fn default_quant_kv() -> u8 {
+fn default_quant_k() -> u8 {
     1
 }
 
@@ -149,7 +159,9 @@ impl Default for Preferences {
             last_model_name: String::new(),
             last_context_size: None,
             last_gpu_layers: None,
-            last_quant_kv: None,
+            last_quant_k: None,
+            last_quant_v: None,
+            _last_quant_kv_compat: None,
             last_threads: None,
             last_blas_threads: None,
             no_browser: false,
@@ -278,7 +290,8 @@ impl Preferences {
             gpu_layers: self.llamacpp_gpu_layers,
             threads: self.llamacpp_threads,
             blas_threads: None,
-            quant_kv: None,
+            quant_k: None,
+            quant_v: None,
         };
         (!override_state.is_empty()).then_some(override_state)
     }
@@ -388,7 +401,8 @@ mod tests {
                 gpu_layers: Some(28),
                 threads: None,
                 blas_threads: None,
-                quant_kv: None,
+                quant_k: None,
+                quant_v: None,
             },
         );
 
@@ -399,7 +413,8 @@ mod tests {
                 gpu_layers: Some(28),
                 threads: None,
                 blas_threads: None,
-                quant_kv: None,
+                quant_k: None,
+                quant_v: None,
             })
         );
     }
@@ -421,7 +436,8 @@ mod tests {
                 gpu_layers: Some(18),
                 threads: Some(6),
                 blas_threads: None,
-                quant_kv: None,
+                quant_k: None,
+                quant_v: None,
             })
         );
     }
@@ -435,7 +451,8 @@ mod tests {
                 profile_name: "custom-1".into(),
                 context_size: 16384,
                 gpu_layers: 20,
-                quant_kv: 1,
+                quant_k: 1,
+                quant_v: 1,
                 threads: Some(8),
             },
         );
@@ -451,7 +468,8 @@ mod tests {
                 profile_name: "custom-1".into(),
                 context_size: 16384,
                 gpu_layers: 20,
-                quant_kv: 1,
+                quant_k: 1,
+                quant_v: 1,
                 threads: Some(8),
             })
         );
@@ -521,7 +539,8 @@ mod tests {
                 "profile_name": "custom-1",
                 "context_size": 16384,
                 "gpu_layers": 22,
-                "quant_kv": 1,
+                "quant_k": 1,
+                "quant_v": 1,
                 "threads": 6
             }
         ]
@@ -643,7 +662,8 @@ mod tests {
                 profile_name: "custom-1".into(),
                 context_size: 8192,
                 gpu_layers: 16,
-                quant_kv: 1,
+                quant_k: 1,
+                quant_v: 1,
                 threads: None,
             },
         );

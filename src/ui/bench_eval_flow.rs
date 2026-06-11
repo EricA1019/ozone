@@ -414,7 +414,8 @@ mod tests {
             recommendation: Recommendation {
                 context_size: 4096,
                 gpu_layers: -1,
-                quant_kv: 1,
+                quant_k: 1,
+                quant_v: 1,
                 note: "test".into(),
                 source: RecSource::Heuristic,
             },

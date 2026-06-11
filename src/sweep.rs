@@ -5,6 +5,49 @@ use anyhow::Result;
 use crate::bench;
 use crate::planner;
 
+/// Generate context steps for a sweep, from 2K up to the model's native max.
+/// Fine-grained at low contexts, geometric stepping at high contexts.
+pub fn generate_context_steps(native_max: u32) -> Vec<u32> {
+    // Low: fine-grained doubling
+    let low: &[u32] = &[2048, 4096, 8192, 16384];
+
+    // Mid: ×1.5 steps from 16384 to 65536
+    let mut mid = Vec::new();
+    let mut current = 16384u32;
+    while current < 65536 && current < native_max {
+        current = ((current as f64 * 1.5) / 1024.0).round() as u32 * 1024;
+        current = current.min(65536);
+        if current > 16384 {
+            mid.push(current);
+        }
+    }
+
+    // High: ×1.25 steps from 65536 to native_max
+    let mut high = Vec::new();
+    let mut current = 65536u32;
+    while current < native_max {
+        current = ((current as f64 * 1.25) / 1024.0).round() as u32 * 1024;
+        current = current.min(native_max);
+        if current > 65536 {
+            high.push(current);
+        }
+    }
+
+    // Combine, deduplicate, ensure max is included
+    let mut steps: Vec<u32> = low.iter().copied().collect();
+    steps.extend(mid);
+    steps.extend(high);
+
+    if steps.last().copied().unwrap_or(0) < native_max {
+        steps.push(native_max);
+    }
+
+    let mut seen = std::collections::HashSet::new();
+    steps.retain(|c| seen.insert(*c));
+
+    steps
+}
+
 pub struct SweepConfig {
     pub model_name: String,
     pub model_path: PathBuf,
@@ -23,6 +66,25 @@ pub struct SweepResult {
     pub best_speed: Option<bench::BenchResult>,
     pub best_context: Option<bench::BenchResult>,
     pub pareto_frontier: Vec<ParetoPoint>,
+    /// Path to the CSV file with all tested configs.
+    pub csv_path: Option<PathBuf>,
+}
+
+#[derive(Debug, Clone, serde::Serialize)]
+struct SweepCsvRow {
+    model: String,
+    context_size: u32,
+    gpu_layers: i32,
+    quant_k: u8,
+    quant_v: u8,
+    tokens_per_sec: f64,
+    ttft_ms: u32,
+    vram_peak_mb: u32,
+    ram_peak_mb: u32,
+    total_tokens: u32,
+    total_time_ms: u32,
+    status: String,
+    timestamp: String,
 }
 
 #[derive(Debug, Clone)]
@@ -36,9 +98,48 @@ pub struct SweepProgress {
 pub struct ParetoPoint {
     pub gpu_layers: i32,
     pub context_size: u32,
-    pub quant_kv: u8,
+    pub quant_k: u8,
+    pub quant_v: u8,
     pub tokens_per_sec: f64,
     pub vram_peak_mb: u32,
+}
+
+/// Pick the optimal profile from sweep results: the highest context that stays
+/// stable at ≥10 tok/s. Falls back to the fastest config if nothing meets the bar.
+pub fn pick_optimal_profile(
+    _model_name: &str,
+    frontier: &[ParetoPoint],
+    threads: Option<u32>,
+) -> Option<crate::prefs::SavedLaunchProfile> {
+    const MIN_TOK_S: f64 = 10.0;
+
+    // Filter to configs meeting the stability threshold
+    let stable: Vec<&ParetoPoint> = frontier
+        .iter()
+        .filter(|p| p.tokens_per_sec >= MIN_TOK_S)
+        .collect();
+
+    if stable.is_empty() {
+        return None;
+    }
+
+    // Pick the one with the highest context; tie-break on speed
+    let best = stable
+        .iter()
+        .max_by(|a, b| {
+            a.context_size
+                .cmp(&b.context_size)
+                .then_with(|| a.tokens_per_sec.partial_cmp(&b.tokens_per_sec).unwrap_or(std::cmp::Ordering::Equal))
+        })?;
+
+    Some(crate::prefs::SavedLaunchProfile {
+        profile_name: "auto-optimal".into(),
+        context_size: best.context_size,
+        gpu_layers: best.gpu_layers,
+        quant_k: best.quant_k,
+        quant_v: best.quant_v,
+        threads,
+    })
 }
 
 /// Check if a candidate point is dominated by any existing Pareto point.
@@ -93,6 +194,21 @@ where
         ),
     });
 
+    // Set up CSV output for all tested configs
+    let csv_path = ozone_core::paths::data_dir()
+        .unwrap_or_else(|| PathBuf::from("."))
+        .join(format!(
+            "sweep_{}_{}.csv",
+            config.model_name,
+            chrono::Utc::now().format("%Y%m%dT%H%M%S"),
+        ));
+    let mut csv_writer = csv::Writer::from_path(&csv_path)?;
+    csv_writer.write_record(&[
+        "model", "context_size", "gpu_layers", "quant_k", "quant_v",
+        "tokens_per_sec", "ttft_ms", "vram_peak_mb", "ram_peak_mb",
+        "total_tokens", "total_time_ms", "status", "timestamp",
+    ])?;
+
     let mut result = SweepResult {
         configs_tested: 0,
         configs_skipped: 0,
@@ -100,6 +216,7 @@ where
         best_speed: None,
         best_context: None,
         pareto_frontier: Vec::new(),
+        csv_path: None,
     };
 
     let mut step = 0u32;
@@ -115,6 +232,7 @@ where
             let max_layers = planner::fit_gpu_layers_to_budget(
                 ctx,
                 config.model_size_gb,
+                qkv,
                 qkv,
                 total_layers,
                 config.gpu_vram_budget_mb,
@@ -175,7 +293,9 @@ where
                 layers,
                 ctx,
                 qkv,
+                qkv,
                 None,
+                bench::BenchMode::Sweep,
                 |_| {},
             )
             .await?;
@@ -201,7 +321,9 @@ where
                         retry_layers,
                         ctx,
                         qkv,
+                        qkv,
                         None,
+                        bench::BenchMode::Sweep,
                         |_| {},
                     )
                     .await?;
@@ -222,9 +344,11 @@ where
                             retry_layers,
                             ctx,
                             qkv,
+                            qkv,
                             &retry,
                         );
-                        store_quietly(&config, retry_layers, ctx, qkv, &retry);
+                        store_quietly(&config, retry_layers, ctx, qkv, qkv, &retry);
+                        write_csv_row(&mut csv_writer, &config, retry_layers, ctx, qkv, qkv, &retry);
                         continue;
                     }
                 }
@@ -250,8 +374,9 @@ where
             });
             result.configs_tested += 1;
             update_bests(&mut result, &bench_result, ctx);
-            maybe_add_pareto(&mut result.pareto_frontier, layers, ctx, qkv, &bench_result);
-            store_quietly(&config, layers, ctx, qkv, &bench_result);
+            maybe_add_pareto(&mut result.pareto_frontier, layers, ctx, qkv, qkv, &bench_result);
+            store_quietly(&config, layers, ctx, qkv, qkv, &bench_result);
+            write_csv_row(&mut csv_writer, &config, layers, ctx, qkv, qkv, &bench_result);
         }
 
         // Early stopping: if all quant_kv levels OOMed at this context, skip larger contexts
@@ -296,12 +421,14 @@ where
                 current: total_combos as u32,
                 total: total_combos as u32,
                 message: format!(
-                    "ctx={} layers={} qkv={} {:.1} t/s {} MB",
-                    p.context_size, p.gpu_layers, p.quant_kv, p.tokens_per_sec, p.vram_peak_mb,
+                    "ctx={} layers={} K=q{} V=q{} {:.1} t/s {} MB",
+                    p.context_size, p.gpu_layers, p.quant_k, p.quant_v, p.tokens_per_sec, p.vram_peak_mb,
                 ),
             });
         }
     }
+    csv_writer.flush()?;
+    result.csv_path = Some(csv_path);
     Ok(result)
 }
 
@@ -337,13 +464,15 @@ fn maybe_add_pareto(
     frontier: &mut Vec<ParetoPoint>,
     gpu_layers: i32,
     context_size: u32,
-    quant_kv: u8,
+    quant_k: u8,
+    quant_v: u8,
     bench: &bench::BenchResult,
 ) {
     let candidate = ParetoPoint {
         gpu_layers,
         context_size,
-        quant_kv,
+        quant_k,
+        quant_v,
         tokens_per_sec: bench.tokens_per_sec,
         vram_peak_mb: bench.vram_peak_mb,
     };
@@ -353,11 +482,40 @@ fn maybe_add_pareto(
     }
 }
 
+fn write_csv_row(
+    writer: &mut csv::Writer<std::fs::File>,
+    config: &SweepConfig,
+    gpu_layers: i32,
+    context_size: u32,
+    quant_k: u8,
+    quant_v: u8,
+    bench: &bench::BenchResult,
+) {
+    let row = SweepCsvRow {
+        model: config.model_name.clone(),
+        context_size,
+        gpu_layers,
+        quant_k,
+        quant_v,
+        tokens_per_sec: bench.tokens_per_sec,
+        ttft_ms: bench.time_to_first_token_ms,
+        vram_peak_mb: bench.vram_peak_mb,
+        ram_peak_mb: bench.ram_peak_mb,
+        total_tokens: bench.total_tokens,
+        total_time_ms: bench.total_time_ms,
+        status: bench.status.clone(),
+        timestamp: chrono::Utc::now().to_rfc3339(),
+    };
+    let _ = writer.serialize(row);
+    let _ = writer.flush();
+}
+
 fn store_quietly(
     config: &SweepConfig,
     gpu_layers: i32,
     context_size: u32,
-    quant_kv: u8,
+    quant_k: u8,
+    quant_v: u8,
     bench: &bench::BenchResult,
 ) {
     match bench::store_result(
@@ -366,7 +524,8 @@ fn store_quietly(
             model_size_gb: config.model_size_gb,
             gpu_layers,
             context_size,
-            quant_kv: quant_kv as u32,
+            quant_k: quant_k as u32,
+            quant_v: quant_v as u32,
             threads: 0,
             launch_profile_name: None,
         },
@@ -389,7 +548,8 @@ pub async fn run_context_sweep(
     model_path: &Path,
     server_path: &Path,
     gpu_layers: i32,
-    quant_kv: u8,
+    quant_k: u8,
+    quant_v: u8,
     threads: Option<u32>,
     quick: bool,
 ) -> Result<(PathBuf, u32)> {
@@ -429,7 +589,8 @@ pub async fn run_context_sweep(
         let result = bench::run_benchmark(
             model_name, model_path,
             &crate::bench::BenchBackend::LlamaCpp { server_path: server_path.to_path_buf() },
-            gpu_layers, ctx, quant_kv, threads,
+            gpu_layers, ctx, quant_k, quant_v, threads,
+            bench::BenchMode::Sweep,
         ).await;
 
         match result {

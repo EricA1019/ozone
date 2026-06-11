@@ -24,7 +24,8 @@ pub(super) fn build_effective_plan(
                     hw,
                     saved_profile.context_size,
                     saved_profile.gpu_layers,
-                    saved_profile.quant_kv,
+                    saved_profile.quant_k,
+                    saved_profile.quant_v,
                     saved_profile.threads,
                 );
             }
@@ -95,7 +96,8 @@ pub(super) fn save_current_plan_as_profile(app: &mut App) -> Option<String> {
             profile_name: profile_name.clone(),
             context_size: plan.context_size,
             gpu_layers: plan.gpu_layers,
-            quant_kv: plan.quant_kv,
+            quant_k: plan.quant_k,
+            quant_v: plan.quant_v,
             threads: plan.threads,
         },
     );
@@ -125,7 +127,8 @@ pub(super) fn update_selected_profile_from_current_plan(app: &mut App) -> Option
             profile_name: selected.profile_name.clone(),
             context_size: plan.context_size,
             gpu_layers: plan.gpu_layers,
-            quant_kv: plan.quant_kv,
+            quant_k: plan.quant_k,
+            quant_v: plan.quant_v,
             threads: plan.threads,
         },
     );
@@ -149,7 +152,8 @@ pub(super) fn apply_selected_saved_profile(app: &mut App) -> Option<String> {
         hw,
         profile.context_size,
         profile.gpu_layers,
-        profile.quant_kv,
+        profile.quant_k,
+        profile.quant_v,
         profile.threads,
     ));
     Some(profile.profile_name)
@@ -205,7 +209,9 @@ pub(super) fn build_override_from_plans(
         blas_threads: (effective.blas_threads != recommended.blas_threads)
             .then_some(effective.blas_threads)
             .flatten(),
-        quant_kv: (effective.quant_kv != recommended.quant_kv)
-            .then_some(effective.quant_kv),
+        quant_k: (effective.quant_k != recommended.quant_k)
+            .then_some(effective.quant_k),
+        quant_v: (effective.quant_v != recommended.quant_v)
+            .then_some(effective.quant_v),
     }
 }

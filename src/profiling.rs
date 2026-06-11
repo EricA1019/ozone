@@ -12,7 +12,7 @@ use crate::{
     analyze, bench,
     catalog::CatalogRecord,
     db::{self, BenchmarkRow, ProfileRow},
-    hardware::HardwareProfile,
+    hardware::{self, HardwareProfile},
     planner::{self, LaunchPlan, RecommendationMode},
     prefs::SavedLaunchProfile,
     processes::{self, ServiceStatus},
@@ -51,6 +51,10 @@ pub enum ProfilingAction {
     ExportPresets,
     LaunchRecommended,
     ReviewIssue,
+    /// Capture and save system hardware profile to disk for offline reuse.
+    ImportSpecs,
+    /// Sweep thread counts to find optimal CPU parallelism for this model.
+    ThreadSweep,
 }
 
 impl ProfilingAction {
@@ -62,6 +66,8 @@ impl ProfilingAction {
             ProfilingAction::BenchmarkSavedProfile => "Benchmark saved profile",
             ProfilingAction::GenerateProfiles => "Generate profiles",
             ProfilingAction::ExportPresets => "Export presets",
+            ProfilingAction::ImportSpecs => "Import system specs",
+            ProfilingAction::ThreadSweep => "Sweep thread counts",
             ProfilingAction::LaunchRecommended => "Launch recommended profile",
             ProfilingAction::ReviewIssue => "Review issue report",
         }
@@ -86,6 +92,8 @@ impl ProfilingAction {
             ProfilingAction::LaunchRecommended => {
                 "Use the best available profile and launch the backend."
             }
+            ProfilingAction::ImportSpecs => "Capture and save system hardware specs to disk.",
+            ProfilingAction::ThreadSweep => "Test thread counts 1-12 to find the sweet spot for this model.",
             ProfilingAction::ReviewIssue => "Show the blocking issue and recommended fixes.",
         }
     }
@@ -154,7 +162,8 @@ pub struct RecommendedProfile {
     pub profile_name: String,
     pub gpu_layers: i32,
     pub context_size: u32,
-    pub quant_kv: u32,
+    pub quant_k: u32,
+    pub quant_v: u32,
     pub tokens_per_sec: f64,
     pub vram_mb: u32,
 }
@@ -500,7 +509,8 @@ fn pick_recommended_profile(profiles: &[ProfileRow]) -> Option<RecommendedProfil
         profile_name: profile.profile_name.clone(),
         gpu_layers: profile.gpu_layers,
         context_size: profile.context_size,
-        quant_kv: profile.quant_kv,
+        quant_k: profile.quant_k,
+        quant_v: profile.quant_v,
         tokens_per_sec: profile.tokens_per_sec,
         vram_mb: profile.vram_mb,
     })
@@ -525,7 +535,9 @@ pub fn preferred_launch_plan(
             gpu_layers,
             total_layers,
             cpu_layers,
-            quant_kv: profile.quant_kv as u8,
+            quant_k: profile.quant_k as u8,
+            quant_v: profile.quant_v as u8,
+            n_parallel: 1,
             threads,
             blas_threads,
             mode,
@@ -539,7 +551,8 @@ pub fn preferred_launch_plan(
                 profile.context_size,
                 gpu_layers,
                 record.model_size_gb,
-                profile.quant_kv as u8,
+                profile.quant_k as u8,
+                profile.quant_v as u8,
                 total_layers,
             ),
             source: "Profile".into(),
@@ -591,11 +604,15 @@ pub fn build_advisory(
         ProfilingAction::GenerateProfiles,
         ProfilingAction::ExportPresets,
         ProfilingAction::LaunchRecommended,
+        ProfilingAction::ImportSpecs,
+        ProfilingAction::ThreadSweep,
     ] {
         let allowed = match action {
             ProfilingAction::LaunchRecommended => recommended_profile.is_some(),
             ProfilingAction::GenerateProfiles => history.ok_benchmark_count >= 2,
             ProfilingAction::ExportPresets => history.profile_count > 0,
+            ProfilingAction::ImportSpecs => true, // always available
+            ProfilingAction::ThreadSweep => model_ok && launcher_ok,
             ProfilingAction::QuickSweep
             | ProfilingAction::FullSweep
             | ProfilingAction::SingleBenchmark => model_ok && launcher_ok,
@@ -723,6 +740,8 @@ pub fn build_advisory(
         }
         ProfilingAction::FullSweep => "A full sweep is useful when you want broader context/quant coverage.".into(),
         ProfilingAction::ExportPresets => "Profiles already exist and can be exported directly into the launcher preset file.".into(),
+        ProfilingAction::ImportSpecs => "Capturing system specs lets Ozone skip hardware polling for 24 hours.".into(),
+        ProfilingAction::ThreadSweep => "Thread sweep finds the optimal CPU thread count for your model.".into(),
     };
 
     Ok(ProfilingAdvisory {
@@ -790,7 +809,7 @@ fn build_success_report(
         ProfilingAction::ExportPresets => {
             format!("Profile export completed: {}", presets_path().display())
         }
-        ProfilingAction::LaunchRecommended | ProfilingAction::ReviewIssue => {
+        ProfilingAction::LaunchRecommended | ProfilingAction::ReviewIssue | ProfilingAction::ImportSpecs | ProfilingAction::ThreadSweep => {
             "Workflow finished.".into()
         }
     };
@@ -946,6 +965,125 @@ pub async fn run_workflow(
         return Ok(());
     }
 
+    // ImportSpecs captures and saves system hardware — no model or backend needed.
+    if action == ProfilingAction::ImportSpecs {
+        let _ = tx.send(WorkflowEvent::Status {
+            title: "Import Specs".into(),
+            detail: "Capturing GPU, CPU, RAM, and CUDA info…".into(),
+        });
+        let profile = hardware::import_system_specs();
+        let gpu_line = match (&profile.gpu_name, &profile.gpu) {
+            (Some(name), Some(gpu)) => format!("{name} · {} MB", gpu.total_mb),
+            (Some(name), None) => name.clone(),
+            _ => "No GPU detected".into(),
+        };
+        let cuda_line = if profile.cuda_available {
+            format!(
+                "CUDA ✓ v{} · compute {} · flash-attn {}",
+                profile.cuda_version.as_deref().unwrap_or("?"),
+                profile.compute_capability.as_deref().unwrap_or("?"),
+                if profile.flash_attn_supported { "✓" } else { "✗" },
+            )
+        } else {
+            "CUDA ✗".into()
+        };
+        let summary = format!(
+            "GPU: {gpu_line}\n{cuda_line}\nCPU: {} logical / {} physical · RAM: {} MB total / {} MB free\nSaved to system-profile.json",
+            profile.cpu_logical, profile.cpu_physical, profile.ram_total_mb, profile.ram_free_mb,
+        );
+        let report = ProfilingSuccessReport {
+            model_name: request.record.model_name.clone(),
+            action,
+            summary,
+            benchmark_count: 0,
+            ok_benchmark_count: 0,
+            profile_count: 0,
+            best_tokens_per_sec: None,
+            recommended_profile: None,
+            saved_profile_report: None,
+            suggestions: vec![
+                "System specs are now cached — Ozone will skip hardware polling for 24 hours."
+                    .into(),
+            ],
+            export_detail: None,
+        };
+        send_completed(&tx, report);
+        return Ok(());
+    }
+
+    // ThreadSweep tests different thread counts for the selected model.
+    if action == ProfilingAction::ThreadSweep {
+        let backend = request.profiling_backend.resolve_backend().ok_or_else(|| {
+            anyhow!(
+                "Requested profiling backend unavailable: {}",
+                request.profiling_backend.display_name()
+            )
+        })?;
+        let plan = request.launch_plan_override.clone().unwrap_or_else(|| {
+            planner::plan_profiling_launch(&request.record, &request.hardware)
+        });
+
+        let _ = tx.send(WorkflowEvent::Status {
+            title: "Thread Sweep".into(),
+            detail: format!(
+                "Testing thread counts 1-12 at ctx={} gpu={}…",
+                plan.context_size, plan.gpu_layers_display(),
+            ),
+        });
+
+        match bench::run_thread_sweep(
+            &request.record.model_name,
+            &request.record.model_path,
+            &backend,
+            plan.gpu_layers,
+            plan.context_size,
+            plan.quant_k,
+            plan.quant_v,
+        )
+        .await
+        {
+            Ok(results) => {
+                let best = results
+                    .iter()
+                    .filter(|r| r.status == "ok")
+                    .max_by(|a, b| a.tokens_per_sec.partial_cmp(&b.tokens_per_sec).unwrap_or(std::cmp::Ordering::Equal));
+                let summary = if let Some(best) = best {
+                    format!(
+                        "Thread sweep complete. {} configs tested. Best: {:.1} t/s",
+                        results.len(),
+                        best.tokens_per_sec,
+                    )
+                } else {
+                    format!("Thread sweep complete. {} configs tested, none successful.", results.len())
+                };
+                let report = ProfilingSuccessReport {
+                    model_name: request.record.model_name.clone(),
+                    action,
+                    summary,
+                    benchmark_count: results.len(),
+                    ok_benchmark_count: results.iter().filter(|r| r.status == "ok").count(),
+                    profile_count: 0,
+                    best_tokens_per_sec: best.map(|r| r.tokens_per_sec),
+                    recommended_profile: None,
+                    saved_profile_report: None,
+                    suggestions: vec!["Review the benchmark history for 'thread-sweep' to compare thread counts.".into()],
+                    export_detail: None,
+                };
+                send_completed(&tx, report);
+            }
+            Err(error) => {
+                let report = build_failure_report(
+                    &request.record,
+                    action,
+                    error.to_string(),
+                    None,
+                );
+                send_failed(&tx, report);
+            }
+        }
+        return Ok(());
+    }
+
     // ExportPresets only reads from DB and writes files — no launcher needed.
     if action == ProfilingAction::ExportPresets {
         let use_llamacpp = processes::resolved_llamacpp_server_path()
@@ -1045,7 +1183,10 @@ pub async fn run_workflow(
             let (context_sizes, quant_kv_levels) = if quick {
                 (vec![4096, 8192], vec![1u8])
             } else {
-                (vec![2048, 4096, 8192, 16384], vec![1u8, 2])
+                let native_max = crate::gguf::read_context_length(&request.record.model_path)
+                    .unwrap_or(65536);
+                let ctxs = sweep::generate_context_steps(native_max);
+                (ctxs, vec![1u8, 2])
             };
             let gpu_vram_budget_mb = request
                 .hardware
@@ -1102,6 +1243,35 @@ pub async fn run_workflow(
                         detail: "Creating speed/context profiles from benchmark data…".into(),
                     });
                     let _ = analyze::generate_profiles_quiet(&request.record.model_name);
+
+                    // Auto-save the optimal profile for quick loading
+                    if let Some(optimal) = sweep::pick_optimal_profile(
+                        &request.record.model_name,
+                        &result.pareto_frontier,
+                        None,
+                    ) {
+                        if let Ok(mut prefs) = crate::prefs::load_prefs().await {
+                            prefs.upsert_saved_launch_profile(&request.record.model_name, optimal.clone());
+                            prefs.set_default_saved_launch_profile(&request.record.model_name, "auto-optimal");
+                            let _ = crate::prefs::save_prefs(&prefs).await;
+                            let _ = tx.send(WorkflowEvent::Status {
+                                title: "Profile saved".into(),
+                                detail: format!(
+                                    "Auto-saved 'auto-optimal': ctx={}, K=q{}, V=q{}",
+                                    optimal.context_size, optimal.quant_k, optimal.quant_v,
+                                ),
+                            });
+                        }
+                    }
+
+                    // Report CSV path
+                    if let Some(ref csv_path) = result.csv_path {
+                        let _ = tx.send(WorkflowEvent::Status {
+                            title: "CSV saved".into(),
+                            detail: format!("{}", csv_path.display()),
+                        });
+                    }
+
                     let report = build_success_report(
                         &request.record,
                         request.action,
@@ -1154,12 +1324,13 @@ pub async fn run_workflow(
             let _ = tx.send(WorkflowEvent::Status {
                 title: benchmark_label,
                 detail: format!(
-                    "Benchmarking ctx={} gpu={}/{} cpu={} qkv={}",
+                    "Benchmarking ctx={} gpu={}/{} cpu={} K=q{} V=q{}",
                     plan.context_size,
                     plan.gpu_layers_display(),
                     plan.total_layers,
                     plan.cpu_layers,
-                    plan.quant_kv,
+                    plan.quant_k,
+                    plan.quant_v,
                 ),
             });
             match bench::run_benchmark_with_progress(
@@ -1168,8 +1339,10 @@ pub async fn run_workflow(
                 &backend,
                 plan.gpu_layers,
                 plan.context_size,
-                plan.quant_kv,
+                plan.quant_k,
+                plan.quant_v,
                 plan.threads,
+                bench::BenchMode::Precise,
                 |progress| {
                     let _ = tx.send(WorkflowEvent::Status {
                         title: "Benchmark".into(),
@@ -1189,7 +1362,8 @@ pub async fn run_workflow(
                             model_size_gb: request.record.model_size_gb,
                             gpu_layers: plan.gpu_layers,
                             context_size: plan.context_size,
-                            quant_kv: plan.quant_kv as u32,
+                            quant_k: plan.quant_k as u32,
+                            quant_v: plan.quant_v as u32,
                             threads: plan.threads.unwrap_or(0),
                             launch_profile_name: request.launch_profile_name.as_deref(),
                         },
@@ -1248,7 +1422,7 @@ pub async fn run_workflow(
                 }
             }
         }
-        ProfilingAction::LaunchRecommended | ProfilingAction::ReviewIssue => {}
+        ProfilingAction::LaunchRecommended | ProfilingAction::ReviewIssue | ProfilingAction::ImportSpecs | ProfilingAction::ThreadSweep => {}
         // ExportPresets is handled before the launcher prerequisite check above.
         ProfilingAction::ExportPresets => unreachable!("ExportPresets handled before match"),
     }
@@ -1269,7 +1443,8 @@ mod tests {
             recommendation: Recommendation {
                 context_size: 4096,
                 gpu_layers: -1,
-                quant_kv: 1,
+                quant_k: 1,
+                quant_v: 1,
                 note: "sample".into(),
                 source: RecSource::Heuristic,
             },
@@ -1277,7 +1452,8 @@ mod tests {
                 context_size: 4096,
                 gen_speed: 24.0,
                 gpu_layers: -1,
-                quant_kv: 1,
+                quant_k: 1,
+                quant_v: 1,
                 vram_mb: 7200,
                 timestamp_ms: 0,
                 model_size_gb: 7.0,
@@ -1295,7 +1471,8 @@ mod tests {
                 profile_name: "context".into(),
                 gpu_layers: 20,
                 context_size: 8192,
-                quant_kv: 1,
+                quant_k: 1,
+                quant_v: 1,
                 tokens_per_sec: 10.0,
                 vram_mb: 5000,
                 source: "auto".into(),
@@ -1306,7 +1483,8 @@ mod tests {
                 profile_name: "speed".into(),
                 gpu_layers: -1,
                 context_size: 4096,
-                quant_kv: 1,
+                quant_k: 1,
+                quant_v: 1,
                 tokens_per_sec: 42.0,
                 vram_mb: 8000,
                 source: "auto".into(),
@@ -1326,7 +1504,8 @@ mod tests {
                 model_size_gb: 7.0,
                 gpu_layers: 20,
                 context_size: 8192,
-                quant_kv: 1,
+                quant_k: 1,
+                quant_v: 1,
                 threads: 8,
                 tokens_per_sec: 11.0,
                 time_to_first_token_ms: 500,
@@ -1347,7 +1526,8 @@ mod tests {
                 model_size_gb: 7.0,
                 gpu_layers: 20,
                 context_size: 8192,
-                quant_kv: 1,
+                quant_k: 1,
+                quant_v: 1,
                 threads: 8,
                 tokens_per_sec: 13.5,
                 time_to_first_token_ms: 480,
@@ -1446,6 +1626,7 @@ mod tests {
                 ram_used_mb: 8000,
                 cpu_logical: 8,
                 cpu_physical: 4,
+                ..Default::default()
             }),
             &ServiceStatus {
                 llamacpp_running: false,

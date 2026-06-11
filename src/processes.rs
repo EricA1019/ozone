@@ -14,22 +14,31 @@ const LLAMACPP_LAUNCH_STATE_VERSION: u32 = 1;
 const LLAMACPP_GRACEFUL_STOP_TIMEOUT_MILLIS: u64 = 2_000;
 const LLAMACPP_PORT_RELEASE_TIMEOUT_MILLIS: u64 = 4_000;
 
-/// Map quant_kv to llama-server --cache-type-k / --cache-type-v flags.
-/// 1 = f16 (default, no flags needed)
-/// 2 = q8_0
-/// 3 = q4_0
-pub fn kv_cache_args(quant_kv: u8) -> Vec<String> {
-    let quant = match quant_kv {
-        2 => "q8_0",
-        3 => "q4_0",
-        _ => return vec![],
+/// Map quant_k / quant_v to llama-server --cache-type-k / --cache-type-v flags.
+/// Values: 1 = f16 (default, no flags needed), 2 = q8_0, 3 = q4_0.
+/// K and V can differ — e.g. K=q8_0, V=q4_0 saves VRAM while preserving attention quality.
+pub fn kv_cache_args(quant_k: u8, quant_v: u8) -> Vec<String> {
+    let k_quant = match quant_k {
+        2 => Some("q8_0"),
+        3 => Some("q4_0"),
+        _ => None,
     };
-    vec![
-        "--cache-type-k".into(),
-        quant.into(),
-        "--cache-type-v".into(),
-        quant.into(),
-    ]
+    let v_quant = match quant_v {
+        2 => Some("q8_0"),
+        3 => Some("q4_0"),
+        _ => None,
+    };
+
+    let mut args = Vec::new();
+    if let Some(q) = k_quant {
+        args.push("--cache-type-k".into());
+        args.push(q.into());
+    }
+    if let Some(q) = v_quant {
+        args.push("--cache-type-v".into());
+        args.push(q.into());
+    }
+    args
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -377,10 +386,29 @@ pub async fn start_llamacpp(server_path: &Path, model_name: &str, args: &[String
         clear_gpu_backends().await?;
     }
 
-    let log_path = paths::llamacpp_log_path()
+    let log_base = paths::llamacpp_log_path()
         .ok_or_else(|| anyhow!("could not determine ozone data directory"))?;
+    // Timestamped log so crashes across restarts are preserved
+    let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%S");
+    let log_path = if let Some(stem) = log_base.file_stem().and_then(|s| s.to_str()) {
+        if let Some(parent) = log_base.parent() {
+            let ext = log_base.extension().and_then(|e| e.to_str()).unwrap_or("log");
+            parent.join(format!("{stem}-{timestamp}.{ext}"))
+        } else {
+            log_base
+        }
+    } else {
+        log_base
+    };
     if let Some(parent) = log_path.parent() {
         std::fs::create_dir_all(parent)?;
+    }
+
+    // Also create/update a symlink to the latest log for convenience
+    let latest_link = paths::llamacpp_log_path();
+    if let Some(ref link_path) = latest_link {
+        let _ = std::fs::remove_file(link_path);
+        let _ = std::os::unix::fs::symlink(&log_path, link_path);
     }
 
     let log_file = std::fs::OpenOptions::new()
@@ -857,21 +885,40 @@ mod kv_cache_tests {
 
     #[test]
     fn kv_cache_args_default_to_empty_for_f16() {
-        assert!(kv_cache_args(1).is_empty(), "quant_kv=1 (f16) needs no flags");
-        assert!(kv_cache_args(0).is_empty(), "quant_kv=0 should default to no flags");
-        assert!(kv_cache_args(99).is_empty(), "unknown quant_kv should default to no flags");
+        assert!(kv_cache_args(1, 1).is_empty(), "quant_k=1 (f16) needs no flags");
+        assert!(kv_cache_args(0, 0).is_empty(), "quant_k=0 should default to no flags");
+        assert!(kv_cache_args(99, 99).is_empty(), "unknown quant should default to no flags");
     }
 
     #[test]
     fn kv_cache_args_maps_to_q8_0_for_quant_2() {
-        let args = kv_cache_args(2);
+        let args = kv_cache_args(2, 2);
         assert_eq!(args, vec!["--cache-type-k", "q8_0", "--cache-type-v", "q8_0"]);
     }
 
     #[test]
     fn kv_cache_args_maps_to_q4_0_for_quant_3() {
-        let args = kv_cache_args(3);
+        let args = kv_cache_args(3, 3);
         assert_eq!(args, vec!["--cache-type-k", "q4_0", "--cache-type-v", "q4_0"]);
+    }
+
+    #[test]
+    fn kv_cache_args_allows_asymmetric_k_and_v() {
+        // K=q8_0 (2), V=q4_0 (3) — saves VRAM on V while keeping K precise
+        let args = kv_cache_args(2, 3);
+        assert_eq!(args, vec!["--cache-type-k", "q8_0", "--cache-type-v", "q4_0"]);
+    }
+
+    #[test]
+    fn kv_cache_args_omits_flags_when_only_k_is_quantized() {
+        let args = kv_cache_args(2, 1);
+        assert_eq!(args, vec!["--cache-type-k", "q8_0"]);
+    }
+
+    #[test]
+    fn kv_cache_args_omits_flags_when_only_v_is_quantized() {
+        let args = kv_cache_args(1, 3);
+        assert_eq!(args, vec!["--cache-type-v", "q4_0"]);
     }
 }
 

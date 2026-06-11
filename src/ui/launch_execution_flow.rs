@@ -120,7 +120,8 @@ async fn apply_successful_launch(
     updated_prefs.last_model_name = plan.model_name.clone();
     updated_prefs.last_context_size = Some(plan.context_size);
     updated_prefs.last_gpu_layers = Some(plan.gpu_layers);
-    updated_prefs.last_quant_kv = Some(plan.quant_kv);
+    updated_prefs.last_quant_k = Some(plan.quant_k);
+    updated_prefs.last_quant_v = Some(plan.quant_v);
     updated_prefs.preferred_backend = Some(super::BackendMode::LlamaCpp);
     let _ = crate::prefs::save_prefs(&updated_prefs).await;
     app.prefs = updated_prefs;

@@ -11,6 +11,9 @@ pub mod session;
 pub mod prefs;
 pub mod hardware;
 
+#[cfg(test)]
+mod test_support;
+
 pub mod product {
     #[derive(Debug, Clone, Copy, PartialEq, Eq)]
     pub enum ProductTier {

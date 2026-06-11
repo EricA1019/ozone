@@ -34,7 +34,8 @@ impl RecSource {
 pub struct Recommendation {
     pub context_size: u32,
     pub gpu_layers: i32,
-    pub quant_kv: u8,
+    pub quant_k: u8,
+    pub quant_v: u8,
     pub note: String,
     pub source: RecSource,
 }
@@ -44,7 +45,8 @@ pub struct BenchmarkRun {
     pub context_size: u32,
     pub gen_speed: f64,
     pub gpu_layers: i32,
-    pub quant_kv: u8,
+    pub quant_k: u8,
+    pub quant_v: u8,
     pub vram_mb: u32,
     /// Loaded from DB; reserved for model info display.
     #[allow(dead_code)]
@@ -141,7 +143,7 @@ pub fn parse_preset_text(text: &str) -> HashMap<String, Recommendation> {
         let Some(context_size) = parts.get(2).and_then(|s| s.trim().parse().ok()) else {
             continue;
         };
-        let Some(quant_kv) = parts.get(3).and_then(|s| s.trim().parse().ok()) else {
+        let Some(quant_k) = parts.get(3).and_then(|s| s.trim().parse().ok()) else {
             continue;
         };
         let note = parts
@@ -154,7 +156,8 @@ pub fn parse_preset_text(text: &str) -> HashMap<String, Recommendation> {
             Recommendation {
                 context_size,
                 gpu_layers,
-                quant_kv,
+                quant_k,
+                quant_v: quant_k,
                 note,
                 source: RecSource::Tuned,
             },
@@ -238,10 +241,15 @@ pub fn parse_benchmark_text(text: &str) -> Vec<(String, BenchmarkRun)> {
             .and_then(|s| s.split_whitespace().next())
             .and_then(|s| s.parse().ok())
             .unwrap_or(0);
-        let quant_kv: u8 = field(section, "Quant KV:")
+        let quant_k: u8 = field(section, "Quant KV:")
             .as_deref()
             .and_then(|s| s.parse().ok())
             .unwrap_or(1);
+        // Also try to parse separate Quant V field (newer format)
+        let quant_v: u8 = field(section, "Quant V:")
+            .as_deref()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(quant_k);
 
         if context_size > 0 && gen_speed > 0.0 && gen_speed <= 100.0 && vram_mb > 0 {
             runs.push((
@@ -250,7 +258,8 @@ pub fn parse_benchmark_text(text: &str) -> Vec<(String, BenchmarkRun)> {
                     context_size,
                     gen_speed,
                     gpu_layers,
-                    quant_kv,
+                    quant_k,
+                    quant_v,
                     vram_mb,
                     timestamp_ms: 0,
                     model_size_gb: size_gb,
@@ -266,7 +275,8 @@ fn heuristic_recommendation(name: &str, size_gb: f64) -> Recommendation {
         return Recommendation {
             context_size: 12288,
             gpu_layers: -1,
-            quant_kv: 1,
+            quant_k: 1,
+            quant_v: 1,
             note: "Heuristic MOE profile".into(),
             source: RecSource::Heuristic,
         };
@@ -275,7 +285,8 @@ fn heuristic_recommendation(name: &str, size_gb: f64) -> Recommendation {
         Recommendation {
             context_size: 16384,
             gpu_layers: -1,
-            quant_kv: 1,
+            quant_k: 1,
+            quant_v: 1,
             note: "Heuristic small-model profile".into(),
             source: RecSource::Heuristic,
         }
@@ -283,7 +294,8 @@ fn heuristic_recommendation(name: &str, size_gb: f64) -> Recommendation {
         Recommendation {
             context_size: 8192,
             gpu_layers: -1,
-            quant_kv: 1,
+            quant_k: 1,
+            quant_v: 1,
             note: "Heuristic medium-model profile".into(),
             source: RecSource::Heuristic,
         }
@@ -291,7 +303,8 @@ fn heuristic_recommendation(name: &str, size_gb: f64) -> Recommendation {
         Recommendation {
             context_size: 8192,
             gpu_layers: 32,
-            quant_kv: 1,
+            quant_k: 1,
+            quant_v: 1,
             note: "Heuristic large-model profile".into(),
             source: RecSource::Heuristic,
         }
@@ -299,7 +312,8 @@ fn heuristic_recommendation(name: &str, size_gb: f64) -> Recommendation {
         Recommendation {
             context_size: 4096,
             gpu_layers: 28,
-            quant_kv: 1,
+            quant_k: 1,
+            quant_v: 1,
             note: "Heuristic x-large-model profile".into(),
             source: RecSource::Heuristic,
         }
@@ -323,7 +337,7 @@ fn select_best_benchmark(
         if let Some(exact) = matching.iter().find(|r| {
             r.context_size == rec.context_size
                 && r.gpu_layers == rec.gpu_layers
-                && r.quant_kv == rec.quant_kv
+                && r.quant_k == rec.quant_k
         }) {
             return Some((*exact).clone());
         }
@@ -356,7 +370,8 @@ pub fn build_catalog(
                     Recommendation {
                         context_size: b.context_size,
                         gpu_layers: b.gpu_layers,
-                        quant_kv: b.quant_kv,
+                        quant_k: b.quant_k,
+                        quant_v: b.quant_v,
                         note: "Best known benchmark".into(),
                         source: RecSource::Benchmarked,
                     }

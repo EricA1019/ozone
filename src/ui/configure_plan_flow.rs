@@ -4,9 +4,11 @@ use super::configure_profile_flow::build_override_from_plans;
 use super::{selected_record, App};
 
 const CONFIGURE_FIELD_CONTEXT_SIZE: usize = 0;
-const CONFIGURE_FIELD_QUANT_KV: usize = 2;
-const CONFIGURE_FIELD_THREADS: usize = 3;
-const CONFIGURE_FIELD_BATCH_THREADS: usize = 4;
+const CONFIGURE_FIELD_GPU_LAYERS: usize = 1;
+const CONFIGURE_FIELD_QUANT_K: usize = 2;
+const CONFIGURE_FIELD_QUANT_V: usize = 3;
+const CONFIGURE_FIELD_THREADS: usize = 4;
+const CONFIGURE_FIELD_BATCH_THREADS: usize = 5;
 
 pub(super) fn adjust_configure_plan(app: &mut App, direction: i32) {
     let Some(record) = selected_record(app) else {
@@ -54,18 +56,29 @@ pub(super) fn adjust_configure_plan(app: &mut App, direction: i32) {
                 override_state.blas_threads = Some(next);
             }
         }
-        CONFIGURE_FIELD_QUANT_KV => {
+        CONFIGURE_FIELD_QUANT_K => {
             let current = app
                 .current_plan
                 .as_ref()
-                .map(|plan| plan.quant_kv)
-                .unwrap_or(recommended.quant_kv);
+                .map(|plan| plan.quant_k)
+                .unwrap_or(recommended.quant_k);
             let next = (current as i32 + direction).clamp(1, 3) as u8;
             if next != current {
-                override_state.quant_kv = Some(next);
+                override_state.quant_k = Some(next);
             }
         }
-        _ => {
+        CONFIGURE_FIELD_QUANT_V => {
+            let current = app
+                .current_plan
+                .as_ref()
+                .map(|plan| plan.quant_v)
+                .unwrap_or(recommended.quant_v);
+            let next = (current as i32 + direction).clamp(1, 3) as u8;
+            if next != current {
+                override_state.quant_v = Some(next);
+            }
+        }
+        CONFIGURE_FIELD_GPU_LAYERS | _ => {
             let current = app
                 .current_plan
                 .as_ref()

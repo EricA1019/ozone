@@ -37,9 +37,27 @@ effects, and concurrent workloads.";
 const BENCH_MAX_TOKENS: u32 = 100;
 const API_TIMEOUT_SECS: u64 = 180;
 
+/// Read the CPU scaling governor. Returns None if unavailable (non-Linux).
+fn read_cpu_governor() -> Option<String> {
+    let path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor";
+    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+}
+
 #[derive(Debug, Clone)]
 pub struct BenchProgress {
     pub message: String,
+}
+
+/// Controls the precision/speed trade-off for benchmarks.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BenchMode {
+    /// Full precision: warm-up run + dual measured runs + 3s settle.
+    /// Best for single-benchmark validation where absolute accuracy matters.
+    Precise,
+    /// Fast sweep mode: single measured run, minimal settle, no warm-up.
+    /// Model load (20-30s GPU work) provides enough thermal stabilisation.
+    /// Best for sweeps where relative comparison across configs is what matters.
+    Sweep,
 }
 
 /// Result of a single benchmark run.
@@ -60,7 +78,8 @@ pub struct BenchmarkStoreRequest<'a> {
     pub model_size_gb: f64,
     pub gpu_layers: i32,
     pub context_size: u32,
-    pub quant_kv: u32,
+    pub quant_k: u32,
+    pub quant_v: u32,
     pub threads: u32,
     pub launch_profile_name: Option<&'a str>,
 }
@@ -68,7 +87,8 @@ pub struct BenchmarkStoreRequest<'a> {
 fn build_llamacpp_bench_args(
     gpu_layers: i32,
     context_size: u32,
-    quant_kv: u8,
+    quant_k: u8,
+    quant_v: u8,
     threads: Option<u32>,
 ) -> Vec<String> {
     let mut args = vec![
@@ -82,8 +102,10 @@ fn build_llamacpp_bench_args(
         context_size.to_string(),
         "--threads".into(),
         threads.unwrap_or(8).to_string(),
+        "--parallel".into(),
+        "1".into(),
     ];
-    args.extend(crate::processes::kv_cache_args(quant_kv));
+    args.extend(crate::processes::kv_cache_args(quant_k, quant_v));
     args
 }
 
@@ -94,8 +116,10 @@ pub async fn run_benchmark(
     backend: &BenchBackend,
     gpu_layers: i32,
     context_size: u32,
-    quant_kv: u8,
+    quant_k: u8,
+    quant_v: u8,
     threads: Option<u32>,
+    mode: BenchMode,
 ) -> Result<BenchResult> {
     run_benchmark_with_progress(
         model_name,
@@ -103,8 +127,10 @@ pub async fn run_benchmark(
         backend,
         gpu_layers,
         context_size,
-        quant_kv,
+        quant_k,
+        quant_v,
         threads,
+        mode,
         |progress| eprintln!("  ⬡ {}", progress.message),
     )
     .await
@@ -117,19 +143,39 @@ pub async fn run_benchmark_with_progress<F>(
     backend: &BenchBackend,
     gpu_layers: i32,
     context_size: u32,
-    quant_kv: u8,
+    quant_k: u8,
+    quant_v: u8,
     threads: Option<u32>,
+    mode: BenchMode,
     mut on_progress: F,
 ) -> Result<BenchResult>
 where
     F: FnMut(BenchProgress),
 {
+    let is_sweep = mode == BenchMode::Sweep;
+
     // Step 1: Clear existing backends
     on_progress(BenchProgress {
         message: "Clearing GPU backends…".into(),
     });
     processes::clear_gpu_backends().await?;
-    tokio::time::sleep(Duration::from_secs(2)).await;
+
+    // Sweep mode: clear_gpu_backends already sleeps 600ms — enough.
+    // Precise mode: add extra settle for a clean start.
+    if !is_sweep {
+        tokio::time::sleep(Duration::from_secs(2)).await;
+    }
+
+    // Step 1b: Check CPU governor
+    if let Some(gov) = read_cpu_governor() {
+        if gov != "performance" {
+            on_progress(BenchProgress {
+                message: format!(
+                    "⚠ CPU governor is '{gov}', not 'performance' — benchmark may vary ±20%. Run: echo performance | sudo tee /sys/devices/system/cpu/cpu*/cpufreq/scaling_governor"
+                ),
+            });
+        }
+    }
 
     // Step 2: Launch the selected backend
     on_progress(BenchProgress {
@@ -138,7 +184,7 @@ where
 
     match backend {
         BenchBackend::LlamaCpp { server_path } => {
-            let args = build_llamacpp_bench_args(gpu_layers, context_size, quant_kv, threads);
+            let args = build_llamacpp_bench_args(gpu_layers, context_size, quant_k, quant_v, threads);
             processes::start_llamacpp(server_path, &model_path.to_string_lossy(), &args)
                 .await
                 .map_err(|e| anyhow!("Launch failed: {e}"))?;
@@ -155,18 +201,71 @@ where
         message: format!("Model loaded: {loaded_model}"),
     });
 
-    // Step 4: Snapshot VRAM after model load
+    // Step 4: GPU settle — longer for precise mode, short for sweep
+    let settle_secs = if is_sweep { 1 } else { 3 };
+    on_progress(BenchProgress {
+        message: format!("Waiting {settle_secs}s for GPU clocks to stabilise…"),
+    });
+    tokio::time::sleep(Duration::from_secs(settle_secs)).await;
+
+    // Step 5: Warm-up (precise mode only). Sweep skips — model load already warmed GPU.
+    if !is_sweep {
+        on_progress(BenchProgress {
+            message: "Running warm-up generation (discarded)…".into(),
+        });
+        let _ = run_llamacpp_generation(false).await;
+    }
+
+    // Step 6: Snapshot VRAM
     let vram_pre = hardware::query_gpu_memory();
 
-    // Step 5: Run generation benchmark
-    on_progress(BenchProgress {
-        message: format!("Running generation benchmark ({BENCH_MAX_TOKENS} tokens)…"),
-    });
-    let gen_result = match backend {
-        BenchBackend::LlamaCpp { .. } => run_llamacpp_generation().await,
+    // Step 7: Measured generation(s)
+    let gen_result = if is_sweep {
+        // Sweep: single measured run at temp=0
+        on_progress(BenchProgress {
+            message: format!("Running generation benchmark ({BENCH_MAX_TOKENS} tokens)…"),
+        });
+        match backend {
+            BenchBackend::LlamaCpp { .. } => run_llamacpp_generation(true).await,
+        }
+    } else {
+        // Precise: dual measured runs, averaged
+        on_progress(BenchProgress {
+            message: format!("Running measured generation ({BENCH_MAX_TOKENS} tokens)…"),
+        });
+        let run1 = run_llamacpp_generation(true).await;
+        on_progress(BenchProgress {
+            message: "Running validation run…".into(),
+        });
+        let run2 = run_llamacpp_generation(true).await;
+
+        match (run1, run2) {
+            (Ok(g1), Ok(g2)) => {
+                let variance = if g1.tokens_per_sec > 0.0 {
+                    ((g2.tokens_per_sec - g1.tokens_per_sec).abs() / g1.tokens_per_sec) * 100.0
+                } else {
+                    0.0
+                };
+                if variance > 20.0 {
+                    on_progress(BenchProgress {
+                        message: format!(
+                            "⚠ Runs diverged by {variance:.0}% — possible thermal throttling. Using average."
+                        ),
+                    });
+                }
+                Ok(GenerationResult {
+                    tokens_per_sec: (g1.tokens_per_sec + g2.tokens_per_sec) / 2.0,
+                    ttft_ms: (g1.ttft_ms + g2.ttft_ms) / 2,
+                    token_count: (g1.token_count + g2.token_count) / 2,
+                    total_ms: (g1.total_ms + g2.total_ms) / 2,
+                    content: g1.content,
+                })
+            }
+            (Err(e), _) | (_, Err(e)) => Err(e),
+        }
     };
 
-    // Step 6: Snapshot VRAM during/after generation
+    // Step 8: Snapshot VRAM after measured runs
     let vram_post = hardware::query_gpu_memory();
     let vram_peak_mb = vram_post
         .as_ref()
@@ -174,11 +273,11 @@ where
         .or_else(|| vram_pre.as_ref().map(|v| v.used_mb as u32))
         .unwrap_or(0);
 
-    // Step 7: Get RAM usage
+    // Step 9: Get RAM usage
     let hw = hardware::load_hardware();
     let ram_peak_mb = hw.ram_used_mb as u32;
 
-    // Step 8: Kill backend
+    // Step 10: Kill backend
     on_progress(BenchProgress {
         message: format!("Stopping {}…", backend.display_name()),
     });
@@ -231,7 +330,10 @@ struct GenerationResult {
     content: String,
 }
 
-async fn run_llamacpp_generation() -> Result<GenerationResult> {
+/// Run a generation against the llama.cpp /completion endpoint.
+/// `measured`: when true, uses temperature=0 for deterministic, reproducible output.
+/// When false (warm-up), uses temperature=0.7 to exercise realistic paths.
+async fn run_llamacpp_generation(measured: bool) -> Result<GenerationResult> {
     #[derive(serde::Deserialize)]
     struct BenchTimings {
         predicted_n: u32,
@@ -249,10 +351,13 @@ async fn run_llamacpp_generation() -> Result<GenerationResult> {
         .timeout(Duration::from_secs(API_TIMEOUT_SECS))
         .build()?;
 
+    let temperature = if measured { 0.0 } else { 0.7 };
+    let max_tokens = if measured { BENCH_MAX_TOKENS } else { 10 };
+
     let payload = serde_json::json!({
         "prompt": BENCH_PROMPT,
-        "n_predict": BENCH_MAX_TOKENS,
-        "temperature": 0.7,
+        "n_predict": max_tokens,
+        "temperature": temperature,
         "stream": false,
     });
 
@@ -341,7 +446,8 @@ pub fn store_result_with_profile(
         model_size_gb: request.model_size_gb,
         gpu_layers: request.gpu_layers,
         context_size: request.context_size,
-        quant_kv: request.quant_kv,
+        quant_k: request.quant_k,
+        quant_v: request.quant_v,
         threads: request.threads,
         tokens_per_sec: result.tokens_per_sec,
         time_to_first_token_ms: result.time_to_first_token_ms,
@@ -374,7 +480,8 @@ pub fn print_result(
     model_name: &str,
     gpu_layers: i32,
     context_size: u32,
-    quant_kv: u8,
+    quant_k: u8,
+    quant_v: u8,
     result: &BenchResult,
 ) {
     println!();
@@ -383,7 +490,8 @@ pub fn print_result(
     println!("  Model:       {model_name}");
     println!("  GPU Layers:  {gpu_layers}");
     println!("  Context:     {context_size}");
-    println!("  Quant KV:    {quant_kv}");
+    println!("  Quant K:     {quant_k}");
+    println!("  Quant V:     {quant_v}");
     println!("  Status:      {}", result.status);
     println!("  ─────────────────────────────────────────────────");
     if result.status == "ok" {
@@ -431,6 +539,153 @@ pub fn output_is_garbage(text: &str) -> bool {
         return true; // >90% duplicate tokens is near-certain looping
     }
     false
+}
+
+/// Thread count sweep: tests different thread counts at fixed context/quant,
+/// storing each result with a launch_profile_name marker.
+/// Uses Sweep mode for speed (single run, no warm-up).
+pub async fn run_thread_sweep(
+    model_name: &str,
+    model_path: &std::path::Path,
+    backend: &BenchBackend,
+    gpu_layers: i32,
+    context_size: u32,
+    quant_k: u8,
+    quant_v: u8,
+) -> Result<Vec<BenchResult>> {
+    let thread_counts: &[u32] = &[1, 2, 4, 6, 8, 12];
+    let mut results = Vec::new();
+
+    for &threads in thread_counts {
+        let result = run_benchmark_with_progress(
+            model_name,
+            model_path,
+            backend,
+            gpu_layers,
+            context_size,
+            quant_k,
+            quant_v,
+            Some(threads),
+            BenchMode::Sweep,
+            |progress| eprintln!("  ⬡ [threads={threads}] {}", progress.message),
+        )
+        .await?;
+
+        // Store with profile marker so it's filterable
+        let _ = store_result_with_profile(
+            BenchmarkStoreRequest {
+                model_name,
+                model_size_gb: 0.0,
+                gpu_layers,
+                context_size,
+                quant_k: quant_k as u32,
+                quant_v: quant_v as u32,
+                threads,
+                launch_profile_name: Some("thread-sweep"),
+            },
+            &result,
+        );
+
+        results.push(result);
+    }
+
+    Ok(results)
+}
+
+/// Batch thread count sweep: tests different batch thread counts independently.
+/// Batch threads handle prompt processing; useful for tuning prompt eval speed.
+pub async fn run_batch_thread_sweep(
+    model_name: &str,
+    model_path: &std::path::Path,
+    backend: &BenchBackend,
+    gpu_layers: i32,
+    context_size: u32,
+    quant_k: u8,
+    quant_v: u8,
+    base_threads: u32,
+) -> Result<Vec<BenchResult>> {
+    let batch_counts: &[u32] = &[1, 2, 4, 6, 8];
+    let mut results = Vec::new();
+
+    for &batch in batch_counts {
+        // Build custom args with --threads-batch
+        let mut args = vec![
+            "--host".into(), "127.0.0.1".into(),
+            "--port".into(), "8989".into(),
+            "--n-gpu-layers".into(), gpu_layers.to_string(),
+            "--ctx-size".into(), context_size.to_string(),
+            "--threads".into(), base_threads.to_string(),
+            "--threads-batch".into(), batch.to_string(),
+            "--parallel".into(), "1".into(),
+        ];
+        args.extend(crate::processes::kv_cache_args(quant_k, quant_v));
+
+        // Launch + benchmark manually since we need custom args
+        processes::clear_gpu_backends().await?;
+        processes::start_llamacpp(backend_server_path(backend)?, &model_path.to_string_lossy(), &args).await?;
+
+        eprintln!("  ⬡ [batch={batch}] Running generation…");
+        let gen = run_llamacpp_generation(true).await;
+
+        processes::clear_gpu_backends().await?;
+
+        match gen {
+            Ok(g) => {
+                let result = BenchResult {
+                    tokens_per_sec: g.tokens_per_sec,
+                    time_to_first_token_ms: g.ttft_ms,
+                    vram_peak_mb: 0,
+                    ram_peak_mb: 0,
+                    total_tokens: g.token_count,
+                    total_time_ms: g.total_ms,
+                    status: if output_is_garbage(&g.content) { "garbage".into() } else { "ok".into() },
+                };
+                let _ = store_result_with_profile(
+                    BenchmarkStoreRequest {
+                        model_name,
+                        model_size_gb: 0.0,
+                        gpu_layers,
+                        context_size,
+                        quant_k: quant_k as u32,
+                        quant_v: quant_v as u32,
+                        threads: batch, // store batch threads in threads field for now
+                        launch_profile_name: Some("batch-sweep"),
+                    },
+                    &result,
+                );
+                results.push(result);
+            }
+            Err(e) => {
+                eprintln!("  ⬡ [batch={batch}] Failed: {e}");
+            }
+        }
+    }
+
+    Ok(results)
+}
+
+/// Print a thread sweep summary table.
+pub fn print_thread_sweep_summary(thread_results: &[BenchResult]) {
+    println!();
+    println!("  ⬡ Thread Sweep Results");
+    println!("  ─────────────────────────────────────────────────");
+    println!("  {:<10} {:<12} {:<10} {:<10}", "Threads", "Tok/s", "TTFT ms", "Status");
+    println!("  ─────────────────────────────────────────────────");
+    let thread_counts = [1, 2, 4, 6, 8, 12];
+    for (i, result) in thread_results.iter().enumerate() {
+        let t = thread_counts.get(i).unwrap_or(&0);
+        println!(
+            "  {:<10} {:<12.2} {:<10} {:<10}",
+            t, result.tokens_per_sec, result.time_to_first_token_ms, result.status,
+        );
+    }
+    println!();
+}
+
+fn backend_server_path(backend: &BenchBackend) -> Result<&std::path::Path> {
+    match backend {
+        BenchBackend::LlamaCpp { server_path } => Ok(server_path.as_path()),
+    }
 }
 
 #[cfg(test)]

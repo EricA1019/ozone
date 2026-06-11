@@ -10,7 +10,9 @@ pub struct BenchmarkRow {
     pub model_size_gb: f64,
     pub gpu_layers: i32,
     pub context_size: u32,
-    pub quant_kv: u32,
+    pub quant_k: u32,
+    /// V-cache quantization (defaults to quant_k when reading legacy rows)
+    pub quant_v: u32,
     #[cfg(any(feature = "bench", feature = "profiling-ui"))]
     pub threads: u32,
     pub tokens_per_sec: f64,
@@ -45,7 +47,8 @@ pub struct ProfileRow {
     pub profile_name: String,
     pub gpu_layers: i32,
     pub context_size: u32,
-    pub quant_kv: u32,
+    pub quant_k: u32,
+    pub quant_v: u32,
     pub tokens_per_sec: f64,
     pub vram_mb: u32,
     pub source: String,
@@ -74,7 +77,8 @@ fn init_tables(conn: &Connection) -> Result<()> {
             model_size_gb         REAL,
             gpu_layers            INTEGER,
             context_size          INTEGER,
-            quant_kv              INTEGER,
+            quant_k               INTEGER,
+            quant_v               INTEGER,
             threads               INTEGER,
             tokens_per_sec        REAL,
             time_to_first_token_ms INTEGER,
@@ -97,13 +101,49 @@ fn init_tables(conn: &Connection) -> Result<()> {
             profile_name  TEXT,
             gpu_layers    INTEGER,
             context_size  INTEGER,
-            quant_kv      INTEGER,
+            quant_k       INTEGER,
+            quant_v       INTEGER DEFAULT 1,
             tokens_per_sec REAL,
             vram_mb       INTEGER,
             source        TEXT,
             created_at    TEXT
          );",
     )?;
+    // Migration: rename quant_kv → quant_k, add quant_v column (older DBs)
+    if let Err(error) = conn.execute(
+        "ALTER TABLE benchmarks RENAME COLUMN quant_kv TO quant_k",
+        [],
+    ) {
+        let msg = error.to_string().to_lowercase();
+        if !msg.contains("duplicate column name") && !msg.contains("no such column") {
+            return Err(error.into());
+        }
+    }
+    if let Err(error) = conn.execute(
+        "ALTER TABLE benchmarks ADD COLUMN quant_v INTEGER DEFAULT 1",
+        [],
+    ) {
+        if !error.to_string().to_lowercase().contains("duplicate column name") {
+            return Err(error.into());
+        }
+    }
+    if let Err(error) = conn.execute(
+        "ALTER TABLE profiles RENAME COLUMN quant_kv TO quant_k",
+        [],
+    ) {
+        let msg = error.to_string().to_lowercase();
+        if !msg.contains("duplicate column name") && !msg.contains("no such column") {
+            return Err(error.into());
+        }
+    }
+    if let Err(error) = conn.execute(
+        "ALTER TABLE profiles ADD COLUMN quant_v INTEGER DEFAULT 1",
+        [],
+    ) {
+        if !error.to_string().to_lowercase().contains("duplicate column name") {
+            return Err(error.into());
+        }
+    }
     if let Err(error) = conn.execute(
         "ALTER TABLE benchmarks ADD COLUMN launch_profile_name TEXT",
         [],
@@ -124,17 +164,18 @@ fn init_tables(conn: &Connection) -> Result<()> {
 pub fn insert_benchmark(conn: &Connection, row: &BenchmarkRow) -> Result<i64> {
     conn.execute(
         "INSERT INTO benchmarks (
-            model_name, model_size_gb, gpu_layers, context_size, quant_kv, threads,
+            model_name, model_size_gb, gpu_layers, context_size, quant_k, quant_v, threads,
             tokens_per_sec, time_to_first_token_ms, vram_peak_mb, ram_peak_mb,
             total_tokens, total_time_ms, status, gpu_name, gpu_vram_mb, ram_total_mb,
             timestamp, notes, launch_profile_name
-        ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19)",
+        ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15,?16,?17,?18,?19,?20)",
         rusqlite::params![
             row.model_name,
             row.model_size_gb,
             row.gpu_layers,
             row.context_size,
-            row.quant_kv,
+            row.quant_k,
+            row.quant_v,
             row.threads,
             row.tokens_per_sec,
             row.time_to_first_token_ms,
@@ -159,15 +200,16 @@ pub fn insert_benchmark(conn: &Connection, row: &BenchmarkRow) -> Result<i64> {
 pub fn insert_profile(conn: &Connection, row: &ProfileRow) -> Result<i64> {
     conn.execute(
         "INSERT INTO profiles (
-            model_name, profile_name, gpu_layers, context_size, quant_kv,
+            model_name, profile_name, gpu_layers, context_size, quant_k, quant_v,
             tokens_per_sec, vram_mb, source, created_at
-        ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9)",
+        ) VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10)",
         rusqlite::params![
             row.model_name,
             row.profile_name,
             row.gpu_layers,
             row.context_size,
-            row.quant_kv,
+            row.quant_k,
+            row.quant_v,
             row.tokens_per_sec,
             row.vram_mb,
             row.source,
@@ -181,7 +223,7 @@ pub fn insert_profile(conn: &Connection, row: &ProfileRow) -> Result<i64> {
 #[cfg(any(feature = "analyze", feature = "profiling-ui", test))]
 pub fn get_benchmarks(conn: &Connection, model_name: &str) -> Result<Vec<BenchmarkRow>> {
     let mut stmt = conn.prepare(
-        "SELECT model_name, model_size_gb, gpu_layers, context_size, quant_kv, threads,
+        "SELECT model_name, model_size_gb, gpu_layers, context_size, quant_k, COALESCE(quant_v, quant_k) as quant_v, threads,
                 tokens_per_sec, time_to_first_token_ms, vram_peak_mb, ram_peak_mb,
                 total_tokens, total_time_ms, status, gpu_name, gpu_vram_mb, ram_total_mb,
                 timestamp, notes, launch_profile_name
@@ -194,31 +236,32 @@ pub fn get_benchmarks(conn: &Connection, model_name: &str) -> Result<Vec<Benchma
             model_size_gb: r.get(1)?,
             gpu_layers: r.get(2)?,
             context_size: r.get(3)?,
-            quant_kv: r.get(4)?,
+            quant_k: r.get(4)?,
+            quant_v: r.get(5)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            threads: r.get(5)?,
-            tokens_per_sec: r.get(6)?,
-            time_to_first_token_ms: r.get(7)?,
-            vram_peak_mb: r.get(8)?,
+            threads: r.get(6)?,
+            tokens_per_sec: r.get(7)?,
+            time_to_first_token_ms: r.get(8)?,
+            vram_peak_mb: r.get(9)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            ram_peak_mb: r.get(9)?,
+            ram_peak_mb: r.get(10)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            total_tokens: r.get(10)?,
+            total_tokens: r.get(11)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            total_time_ms: r.get(11)?,
-            status: r.get(12)?,
+            total_time_ms: r.get(12)?,
+            status: r.get(13)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            gpu_name: r.get(13)?,
+            gpu_name: r.get(14)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            gpu_vram_mb: r.get(14)?,
+            gpu_vram_mb: r.get(15)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            ram_total_mb: r.get(15)?,
+            ram_total_mb: r.get(16)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            timestamp: r.get(16)?,
+            timestamp: r.get(17)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            notes: r.get(17)?,
+            notes: r.get(18)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            launch_profile_name: r.get(18)?,
+            launch_profile_name: r.get(19)?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -228,7 +271,7 @@ pub fn get_benchmarks(conn: &Connection, model_name: &str) -> Result<Vec<Benchma
 #[cfg(any(feature = "analyze", feature = "profiling-ui"))]
 pub fn get_all_benchmarks(conn: &Connection) -> Result<Vec<BenchmarkRow>> {
     let mut stmt = conn.prepare(
-        "SELECT model_name, model_size_gb, gpu_layers, context_size, quant_kv, threads,
+        "SELECT model_name, model_size_gb, gpu_layers, context_size, quant_k, COALESCE(quant_v, quant_k) as quant_v, threads,
                 tokens_per_sec, time_to_first_token_ms, vram_peak_mb, ram_peak_mb,
                 total_tokens, total_time_ms, status, gpu_name, gpu_vram_mb, ram_total_mb,
                 timestamp, notes, launch_profile_name
@@ -241,31 +284,32 @@ pub fn get_all_benchmarks(conn: &Connection) -> Result<Vec<BenchmarkRow>> {
             model_size_gb: r.get(1)?,
             gpu_layers: r.get(2)?,
             context_size: r.get(3)?,
-            quant_kv: r.get(4)?,
+            quant_k: r.get(4)?,
+            quant_v: r.get(5)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            threads: r.get(5)?,
-            tokens_per_sec: r.get(6)?,
-            time_to_first_token_ms: r.get(7)?,
-            vram_peak_mb: r.get(8)?,
+            threads: r.get(6)?,
+            tokens_per_sec: r.get(7)?,
+            time_to_first_token_ms: r.get(8)?,
+            vram_peak_mb: r.get(9)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            ram_peak_mb: r.get(9)?,
+            ram_peak_mb: r.get(10)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            total_tokens: r.get(10)?,
+            total_tokens: r.get(11)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            total_time_ms: r.get(11)?,
-            status: r.get(12)?,
+            total_time_ms: r.get(12)?,
+            status: r.get(13)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            gpu_name: r.get(13)?,
+            gpu_name: r.get(14)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            gpu_vram_mb: r.get(14)?,
+            gpu_vram_mb: r.get(15)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            ram_total_mb: r.get(15)?,
+            ram_total_mb: r.get(16)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            timestamp: r.get(16)?,
+            timestamp: r.get(17)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            notes: r.get(17)?,
+            notes: r.get(18)?,
             #[cfg(any(feature = "bench", feature = "profiling-ui"))]
-            launch_profile_name: r.get(18)?,
+            launch_profile_name: r.get(19)?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -275,7 +319,7 @@ pub fn get_all_benchmarks(conn: &Connection) -> Result<Vec<BenchmarkRow>> {
 #[cfg(any(feature = "analyze", feature = "profiling-ui"))]
 pub fn get_profiles(conn: &Connection, model_name: &str) -> Result<Vec<ProfileRow>> {
     let mut stmt = conn.prepare(
-        "SELECT model_name, profile_name, gpu_layers, context_size, quant_kv,
+        "SELECT model_name, profile_name, gpu_layers, context_size, quant_k, COALESCE(quant_v, quant_k) as quant_v,
                 tokens_per_sec, vram_mb, source, created_at
          FROM profiles WHERE model_name = ?1 ORDER BY profile_name",
     )?;
@@ -285,11 +329,12 @@ pub fn get_profiles(conn: &Connection, model_name: &str) -> Result<Vec<ProfileRo
             profile_name: r.get(1)?,
             gpu_layers: r.get(2)?,
             context_size: r.get(3)?,
-            quant_kv: r.get(4)?,
-            tokens_per_sec: r.get(5)?,
-            vram_mb: r.get(6)?,
-            source: r.get(7)?,
-            created_at: r.get(8)?,
+            quant_k: r.get(4)?,
+            quant_v: r.get(5)?,
+            tokens_per_sec: r.get(6)?,
+            vram_mb: r.get(7)?,
+            source: r.get(8)?,
+            created_at: r.get(9)?,
         })
     })?;
     rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
@@ -314,7 +359,8 @@ mod tests {
                 model_size_gb         REAL,
                 gpu_layers            INTEGER,
                 context_size          INTEGER,
-                quant_kv              INTEGER,
+                quant_k               INTEGER,
+            quant_v               INTEGER DEFAULT 1,
                 threads               INTEGER,
                 tokens_per_sec        REAL,
                 time_to_first_token_ms INTEGER,
@@ -337,6 +383,7 @@ mod tests {
                 gpu_layers    INTEGER,
                 context_size  INTEGER,
                 quant_kv      INTEGER,
+            quant_v       INTEGER DEFAULT 1,
                 tokens_per_sec REAL,
                 vram_mb       INTEGER,
                 source        TEXT,
@@ -357,7 +404,8 @@ mod tests {
             model_size_gb: 7.0,
             gpu_layers: 20,
             context_size: 16384,
-            quant_kv: 1,
+            quant_k: 1,
+            quant_v: 1,
             threads: 8,
             tokens_per_sec: 12.5,
             time_to_first_token_ms: 420,

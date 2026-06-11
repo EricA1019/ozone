@@ -88,11 +88,12 @@ fn print_benchmark_table(model_name: &str, rows: &[BenchmarkRow]) {
         let ttft = format!("{} ms", r.time_to_first_token_ms);
         let vram = format!("{} MB", r.vram_peak_mb);
         println!(
-            "  {:<2} │ {:<6} │ {:<7} │ {:<3} │ {:<8.2} │ {:<7} │ {:<7} │ {}",
+            "  {:<2} │ {:<6} │ {:<7} │ {:<3} │ {:<3} │ {:<8.2} │ {:<7} │ {:<7} │ {}",
             i + 1,
             r.gpu_layers,
             r.context_size,
-            r.quant_kv,
+            r.quant_k,
+            r.quant_v,
             r.tokens_per_sec,
             ttft,
             vram,
@@ -109,7 +110,8 @@ fn print_benchmark_table(model_name: &str, rows: &[BenchmarkRow]) {
 struct ParetoPoint {
     context_size: u32,
     gpu_layers: i32,
-    quant_kv: u32,
+    quant_k: u32,
+    quant_v: u32,
     tokens_per_sec: f64,
     vram_peak_mb: u32,
 }
@@ -131,7 +133,8 @@ fn compute_pareto(rows: &[BenchmarkRow]) -> Vec<ParetoPoint> {
             .or_insert(ParetoPoint {
                 context_size: r.context_size,
                 gpu_layers: r.gpu_layers,
-                quant_kv: r.quant_kv,
+                quant_k: r.quant_k,
+                quant_v: r.quant_v,
                 tokens_per_sec: r.tokens_per_sec,
                 vram_peak_mb: r.vram_peak_mb,
             });
@@ -139,7 +142,8 @@ fn compute_pareto(rows: &[BenchmarkRow]) -> Vec<ParetoPoint> {
             *entry = ParetoPoint {
                 context_size: r.context_size,
                 gpu_layers: r.gpu_layers,
-                quant_kv: r.quant_kv,
+                quant_k: r.quant_k,
+                quant_v: r.quant_v,
                 tokens_per_sec: r.tokens_per_sec,
                 vram_peak_mb: r.vram_peak_mb,
             };
@@ -198,8 +202,8 @@ pub fn show_pareto(model_name: &str) -> Result<()> {
             format!("★ {label}")
         };
         println!(
-            "  {:<8} │ {:<6} │ {:<3} │ {:<8.2} │ {:<7} │ {}",
-            p.context_size, p.gpu_layers, p.quant_kv, p.tokens_per_sec, vram, profile_str,
+            "  {:<8} │ {:<6} │ {:<3} │ {:<3} │ {:<8.2} │ {:<7} │ {}",
+            p.context_size, p.gpu_layers, p.quant_k, p.quant_v, p.tokens_per_sec, vram, profile_str,
         );
     }
     println!("  ─────────────────────────────────────────────────────────");
@@ -278,7 +282,8 @@ fn generate_profiles_impl(model_name: &str, noisy: bool) -> Result<usize> {
             profile_name: labels[i].clone(),
             gpu_layers: p.gpu_layers,
             context_size: p.context_size,
-            quant_kv: p.quant_kv,
+            quant_k: p.quant_k,
+            quant_v: p.quant_v,
             tokens_per_sec: p.tokens_per_sec,
             vram_mb: p.vram_peak_mb,
             source: "auto".to_string(),
@@ -369,11 +374,12 @@ fn print_profiles_table(model_name: &str, profiles: &[ProfileRow]) {
     for p in profiles {
         let vram = format!("{} MB", p.vram_mb);
         println!(
-            "  {:<8} │ {:<6} │ {:<7} │ {:<3} │ {:<8.2} │ {:<7} │ {}",
+            "  {:<2} │ {:<6} │ {:<7} │ {:<3} │ {:<3} │ {:<8.2} │ {:<7} │ {}",
             p.profile_name,
             p.gpu_layers,
             p.context_size,
-            p.quant_kv,
+            p.quant_k,
+            p.quant_v,
             p.tokens_per_sec,
             vram,
             p.source,
@@ -460,8 +466,8 @@ fn export_presets_conf_impl(conf_path: &Path, model: Option<&str>, noisy: bool) 
             profile.profile_name, profile.tokens_per_sec, profile.vram_mb,
         );
         auto_lines.push(format!(
-            "{}|{}|{}|{}|{}",
-            model_name, profile.gpu_layers, profile.context_size, profile.quant_kv, note,
+            "{}|{}|{}|{}|{}|{}",
+            model_name, profile.gpu_layers, profile.context_size, profile.quant_k, profile.quant_v, note,
         ));
     }
     auto_lines.push(AUTO_END.to_string());
@@ -501,8 +507,8 @@ fn export_presets_conf_impl(conf_path: &Path, model: Option<&str>, noisy: bool) 
         );
         for (name, p) in &best_per_model {
             println!(
-                "    {name}: {} profile (layers={}, ctx={}, qkv={})",
-                p.profile_name, p.gpu_layers, p.context_size, p.quant_kv,
+                "    {name}: {} profile (layers={}, ctx={}, K=q{} V=q{})",
+                p.profile_name, p.gpu_layers, p.context_size, p.quant_k, p.quant_v,
             );
         }
         println!();

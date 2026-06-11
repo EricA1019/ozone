@@ -680,6 +680,11 @@ impl App {
     pub fn clear_profile_success_and_open_configure_hub(&mut self) {
         self.profiling_pending_action = None;
         self.profiling_success = None;
+        // Refresh profiles to pick up any auto-saved ones from the profiling run
+        if let Some(plan) = self.current_plan.as_ref() {
+            let model_name = plan.model_name.clone();
+            crate::ui::configure_profile_flow::refresh_configure_profiles(self, &model_name);
+        }
         self.screen = Screen::ConfigureHub;
     }
 
@@ -1448,7 +1453,7 @@ mod tests {
             gpu_layers: 24,
             total_layers: 32,
             cpu_layers: 8,
-            quant_kv: 1,
+            quant_k: 1, quant_v: 1, n_parallel: 1,
             threads: None,
             blas_threads: None,
             mode: crate::planner::RecommendationMode::MixedMemory,
@@ -1511,7 +1516,7 @@ mod tests {
             recommendation: crate::catalog::Recommendation {
                 context_size: 4096,
                 gpu_layers: -1,
-                quant_kv: 1,
+                quant_k: 1, quant_v: 1,
                 note: "test".into(),
                 source: crate::catalog::RecSource::Heuristic,
             },
@@ -1558,7 +1563,7 @@ mod tests {
                 profile_name: "custom-1".into(),
                 context_size: 16384,
                 gpu_layers: 12,
-                quant_kv: 1,
+                quant_k: 1, quant_v: 1,
                 threads: Some(6),
             },
         );
@@ -1576,6 +1581,7 @@ mod tests {
             ram_used_mb: 12000,
             cpu_logical: 8,
             cpu_physical: 4,
+            ..Default::default()
         });
 
         let record = test_record("alpha.gguf");
@@ -1592,7 +1598,8 @@ mod tests {
     const TEST_TOTAL_LAYERS: u32 = 32;
     const TEST_RECOMMENDED_GPU_LAYERS: i32 = 24;
     const TEST_RECOMMENDED_CPU_LAYERS: u32 = 8;
-    const TEST_QUANT_KV: u8 = 1;
+    const TEST_QUANT_K: u8 = 1;
+    const TEST_QUANT_V: u8 = 1;
     const TEST_GPU_USED_MB: u64 = 1000;
     const TEST_GPU_FREE_MB: u64 = 12000;
     const TEST_GPU_TOTAL_MB: u64 = 16000;
@@ -1615,6 +1622,7 @@ mod tests {
             ram_used_mb: TEST_RAM_USED_MB,
             cpu_logical: TEST_CPU_LOGICAL,
             cpu_physical: TEST_CPU_PHYSICAL,
+            ..Default::default()
         });
         app.catalog = vec![test_record(TEST_MODEL_NAME)];
         app.current_plan = Some(LaunchPlan {
@@ -1623,7 +1631,7 @@ mod tests {
             gpu_layers: TEST_RECOMMENDED_GPU_LAYERS,
             total_layers: TEST_TOTAL_LAYERS,
             cpu_layers: TEST_RECOMMENDED_CPU_LAYERS,
-            quant_kv: TEST_QUANT_KV,
+            quant_k: TEST_QUANT_K, quant_v: TEST_QUANT_V, n_parallel: 1,
             threads: None,
             blas_threads: None,
             mode: crate::planner::RecommendationMode::MixedMemory,
@@ -1686,7 +1694,7 @@ mod tests {
             gpu_layers,
             total_layers: TEST_TOTAL_LAYERS,
             cpu_layers: TEST_RECOMMENDED_CPU_LAYERS,
-            quant_kv: TEST_QUANT_KV,
+            quant_k: TEST_QUANT_K, quant_v: TEST_QUANT_V, n_parallel: 1,
             threads: None,
             blas_threads: None,
             mode: crate::planner::RecommendationMode::MixedMemory,
@@ -1714,7 +1722,7 @@ mod tests {
             profile_name: "custom-1".into(),
             context_size: TEST_CONTEXT_BASE,
             gpu_layers: TEST_RECOMMENDED_GPU_LAYERS,
-            quant_kv: TEST_QUANT_KV,
+            quant_k: TEST_QUANT_K, quant_v: TEST_QUANT_V,
             threads: None,
         }];
         app.configure_profile_index = 1;
@@ -1814,6 +1822,7 @@ mod tests {
             ram_used_mb: TEST_RAM_USED_MB,
             cpu_logical: TEST_CPU_LOGICAL,
             cpu_physical: TEST_CPU_PHYSICAL,
+            ..Default::default()
         });
 
         let key = KeyEvent::new(KeyCode::Enter, crossterm::event::KeyModifiers::NONE);
@@ -2185,7 +2194,7 @@ mod tests {
             gpu_layers: -1,
             total_layers: 32,
             cpu_layers: 0,
-            quant_kv: 1,
+            quant_k: 1, quant_v: 1, n_parallel: 1,
             threads: None,
             blas_threads: None,
             mode: crate::planner::RecommendationMode::VramFirst,

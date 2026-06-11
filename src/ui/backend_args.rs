@@ -9,7 +9,7 @@ pub(super) fn build_kc_args(plan: &LaunchPlan) -> Vec<String> {
         "--contextsize".to_string(),
         plan.context_size.to_string(),
         "--quantkv".to_string(),
-        plan.quant_kv.to_string(),
+        plan.quant_k.to_string(),
     ];
     if let Some(t) = plan.threads {
         args.push("--threads".to_string());
@@ -41,6 +41,8 @@ pub(super) fn build_llama_args(plan: &LaunchPlan) -> Vec<String> {
         "--gpu-layers".to_string(),
         gpu_layers,
         "--no-webui".to_string(),
+        "--parallel".to_string(),
+        plan.n_parallel.to_string(),
     ];
     if let Some(t) = plan.threads {
         args.push("--threads".to_string());
@@ -50,7 +52,7 @@ pub(super) fn build_llama_args(plan: &LaunchPlan) -> Vec<String> {
         args.push("--threads-batch".to_string());
         args.push(bt.to_string());
     }
-    args.extend(kv_cache_args(plan.quant_kv));
+    args.extend(kv_cache_args(plan.quant_k, plan.quant_v));
     // Only enable flash attention if CUDA GPU is available (requires compute 8.0+)
     // Check via nvidia-smi — if CUDA isn't available, the flag would crash
     if std::process::Command::new("nvidia-smi")
@@ -88,7 +90,9 @@ mod tests {
             gpu_layers: 42,
             total_layers: 56,
             cpu_layers: 14,
-            quant_kv: 2,
+            quant_k: 2,
+            quant_v: 2,
+            n_parallel: 1,
             threads: Some(8),
             blas_threads: Some(4),
             mode: RecommendationMode::MixedMemory,
@@ -143,6 +147,8 @@ mod tests {
                 "--gpu-layers",
                 "all",
                 "--no-webui",
+                "--parallel",
+                "1",
                 "--threads-batch",
                 "4",
                 "--cache-type-k",

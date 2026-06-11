@@ -20,11 +20,29 @@ pub struct GpuMemory {
 #[serde(rename_all = "camelCase")]
 pub struct HardwareProfile {
     pub gpu: Option<GpuMemory>,
+    /// GPU model name (e.g. "NVIDIA GeForce RTX 3060")
+    #[serde(default)]
+    pub gpu_name: Option<String>,
     pub ram_total_mb: u64,
     pub ram_free_mb: u64,
     pub ram_used_mb: u64,
     pub cpu_logical: usize,
     pub cpu_physical: usize,
+    /// Whether CUDA is available (nvidia-smi present + libcuda found)
+    #[serde(default)]
+    pub cuda_available: bool,
+    /// CUDA driver version string (e.g. "13.0")
+    #[serde(default)]
+    pub cuda_version: Option<String>,
+    /// GPU compute capability (e.g. "8.6")
+    #[serde(default)]
+    pub compute_capability: Option<String>,
+    /// Whether flash attention is supported (compute capability >= 8.0)
+    #[serde(default)]
+    pub flash_attn_supported: bool,
+    /// Unix timestamp (seconds) of when this profile was captured
+    #[serde(default)]
+    pub captured_at_unix: Option<u64>,
 }
 
 fn query_amd_gpu_memory() -> Option<GpuMemory> {
@@ -126,6 +144,81 @@ pub fn query_gpu_memory() -> Option<GpuMemory> {
 
 static HARDWARE_CACHE: Mutex<Option<(HardwareProfile, Instant)>> = Mutex::new(None);
 
+/// Query GPU model name via nvidia-smi.
+fn query_gpu_name() -> Option<String> {
+    Command::new("nvidia-smi")
+        .args(["--query-gpu=name", "--format=csv,noheader"])
+        .output()
+        .ok()
+        .and_then(|out| {
+            if out.status.success() {
+                String::from_utf8(out.stdout).ok().map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+}
+
+/// Query CUDA driver version via nvidia-smi.
+fn query_cuda_driver_version() -> Option<String> {
+    Command::new("nvidia-smi")
+        .args(["--query-gpu=driver_version", "--format=csv,noheader"])
+        .output()
+        .ok()
+        .and_then(|out| {
+            if out.status.success() {
+                String::from_utf8(out.stdout).ok().map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+}
+
+/// Query GPU compute capability via nvidia-smi.
+fn query_compute_capability() -> Option<String> {
+    Command::new("nvidia-smi")
+        .args(["--query-gpu=compute_cap", "--format=csv,noheader"])
+        .output()
+        .ok()
+        .and_then(|out| {
+            if out.status.success() {
+                String::from_utf8(out.stdout).ok().map(|s| s.trim().to_string())
+            } else {
+                None
+            }
+        })
+}
+
+/// Check if CUDA is available: nvidia-smi works + libcuda is findable.
+fn check_cuda_available() -> bool {
+    // Quick check: does nvidia-smi exist and work?
+    let smi_ok = Command::new("nvidia-smi")
+        .arg("-L")
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false);
+    if !smi_ok {
+        return false;
+    }
+    // Confirm libcuda is on the linker path
+    Command::new("ldconfig")
+        .args(["-p"])
+        .output()
+        .ok()
+        .map(|out| {
+            String::from_utf8_lossy(&out.stdout).contains("libcuda.so")
+        })
+        .unwrap_or(false)
+}
+
+/// Derive flash attention support from compute capability.
+fn compute_flash_attn_supported(cap: Option<&str>) -> bool {
+    cap.and_then(|c| c.split('.').next())
+        .and_then(|major| major.parse::<u32>().ok())
+        .map(|major| major >= 8)
+        .unwrap_or(false)
+}
+
 pub fn collect_hardware_profile() -> HardwareProfile {
     let mut sys = System::new_all();
     sys.refresh_all();
@@ -136,13 +229,31 @@ pub fn collect_hardware_profile() -> HardwareProfile {
     let cpu_logical = sys.cpus().len().max(1);
     let cpu_physical = sys.physical_core_count().unwrap_or(cpu_logical / 2).max(1);
 
+    let gpu = query_gpu_memory();
+    let gpu_name = query_gpu_name();
+    let cuda_available = check_cuda_available();
+    let cuda_version = if cuda_available { query_cuda_driver_version() } else { None };
+    let compute_capability = if cuda_available { query_compute_capability() } else { None };
+    let flash_attn_supported = compute_flash_attn_supported(compute_capability.as_deref());
+
     HardwareProfile {
-        gpu: query_gpu_memory(),
+        gpu,
+        gpu_name,
         ram_total_mb,
         ram_free_mb,
         ram_used_mb,
         cpu_logical,
         cpu_physical,
+        cuda_available,
+        cuda_version,
+        compute_capability,
+        flash_attn_supported,
+        captured_at_unix: Some(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        ),
     }
 }
 
@@ -181,6 +292,7 @@ pub fn save_hardware_profile(profile: &HardwareProfile) {
 }
 
 pub fn load_hardware() -> HardwareProfile {
+    // Check in-memory cache first (30s TTL)
     if let Ok(guard) = HARDWARE_CACHE.lock() {
         if let Some((ref hw, ts)) = *guard {
             if ts.elapsed() < HARDWARE_CACHE_TTL {
@@ -189,11 +301,60 @@ pub fn load_hardware() -> HardwareProfile {
         }
     }
 
+    // Check persistent system profile cache (24h TTL)
+    const SYSTEM_PROFILE_TTL_SECS: u64 = 86400; // 24 hours
+    if let Some(cached) = load_system_profile() {
+        let age_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+            .saturating_sub(cached.captured_at_unix.unwrap_or(0));
+        if age_secs < SYSTEM_PROFILE_TTL_SECS && cached.gpu.is_some() {
+            // Cache is fresh — skip polling, use it
+            if let Ok(mut guard) = HARDWARE_CACHE.lock() {
+                *guard = Some((cached.clone(), Instant::now()));
+            }
+            return cached;
+        }
+    }
+
     let result = collect_hardware_profile();
+    save_system_profile(&result);
 
     if let Ok(mut guard) = HARDWARE_CACHE.lock() {
         *guard = Some((result.clone(), Instant::now()));
     }
 
     result
+}
+
+/// Load the persistent system profile from disk.
+pub fn load_system_profile() -> Option<HardwareProfile> {
+    let path = crate::paths::data_dir()?.join("system-profile.json");
+    let text = std::fs::read_to_string(&path).ok()?;
+    serde_json::from_str(&text).ok()
+}
+
+/// Save a hardware profile to disk as the system profile.
+pub fn save_system_profile(profile: &HardwareProfile) {
+    let Some(data_dir) = crate::paths::data_dir() else { return };
+    let path = data_dir.join("system-profile.json");
+    if let Ok(text) = serde_json::to_string_pretty(profile) {
+        let _ = std::fs::create_dir_all(&data_dir);
+        let _ = std::fs::write(&path, text);
+    }
+}
+
+/// Force a fresh hardware capture and save it as the system profile.
+/// Call this when the user explicitly chooses "Import Specs".
+pub fn import_system_specs() -> HardwareProfile {
+    let profile = collect_hardware_profile();
+    save_system_profile(&profile);
+
+    // Refresh in-memory cache
+    if let Ok(mut guard) = HARDWARE_CACHE.lock() {
+        *guard = Some((profile.clone(), Instant::now()));
+    }
+
+    profile
 }

@@ -185,11 +185,27 @@ pub(super) fn apply_workflow_event(app: &mut App, event: WorkflowEvent) {
             if let Some(ref profile) = report.recommended_profile {
                 app.prefs.llamacpp_gpu_layers = Some(profile.gpu_layers);
                 app.prefs.llamacpp_context_size = Some(profile.context_size);
-                let prefs_clone = app.prefs.clone();
-                tokio::spawn(async move {
-                    let _ = crate::prefs::save_prefs(&prefs_clone).await;
-                });
             }
+            // Reload preferences from disk to pick up any auto-saved profiles
+            if let Ok(fresh_prefs) = tokio::runtime::Handle::current().block_on(crate::prefs::load_prefs()) {
+                // Preserve any runtime state that shouldn't be overwritten
+                let old_llamacpp = (
+                    app.prefs.llamacpp_gpu_layers,
+                    app.prefs.llamacpp_context_size,
+                );
+                app.prefs = fresh_prefs;
+                app.prefs.llamacpp_gpu_layers = old_llamacpp.0;
+                app.prefs.llamacpp_context_size = old_llamacpp.1;
+            }
+            // Refresh configure profiles if we have a model name
+            if let Some(plan) = app.current_plan.as_ref() {
+                let model_name = plan.model_name.clone();
+                refresh_configure_profiles(app, &model_name);
+            }
+            let prefs_clone = app.prefs.clone();
+            tokio::spawn(async move {
+                let _ = crate::prefs::save_prefs(&prefs_clone).await;
+            });
             app.profiling_success = Some(report);
             app.profiling_failure = None;
             app.profiling_choice_index = 0;

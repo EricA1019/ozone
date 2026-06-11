@@ -16,7 +16,34 @@ Add `(**FIXED** yyyy-mm-dd <commit-hash>)` and append to the HISTORY section at 
 
 ## ACTIVE
 
-No active bugs remaining. All bugs from all phases have been fixed.
+### BUG-011 — llama-server auto n_parallel=4 exhausts VRAM on mid-size GPUs (**FIXED** 2026-06-10)
+Ozone never passes `--n-parallel` to llama-server, so the server auto-detects `n_parallel = 4`.
+On 12GB GPUs with 12B models at 24K+ context, the 4x KV cache allocation exceeds VRAM,
+causing `vk::DeviceLostError` (Vulkan backend) or CUDA OOM. Observed with
+TheDrummer/Rocinante-12B Q4_K_M at 24K context with q8_0 KV cache.
+
+**Fix:** Default `--n-parallel 1` in `build_llama_args()` and `build_llamacpp_bench_args()`.
+The `LaunchPlan` now carries `n_parallel: u32` (default 1). Sweep/bench commands also force 1.
+
+### BUG-012 — Log file truncated on restart loses crash evidence (**FIXED** 2026-06-10)
+`start_llamacpp()` opened the log with `.truncate(true)`, so every restart overwrote the
+previous session's log. Crashes mid-session (e.g., VRAM exhaustion at high context) left no trace.
+
+**Fix:** Timestamped log filenames (`llamacpp-YYYYMMDDTHHMMSS.log`) with a symlink
+`llamacpp.log → latest` for convenience. Previous logs preserved across restarts.
+
+### STRUCT-006 — K and V cache quantization must be independently controllable (**FIXED** 2026-06-10)
+Previously `quant_kv: u8` forced K and V to use the same quantization. But K-cache is
+more important for attention quality, while V-cache can be more aggressive (e.g., K=q8_0, V=q4_0)
+saving VRAM without noticeable quality loss.
+
+**Fix:** Split `quant_kv` → `quant_k` + `quant_v` across the entire codebase:
+- `LaunchPlan`, `Recommendation`, `BenchmarkRun`, `ModelLaunchOverride`, `SavedLaunchProfile`
+- `kv_cache_args(quant_k, quant_v)` generates independent `--cache-type-k`/`--cache-type-v`
+- CLI: `--quant-k`, `--quant-v`, `--quant-kv` (shorthand sets both)
+- DB: `quant_v` column added, `COALESCE(quant_v, quant_k)` for legacy rows
+- All planner estimators use `asymmetric_kv_factor()` averaging K and V factors
+- 159 tests pass
 --------------------------------------------------------------------
 
 ## HISTORY

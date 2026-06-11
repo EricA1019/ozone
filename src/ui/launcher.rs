@@ -305,15 +305,20 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 LIME
             };
-            let label = Line::from(vec![Span::styled(
-                format!(
-                    "  GPU VRAM  {}/{} MB  ({:.0}%)",
-                    gpu.used_mb,
-                    gpu.total_mb,
-                    ratio * 100.0
+            let gpu_name = hw.gpu_name.as_deref().unwrap_or("GPU");
+            let cuda_flag = if hw.cuda_available {
+                let ver = hw.cuda_version.as_deref().unwrap_or("?");
+                format!("  CUDA v{ver} ✓")
+            } else {
+                "  CUDA ✗".into()
+            };
+            let label = Line::from(vec![
+                Span::styled(
+                    format!("  {gpu_name}  {}/{} MB  ({:.0}%)", gpu.used_mb, gpu.total_mb, ratio * 100.0),
+                    Style::default().fg(color),
                 ),
-                Style::default().fg(color),
-            )]);
+                Span::styled(&cuda_flag, Style::default().fg(LIME)),
+            ]);
             f.render_widget(Paragraph::new(label), rows[0]);
 
             let bar = BrailleBar::new(gpu.used_mb as f64, gpu.total_mb as f64).fill_color(color);
@@ -535,7 +540,8 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
                     rec.recommendation.context_size,
                     rec.recommendation.gpu_layers,
                     rec.model_size_gb,
-                    rec.recommendation.quant_kv,
+                    rec.recommendation.quant_k,
+                    rec.recommendation.quant_v,
                     crate::planner::estimate_total_layers(rec.model_size_gb),
                 )
             });
@@ -714,7 +720,7 @@ pub fn render_confirm(f: &mut Frame, app: &App) {
             ]),
             Line::from(vec![
                 Span::styled("  QuantKV:  ", style_gray()),
-                Span::styled(plan.quant_kv.to_string(), style_cyan()),
+                Span::styled(plan.quant_k.to_string(), style_cyan()),
             ]),
             Line::from(vec![
                 Span::styled("  Mode:     ", style_gray()),
@@ -739,50 +745,20 @@ pub fn render_configure_hub(f: &mut Frame, app: &App) {
         return;
     };
 
-    let area = f.area();
-    let outer = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Length(6),
-            Constraint::Length(5),
-            Constraint::Length(5),
-            Constraint::Length(8),
-            Constraint::Length(6),
-            Constraint::Min(5),
-        ])
-        .split(area);
-
-    let header_lines = vec![
-        Line::from(Span::styled("  Configure Hub", style_bold_violet())),
-        Line::from(vec![
-            Span::styled("  Model: ", style_gray()),
-            Span::styled(&effective.model_name, style_cyan()),
-        ]),
-        Line::from(Span::styled(
-            "  Review the recommended profile, then tune context and GPU/CPU split.",
-            style_gray(),
-        )),
-    ];
-    let header_block = chrome_block_with_hint(
-        launcher_title("Configure Hub"),
-        "↑↓ field · ←→ adjust · 1-9 profile · p/n cycle · l load · s save · u update · d delete · f default · b benchmark · Enter confirm",
-        style_lime(),
-    );
-    f.render_widget(Paragraph::new(header_lines).block(header_block), outer[0]);
-
-    let plan_panels = Layout::default()
-        .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
-        .split(outer[1]);
-    render_plan_summary(f, plan_panels[0], "Recommended", recommended);
-    render_plan_summary(f, plan_panels[1], "Customized", effective);
-
+    // Build control lines first so we can size the panel dynamically
     let context_selected = app.configure_field_index == 0;
     let layers_selected = app.configure_field_index == 1;
-    let quant_selected = app.configure_field_index == 2;
-    let threads_selected = app.configure_field_index == 3;
-    let batch_selected = app.configure_field_index == 4;
-    let quant_label = match effective.quant_kv {
+    let quant_k_selected = app.configure_field_index == 2;
+    let quant_v_selected = app.configure_field_index == 3;
+    let threads_selected = app.configure_field_index == 4;
+    let batch_selected = app.configure_field_index == 5;
+    let quant_k_label = match effective.quant_k {
+        1 => "f16 (default)",
+        2 => "q8_0",
+        3 => "q4_0",
+        _ => "unknown",
+    };
+    let quant_v_label = match effective.quant_v {
         1 => "f16 (default)",
         2 => "q8_0",
         3 => "q4_0",
@@ -832,19 +808,35 @@ pub fn render_configure_hub(f: &mut Frame, app: &App) {
         ]),
         Line::from(vec![
             Span::styled(
-                if quant_selected {
-                    format!("{HEX_CURSOR} KV cache")
+                if quant_k_selected {
+                    format!("{HEX_CURSOR} K cache")
                 } else {
-                    "  KV cache".into()
+                    "  K cache".into()
                 },
-                if quant_selected {
+                if quant_k_selected {
                     style_bold_cyan()
                 } else {
                     style_gray()
                 },
             ),
             Span::styled("  ", style_gray()),
-            Span::styled(quant_label, style_amber()),
+            Span::styled(quant_k_label, style_amber()),
+        ]),
+        Line::from(vec![
+            Span::styled(
+                if quant_v_selected {
+                    format!("{HEX_CURSOR} V cache")
+                } else {
+                    "  V cache".into()
+                },
+                if quant_v_selected {
+                    style_bold_cyan()
+                } else {
+                    style_gray()
+                },
+            ),
+            Span::styled("  ", style_gray()),
+            Span::styled(quant_v_label, style_amber()),
         ]),
         Line::from(vec![
             Span::styled(
@@ -885,12 +877,73 @@ pub fn render_configure_hub(f: &mut Frame, app: &App) {
             ),
         ]),
     ];
+    // Dynamically size the controls panel: lines + 2 for border, but never
+    // smaller than 4 to keep the panel visible on tiny terminals.
+    let controls_height = (control_lines.len() as u16 + 2).max(4);
+
+    let area = f.area();
+    let outer = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(6),
+            Constraint::Length(5),
+            Constraint::Length(controls_height),
+            Constraint::Length(8),
+            Constraint::Length(6),
+            Constraint::Min(0),
+        ])
+        .split(area);
+
+    let header_lines = vec![
+        Line::from(Span::styled("  Configure Hub", style_bold_violet())),
+        Line::from(vec![
+            Span::styled("  Model: ", style_gray()),
+            Span::styled(&effective.model_name, style_cyan()),
+        ]),
+        Line::from(Span::styled(
+            "  Review the recommended profile, then tune context and GPU/CPU split.",
+            style_gray(),
+        )),
+    ];
+    let header_block = chrome_block_with_hint(
+        launcher_title("Configure Hub"),
+        "↑↓ field · ←→ adjust · 1-9 profile · p/n cycle · l load · s save · u update · d delete · f default · b benchmark · Enter confirm",
+        style_lime(),
+    );
+    f.render_widget(Paragraph::new(header_lines).block(header_block), outer[0]);
+
+    let plan_panels = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(outer[1]);
+    render_plan_summary(f, plan_panels[0], "Recommended", recommended);
+    render_plan_summary(f, plan_panels[1], "Customized", effective);
+
     let controls_block = Block::default()
         .title(Span::styled("  Controls ", style_bold_cyan()))
         .borders(Borders::ALL)
         .border_style(style_gray());
+    // Scroll so the selected field stays visible when there are more lines
+    // than the panel can show (e.g. on small terminals)
+    let visible_rows = outer[2].height.saturating_sub(2) as usize;
+    let selected = app.configure_field_index;
+    let scroll_offset = if control_lines.len() > visible_rows && visible_rows > 0 {
+        // Keep the selected line in the visible window
+        let max_offset = control_lines.len() - visible_rows;
+        if selected > max_offset {
+            max_offset
+        } else if selected > visible_rows / 2 {
+            selected.saturating_sub(visible_rows / 2)
+        } else {
+            0
+        }
+    } else {
+        0
+    };
     f.render_widget(
-        Paragraph::new(control_lines).block(controls_block),
+        Paragraph::new(control_lines)
+            .block(controls_block)
+            .scroll((scroll_offset as u16, 0)),
         outer[2],
     );
 
@@ -1053,8 +1106,8 @@ fn render_saved_profile_report_panel(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled("  Config: ", style_gray()),
                 Span::styled(
                     format!(
-                        "ctx {} · gpu {} · qkv {}",
-                        profile.context_size, profile.gpu_layers, profile.quant_kv
+                        "ctx {} · gpu {} · K=q{} V=q{}",
+                        profile.context_size, profile.gpu_layers, profile.quant_k, profile.quant_v
                     ),
                     style_cyan(),
                 ),
@@ -1348,12 +1401,13 @@ pub fn render_profile_advisory(f: &mut Frame, app: &App) {
             Span::styled("  Launch plan: ", style_gray()),
             Span::styled(
                 format!(
-                    "{} · ctx {} · gpu {} · cpu {} · qkv {}",
+                    "{} · ctx {} · gpu {} · cpu {} · K=q{} V=q{}",
                     plan.mode.label(),
                     plan.context_size,
                     plan.gpu_layers_display(),
                     plan.cpu_layers,
-                    plan.quant_kv
+                    plan.quant_k,
+                    plan.quant_v
                 ),
                 style_cyan(),
             ),
@@ -1487,13 +1541,14 @@ pub fn render_profile_confirm(f: &mut Frame, app: &App) {
                 Span::styled("  Start point: ", style_gray()),
                 Span::styled(
                     format!(
-                        "{} · GPU {}/{} · CPU {} · ctx {} · qkv {}",
+                        "{} · GPU {}/{} · CPU {} · ctx {} · K=q{} V=q{}",
                         plan.mode.label(),
                         plan.gpu_layers_display(),
                         plan.total_layers,
                         plan.cpu_layers,
                         plan.context_size,
-                        plan.quant_kv
+                        plan.quant_k,
+                        plan.quant_v
                     ),
                     style_cyan(),
                 ),
@@ -1984,7 +2039,7 @@ mod tests {
             recommendation: Recommendation {
                 context_size: 8192,
                 gpu_layers: -1,
-                quant_kv: 1,
+                quant_k: 1, quant_v: 1,
                 note: "test".into(),
                 source: RecSource::Heuristic,
             },
