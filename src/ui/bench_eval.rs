@@ -93,6 +93,7 @@ pub(super) fn render(f: &mut Frame, app: &App) {
 }
 
 pub(super) fn render_running(f: &mut Frame, app: &App) {
+    let is_eval_run = matches!(app.screen, super::Screen::EvalRunRunning);
     let area = f.area();
     let center = Layout::default()
         .direction(Direction::Vertical)
@@ -113,10 +114,12 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
         ])
         .split(center_h);
 
+    let title_text = if is_eval_run { "Eval Running" } else { "Bench + Eval Running" };
+    let subtitle_text = if is_eval_run { "  ·  native eval pipeline" } else { "  ·  subprocess output" };
     let header = Paragraph::new(Line::from(vec![
         Span::styled(format!(" {} oz ", HEX_CURSOR), style_bold_lime()),
-        Span::styled("Bench + Eval Running", style_bold_cyan()),
-        Span::styled("  ·  subprocess output", style_muted()),
+        Span::styled(title_text, style_bold_cyan()),
+        Span::styled(subtitle_text, style_muted()),
     ]))
     .block(
         Block::default()
@@ -125,34 +128,58 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
     );
     f.render_widget(header, chunks[0]);
 
-    let mut summary_lines = vec![Line::from(vec![
-        Span::styled("  Stage: ", style_gray()),
-        Span::styled(&app.bench_eval_progress_title, style_cyan()),
-    ])];
-    if let Some(model) = &app.bench_eval_running_model {
-        summary_lines.push(Line::from(vec![
-            Span::styled("  Model: ", style_gray()),
-            Span::styled(model, style_cyan()),
-        ]));
-    }
-    if let Some(preset) = &app.bench_eval_running_preset {
-        summary_lines.push(Line::from(vec![
-            Span::styled("  Preset: ", style_gray()),
-            Span::styled(preset, style_cyan()),
-        ]));
-    }
-    if let Some(limit) = app.bench_eval_running_limit {
-        summary_lines.push(Line::from(vec![
-            Span::styled("  Samples: ", style_gray()),
-            Span::styled(limit.to_string(), style_cyan()),
-        ]));
-    }
-    if let Some(command) = &app.bench_eval_running_command {
-        summary_lines.push(Line::from(vec![
-            Span::styled("  Command: ", style_gray()),
-            Span::styled(command, style_muted()),
-        ]));
-    }
+    let mut summary_lines: Vec<Line> = if is_eval_run {
+        let mut lines = vec![Line::from(vec![
+            Span::styled("  Stage: ", style_gray()),
+            Span::styled(&app.eval_run_stage, style_cyan()),
+        ])];
+        if let Some(ref model) = app.eval_run_model {
+            lines.push(Line::from(vec![
+                Span::styled("  Model: ", style_gray()),
+                Span::styled(model.as_str(), style_cyan()),
+            ]));
+        }
+        let passed = app.eval_run_tasks_passed;
+        let total = app.eval_run_tasks_run;
+        if total > 0 {
+            let pct = if total > 0 { (passed as f64 / total as f64 * 100.0) as u32 } else { 0 };
+            lines.push(Line::from(vec![
+                Span::styled("  Progress: ", style_gray()),
+                Span::styled(format!("{passed}/{total} tasks ({pct}%)"), style_lime()),
+            ]));
+        }
+        lines
+    } else {
+        let mut lines = vec![Line::from(vec![
+            Span::styled("  Stage: ", style_gray()),
+            Span::styled(&app.bench_eval_progress_title, style_cyan()),
+        ])];
+        if let Some(model) = &app.bench_eval_running_model {
+            lines.push(Line::from(vec![
+                Span::styled("  Model: ", style_gray()),
+                Span::styled(model, style_cyan()),
+            ]));
+        }
+        if let Some(preset) = &app.bench_eval_running_preset {
+            lines.push(Line::from(vec![
+                Span::styled("  Preset: ", style_gray()),
+                Span::styled(preset, style_cyan()),
+            ]));
+        }
+        if let Some(limit) = app.bench_eval_running_limit {
+            lines.push(Line::from(vec![
+                Span::styled("  Samples: ", style_gray()),
+                Span::styled(limit.to_string(), style_cyan()),
+            ]));
+        }
+        if let Some(command) = &app.bench_eval_running_command {
+            lines.push(Line::from(vec![
+                Span::styled("  Command: ", style_gray()),
+                Span::styled(command, style_muted()),
+            ]));
+        }
+        lines
+    };
 
     let summary = Paragraph::new(summary_lines).block(
         Block::default()
@@ -162,15 +189,31 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
     );
     f.render_widget(summary, chunks[1]);
 
-    let lines: Vec<Line> = if app.bench_eval_progress.is_empty() {
+    let progress_lines: &Vec<String> = if is_eval_run {
+        &app.eval_run_progress
+    } else {
+        &app.bench_eval_progress
+    };
+    let lines: Vec<Line> = if progress_lines.is_empty() {
         vec![Line::from(Span::styled(
             "  Waiting for the first output line…",
             style_gray(),
         ))]
     } else {
-        app.bench_eval_progress
+        progress_lines
             .iter()
-            .map(|line| Line::from(Span::styled(format!("  {line}"), style_gray())))
+            .map(|line| {
+                let style = if line.starts_with("  [PASS]") {
+                    style_lime()
+                } else if line.starts_with("  [FAIL]") {
+                    style_red()
+                } else if line.starts_with("  [SKIP]") {
+                    style_amber()
+                } else {
+                    style_gray()
+                };
+                Line::from(Span::styled(format!("  {line}"), style))
+            })
             .collect()
     };
 
@@ -181,7 +224,7 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
         0
     };
     let log_block = Block::default()
-        .title(Span::styled("  Eval Log ", style_bold_cyan()))
+        .title(Span::styled(if is_eval_run { "  Eval Tasks " } else { "  Eval Log " }, style_bold_cyan()))
         .title_bottom(Line::from(Span::styled(
             "  Esc/q return to menu",
             style_gray(),

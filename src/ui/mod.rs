@@ -41,6 +41,8 @@ mod backend_args;
 mod bench_eval;
 mod bench_eval_workflow;
 mod bench_eval_flow;
+mod bench_launcher;
+mod eval_launcher;
 mod catalog_flow;
 mod command_overlay_flow;
 mod confirm_flow;
@@ -70,6 +72,8 @@ mod tier_picker_flow;
 use self::catalog_flow::apply_catalog_report;
 use self::bench_eval_workflow::{apply_bench_eval_event, BenchEvalWorkflowEvent};
 use self::eval_run_workflow::{apply_eval_run_event, EvalRunEvent};
+use self::eval_launcher::{handle_key as handle_eval_launcher_key, EvalLauncherOutcome};
+use self::bench_launcher::{handle_key as handle_bench_launcher_key, BenchLauncherOutcome};
 use self::bench_eval_flow::{handle_bench_eval_key, BenchEvalOutcome};
 #[cfg(test)]
 use self::catalog_flow::{apply_catalog_refresh, selected_catalog_name};
@@ -126,6 +130,8 @@ pub enum Screen {
     #[cfg(feature = "profiling-ui")]
     ProfileFailure,
     BenchEval,
+    EvalLauncher,
+    BenchLauncher,
     BenchEvalRunning,
     EvalRunRunning,
     BenchEvalReport,
@@ -150,7 +156,8 @@ pub enum LauncherActionId {
     ConfigureModel,
     #[cfg(feature = "profiling-ui")]
     ProfileModel,
-    BenchEval,
+    BenchLauncher,
+    EvalLauncher,
     Settings,
     ClearGpu,
     Monitor,
@@ -378,6 +385,8 @@ pub struct App {
     pub settings_input_buffer: String,
     pub settings_editing: bool,
     bench_eval_selected: usize,
+    eval_launcher_selected: usize,
+    bench_launcher_selected: usize,
     bench_eval_progress_title: String,
     bench_eval_progress: Vec<String>,
     bench_eval_event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<BenchEvalWorkflowEvent>>,
@@ -475,6 +484,8 @@ impl App {
             settings_input_buffer: String::new(),
             settings_editing: false,
             bench_eval_selected: 0,
+            eval_launcher_selected: 0,
+            bench_launcher_selected: 0,
             bench_eval_progress_title: "Ready".into(),
             bench_eval_progress: Vec::new(),
             bench_eval_event_rx: None,
@@ -547,6 +558,8 @@ impl App {
             settings_input_buffer: String::new(),
             settings_editing: false,
             bench_eval_selected: 0,
+            eval_launcher_selected: 0,
+            bench_launcher_selected: 0,
             bench_eval_progress_title: "Ready".into(),
             bench_eval_progress: Vec::new(),
             bench_eval_event_rx: None,
@@ -1185,6 +1198,8 @@ pub async fn run_launcher(
                 #[cfg(feature = "profiling-ui")]
                 Screen::ProfileFailure => launcher::render_profile_failure(f, &app),
                 Screen::BenchEval => bench_eval::render(f, &app),
+                Screen::EvalLauncher => eval_launcher::render(f, &app),
+                Screen::BenchLauncher => bench_launcher::render(f, &app),
                 Screen::BenchEvalRunning => bench_eval::render_running(f, &app),
                 Screen::EvalRunRunning => bench_eval::render_running(f, &app),
                 Screen::BenchEvalReport => bench_eval::render_report(f, &app),
@@ -1274,6 +1289,12 @@ pub async fn run_launcher(
                         ) {
                             continue;
                         }
+                    }
+                    Screen::EvalLauncher => {
+                        if let EvalLauncherOutcome::ExitLauncher = handle_eval_launcher_key(&mut app, key).await {}
+                    }
+                    Screen::BenchLauncher => {
+                        if let BenchLauncherOutcome::ExitLauncher = handle_bench_launcher_key(&mut app, key).await {}
                     }
                     Screen::BenchEval => match handle_bench_eval_key(&mut app, key).await {
                         BenchEvalOutcome::Continue => {}

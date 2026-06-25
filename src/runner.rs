@@ -16,6 +16,44 @@ use crate::suites::{EvalTask, CANARY_SUITE, CODE_MICRO, FORMAT_MICRO, HEALTH_SUI
 use crate::timeout::{compute_timeout, HARD_CAP_SECS, MIN_TIMEOUT_SECS};
 use crate::warmup::run_warmup;
 
+
+/// Sweep depth for eval runs — controls which suites are executed.
+///
+/// Quick: health + canary (~17 tasks). Good for fast sanity checks.
+/// Standard: health + canary + code_micro (~21 tasks). Covers coding quality.
+/// Full: all 5 suites (~36 tasks). Comprehensive evaluation.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum SweepLevel {
+    Quick,
+    Standard,
+    Full,
+}
+
+impl SweepLevel {
+    /// Return the slice of suites to run for this sweep level.
+    pub fn suites(&self) -> Vec<&'static [EvalTask]> {
+        match self {
+            Self::Quick => vec![HEALTH_SUITE, CANARY_SUITE],
+            Self::Standard => vec![HEALTH_SUITE, CANARY_SUITE, CODE_MICRO],
+            Self::Full => vec![HEALTH_SUITE, CANARY_SUITE, CODE_MICRO, FORMAT_MICRO, MATH_MICRO],
+        }
+    }
+
+    /// Human-readable label for this sweep level.
+    pub fn label(&self) -> &'static str {
+        match self {
+            Self::Quick => "Quick Sweep",
+            Self::Standard => "Standard Sweep",
+            Self::Full => "Full Sweep",
+        }
+    }
+
+    /// Estimated task count for display.
+    pub fn task_count(&self) -> usize {
+        self.suites().iter().map(|s| s.len()).sum()
+    }
+}
+
 /// Configuration for an eval run.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
@@ -36,6 +74,8 @@ pub struct EvalRunConfig {
     pub skip_health_gate: bool,
     /// Context policy.
     pub policy: ContextPolicy,
+    /// Sweep depth (which suites to run).
+    pub sweep_level: SweepLevel,
 }
 
 impl Default for EvalRunConfig {
@@ -49,6 +89,7 @@ impl Default for EvalRunConfig {
             skip_warmup: false,
             skip_health_gate: false,
             policy: ContextPolicy::default(),
+            sweep_level: SweepLevel::Full,
         }
     }
 }
@@ -90,7 +131,8 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
     if !config.skip_warmup {
         let warmup = run_warmup(&config.base_url, 30).await;
         result.warmup_passed = warmup.success;
-        println!("Warm-up: {}", if warmup.success { "ok" } else { "failed" });
+        println!("Sweep level: {}", config.sweep_level.label());
+    println!("Warm-up: {}", if warmup.success { "ok" } else { "failed" });
     }
 
     // ---- Step 3: Calibration ----
@@ -115,13 +157,7 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
     }
 
     // ---- Step 6: Run suites ----
-    let suites: [&[EvalTask]; 5] = [
-        HEALTH_SUITE,
-        CANARY_SUITE,
-        CODE_MICRO,
-        FORMAT_MICRO,
-        MATH_MICRO,
-    ];
+    let suites = config.sweep_level.suites();
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(HARD_CAP_SECS))
@@ -195,7 +231,7 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
 
     result.total_duration_ms = overall_start.elapsed().as_millis() as u64;
     result.status = "completed".into();
-    println!("Eval run complete: {}/{} passed", result.tasks_passed, result.tasks_run);
+    println!("Eval run complete ({sweep}): {passed}/{total} passed", sweep = config.sweep_level.label(), passed = result.tasks_passed, total = result.tasks_run);
 
     Ok(result)
 }
@@ -284,13 +320,7 @@ pub async fn run_eval_with_events(
     }
 
     // ---- Step 6: Run suites ----
-    let suites: [&[EvalTask]; 5] = [
-        HEALTH_SUITE,
-        CANARY_SUITE,
-        CODE_MICRO,
-        FORMAT_MICRO,
-        MATH_MICRO,
-    ];
+    let suites = config.sweep_level.suites();
 
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(HARD_CAP_SECS))

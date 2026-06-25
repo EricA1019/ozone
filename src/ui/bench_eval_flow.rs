@@ -232,7 +232,7 @@ async fn activate_selected(app: &mut App) {
     }
 }
 
-pub(super) fn resolve_bench_eval_model(app: &App) -> Option<String> {
+pub(crate) fn resolve_bench_eval_model(app: &App) -> Option<String> {
     app.filtered_catalog_get(app.selected_model)
         .map(|record| record.model_name)
         .or_else(|| app.current_plan.as_ref().map(|plan| plan.model_name.clone()))
@@ -240,7 +240,7 @@ pub(super) fn resolve_bench_eval_model(app: &App) -> Option<String> {
 }
 
 /// Start an eval using a CLI task name string (works with the task registry).
-async fn start_eval_with_cli_name(app: &mut App, cli_name: &str) {
+pub(crate) async fn start_eval_with_cli_name(app: &mut App, cli_name: &str) {
     let Some(model_name) = resolve_bench_eval_model(app) else {
         app.set_error("Launch a model first so Bench + Eval knows which model to evaluate.".into());
         return;

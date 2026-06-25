@@ -79,10 +79,13 @@ pub(super) async fn run_launcher_action(
                 app.screen = super::Screen::ModelPicker;
             }
         }
-        super::LauncherActionId::BenchEval => {
-            app.reset_bench_eval_flow();
-            app.bench_eval_selected = 0;
-            app.screen = super::Screen::BenchEval;
+        super::LauncherActionId::BenchLauncher => {
+            app.bench_launcher_selected = 0;
+            app.screen = super::Screen::BenchLauncher;
+        }
+        super::LauncherActionId::EvalLauncher => {
+            app.eval_launcher_selected = 0;
+            app.screen = super::Screen::EvalLauncher;
         }
         #[cfg(feature = "profiling-ui")]
         super::LauncherActionId::ProfileModel => {

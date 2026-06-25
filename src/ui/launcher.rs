@@ -49,10 +49,16 @@ fn launcher_actions(_app: &App) -> Vec<LauncherAction> {
             command: "configure",
         },
         LauncherAction {
-            id: LauncherActionId::BenchEval,
-            label: "Bench + Eval".into(),
-            description: "Open benchmark and evaluation menu".into(),
-            command: "bench-eval",
+            id: LauncherActionId::BenchLauncher,
+            label: "Benchmarks".into(),
+            description: "Profile models, sweep configs & export".into(),
+            command: "benchmarks",
+        },
+        LauncherAction {
+            id: LauncherActionId::EvalLauncher,
+            label: "Evals".into(),
+            description: "Run eval sweeps, creative probes & view results".into(),
+            command: "evals",
         },
     ];
     #[cfg(feature = "profiling-ui")]
@@ -2129,7 +2135,7 @@ mod tests {
         }));
         assert!(actions
             .iter()
-            .any(|action| action.id == LauncherActionId::BenchEval && action.command == "bench-eval"));
+            .any(|action| action.id == LauncherActionId::BenchLauncher && action.command == "benchmarks"));
         assert!(actions
             .iter()
             .any(|action| action.id == LauncherActionId::Settings && action.command == "settings"));
