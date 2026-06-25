@@ -55,9 +55,13 @@ pub mod product {
 pub mod paths {
     use directories::ProjectDirs;
     use std::path::PathBuf;
+    use std::sync::OnceLock;
 
     const GLOBAL_DB_FILE_NAME: &str = "global.db";
     const SESSIONS_DIR_NAME: &str = "sessions";
+
+    /// Runtime override for the model directory, set from Preferences.
+    static MODELS_DIR_OVERRIDE: OnceLock<PathBuf> = OnceLock::new();
     const SESSION_DB_FILE_NAME: &str = "session.db";
     const SESSION_CONFIG_FILE_NAME: &str = "config.toml";
     const SESSION_DRAFT_FILE_NAME: &str = "draft.txt";
@@ -76,15 +80,25 @@ pub mod paths {
         project_dirs().map(|dirs| dirs.data_dir().to_path_buf())
     }
 
-    /// Returns the model directory. Respects `OZONE_MODELS_DIR` env var,
+    /// Returns the model directory. Respects a cached override (set via
+    /// `set_models_dir_override`), then `OZONE_MODELS_DIR` env var,
     /// falls back to `~/models/`.
     pub fn models_dir() -> PathBuf {
-        if let Ok(val) = std::env::var(ENV_MODELS_DIR) {
-            return PathBuf::from(val);
-        }
-        dirs::home_dir()
-            .map(|h| h.join("models"))
-            .unwrap_or_else(|| PathBuf::from("models"))
+        MODELS_DIR_OVERRIDE.get().cloned().unwrap_or_else(|| {
+            if let Ok(val) = std::env::var(ENV_MODELS_DIR) {
+                PathBuf::from(val)
+            } else {
+                dirs::home_dir()
+                    .map(|h| h.join("models"))
+                    .unwrap_or_else(|| PathBuf::from("models"))
+            }
+        })
+    }
+
+    /// Override the model directory at runtime (e.g. from Preferences).
+    /// This takes priority over the env var and default.
+    pub fn set_models_dir_override(path: &std::path::Path) {
+        let _ = MODELS_DIR_OVERRIDE.set(path.to_path_buf());
     }
 
     /// Returns the preset file path inside the models directory.

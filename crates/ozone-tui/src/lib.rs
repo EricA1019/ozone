@@ -9,9 +9,9 @@ pub mod state;
 pub mod hardware;
 pub mod input;
 pub mod layout;
-pub mod mock;
 pub mod render;
 pub mod theme;
+pub mod runtime;
 
 use std::{error::Error, fmt, io};
 
@@ -42,7 +42,6 @@ pub use input::{
 pub use layout::{
     build_layout, build_layout_for_area, LayoutMode, LayoutModel, PaneId, PaneLayout,
 };
-pub use mock::{MockRuntime, SessionRuntime};
 pub use render::{build_render_model, render_shell, FolderPickerRenderModel, RenderModel};
 pub use theme::ThemePreset;
 
@@ -562,8 +561,7 @@ mod tests {
         RuntimeFailure, RuntimeProgress, RuntimeSendReceipt, RuntimeSessionLoad, SessionContext,
         SessionRuntime, ShellState, TranscriptItem,
     };
-    use crate::state::RuntimePhase;
-
+    
     fn session_context() -> SessionContext {
         let session_id = SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap();
         SessionContext::new(session_id, "Phase 1C")
@@ -576,7 +574,6 @@ mod tests {
         let bootstrap = AppBootstrap {
             transcript: vec![TranscriptItem::new("user", "hello skeleton")],
             branches: vec![BranchItem::new("main", "main", true)],
-            status_line: Some("mock runtime ready".into()),
             draft: None,
             screen: None,
             session_metadata: None,
@@ -1067,17 +1064,4 @@ mod tests {
         );
     }
 
-    #[test]
-    fn mock_runtime_completes_on_first_poll_via_poll_generation() {
-        let context = session_context();
-        let mut runtime = MockRuntime::seeded();
-
-        runtime.send_draft(&context, "quick poll test").unwrap();
-        let poll = runtime.poll_generation(&context).unwrap().unwrap();
-
-        assert!(matches!(poll, GenerationPoll::Completed(_)));
-        assert!(runtime.active_generation.is_none());
-        assert_eq!(runtime.polled_requests, vec!["mock-request-1"]);
-        assert_eq!(runtime.completed_requests, vec!["mock-request-1"]);
-    }
 }

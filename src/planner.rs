@@ -85,15 +85,15 @@ pub fn estimate_vram_mb(
         gpu_layers.min(total_layers as i32)
     };
     let layer_frac = gpu_layer_fraction(clamp_layers, total_layers);
+    let ctx_mult = safe_ctx / 4096.0;
+    let overhead_mb = 320.0 + safe_size * 12.0 + ctx_mult * 40.0;
     if layer_frac <= 0.0 {
-        return 0;
+        return overhead_mb.round() as u32;
     }
     let quant_factor = asymmetric_kv_factor(quant_k, quant_v);
-    let ctx_mult = safe_ctx / 4096.0;
     let model_weights_mb = safe_size * MIB_PER_GIB * layer_frac;
     let kv_per_4k_mb = (safe_size * 20.0).max(96.0);
     let kv_cache_mb = kv_per_4k_mb * ctx_mult * quant_factor * (0.25 + layer_frac * 0.75);
-    let overhead_mb = 320.0 + safe_size * 12.0 + ctx_mult * 40.0;
     (model_weights_mb + kv_cache_mb + overhead_mb).round() as u32
 }
 

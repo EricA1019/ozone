@@ -14,14 +14,12 @@ use crate::ui::BackendMode;
 pub enum Tier {
     Lite,
     Base,
-    Plus,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "kebab-case")]
 pub enum FrontendPreference {
     SillyTavern,
-    OzonePlus,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -74,6 +72,10 @@ pub struct Preferences {
     /// Message list density: `"comfortable"` or `"compact"`.
     #[serde(default = "default_message_density")]
     pub message_density: String,
+    /// Custom model directory override. When set, overrides `~/models/` and
+    /// the `OZONE_MODELS_DIR` env var.
+    #[serde(default)]
+    pub models_dir: Option<String>,
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
@@ -106,19 +108,14 @@ pub struct SavedLaunchProfile {
 }
 
 fn coerce_supported_tier(tier: Option<Tier>) -> Option<Tier> {
-    match tier {
-        Some(Tier::Plus) => Some(Tier::Base),
-        other => other,
-    }
+    // Tier::Plus was removed in v0.5
+    tier
 }
 
 fn coerce_supported_frontend(
     frontend: Option<FrontendPreference>,
 ) -> Option<FrontendPreference> {
-    match frontend {
-        Some(FrontendPreference::OzonePlus) => None,
-        other => other,
-    }
+    frontend
 }
 
 fn coerce_supported_backend(_backend: Option<BackendMode>) -> Option<BackendMode> {
@@ -179,6 +176,7 @@ impl Default for Preferences {
             show_inspector: false,
             timestamp_style: default_timestamp_style(),
             message_density: default_message_density(),
+            models_dir: None,
         }
     }
 }
@@ -516,7 +514,7 @@ mod tests {
     }
 
         #[test]
-        fn load_prefs_coerces_plus_state_to_supported_surface() {
+        fn load_prefs_rejects_legacy_plus_tier() {
             let _env_guard = env_lock();
                 let sandbox = TestSandbox::new("coerce-plus-state");
                 std::fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
@@ -531,8 +529,7 @@ mod tests {
     "version": 1,
     "last_model_name": "legacy.gguf",
     "no_browser": true,
-    "preferred_frontend": "ozone-plus",
-    "preferred_tier": "plus",
+
     "saved_launch_profiles": {
         "legacy.gguf": [
             {
@@ -558,8 +555,8 @@ mod tests {
                         .block_on(super::load_prefs())
                         .expect("legacy plus prefs should migrate");
 
-                assert_eq!(prefs.preferred_tier, Some(Tier::Base));
-                assert_eq!(prefs.preferred_frontend, None);
+                assert_eq!(prefs.preferred_tier, None, "legacy plus tier should be rejected");
+                assert_eq!(prefs.preferred_frontend, None, "ozone-plus frontend should be rejected");
                 assert_eq!(
                         prefs.default_saved_launch_profile_name_for("legacy.gguf"),
                         Some("custom-1")

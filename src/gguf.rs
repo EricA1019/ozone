@@ -243,9 +243,22 @@ fn read_i64<R: Read>(reader: &mut R) -> anyhow::Result<i64> {
 }
 
 /// Read the model's maximum context length from GGUF metadata.
-/// Falls back to None if the key is not present.
+/// Tries multiple known GGUF keys in order, falling back to None.
 pub fn read_context_length(path: &Path) -> Option<u32> {
-    read_single_u32_key(path, "llama.context_length").filter(|v| *v > 0)
+    // Common GGUF keys for context length, ordered by preference
+    let keys = [
+        "llama.context_length",
+        "llama.n_ctx_train",
+        "llama.max_position_embeddings",
+        "llama.n_ctx",
+        "llama.model.max_context",
+    ];
+    for key in &keys {
+        if let Some(val) = read_single_u32_key(path, key).filter(|v| *v > 0) {
+            return Some(val);
+        }
+    }
+    None
 }
 
 /// Read a single u32 metadata value by key name.

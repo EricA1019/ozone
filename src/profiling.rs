@@ -196,6 +196,7 @@ pub struct ProfilingSuccessReport {
     pub best_tokens_per_sec: Option<f64>,
     pub recommended_profile: Option<RecommendedProfile>,
     pub saved_profile_report: Option<SavedProfileReport>,
+    pub auto_saved_profile: Option<crate::prefs::SavedLaunchProfile>,
     pub suggestions: Vec<String>,
     pub export_detail: Option<String>,
 }
@@ -842,6 +843,7 @@ fn build_success_report(
         saved_profile_report,
         suggestions,
         export_detail: None,
+        auto_saved_profile: None,
     })
 }
 
@@ -1006,6 +1008,7 @@ pub async fn run_workflow(
                     .into(),
             ],
             export_detail: None,
+            auto_saved_profile: None,
         };
         send_completed(&tx, report);
         return Ok(());
@@ -1068,6 +1071,7 @@ pub async fn run_workflow(
                     saved_profile_report: None,
                     suggestions: vec!["Review the benchmark history for 'thread-sweep' to compare thread counts.".into()],
                     export_detail: None,
+                    auto_saved_profile: None,
                 };
                 send_completed(&tx, report);
             }
@@ -1103,11 +1107,28 @@ pub async fn run_workflow(
             });
             match export_llamacpp_profiles(&profiles) {
                 Ok(out) => {
-                    let mut report = build_success_report(
+                    let action = request.action.clone();
+                    let mut report = match build_success_report(
                         &request.record,
                         request.action,
                         request.launch_profile_name.as_deref(),
-                    )?;
+                    ) {
+                        Ok(r) => r,
+                        Err(e) => ProfilingSuccessReport {
+                            model_name: request.record.model_name.clone(),
+                            action,
+                            summary: format!("Export completed (report error: {e})"),
+                            benchmark_count: 0,
+                            ok_benchmark_count: 0,
+                            profile_count: 0,
+                            best_tokens_per_sec: None,
+                            recommended_profile: None,
+                            saved_profile_report: None,
+                            suggestions: vec![],
+                            export_detail: None,
+                            auto_saved_profile: None,
+                        },
+                    };
                     report.export_detail = Some(format!("llama.cpp: {}", out.display()));
                     send_completed(&tx, report);
                 }
@@ -1131,11 +1152,28 @@ pub async fn run_workflow(
                 Some(&request.record.model_name),
             ) {
                 Ok(_count) => {
-                    let mut report = build_success_report(
+                    let action = request.action.clone();
+                    let mut report = match build_success_report(
                         &request.record,
                         request.action,
                         request.launch_profile_name.as_deref(),
-                    )?;
+                    ) {
+                        Ok(r) => r,
+                        Err(e) => ProfilingSuccessReport {
+                            model_name: request.record.model_name.clone(),
+                            action,
+                            summary: format!("Export completed (report error: {e})"),
+                            benchmark_count: 0,
+                            ok_benchmark_count: 0,
+                            profile_count: 0,
+                            best_tokens_per_sec: None,
+                            recommended_profile: None,
+                            saved_profile_report: None,
+                            suggestions: vec![],
+                            export_detail: None,
+                            auto_saved_profile: None,
+                        },
+                    };
                     if let Ok(content) = std::fs::read_to_string(presets_path()) {
                         let model_lines: Vec<&str> = content
                             .lines()
@@ -1181,12 +1219,13 @@ pub async fn run_workflow(
         ProfilingAction::QuickSweep | ProfilingAction::FullSweep => {
             let quick = matches!(request.action, ProfilingAction::QuickSweep);
             let (context_sizes, quant_kv_levels) = if quick {
-                (vec![4096, 8192], vec![1u8])
+                (vec![4096, 8192], vec![(1u8, 1u8)])
             } else {
                 let native_max = crate::gguf::read_context_length(&request.record.model_path)
-                    .unwrap_or(65536);
+                    .unwrap_or(131072);
                 let ctxs = sweep::generate_context_steps(native_max);
-                (ctxs, vec![1u8, 2])
+                // Test asymmetric K/V pairs: (K, V) = (f16, f16), (q8_0, q8_0), (q8_0, q4_0)
+                (ctxs, vec![(1u8, 1u8), (2u8, 2u8), (2u8, 3u8)])
             };
             let gpu_vram_budget_mb = request
                 .hardware
@@ -1200,6 +1239,7 @@ pub async fn run_workflow(
                     request.profiling_backend.display_name()
                 )
             })?;
+            let thread_backend = backend.clone();
             let seed_plan = planner::plan_profiling_launch(&request.record, &request.hardware);
             let config = sweep::SweepConfig {
                 model_name: request.record.model_name.clone(),
@@ -1207,13 +1247,22 @@ pub async fn run_workflow(
                 backend,
                 model_size_gb: request.record.model_size_gb,
                 total_layers: seed_plan.total_layers,
-                context_sizes,
-                quant_kv_levels,
+                context_sizes: context_sizes.clone(),
+                quant_kv_levels: quant_kv_levels.clone(),
                 gpu_vram_budget_mb,
             };
             let _ = tx.send(WorkflowEvent::Status {
                 title: "Profiling".into(),
                 detail: format!("Starting {}…", request.action.label().to_lowercase()),
+            });
+            let _ = tx.send(WorkflowEvent::Status {
+                title: "Model".into(),
+                detail: format!(
+                    "{} · Max context (GGUF): {} · {} K/V pairs",
+                    request.record.model_name,
+                    context_sizes.last().copied().unwrap_or(0),
+                    quant_kv_levels.len(),
+                ),
             });
             let cancel_ref = cancel.clone();
             match sweep::run_sweep_with_progress(config, |progress| {
@@ -1245,11 +1294,12 @@ pub async fn run_workflow(
                     let _ = analyze::generate_profiles_quiet(&request.record.model_name);
 
                     // Auto-save the optimal profile for quick loading
-                    if let Some(optimal) = sweep::pick_optimal_profile(
+                    let auto_profile = sweep::pick_optimal_profile(
                         &request.record.model_name,
                         &result.pareto_frontier,
                         None,
-                    ) {
+                    );
+                    if let Some(ref optimal) = auto_profile {
                         if let Ok(mut prefs) = crate::prefs::load_prefs().await {
                             prefs.upsert_saved_launch_profile(&request.record.model_name, optimal.clone());
                             prefs.set_default_saved_launch_profile(&request.record.model_name, "auto-optimal");
@@ -1264,6 +1314,66 @@ pub async fn run_workflow(
                         }
                     }
 
+                    // Auto-chain: thread sweep on the optimal config found above
+                    if let Some(ref optimal) = auto_profile {
+                        let _ = tx.send(WorkflowEvent::Status {
+                            title: "Thread sweep".into(),
+                            detail: format!(
+                                "Testing thread counts for ctx={} K=q{} V=q{}…",
+                                optimal.context_size, optimal.quant_k, optimal.quant_v,
+                            ),
+                        });
+                        match bench::run_thread_sweep(
+                            &request.record.model_name,
+                            &request.record.model_path,
+                            &thread_backend,
+                            optimal.gpu_layers,
+                            optimal.context_size,
+                            optimal.quant_k,
+                            optimal.quant_v,
+                        )
+                        .await
+                        {
+                            Ok(thread_results) => {
+                                let best_thread = thread_results
+                                    .iter()
+                                    .filter(|r| r.status == "ok")
+                                    .max_by(|a, b| {
+                                        a.tokens_per_sec
+                                            .partial_cmp(&b.tokens_per_sec)
+                                            .unwrap_or(std::cmp::Ordering::Equal)
+                                    });
+                                if let Some(best) = best_thread {
+                                    // Re-load prefs to get the auto-saved profile, update thread count
+                                    if let Ok(mut prefs) = crate::prefs::load_prefs().await {
+                                        let model = &request.record.model_name;
+                                        if let Some(mut saved) =
+                                            prefs.saved_launch_profile(model, "auto-optimal")
+                                        {
+                                            saved.threads = best.threads;
+                                            prefs.upsert_saved_launch_profile(model, saved);
+                                            let _ = crate::prefs::save_prefs(&prefs).await;
+                                        }
+                                    }
+                                    let _ = tx.send(WorkflowEvent::Status {
+                                        title: "Thread result".into(),
+                                        detail: format!(
+                                            "Best thread count: {} ({:.1} t/s)",
+                                            best.threads.unwrap_or_default(),
+                                            best.tokens_per_sec,
+                                        ),
+                                    });
+                                }
+                            }
+                            Err(e) => {
+                                let _ = tx.send(WorkflowEvent::Status {
+                                    title: "Thread sweep".into(),
+                                    detail: format!("Skipped: {e}"),
+                                });
+                            }
+                        }
+                    }
+
                     // Report CSV path
                     if let Some(ref csv_path) = result.csv_path {
                         let _ = tx.send(WorkflowEvent::Status {
@@ -1272,11 +1382,32 @@ pub async fn run_workflow(
                         });
                     }
 
-                    let report = build_success_report(
+                    let action = request.action.clone();
+                    let auto_saved = auto_profile.clone();
+                    let mut report = match build_success_report(
                         &request.record,
                         request.action,
                         request.launch_profile_name.as_deref(),
-                    )?;
+                    ) {
+                        Ok(mut r) => {
+                            r.auto_saved_profile = auto_saved;
+                            r
+                        }
+                        Err(e) => ProfilingSuccessReport {
+                            model_name: request.record.model_name.clone(),
+                            action,
+                            summary: format!("Sweep completed (report error: {e})"),
+                            benchmark_count: result.configs_tested as usize,
+                            ok_benchmark_count: 0,
+                            profile_count: 0,
+                            best_tokens_per_sec: None,
+                            recommended_profile: None,
+                            saved_profile_report: None,
+                            suggestions: vec![],
+                            export_detail: None,
+                            auto_saved_profile: auto_saved,
+                        },
+                    };
                     send_completed(&tx, report);
                 }
                 Ok(_) => {
@@ -1370,11 +1501,28 @@ pub async fn run_workflow(
                         &result,
                     );
                     if result.status == "ok" {
-                        let report = build_success_report(
+                        let action = request.action.clone();
+                        let report = match build_success_report(
                             &request.record,
                             request.action,
                             request.launch_profile_name.as_deref(),
-                        )?;
+                        ) {
+                            Ok(r) => r,
+                            Err(e) => ProfilingSuccessReport {
+                                model_name: request.record.model_name.clone(),
+                                action,
+                                summary: format!("Benchmark ok (report error: {e})"),
+                                benchmark_count: 0,
+                                ok_benchmark_count: 0,
+                                profile_count: 0,
+                                best_tokens_per_sec: None,
+                                recommended_profile: None,
+                                saved_profile_report: None,
+                                suggestions: vec![],
+                                export_detail: None,
+                                auto_saved_profile: None,
+                            },
+                        };
                         send_completed(&tx, report);
                     } else {
                         let report = build_failure_report(
@@ -1404,11 +1552,28 @@ pub async fn run_workflow(
             });
             match analyze::generate_profiles_quiet(&request.record.model_name) {
                 Ok(_) => {
-                    let report = build_success_report(
+                    let action = request.action.clone();
+                    let report = match build_success_report(
                         &request.record,
                         request.action,
                         request.launch_profile_name.as_deref(),
-                    )?;
+                    ) {
+                        Ok(r) => r,
+                        Err(e) => ProfilingSuccessReport {
+                            model_name: request.record.model_name.clone(),
+                            action,
+                            summary: format!("Profiles generated (report error: {e})"),
+                            benchmark_count: 0,
+                            ok_benchmark_count: 0,
+                            profile_count: 0,
+                            best_tokens_per_sec: None,
+                            recommended_profile: None,
+                            saved_profile_report: None,
+                            suggestions: vec![],
+                            export_detail: None,
+                            auto_saved_profile: None,
+                        },
+                    };
                     send_completed(&tx, report);
                 }
                 Err(error) => {

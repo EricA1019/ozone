@@ -1908,7 +1908,7 @@ pub fn render_settings(f: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Fill(1),
-            Constraint::Length(21),
+            Constraint::Length(29),
             Constraint::Fill(1),
         ])
         .split(area)[1];
@@ -1916,7 +1916,7 @@ pub fn render_settings(f: &mut Frame, app: &App) {
         .direction(Direction::Horizontal)
         .constraints([
             Constraint::Fill(1),
-            Constraint::Max(64),
+            Constraint::Max(72),
             Constraint::Fill(1),
         ])
         .split(center)[1];
@@ -1927,6 +1927,7 @@ pub fn render_settings(f: &mut Frame, app: &App) {
             Constraint::Length(3), // header
             Constraint::Length(3), // summary
             Constraint::Length(5), // backend block
+            Constraint::Length(6), // model directory block
             Constraint::Length(3), // hint
         ])
         .split(center_h);
@@ -1999,6 +2000,50 @@ pub fn render_settings(f: &mut Frame, app: &App) {
         })
         .collect();
     f.render_widget(List::new(backend_items), backend_inner);
+
+    // Model directory block
+    let model_dir_focused = app.settings_section == 1;
+    let model_dir_block = chrome_block(
+        Line::from(Span::styled(
+            " Models Directory ",
+            style_panel_title(model_dir_focused),
+        )),
+        style_panel_border(model_dir_focused),
+    );
+    let model_dir_inner = model_dir_block.inner(chunks[3]);
+    f.render_widget(model_dir_block, chunks[3]);
+
+    let current_dir = if app.settings_editing {
+        &app.settings_input_buffer
+    } else {
+        app.prefs.models_dir.as_deref().unwrap_or("")
+    };
+
+    let dir_display = if app.settings_editing {
+        format!("{current_dir}▌")
+    } else {
+        let default = ozone_core::paths::models_dir();
+        let shown = if current_dir.is_empty() {
+            default.to_string_lossy().to_string()
+        } else {
+            current_dir.to_string()
+        };
+        if model_dir_focused {
+            format!("{shown}  ⬡ press Enter to edit")
+        } else {
+            shown
+        }
+    };
+
+    let dir_paragraph = Paragraph::new(Line::from(Span::styled(
+        &dir_display,
+        if app.settings_editing {
+            style_bold_cyan()
+        } else {
+            style_gray()
+        },
+    )));
+    f.render_widget(dir_paragraph, model_dir_inner);
 
     // Hint
     let hint = Paragraph::new(Line::from(vec![
@@ -2100,7 +2145,7 @@ mod tests {
 
         assert!(!actions
             .iter()
-            .any(|action| action.command.contains("ozone-plus")));
+            .any(|action| action.command.contains("--help"))); // ozone+ removed
     }
 
     #[test]

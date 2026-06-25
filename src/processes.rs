@@ -8,7 +8,7 @@ use std::process::Stdio;
 use std::time::Duration;
 use tokio::time::sleep;
 
-const LLAMACPP_START_TIMEOUT_SECS: u64 = 120;
+const LLAMACPP_START_TIMEOUT_SECS: u64 = 300;
 const LLAMACPP_MANAGED_PORT: u16 = 8989;
 const LLAMACPP_LAUNCH_STATE_VERSION: u32 = 1;
 const LLAMACPP_GRACEFUL_STOP_TIMEOUT_MILLIS: u64 = 2_000;

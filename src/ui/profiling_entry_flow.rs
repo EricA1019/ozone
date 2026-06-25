@@ -106,8 +106,8 @@ pub(super) fn handle_profile_confirm_key(app: &mut App, key: KeyEvent) {
                 let cancel = CancellationToken::new();
                 let cancel_clone = cancel.clone();
                 app.start_profile_workflow(rx, cancel);
-                tokio::spawn(async move {
-                    let _ = profiling::run_workflow(request, tx, cancel_clone).await;
+                let _handle = tokio::spawn(async move {
+                    profiling::run_workflow(request, tx, cancel_clone).await
                 });
             }
         }

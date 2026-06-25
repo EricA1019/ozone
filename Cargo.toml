@@ -17,7 +17,6 @@ members = [
     "crates/ozone-mcp",
     "crates/ozone-memory",
     "crates/ozone-persist",
-    "crates/ozone-tui",
 ]
 resolver = "2"
 
@@ -53,7 +52,7 @@ ratatui-braille-bar = "0.2.2"
 # Keep direct source builds on the lightweight launcher surface.
 # The installable base artifact enables `full` via release packaging or
 # `./contrib/sync-local-install.sh`.
-default = []
+default = ["bench","sweep","analyze","profiling-ui","model-mgmt"]
 full = ["bench", "sweep", "analyze", "profiling-ui", "model-mgmt"]
 database = ["dep:rusqlite"]
 bench = ["database"]

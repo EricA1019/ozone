@@ -35,7 +35,7 @@ when applied to production systems with real hardware constraints, caching \
 effects, and concurrent workloads.";
 
 const BENCH_MAX_TOKENS: u32 = 100;
-const API_TIMEOUT_SECS: u64 = 180;
+const API_TIMEOUT_SECS: u64 = 600;
 
 /// Read the CPU scaling governor. Returns None if unavailable (non-Linux).
 fn read_cpu_governor() -> Option<String> {
@@ -70,6 +70,10 @@ pub struct BenchResult {
     pub total_tokens: u32,
     pub total_time_ms: u32,
     pub status: String,
+    /// Human-readable detail when status is not "ok"
+    pub error_detail: Option<String>,
+    /// Thread count used for this benchmark (None = default/auto)
+    pub threads: Option<u32>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -298,13 +302,16 @@ where
                 total_tokens: gen.token_count,
                 total_time_ms: gen.total_ms,
                 status: status.into(),
+                error_detail: if status == "garbage" { Some("Output failed garbage detection".into()) } else { None },
+                threads: None,
             })
         },
         Err(e) => {
-            let status = if e.to_string().contains("OOM") || e.to_string().contains("out of memory")
+            let detail = e.to_string();
+            let status = if detail.contains("OOM") || detail.contains("out of memory")
             {
                 "oom"
-            } else if e.to_string().contains("timeout") || e.to_string().contains("Timeout") {
+            } else if detail.contains("timeout") || detail.contains("Timeout") {
                 "timeout"
             } else {
                 "error"
@@ -317,6 +324,8 @@ where
                 total_tokens: 0,
                 total_time_ms: 0,
                 status: status.into(),
+                error_detail: Some(detail),
+                threads: None,
             })
         }
     }
@@ -503,6 +512,9 @@ pub fn print_result(
         println!("  Total time:  {} ms", result.total_time_ms);
     } else {
         println!("  Benchmark failed: {}", result.status);
+        if let Some(ref detail) = result.error_detail {
+            println!("  Detail: {detail}");
+        }
     }
     println!();
 }
@@ -557,7 +569,7 @@ pub async fn run_thread_sweep(
     let mut results = Vec::new();
 
     for &threads in thread_counts {
-        let result = run_benchmark_with_progress(
+        let mut result = run_benchmark_with_progress(
             model_name,
             model_path,
             backend,
@@ -570,6 +582,7 @@ pub async fn run_thread_sweep(
             |progress| eprintln!("  ⬡ [threads={threads}] {}", progress.message),
         )
         .await?;
+        result.threads = Some(threads);
 
         // Store with profile marker so it's filterable
         let _ = store_result_with_profile(
@@ -639,6 +652,8 @@ pub async fn run_batch_thread_sweep(
                     total_tokens: g.token_count,
                     total_time_ms: g.total_ms,
                     status: if output_is_garbage(&g.content) { "garbage".into() } else { "ok".into() },
+                    error_detail: None,
+                    threads: None,
                 };
                 let _ = store_result_with_profile(
                     BenchmarkStoreRequest {

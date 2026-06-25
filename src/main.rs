@@ -501,13 +501,13 @@ async fn main() -> Result<()> {
                 .unwrap_or(0);
 
             let (context_sizes, quant_kv_levels) = if quick {
-                (vec![4096, 8192], vec![1u8])
+                (vec![4096, 8192], vec![(1u8, 1u8)])
             } else {
                 // Read the model's native max context from GGUF metadata
                 let native_max = gguf::read_context_length(&model_path).unwrap_or(65536);
                 let max = max_context.unwrap_or(native_max).min(native_max);
                 let ctxs = sweep::generate_context_steps(max);
-                (ctxs, vec![1u8, 2])
+                (ctxs, vec![(1u8, 1u8), (2u8, 2u8)])
             };
 
             let sweep_config = sweep::SweepConfig {

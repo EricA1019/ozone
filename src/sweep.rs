@@ -55,7 +55,7 @@ pub struct SweepConfig {
     pub model_size_gb: f64,
     pub total_layers: u32,
     pub context_sizes: Vec<u32>,
-    pub quant_kv_levels: Vec<u8>,
+    pub quant_kv_levels: Vec<(u8, u8)>, // (quant_k, quant_v) pairs
     pub gpu_vram_budget_mb: u32,
 }
 
@@ -84,6 +84,7 @@ struct SweepCsvRow {
     total_tokens: u32,
     total_time_ms: u32,
     status: String,
+    error_detail: Option<String>,
     timestamp: String,
 }
 
@@ -206,7 +207,7 @@ where
     csv_writer.write_record(&[
         "model", "context_size", "gpu_layers", "quant_k", "quant_v",
         "tokens_per_sec", "ttft_ms", "vram_peak_mb", "ram_peak_mb",
-        "total_tokens", "total_time_ms", "status", "timestamp",
+        "total_tokens", "total_time_ms", "status", "error_detail", "timestamp",
     ])?;
 
     let mut result = SweepResult {
@@ -225,15 +226,15 @@ where
         // Early stopping: track whether the smallest quant_kv already OOMs at this context
         let mut all_oom_at_ctx = true;
 
-        for &qkv in &config.quant_kv_levels {
+        for &(qk, qv) in &config.quant_kv_levels {
             step += 1;
 
             // Binary search for max layers that fit VRAM budget
             let max_layers = planner::fit_gpu_layers_to_budget(
                 ctx,
                 config.model_size_gb,
-                qkv,
-                qkv,
+                qk,
+                qv,
                 total_layers,
                 config.gpu_vram_budget_mb,
             );
@@ -246,8 +247,8 @@ where
                         current: step,
                         total: total_combos as u32,
                         message: format!(
-                            "[{}/{}] ctx={} qkv={} ... skipped (exceeds VRAM budget)",
-                            step, total_combos, ctx, qkv,
+                            "[{}/{}] ctx={} K=q{qk}/V=q{qv} ... skipped (exceeds VRAM budget)",
+                            step, total_combos, ctx,
                         ),
                     });
                     result.configs_skipped += 1;
@@ -269,8 +270,8 @@ where
                     current: step,
                     total: total_combos as u32,
                     message: format!(
-                        "[{}/{}] ctx={} qkv={} layers={} ... skipped (dominated)",
-                        step, total_combos, ctx, qkv, layers,
+                        "[{}/{}] ctx={} K=q{qk}/V=q{qv} layers={} ... skipped (dominated)",
+                        step, total_combos, ctx, layers,
                     ),
                 });
                 result.configs_skipped += 1;
@@ -281,24 +282,50 @@ where
                 current: step,
                 total: total_combos as u32,
                 message: format!(
-                    "[{}/{}] ctx={} qkv={} layers={} ... running",
-                    step, total_combos, ctx, qkv, layers,
+                    "[{}/{}] ctx={} K=q{qk}/V=q{qv} layers={} ... running",
+                    step, total_combos, ctx, layers,
                 ),
             });
 
-            let bench_result = bench::run_benchmark_with_progress(
+            let bench_result = match bench::run_benchmark_with_progress(
                 &config.model_name,
                 &config.model_path,
                 &config.backend.clone(),
                 layers,
                 ctx,
-                qkv,
-                qkv,
+                qk,
+                qv,
                 None,
                 bench::BenchMode::Sweep,
                 |_| {},
             )
-            .await?;
+            .await
+            {
+                Ok(r) => r,
+                Err(e) => {
+                    let detail = e.to_string();
+                    let is_timeout = detail.to_lowercase().contains("timeout");
+                    on_progress(SweepProgress {
+                        current: step,
+                        total: total_combos as u32,
+                        message: format!(
+                            "[{}/{}] ctx={} K=q{qk}/V=q{qv} layers={} ... {} ✗ — {detail}",
+                            step, total_combos, ctx, layers,
+                            if is_timeout { "timeout" } else { "launch-error" },
+                        ),
+                    });
+                    result.configs_failed += 1;
+                    // For timeout on first config (cold cache), keep going — subsequent loads will be faster
+                    if is_timeout && step <= 2 {
+                        on_progress(SweepProgress {
+                            current: step,
+                            total: total_combos as u32,
+                            message: "→ First load timeout (cold cache) — continuing, subsequent loads will be page-cached".into(),
+                        });
+                    }
+                    continue;
+                }
+            };
 
             if bench_result.status != "ok" {
                 // Retry with fewer layers on OOM/timeout
@@ -309,32 +336,47 @@ where
                         current: step,
                         total: total_combos as u32,
                         message: format!(
-                            "[{}/{}] ctx={} qkv={} layers={} ... {} — retrying with {} layers",
-                            step, total_combos, ctx, qkv, layers, bench_result.status, retry_layers,
+                            "[{}/{}] ctx={} K=q{qk}/V=q{qv} layers={} ... {} — retrying with {} layers",
+                            step, total_combos, ctx, layers, bench_result.status, retry_layers,
                         ),
                     });
 
-                    let retry = bench::run_benchmark_with_progress(
+                    let retry = match bench::run_benchmark_with_progress(
                         &config.model_name,
                         &config.model_path,
                         &config.backend.clone(),
                         retry_layers,
                         ctx,
-                        qkv,
-                        qkv,
+                        qk,
+                        qv,
                         None,
                         bench::BenchMode::Sweep,
                         |_| {},
                     )
-                    .await?;
+                    .await
+                    {
+                        Ok(r) => r,
+                        Err(e) => {
+                            on_progress(SweepProgress {
+                                current: step,
+                                total: total_combos as u32,
+                                message: format!(
+                                    "[{}/{}] ctx={} K=q{qk}/V=q{qv} layers={} ... {} ✗ — {}",
+                                    step, total_combos, ctx, layers, bench_result.status, e,
+                                ),
+                            });
+                            result.configs_failed += 1;
+                            continue;
+                        }
+                    };
 
                     if retry.status == "ok" {
                         on_progress(SweepProgress {
                             current: step,
                             total: total_combos as u32,
                             message: format!(
-                                "[{}/{}] ctx={} qkv={} layers={} ... {:.1} t/s ✓",
-                                step, total_combos, ctx, qkv, retry_layers, retry.tokens_per_sec,
+                                "[{}/{}] ctx={} K=q{qk}/V=q{qv} layers={} ... {:.1} t/s ✓",
+                                step, total_combos, ctx, retry_layers, retry.tokens_per_sec,
                             ),
                         });
                         result.configs_tested += 1;
@@ -343,12 +385,12 @@ where
                             &mut result.pareto_frontier,
                             retry_layers,
                             ctx,
-                            qkv,
-                            qkv,
+                            qk,
+                            qv,
                             &retry,
                         );
-                        store_quietly(&config, retry_layers, ctx, qkv, qkv, &retry);
-                        write_csv_row(&mut csv_writer, &config, retry_layers, ctx, qkv, qkv, &retry);
+                        store_quietly(&config, retry_layers, ctx, qk, qv, &retry);
+                        write_csv_row(&mut csv_writer, &config, retry_layers, ctx, qk, qv, &retry);
                         continue;
                     }
                 }
@@ -356,8 +398,12 @@ where
                     current: step,
                     total: total_combos as u32,
                     message: format!(
-                        "[{}/{}] ctx={} qkv={} layers={} ... {} ✗",
-                        step, total_combos, ctx, qkv, layers, bench_result.status,
+                        "[{}/{}] ctx={} K=q{qk}/V=q{qv} layers={} ... {} ✗{}",
+                        step, total_combos, ctx, layers,
+                        bench_result.status,
+                        bench_result.error_detail.as_deref()
+                            .map(|d| format!(" — {d}"))
+                            .unwrap_or_default(),
                     ),
                 });
                 result.configs_failed += 1;
@@ -368,15 +414,15 @@ where
                 current: step,
                 total: total_combos as u32,
                 message: format!(
-                    "[{}/{}] ctx={} qkv={} layers={} ... {:.1} t/s ✓",
-                    step, total_combos, ctx, qkv, layers, bench_result.tokens_per_sec,
+                    "[{}/{}] ctx={} K=q{qk}/V=q{qv} layers={} ... {:.1} t/s ✓",
+                        step, total_combos, ctx, layers, bench_result.tokens_per_sec,
                 ),
             });
             result.configs_tested += 1;
             update_bests(&mut result, &bench_result, ctx);
-            maybe_add_pareto(&mut result.pareto_frontier, layers, ctx, qkv, qkv, &bench_result);
-            store_quietly(&config, layers, ctx, qkv, qkv, &bench_result);
-            write_csv_row(&mut csv_writer, &config, layers, ctx, qkv, qkv, &bench_result);
+            maybe_add_pareto(&mut result.pareto_frontier, layers, ctx, qk, qv, &bench_result);
+            store_quietly(&config, layers, ctx, qk, qv, &bench_result);
+            write_csv_row(&mut csv_writer, &config, layers, ctx, qk, qv, &bench_result);
         }
 
         // Early stopping: if all quant_kv levels OOMed at this context, skip larger contexts
@@ -410,6 +456,17 @@ where
         ),
     });
 
+    if result.configs_tested == 0 {
+        on_progress(SweepProgress {
+            current: total_combos as u32,
+            total: total_combos as u32,
+            message: "⚠ No configs were successfully tested.".into(),
+        });
+        let _ = csv_writer.flush();
+        result.csv_path = Some(csv_path);
+        return Ok(result);
+    }
+
     if !result.pareto_frontier.is_empty() {
         on_progress(SweepProgress {
             current: total_combos as u32,
@@ -427,7 +484,7 @@ where
             });
         }
     }
-    csv_writer.flush()?;
+    let _ = csv_writer.flush();
     result.csv_path = Some(csv_path);
     Ok(result)
 }
@@ -504,6 +561,7 @@ fn write_csv_row(
         total_tokens: bench.total_tokens,
         total_time_ms: bench.total_time_ms,
         status: bench.status.clone(),
+        error_detail: bench.error_detail.clone(),
         timestamp: chrono::Utc::now().to_rfc3339(),
     };
     let _ = writer.serialize(row);

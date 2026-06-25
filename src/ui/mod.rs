@@ -372,6 +372,8 @@ pub struct App {
     pub exit_confirm_index: usize,
     pub settings_section: usize,
     pub settings_backend_index: usize,
+    pub settings_input_buffer: String,
+    pub settings_editing: bool,
     bench_eval_selected: usize,
     bench_eval_progress_title: String,
     bench_eval_progress: Vec<String>,
@@ -460,6 +462,8 @@ impl App {
             exit_confirm_index: 1,
             settings_section: 0,
             settings_backend_index: 0,
+            settings_input_buffer: String::new(),
+            settings_editing: false,
             bench_eval_selected: 0,
             bench_eval_progress_title: "Ready".into(),
             bench_eval_progress: Vec::new(),
@@ -523,6 +527,8 @@ impl App {
             exit_confirm_index: 1,
             settings_section: 0,
             settings_backend_index: 0,
+            settings_input_buffer: String::new(),
+            settings_editing: false,
             bench_eval_selected: 0,
             bench_eval_progress_title: "Ready".into(),
             bench_eval_progress: Vec::new(),
@@ -935,6 +941,11 @@ pub async fn run_launcher(
         prefs.preferred_tier = Some(tier);
     }
 
+    // Apply model directory override from preferences
+    if let Some(ref dir) = prefs.models_dir {
+        ozone_core::paths::set_models_dir_override(std::path::Path::new(dir));
+    }
+
     let mut app = App::new(prefs);
     if let Some(error) = startup_error {
         app.set_error(error);
@@ -1047,6 +1058,7 @@ pub async fn run_launcher(
         // Drain profiling workflow events (only compiled when profiling-ui is enabled).
         #[cfg(feature = "profiling-ui")]
         loop {
+            let lost = app.profiling_event_rx.is_none();
             let event = match app.profiling_event_rx.as_mut() {
                 Some(rx) => match rx.try_recv() {
                     Ok(event) => Some(event),
@@ -1059,6 +1071,13 @@ pub async fn run_launcher(
                 None => None,
             };
             let Some(event) = event else {
+                // If the channel dropped without sending Completed/Failed, and we're
+                // on ProfileRunning, the task silently crashed — bail to launcher.
+                if lost && app.screen == Screen::ProfileRunning {
+                    app.profiling_cancel = None;
+                    app.reset_profile_and_open_launcher();
+                    app.set_status("Profiling task exited unexpectedly — check crash.log".into());
+                }
                 break;
             };
             apply_workflow_event(&mut app, event);
@@ -1499,6 +1518,7 @@ mod tests {
             benchmark_count: 0,
             ok_benchmark_count: 0,
             profile_count: 0,
+            auto_saved_profile: None,
             best_tokens_per_sec: None,
             recommended_profile: None,
             saved_profile_report: None,
@@ -2079,6 +2099,7 @@ mod tests {
             action: ProfilingAction::BenchmarkSavedProfile,
             summary: "saved".into(),
             benchmark_count: 0,
+            auto_saved_profile: None,
             ok_benchmark_count: 0,
             profile_count: 0,
             best_tokens_per_sec: None,

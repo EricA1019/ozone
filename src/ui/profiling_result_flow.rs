@@ -186,16 +186,11 @@ pub(super) fn apply_workflow_event(app: &mut App, event: WorkflowEvent) {
                 app.prefs.llamacpp_gpu_layers = Some(profile.gpu_layers);
                 app.prefs.llamacpp_context_size = Some(profile.context_size);
             }
-            // Reload preferences from disk to pick up any auto-saved profiles
-            if let Ok(fresh_prefs) = tokio::runtime::Handle::current().block_on(crate::prefs::load_prefs()) {
-                // Preserve any runtime state that shouldn't be overwritten
-                let old_llamacpp = (
-                    app.prefs.llamacpp_gpu_layers,
-                    app.prefs.llamacpp_context_size,
-                );
-                app.prefs = fresh_prefs;
-                app.prefs.llamacpp_gpu_layers = old_llamacpp.0;
-                app.prefs.llamacpp_context_size = old_llamacpp.1;
+            // Apply auto-saved profile from the profiling task (avoids block_on panic)
+            if let Some(ref saved) = report.auto_saved_profile {
+                let model = report.model_name.clone();
+                app.prefs.upsert_saved_launch_profile(&model, saved.clone());
+                app.prefs.set_default_saved_launch_profile(&model, &saved.profile_name);
             }
             // Refresh configure profiles if we have a model name
             if let Some(plan) = app.current_plan.as_ref() {

@@ -109,53 +109,18 @@ fn init_tables(conn: &Connection) -> Result<()> {
             created_at    TEXT
          );",
     )?;
-    // Migration: rename quant_kv → quant_k, add quant_v column (older DBs)
-    if let Err(error) = conn.execute(
-        "ALTER TABLE benchmarks RENAME COLUMN quant_kv TO quant_k",
-        [],
-    ) {
-        let msg = error.to_string().to_lowercase();
-        if !msg.contains("duplicate column name") && !msg.contains("no such column") {
-            return Err(error.into());
-        }
-    }
-    if let Err(error) = conn.execute(
-        "ALTER TABLE benchmarks ADD COLUMN quant_v INTEGER DEFAULT 1",
-        [],
-    ) {
-        if !error.to_string().to_lowercase().contains("duplicate column name") {
-            return Err(error.into());
-        }
-    }
-    if let Err(error) = conn.execute(
-        "ALTER TABLE profiles RENAME COLUMN quant_kv TO quant_k",
-        [],
-    ) {
-        let msg = error.to_string().to_lowercase();
-        if !msg.contains("duplicate column name") && !msg.contains("no such column") {
-            return Err(error.into());
-        }
-    }
-    if let Err(error) = conn.execute(
-        "ALTER TABLE profiles ADD COLUMN quant_v INTEGER DEFAULT 1",
-        [],
-    ) {
-        if !error.to_string().to_lowercase().contains("duplicate column name") {
-            return Err(error.into());
-        }
-    }
-    if let Err(error) = conn.execute(
+    // Migration: rename quant_kv → quant_k, add quant_v column (older DBs).
+    // All migration errors are non-fatal — the schema might not support RENAME
+    // COLUMN (SQLite < 3.25.0), or the columns may already exist. The queries
+    // use COALESCE(quant_v, quant_k) to handle any missing columns gracefully.
+    let _ = conn.execute("ALTER TABLE benchmarks RENAME COLUMN quant_kv TO quant_k", []);
+    let _ = conn.execute("ALTER TABLE benchmarks ADD COLUMN quant_v INTEGER DEFAULT 1", []);
+    let _ = conn.execute("ALTER TABLE profiles RENAME COLUMN quant_kv TO quant_k", []);
+    let _ = conn.execute("ALTER TABLE profiles ADD COLUMN quant_v INTEGER DEFAULT 1", []);
+    let _ = conn.execute(
         "ALTER TABLE benchmarks ADD COLUMN launch_profile_name TEXT",
         [],
-    ) {
-        let duplicate_column = error
-            .to_string()
-            .to_lowercase()
-            .contains("duplicate column name");
-        if !duplicate_column {
-            return Err(error.into());
-        }
-    }
+    );
     Ok(())
 }
 
