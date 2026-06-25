@@ -91,6 +91,39 @@ async fn activate_selected(app: &mut App) {
         BenchEvalAction::EvalHellaSwag => start_eval_with_cli_name(app, "hellaswag").await,
         BenchEvalAction::EvalTruthfulQA => start_eval_with_cli_name(app, "truthfulqa").await,
         BenchEvalAction::EvalBbh => start_eval_with_cli_name(app, "bbh").await,
+        BenchEvalAction::EvalRun => {
+            let Some(model_name) = resolve_bench_eval_model(app) else {
+                app.set_error("No model selected. Select or launch a model first.".into());
+                return;
+            };
+            if app.eval_run_event_rx.is_some() {
+                app.set_error("An eval run is already in progress.".into());
+                return;
+            }
+            let (tx, rx) = unbounded_channel();
+            let model_path = ozone_core::paths::models_dir().join(&model_name);
+            let base_url = ozone_core::paths::llamacpp_base_url();
+            let config = crate::runner::EvalRunConfig {
+                model_name: model_name.clone(),
+                model_path: model_path.to_string_lossy().to_string(),
+                backend: "llama.cpp".into(),
+                base_url,
+                context_length: 4096,
+                skip_warmup: false,
+                skip_health_gate: false,
+                ..Default::default()
+            };
+            app.eval_run_event_rx = Some(rx);
+            app.eval_run_stage = "Starting...".into();
+            app.eval_run_running = true;
+            app.eval_run_tasks_run = 0;
+            app.eval_run_tasks_passed = 0;
+            app.eval_run_model = Some(model_name);
+            app.eval_run_progress.clear();
+            app.screen = Screen::EvalRunRunning;
+            app.set_status("Eval run started...".into());
+            super::eval_run_workflow::spawn_eval_run(config, tx);
+        }
         BenchEvalAction::EvalCreativeWriting => {
             let Some(model_name) = resolve_bench_eval_model(app) else {
                 app.set_error("No model selected. Select or launch a model first.".into());

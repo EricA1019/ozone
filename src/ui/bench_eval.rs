@@ -21,6 +21,7 @@ pub(super) enum BenchEvalAction {
     EvalTruthfulQA,
     EvalBbh,
     EvalCreativeWriting,
+    EvalRun,
     ExportServer,
     ViewResults,
     ViewReport,
@@ -50,6 +51,7 @@ pub(super) fn entries() -> Vec<BenchEvalEntry> {
 
     // Add non-eval entries
     entries.push(BenchEvalEntry { action: BenchEvalAction::EvalCreativeWriting, label: "Eval Creative Writing", description: "Diversity & coherence probe", command: "eval-creative" });
+    entries.push(BenchEvalEntry { action: BenchEvalAction::EvalRun, label: "Eval Run (Native)", description: "Warm-up, calibration, health gates, suites", command: "eval-run" });
     entries.push(BenchEvalEntry { action: BenchEvalAction::ProfileModel, label: "Profile Model", description: "Benchmark/sweep workflow", command: "profile" });
     entries.push(BenchEvalEntry { action: BenchEvalAction::ExportServer, label: "Export Server", description: "Generate standalone launch script", command: "export-server" });
     entries.push(BenchEvalEntry { action: BenchEvalAction::ViewResults, label: "View Results", description: "Browse past eval/sweep/creative results", command: "results" });
@@ -385,6 +387,9 @@ fn render_preview(f: &mut Frame, area: Rect, app: &App) {
         }
         BenchEvalAction::EvalBbh => {
             format!("oz eval {model_hint} --preset bbh --limit 1")
+        }
+        BenchEvalAction::EvalRun => {
+            format!("oz eval-run {} --context-length 4096", model_hint)
         }
         BenchEvalAction::EvalCreativeWriting => {
             format!("oz eval {model_hint} --preset creative-writing --limit 3 --temperature 0.7")

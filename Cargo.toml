@@ -25,6 +25,7 @@ name = "ozone"
 path = "src/main.rs"
 
 [dependencies]
+sha2 = "0.10"
 anyhow = "1"
 chrono = { version = "0.4", features = ["clock"] }
 clap = { version = "4", features = ["derive"] }

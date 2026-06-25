@@ -54,6 +54,7 @@ mod launcher_screen_flow;
 mod model_picker_flow;
 mod monitor_flow;
 pub mod monitor;
+pub mod eval_run_workflow;
 #[cfg(feature = "profiling-ui")]
 mod profiling_entry_flow;
 #[cfg(feature = "profiling-ui")]
@@ -68,6 +69,7 @@ mod tier_picker_flow;
 
 use self::catalog_flow::apply_catalog_report;
 use self::bench_eval_workflow::{apply_bench_eval_event, BenchEvalWorkflowEvent};
+use self::eval_run_workflow::{apply_eval_run_event, EvalRunEvent};
 use self::bench_eval_flow::{handle_bench_eval_key, BenchEvalOutcome};
 #[cfg(test)]
 use self::catalog_flow::{apply_catalog_refresh, selected_catalog_name};
@@ -125,6 +127,7 @@ pub enum Screen {
     ProfileFailure,
     BenchEval,
     BenchEvalRunning,
+    EvalRunRunning,
     BenchEvalReport,
     BenchEvalResults,
     Settings,
@@ -378,6 +381,13 @@ pub struct App {
     bench_eval_progress_title: String,
     bench_eval_progress: Vec<String>,
     bench_eval_event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<BenchEvalWorkflowEvent>>,
+    eval_run_event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<EvalRunEvent>>,
+    eval_run_stage: String,
+    eval_run_progress: Vec<String>,
+    eval_run_running: bool,
+    eval_run_tasks_run: usize,
+    eval_run_tasks_passed: usize,
+    eval_run_model: Option<String>,
     bench_eval_running_model: Option<String>,
     bench_eval_running_preset: Option<String>,
     bench_eval_running_limit: Option<u32>,
@@ -468,6 +478,13 @@ impl App {
             bench_eval_progress_title: "Ready".into(),
             bench_eval_progress: Vec::new(),
             bench_eval_event_rx: None,
+            eval_run_event_rx: None,
+            eval_run_stage: String::new(),
+            eval_run_progress: Vec::new(),
+            eval_run_running: false,
+            eval_run_tasks_run: 0,
+            eval_run_tasks_passed: 0,
+            eval_run_model: None,
             bench_eval_running_model: None,
             bench_eval_running_preset: None,
             bench_eval_running_limit: None,
@@ -533,6 +550,13 @@ impl App {
             bench_eval_progress_title: "Ready".into(),
             bench_eval_progress: Vec::new(),
             bench_eval_event_rx: None,
+            eval_run_event_rx: None,
+            eval_run_stage: String::new(),
+            eval_run_progress: Vec::new(),
+            eval_run_running: false,
+            eval_run_tasks_run: 0,
+            eval_run_tasks_passed: 0,
+            eval_run_model: None,
             bench_eval_running_model: None,
             bench_eval_running_preset: None,
             bench_eval_running_limit: None,
@@ -713,6 +737,13 @@ impl App {
         self.bench_eval_progress_title = "Ready".into();
         self.bench_eval_progress.clear();
         self.bench_eval_event_rx = None;
+        self.eval_run_event_rx = None;
+        self.eval_run_stage.clear();
+        self.eval_run_progress.clear();
+        self.eval_run_running = false;
+        self.eval_run_tasks_run = 0;
+        self.eval_run_tasks_passed = 0;
+        self.eval_run_model = None;
         self.bench_eval_running_model = None;
         self.bench_eval_running_preset = None;
         self.bench_eval_running_limit = None;
@@ -1101,6 +1132,25 @@ pub async fn run_launcher(
             apply_bench_eval_event(&mut app, event);
         }
 
+        // Eval run event processing
+        loop {
+            let event = match app.eval_run_event_rx.as_mut() {
+                Some(rx) => match rx.try_recv() {
+                    Ok(event) => Some(event),
+                    Err(tokio::sync::mpsc::error::TryRecvError::Empty) => None,
+                    Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
+                        app.eval_run_event_rx = None;
+                        None
+                    }
+                },
+                None => None,
+            };
+            let Some(event) = event else {
+                break;
+            };
+            apply_eval_run_event(&mut app, event);
+        }
+
         // Execute a pending launch request queued by the confirm flow.
         if let Some(choice_idx) = app.pending_launch_choice.take() {
             match handle_pending_frontend_launch(&mut app, choice_idx).await {
@@ -1136,6 +1186,7 @@ pub async fn run_launcher(
                 Screen::ProfileFailure => launcher::render_profile_failure(f, &app),
                 Screen::BenchEval => bench_eval::render(f, &app),
                 Screen::BenchEvalRunning => bench_eval::render_running(f, &app),
+                Screen::EvalRunRunning => bench_eval::render_running(f, &app),
                 Screen::BenchEvalReport => bench_eval::render_report(f, &app),
                 Screen::BenchEvalResults => bench_eval::render_results(f, &app),
                 Screen::Settings => launcher::render_settings(f, &app),

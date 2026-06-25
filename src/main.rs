@@ -6,9 +6,22 @@ mod catalog;
 mod creative_writing;
 mod eval;
 mod eval_report;
+mod eval_types;
+mod warmup;
+mod artifacts;
+mod calibration;
+mod timeout;
+mod preflight;
+mod policy;
+mod suites;
+mod gate;
+mod scorers;
+mod runner;
 mod export_server;
 #[cfg(any(feature = "bench", feature = "analyze", feature = "profiling-ui"))]
 mod db;
+#[cfg(any(feature = "bench", feature = "analyze", feature = "profiling-ui"))]
+mod csv_export;
 #[cfg(any(feature = "profiling-ui", feature = "sweep"))]
 mod gguf;
 mod hardware;
@@ -22,6 +35,7 @@ mod processes;
 mod profiling;
 #[cfg(feature = "sweep")]
 mod sweep;
+mod hash;
 mod theme;
 #[cfg(test)]
 mod test_support;
@@ -209,6 +223,21 @@ enum Commands {
     Model {
         #[command(subcommand)]
         command: model::ModelCommand,
+    },
+    /// Run the native eval pipeline (warmup, calibration, gates, suites)
+    EvalRun {
+        /// Model file path (for hashing)
+        model_path: String,
+        #[arg(long, default_value = "llama.cpp", help = "Backend type")]
+        backend: String,
+        #[arg(long, default_value = "http://127.0.0.1:8989", help = "Base URL for OpenAI-compatible local API")]
+        base_url: String,
+        #[arg(long, default_value_t = 16384, help = "Configured context length")]
+        context_length: u32,
+        #[arg(long, help = "Skip warm-up phase")]
+        skip_warmup: bool,
+        #[arg(long, help = "Skip health gate (force run suites)")]
+        skip_health_gate: bool,
     },
     /// List saved launch profiles from preferences
     Profiles,
@@ -674,6 +703,37 @@ async fn main() -> Result<()> {
                 &plan, &model_path, &server_path, port, &output_path,
             )?;
             ozone_core::cli::success(&format!("Server script written to {}", written.display()));
+            Ok(())
+        }
+        Some(Commands::EvalRun {
+            model_path,
+            backend,
+            base_url,
+            context_length,
+            skip_warmup,
+            skip_health_gate,
+        }) => {
+            use crate::runner::EvalRunConfig;
+            let config = EvalRunConfig {
+                model_name: std::path::Path::new(&model_path)
+                    .file_stem()
+                    .and_then(|s| s.to_str())
+                    .unwrap_or("unknown")
+                    .to_string(),
+                model_path,
+                backend,
+                base_url,
+                context_length,
+                skip_warmup,
+                skip_health_gate,
+                ..Default::default()
+            };
+            let result = runner::run_eval(&config).await?;
+            println!("Status: {} ({}/{} passed in {:.1}s)",
+                result.status,
+                result.tasks_passed,
+                result.tasks_run,
+                result.total_duration_ms as f64 / 1000.0);
             Ok(())
         }
         Some(Commands::EvalList) => {
