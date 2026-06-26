@@ -1,11 +1,14 @@
+use crate::optional_string;
 /// MCP tool: mock user tool.
 use crate::OzoneMcpServer;
 use crate::ToolReply;
-use serde_json::Value;
 use anyhow::bail;
-use crate::optional_string;
+use serde_json::Value;
 
-pub fn mock_user_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
+pub fn mock_user_tool(
+    server: &mut OzoneMcpServer,
+    args: &serde_json::Value,
+) -> anyhow::Result<ToolReply> {
     let requested_journey = optional_string(args, "journey");
     let requested_target = optional_string(args, "target");
     let prepared_sandbox = server.prepare_mock_user_sandbox(

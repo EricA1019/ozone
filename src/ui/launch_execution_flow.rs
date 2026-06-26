@@ -1,9 +1,6 @@
 use std::time::Instant;
 
-use super::{
-    backend_args::build_llama_args,
-    App, Screen,
-};
+use super::{backend_args::build_llama_args, App, Screen};
 
 pub(super) enum PendingFrontendLaunchOutcome {
     Continue,
@@ -19,7 +16,6 @@ pub(super) async fn handle_pending_frontend_launch(
         app.screen = Screen::Launching;
         app.launch_start = Some(Instant::now());
 
-        let home = std::env::var("HOME").unwrap_or_default();
         let server_path = match crate::processes::resolved_llamacpp_server_path() {
             Ok(path) => path,
             Err(error) => {
@@ -28,9 +24,7 @@ pub(super) async fn handle_pending_frontend_launch(
                 return PendingFrontendLaunchOutcome::SkipTick;
             }
         };
-        let model_path = std::path::PathBuf::from(&home)
-            .join("models")
-            .join(&plan.model_name);
+        let model_path = ozone_core::paths::models_dir().join(&plan.model_name);
         let llama_args = build_llama_args(&plan);
         match crate::processes::start_llamacpp(
             &server_path,
@@ -129,9 +123,6 @@ async fn apply_successful_launch(
     let _ = crate::prefs::save_prefs(&updated_prefs).await;
     app.prefs = updated_prefs;
 
-    if !app.prefs.no_browser {
-        crate::processes::open_browser_app("http://localhost:8000");
-    }
     app.screen = Screen::Monitor;
     false
 }

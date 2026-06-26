@@ -80,7 +80,9 @@ async fn activate_selected(app: &mut App) {
 
             #[cfg(not(feature = "profiling-ui"))]
             {
-                app.set_error("Profiling workflow requires full build with profiling-ui feature.".into());
+                app.set_error(
+                    "Profiling workflow requires full build with profiling-ui feature.".into(),
+                );
             }
         }
         BenchEvalAction::EvalGsm8k => start_eval_with_cli_name(app, "gsm8k").await,
@@ -152,7 +154,10 @@ async fn activate_selected(app: &mut App) {
                 let base_url = ozone_core::paths::llamacpp_base_url();
                 eprintln!("Creative writing eval starting for {model}…");
                 match crate::creative_writing::run_creative_writing_eval(
-                    &model, &prompts, &base_url, &artifacts_dir,
+                    &model,
+                    &prompts,
+                    &base_url,
+                    &artifacts_dir,
                 )
                 .await
                 {
@@ -202,7 +207,11 @@ async fn activate_selected(app: &mut App) {
                 let plan = crate::planner::plan_launch(record, &Default::default());
                 let output = model_dir.join(format!("serve-{model}.sh"));
                 match crate::export_server::generate_serve_script(
-                    &plan, &model_path, &server_path, 8989, &output,
+                    &plan,
+                    &model_path,
+                    &server_path,
+                    8989,
+                    &output,
                 ) {
                     Ok(path) => eprintln!("Server script written to {}", path.display()),
                     Err(e) => eprintln!("export server: failed to generate script: {e}"),
@@ -214,7 +223,9 @@ async fn activate_selected(app: &mut App) {
             app.bench_eval_results_viewing = false;
             app.bench_eval_results_selected = 0;
             if app.bench_eval_results_files.is_empty() {
-                app.set_error("No result files found. Run an eval, sweep, or creative-write first.".into());
+                app.set_error(
+                    "No result files found. Run an eval, sweep, or creative-write first.".into(),
+                );
             } else {
                 app.screen = Screen::BenchEvalResults;
             }
@@ -235,8 +246,14 @@ async fn activate_selected(app: &mut App) {
 pub(crate) fn resolve_bench_eval_model(app: &App) -> Option<String> {
     app.filtered_catalog_get(app.selected_model)
         .map(|record| record.model_name)
-        .or_else(|| app.current_plan.as_ref().map(|plan| plan.model_name.clone()))
-        .or_else(|| (!app.prefs.last_model_name.is_empty()).then(|| app.prefs.last_model_name.clone()))
+        .or_else(|| {
+            app.current_plan
+                .as_ref()
+                .map(|plan| plan.model_name.clone())
+        })
+        .or_else(|| {
+            (!app.prefs.last_model_name.is_empty()).then(|| app.prefs.last_model_name.clone())
+        })
 }
 
 /// Start an eval using a CLI task name string (works with the task registry).
@@ -253,9 +270,8 @@ pub(crate) async fn start_eval_with_cli_name(app: &mut App, cli_name: &str) {
 
     let limit = 1;
     let base_url = ozone_core::paths::llamacpp_base_url();
-    let command_preview = format!(
-        "oz eval {model_name} --preset {cli_name} --limit {limit} --base-url {base_url}"
-    );
+    let command_preview =
+        format!("oz eval {model_name} --preset {cli_name} --limit {limit} --base-url {base_url}");
     let (tx, rx) = unbounded_channel();
     let error_tx = tx.clone();
 
@@ -295,9 +311,12 @@ pub(crate) async fn start_eval_with_cli_name(app: &mut App, cli_name: &str) {
                 });
                 // Use minimal default args for the eval context
                 let args: Vec<String> = vec![
-                    "--host".into(), "127.0.0.1".into(),
-                    "--port".into(), "8989".into(),
-                    "--ctx-size".into(), "4096".into(),
+                    "--host".into(),
+                    "127.0.0.1".into(),
+                    "--port".into(),
+                    "8989".into(),
+                    "--ctx-size".into(),
+                    "4096".into(),
                     "--no-webui".into(),
                 ];
                 match crate::processes::start_llamacpp(sp, &mp.to_string_lossy(), &args).await {
@@ -306,10 +325,12 @@ pub(crate) async fn start_eval_with_cli_name(app: &mut App, cli_name: &str) {
                         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;
                     }
                     Err(e) => {
-                        let _ = error_tx.send(super::bench_eval_workflow::BenchEvalWorkflowEvent::Output {
-                            is_stderr: true,
-                            line: format!("Model launch warning: {e}"),
-                        });
+                        let _ = error_tx.send(
+                            super::bench_eval_workflow::BenchEvalWorkflowEvent::Output {
+                                is_stderr: true,
+                                line: format!("Model launch warning: {e}"),
+                            },
+                        );
                     }
                 }
             }
@@ -434,7 +455,7 @@ pub(super) fn handle_bench_eval_results_key(app: &mut App, key: KeyEvent) {
 #[cfg(test)]
 mod tests {
     use super::resolve_bench_eval_model;
-    use crate::catalog::{CatalogRecord, Recommendation, RecSource};
+    use crate::catalog::{CatalogRecord, RecSource, Recommendation};
     use crate::prefs::Preferences;
     use crate::ui::App;
     use std::path::PathBuf;
@@ -471,7 +492,10 @@ mod tests {
         let mut app = App::new(Preferences::default());
         app.catalog = vec![test_catalog_record("saved-model-1.gguf")];
 
-        assert_eq!(resolve_bench_eval_model(&app), Some("saved-model-1.gguf".into()));
+        assert_eq!(
+            resolve_bench_eval_model(&app),
+            Some("saved-model-1.gguf".into())
+        );
     }
 
     #[test]
@@ -480,6 +504,9 @@ mod tests {
         app.catalog = vec![test_catalog_record("saved-model-1.gguf")];
         app.prefs.last_model_name = "stale-last-model.gguf".into();
 
-        assert_eq!(resolve_bench_eval_model(&app), Some("saved-model-1.gguf".into()));
+        assert_eq!(
+            resolve_bench_eval_model(&app),
+            Some("saved-model-1.gguf".into())
+        );
     }
 }

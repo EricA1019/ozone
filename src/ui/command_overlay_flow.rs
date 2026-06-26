@@ -1,7 +1,7 @@
-use crossterm::event::{KeyEvent, KeyCode};
+use crossterm::event::{KeyCode, KeyEvent};
 use ratatui::style::{Color, Modifier, Style};
-use tui_textarea::TextArea;
 use std::time::Instant;
+use tui_textarea::TextArea;
 
 use super::{launcher, App, Screen};
 

@@ -8,7 +8,8 @@ const SIZE_HEURISTIC_LABEL: &str = "Size heuristic";
 
 const MIB_PER_GIB: f64 = 1024.0;
 const VRAM_HEADROOM_RATIO: f64 = 0.9;
-pub const CONFIGURE_CONTEXT_STEPS: [u32; 8] = [4096, 8192, 16384, 24576, 32768, 49152, 65536, 262144];
+pub const CONFIGURE_CONTEXT_STEPS: [u32; 8] =
+    [4096, 8192, 16384, 24576, 32768, 49152, 65536, 262144];
 
 pub use ozone_core::planner::{LaunchPlan, RecommendationMode};
 
@@ -259,15 +260,9 @@ pub fn apply_launch_override(
         .threads
         .or(recommended.threads)
         .or(recommended_threads);
-    let quant_k = override_state
-        .quant_k
-        .unwrap_or(recommended.quant_k);
-    let quant_v = override_state
-        .quant_v
-        .unwrap_or(recommended.quant_v);
-    let blas_threads = override_state
-        .blas_threads
-        .or(recommended.blas_threads);
+    let quant_k = override_state.quant_k.unwrap_or(recommended.quant_k);
+    let quant_v = override_state.quant_v.unwrap_or(recommended.quant_v);
+    let blas_threads = override_state.blas_threads.or(recommended.blas_threads);
     let cpu_layers = estimate_cpu_resident_layers(gpu_layers, recommended.total_layers);
     let estimated_vram_mb = estimate_vram_mb(
         context_size,
@@ -320,32 +315,37 @@ pub fn apply_launch_override(
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct SavedProfileSelection {
+    pub context_size: u32,
+    pub gpu_layers: i32,
+    pub quant_k: u8,
+    pub quant_v: u8,
+    pub threads: Option<u32>,
+}
+
 pub fn apply_saved_profile(
     recommended: &LaunchPlan,
     record: &CatalogRecord,
     hw: &HardwareProfile,
-    context_size: u32,
-    gpu_layers: i32,
-    quant_k: u8,
-    quant_v: u8,
-    threads: Option<u32>,
+    profile: SavedProfileSelection,
 ) -> LaunchPlan {
     let mut plan = apply_launch_override(
         recommended,
         record,
         hw,
         &ModelLaunchOverride {
-            context_size: Some(context_size),
-            gpu_layers: Some(gpu_layers),
-            threads,
+            context_size: Some(profile.context_size),
+            gpu_layers: Some(profile.gpu_layers),
+            threads: profile.threads,
             blas_threads: None,
             quant_k: None,
             quant_v: None,
         },
     );
-    if plan.quant_k != quant_k || plan.quant_v != quant_v {
-        plan.quant_k = quant_k.max(1);
-        plan.quant_v = quant_v.max(1);
+    if plan.quant_k != profile.quant_k || plan.quant_v != profile.quant_v {
+        plan.quant_k = profile.quant_k.max(1);
+        plan.quant_v = profile.quant_v.max(1);
         plan.estimated_vram_mb = estimate_vram_mb(
             plan.context_size,
             plan.gpu_layers,
@@ -500,7 +500,14 @@ fn plan_launch_with_layers(
         profiling_mode || matches!(rec.source, crate::catalog::RecSource::Heuristic);
 
     if should_adapt_to_hardware {
-        let ram_need = estimate_ram_mb(context_size, gpu_layers, size_gb, quant_k, quant_v, total_layers);
+        let ram_need = estimate_ram_mb(
+            context_size,
+            gpu_layers,
+            size_gb,
+            quant_k,
+            quant_v,
+            total_layers,
+        );
         if hw.ram_free_mb > 0 && hw.ram_free_mb < (ram_need as f64 * 1.15) as u64 {
             quant_k = quant_k.max(2);
             quant_v = quant_v.max(2);
@@ -590,10 +597,23 @@ fn plan_launch_with_layers(
         .map(|b| b.vram_mb)
         .filter(|&v| v > 0)
         .unwrap_or_else(|| {
-            estimate_vram_mb(context_size, gpu_layers, size_gb, quant_k, quant_v, total_layers)
+            estimate_vram_mb(
+                context_size,
+                gpu_layers,
+                size_gb,
+                quant_k,
+                quant_v,
+                total_layers,
+            )
         });
-    let estimated_ram_mb =
-        estimate_ram_mb(context_size, gpu_layers, size_gb, quant_k, quant_v, total_layers);
+    let estimated_ram_mb = estimate_ram_mb(
+        context_size,
+        gpu_layers,
+        size_gb,
+        quant_k,
+        quant_v,
+        total_layers,
+    );
 
     let (threads, blas_threads) = recommend_threads(hw, &mode);
 
@@ -761,6 +781,7 @@ mod configure_tests {
     use super::{
         apply_launch_override, apply_saved_profile, build_configure_warnings, classify_mode,
         step_context_size, ConfigureWarningSeverity, LaunchPlan, RecommendationMode,
+        SavedProfileSelection,
     };
     use crate::{
         catalog::{CatalogRecord, RecSource, Recommendation},
@@ -880,7 +901,18 @@ mod configure_tests {
     fn saved_profile_recomputes_quant_and_memory_estimates() {
         let record = sample_record();
         let hw = sample_hw();
-        let plan = apply_saved_profile(&sample_plan(), &record, &hw, 8192, 12, 2, 2, Some(6));
+        let plan = apply_saved_profile(
+            &sample_plan(),
+            &record,
+            &hw,
+            SavedProfileSelection {
+                context_size: 8192,
+                gpu_layers: 12,
+                quant_k: 2,
+                quant_v: 2,
+                threads: Some(6),
+            },
+        );
 
         assert_eq!(plan.context_size, 8192);
         assert_eq!(plan.gpu_layers, 12);

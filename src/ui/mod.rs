@@ -17,19 +17,15 @@ use crate::profiling::{
     WorkflowEvent,
 };
 use anyhow::Result;
+#[cfg(test)]
+use crossterm::event::KeyEvent;
 use crossterm::{
     cursor::Show,
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
     terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
 };
-#[cfg(test)]
-use crossterm::event::KeyEvent;
-use ratatui::{
-    backend::CrosstermBackend,
-    widgets::Clear,
-    Terminal,
-};
+use ratatui::{backend::CrosstermBackend, widgets::Clear, Terminal};
 use serde::{de, Deserialize, Deserializer, Serialize};
 #[cfg(feature = "profiling-ui")]
 use tokio::sync::mpsc::{error::TryRecvError, UnboundedReceiver};
@@ -39,24 +35,24 @@ use tui_textarea::TextArea;
 
 mod backend_args;
 mod bench_eval;
-mod bench_eval_workflow;
 mod bench_eval_flow;
+mod bench_eval_workflow;
 mod bench_launcher;
-mod eval_launcher;
 mod catalog_flow;
 mod command_overlay_flow;
-mod confirm_flow;
 mod configure_hub_flow;
 mod configure_plan_flow;
 mod configure_profile_flow;
+mod confirm_flow;
+mod eval_launcher;
+pub mod eval_run_workflow;
 mod exit_confirm_flow;
-pub mod launcher;
 mod launch_execution_flow;
+pub mod launcher;
 mod launcher_screen_flow;
 mod model_picker_flow;
-mod monitor_flow;
 pub mod monitor;
-pub mod eval_run_workflow;
+mod monitor_flow;
 #[cfg(feature = "profiling-ui")]
 mod profiling_entry_flow;
 #[cfg(feature = "profiling-ui")]
@@ -69,28 +65,28 @@ pub mod tier_install;
 pub mod tier_picker;
 mod tier_picker_flow;
 
-use self::catalog_flow::apply_catalog_report;
-use self::bench_eval_workflow::{apply_bench_eval_event, BenchEvalWorkflowEvent};
-use self::eval_run_workflow::{apply_eval_run_event, EvalRunEvent};
-use self::eval_launcher::{handle_key as handle_eval_launcher_key, EvalLauncherOutcome};
-use self::bench_launcher::{handle_key as handle_bench_launcher_key, BenchLauncherOutcome};
 use self::bench_eval_flow::{handle_bench_eval_key, BenchEvalOutcome};
+use self::bench_eval_workflow::{apply_bench_eval_event, BenchEvalWorkflowEvent};
+use self::bench_launcher::{handle_key as handle_bench_launcher_key, BenchLauncherOutcome};
+use self::catalog_flow::apply_catalog_report;
 #[cfg(test)]
 use self::catalog_flow::{apply_catalog_refresh, selected_catalog_name};
-use self::command_overlay_flow::{
-    new_command_overlay, open_command_overlay, overlay_supported, handle_command_overlay_key,
-};
 #[cfg(test)]
 use self::command_overlay_flow::normalize_command_overlay;
-use self::confirm_flow::handle_confirm_key;
+use self::command_overlay_flow::{
+    handle_command_overlay_key, new_command_overlay, open_command_overlay, overlay_supported,
+};
 use self::configure_hub_flow::handle_configure_hub_key;
 #[cfg(test)]
 use self::configure_plan_flow::{adjust_configure_plan, reset_configure_plan};
 #[cfg(test)]
 use self::configure_profile_flow::build_effective_plan;
+use self::confirm_flow::handle_confirm_key;
+use self::eval_launcher::{handle_key as handle_eval_launcher_key, EvalLauncherOutcome};
+use self::eval_run_workflow::{apply_eval_run_event, EvalRunEvent};
 use self::exit_confirm_flow::{handle_exit_confirm_key, ExitConfirmOutcome};
 use self::launch_execution_flow::{
-    handle_pending_frontend_launch, PendingFrontendLaunchOutcome, run_launcher_action,
+    handle_pending_frontend_launch, run_launcher_action, PendingFrontendLaunchOutcome,
 };
 use self::launcher_screen_flow::handle_launcher_screen_key;
 use self::model_picker_flow::handle_model_picker_key;
@@ -99,8 +95,8 @@ use self::monitor_flow::{handle_monitor_key, MonitorOutcome};
 use self::profiling_entry_flow::{handle_profile_advisory_key, handle_profile_confirm_key};
 #[cfg(feature = "profiling-ui")]
 use self::profiling_result_flow::{
-    handle_profile_failure_key, handle_profile_running_key, handle_profile_success_key,
-    apply_workflow_event, ProfilingResultOutcome,
+    apply_workflow_event, handle_profile_failure_key, handle_profile_running_key,
+    handle_profile_success_key, ProfilingResultOutcome,
 };
 #[cfg(test)]
 use self::settings_flow::back_from_confirm;
@@ -238,7 +234,12 @@ fn first_csv_summary(path: &std::path::Path) -> Option<String> {
     let line = text.lines().nth(1)?;
     let parts: Vec<&str> = line.split(',').take(4).collect();
     if parts.len() >= 3 {
-        Some(format!("{} ctx={} → {} tok/s", parts[0], parts.get(1).unwrap_or(&"?"), parts.get(2).unwrap_or(&"?")))
+        Some(format!(
+            "{} ctx={} → {} tok/s",
+            parts[0],
+            parts.get(1).unwrap_or(&"?"),
+            parts.get(2).unwrap_or(&"?")
+        ))
     } else {
         Some(line.chars().take(80).collect())
     }
@@ -252,8 +253,12 @@ fn scan_result_dir(dir: &std::path::Path, out: &mut Vec<ResultFile>) {
             let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
             if path.is_dir() {
                 scan_result_dir(&path, out);
-            } else if fname.ends_with(".csv") && (fname.contains("eval") || fname.contains("sweep") || fname.contains("creative")) {
-                let kind = if fname.contains("creative") || path.to_string_lossy().contains("creative_writing") {
+            } else if fname.ends_with(".csv")
+                && (fname.contains("eval") || fname.contains("sweep") || fname.contains("creative"))
+            {
+                let kind = if fname.contains("creative")
+                    || path.to_string_lossy().contains("creative_writing")
+                {
                     ResultFileKind::CreativeWriting
                 } else if fname.contains("sweep") {
                     ResultFileKind::Sweep
@@ -261,7 +266,8 @@ fn scan_result_dir(dir: &std::path::Path, out: &mut Vec<ResultFile>) {
                     ResultFileKind::Eval
                 };
                 let summary = first_csv_summary(&path).unwrap_or_default();
-                let model = path.parent()
+                let model = path
+                    .parent()
                     .and_then(|p| p.file_name())
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown")
@@ -275,9 +281,14 @@ fn scan_result_dir(dir: &std::path::Path, out: &mut Vec<ResultFile>) {
             } else if fname.ends_with(".md") && fname.contains("creative") {
                 let summary = std::fs::read_to_string(&path)
                     .ok()
-                    .and_then(|t| t.lines().next().map(|l| l.trim_start_matches("# ").to_string()))
+                    .and_then(|t| {
+                        t.lines()
+                            .next()
+                            .map(|l| l.trim_start_matches("# ").to_string())
+                    })
                     .unwrap_or_default();
-                let model = path.parent()
+                let model = path
+                    .parent()
                     .and_then(|p| p.file_name())
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown")
@@ -296,7 +307,9 @@ fn scan_result_dir(dir: &std::path::Path, out: &mut Vec<ResultFile>) {
 /// Format a result file's contents for display in the viewer.
 fn format_result_text(path: &std::path::Path, text: &str, kind: &ResultFileKind) -> String {
     match kind {
-        ResultFileKind::Report | ResultFileKind::CreativeWriting if path.extension().is_some_and(|e| e == "md") => {
+        ResultFileKind::Report | ResultFileKind::CreativeWriting
+            if path.extension().is_some_and(|e| e == "md") =>
+        {
             text.to_string()
         }
         _ => {
@@ -318,7 +331,9 @@ fn format_result_text(path: &std::path::Path, text: &str, kind: &ResultFileKind)
                 }
             }
             // Header
-            let header_line: String = headers.iter().enumerate()
+            let header_line: String = headers
+                .iter()
+                .enumerate()
                 .map(|(i, h)| format!("{:width$}", h, width = widths[i] + 2))
                 .collect();
             out.push_str(&header_line);
@@ -328,10 +343,16 @@ fn format_result_text(path: &std::path::Path, text: &str, kind: &ResultFileKind)
             // Data rows (limit to 50)
             for line in lines[1..].iter().take(50) {
                 let cols: Vec<&str> = line.split(',').collect();
-                let row: String = cols.iter().enumerate()
+                let row: String = cols
+                    .iter()
+                    .enumerate()
                     .map(|(i, c)| {
                         let w = widths.get(i).copied().unwrap_or(10) + 2;
-                        let s = if c.len() > 20 { format!("{}…", &c[..19]) } else { c.to_string() };
+                        let s = if c.len() > 20 {
+                            format!("{}…", &c[..19])
+                        } else {
+                            c.to_string()
+                        };
                         format!("{:width$}", s, width = w)
                     })
                     .collect();
@@ -746,23 +767,6 @@ impl App {
         }
     }
 
-    fn reset_bench_eval_flow(&mut self) {
-        self.bench_eval_progress_title = "Ready".into();
-        self.bench_eval_progress.clear();
-        self.bench_eval_event_rx = None;
-        self.eval_run_event_rx = None;
-        self.eval_run_stage.clear();
-        self.eval_run_progress.clear();
-        self.eval_run_running = false;
-        self.eval_run_tasks_run = 0;
-        self.eval_run_tasks_passed = 0;
-        self.eval_run_model = None;
-        self.bench_eval_running_model = None;
-        self.bench_eval_running_preset = None;
-        self.bench_eval_running_limit = None;
-        self.bench_eval_running_command = None;
-    }
-
     fn start_bench_eval_workflow(
         &mut self,
         rx: tokio::sync::mpsc::UnboundedReceiver<BenchEvalWorkflowEvent>,
@@ -892,10 +896,6 @@ enum LauncherActionOutcome {
     Continue,
     Exit,
 }
-
-
-
-
 
 fn selected_record(app: &App) -> Option<CatalogRecord> {
     app.current_plan.as_ref().and_then(|plan| {
@@ -1028,10 +1028,8 @@ pub async fn run_launcher(
     let catalog_model_dir = model_dir.clone();
     let catalog_preset_file = preset_file.clone();
     let catalog_bench_file = bench_file.clone();
-    let (cat_tx, mut cat_rx) = tokio::sync::oneshot::channel::<(
-        u64,
-        Result<crate::catalog::CatalogLoadReport>,
-    )>();
+    let (cat_tx, mut cat_rx) =
+        tokio::sync::oneshot::channel::<(u64, Result<crate::catalog::CatalogLoadReport>)>();
     tokio::spawn(async move {
         let signature = crate::catalog::catalog_signature(
             &catalog_model_dir,
@@ -1230,24 +1228,20 @@ pub async fn run_launcher(
                 }
                 match app.screen {
                     Screen::Splash => handle_splash_key(&mut app),
-                    Screen::TierPicker => {
-                        match handle_tier_picker_key(&mut app, key) {
-                            TierPickerOutcome::Continue => {}
-                            TierPickerOutcome::ExitLauncher => break Ok(()),
-                        }
-                    }
+                    Screen::TierPicker => match handle_tier_picker_key(&mut app, key) {
+                        TierPickerOutcome::Continue => {}
+                        TierPickerOutcome::ExitLauncher => break Ok(()),
+                    },
                     Screen::Launcher => {
                         match handle_launcher_screen_key(&mut app, key, &mut last_refresh).await {
                             LauncherActionOutcome::Continue => {}
                             LauncherActionOutcome::Exit => break Ok(()),
                         }
                     }
-                    Screen::ExitConfirm => {
-                        match handle_exit_confirm_key(&mut app, key) {
-                            ExitConfirmOutcome::Continue => {}
-                            ExitConfirmOutcome::ExitLauncher => break Ok(()),
-                        }
-                    }
+                    Screen::ExitConfirm => match handle_exit_confirm_key(&mut app, key) {
+                        ExitConfirmOutcome::Continue => {}
+                        ExitConfirmOutcome::ExitLauncher => break Ok(()),
+                    },
                     Screen::Settings => {
                         handle_settings_key(&mut app, key).await;
                     }
@@ -1291,10 +1285,14 @@ pub async fn run_launcher(
                         }
                     }
                     Screen::EvalLauncher => {
-                        if let EvalLauncherOutcome::ExitLauncher = handle_eval_launcher_key(&mut app, key).await {}
+                        if let EvalLauncherOutcome::ExitLauncher =
+                            handle_eval_launcher_key(&mut app, key).await
+                        {}
                     }
                     Screen::BenchLauncher => {
-                        if let BenchLauncherOutcome::ExitLauncher = handle_bench_launcher_key(&mut app, key).await {}
+                        if let BenchLauncherOutcome::ExitLauncher =
+                            handle_bench_launcher_key(&mut app, key).await
+                        {}
                     }
                     Screen::BenchEval => match handle_bench_eval_key(&mut app, key).await {
                         BenchEvalOutcome::Continue => {}
@@ -1404,8 +1402,6 @@ pub async fn run_launcher(
     result
 }
 
-
-
 pub async fn run_monitor() -> Result<()> {
     let (prefs, startup_error) = match crate::prefs::load_prefs().await {
         Ok(prefs) => (prefs, None),
@@ -1508,7 +1504,7 @@ mod tests {
         sync_settings_from_prefs(&mut app);
 
         assert_eq!(app.settings_section, 0);
-    assert_eq!(app.settings_backend_index, 0);
+        assert_eq!(app.settings_backend_index, 0);
     }
 
     #[test]
@@ -1529,7 +1525,9 @@ mod tests {
     fn terminal_restore_guard_restore_without_state_is_a_noop() {
         let mut guard = TerminalRestoreGuard::new();
 
-        guard.restore().expect("restore without state should succeed");
+        guard
+            .restore()
+            .expect("restore without state should succeed");
 
         assert!(!guard.raw_mode_enabled);
         assert!(!guard.alt_screen_entered);
@@ -1544,7 +1542,9 @@ mod tests {
             gpu_layers: 24,
             total_layers: 32,
             cpu_layers: 8,
-            quant_k: 1, quant_v: 1, n_parallel: 1,
+            quant_k: 1,
+            quant_v: 1,
+            n_parallel: 1,
             threads: None,
             blas_threads: None,
             mode: crate::planner::RecommendationMode::MixedMemory,
@@ -1608,7 +1608,8 @@ mod tests {
             recommendation: crate::catalog::Recommendation {
                 context_size: 4096,
                 gpu_layers: -1,
-                quant_k: 1, quant_v: 1,
+                quant_k: 1,
+                quant_v: 1,
                 note: "test".into(),
                 source: crate::catalog::RecSource::Heuristic,
             },
@@ -1655,7 +1656,8 @@ mod tests {
                 profile_name: "custom-1".into(),
                 context_size: 16384,
                 gpu_layers: 12,
-                quant_k: 1, quant_v: 1,
+                quant_k: 1,
+                quant_v: 1,
                 threads: Some(6),
             },
         );
@@ -1723,7 +1725,9 @@ mod tests {
             gpu_layers: TEST_RECOMMENDED_GPU_LAYERS,
             total_layers: TEST_TOTAL_LAYERS,
             cpu_layers: TEST_RECOMMENDED_CPU_LAYERS,
-            quant_k: TEST_QUANT_K, quant_v: TEST_QUANT_V, n_parallel: 1,
+            quant_k: TEST_QUANT_K,
+            quant_v: TEST_QUANT_V,
+            n_parallel: 1,
             threads: None,
             blas_threads: None,
             mode: crate::planner::RecommendationMode::MixedMemory,
@@ -1779,14 +1783,20 @@ mod tests {
         assert_eq!(reset_plan.gpu_layers, TEST_RECOMMENDED_GPU_LAYERS);
     }
 
-    fn test_launch_plan_for_model(model_name: &str, context_size: u32, gpu_layers: i32) -> LaunchPlan {
+    fn test_launch_plan_for_model(
+        model_name: &str,
+        context_size: u32,
+        gpu_layers: i32,
+    ) -> LaunchPlan {
         LaunchPlan {
             model_name: model_name.into(),
             context_size,
             gpu_layers,
             total_layers: TEST_TOTAL_LAYERS,
             cpu_layers: TEST_RECOMMENDED_CPU_LAYERS,
-            quant_k: TEST_QUANT_K, quant_v: TEST_QUANT_V, n_parallel: 1,
+            quant_k: TEST_QUANT_K,
+            quant_v: TEST_QUANT_V,
+            n_parallel: 1,
             threads: None,
             blas_threads: None,
             mode: crate::planner::RecommendationMode::MixedMemory,
@@ -1804,7 +1814,11 @@ mod tests {
     fn configure_hub_escape_clears_state_and_returns_to_model_picker() {
         let mut app = App::new(Preferences::default());
         app.screen = Screen::ConfigureHub;
-        app.current_plan = Some(test_launch_plan_for_model(TEST_MODEL_NAME, TEST_CONTEXT_BASE, 12));
+        app.current_plan = Some(test_launch_plan_for_model(
+            TEST_MODEL_NAME,
+            TEST_CONTEXT_BASE,
+            12,
+        ));
         app.configure_recommended_plan = Some(test_launch_plan_for_model(
             TEST_MODEL_NAME,
             TEST_CONTEXT_BASE,
@@ -1814,7 +1828,8 @@ mod tests {
             profile_name: "custom-1".into(),
             context_size: TEST_CONTEXT_BASE,
             gpu_layers: TEST_RECOMMENDED_GPU_LAYERS,
-            quant_k: TEST_QUANT_K, quant_v: TEST_QUANT_V,
+            quant_k: TEST_QUANT_K,
+            quant_v: TEST_QUANT_V,
             threads: None,
         }];
         app.configure_profile_index = 1;
@@ -1992,7 +2007,7 @@ mod tests {
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
         runtime.block_on(handle_settings_key(&mut app, key));
 
-    assert_eq!(app.prefs.preferred_backend, Some(BackendMode::LlamaCpp));
+        assert_eq!(app.prefs.preferred_backend, Some(BackendMode::LlamaCpp));
         assert_eq!(app.screen, Screen::Launcher);
     }
 
@@ -2049,7 +2064,8 @@ mod tests {
 
         let key = KeyEvent::new(KeyCode::Char('q'), crossterm::event::KeyModifiers::NONE);
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
-        let outcome = runtime.block_on(handle_launcher_screen_key(&mut app, key, &mut last_refresh));
+        let outcome =
+            runtime.block_on(handle_launcher_screen_key(&mut app, key, &mut last_refresh));
 
         assert!(matches!(outcome, LauncherActionOutcome::Exit));
     }
@@ -2062,7 +2078,8 @@ mod tests {
 
         let key = KeyEvent::new(KeyCode::Esc, crossterm::event::KeyModifiers::NONE);
         let runtime = tokio::runtime::Runtime::new().expect("runtime");
-        let outcome = runtime.block_on(handle_launcher_screen_key(&mut app, key, &mut last_refresh));
+        let outcome =
+            runtime.block_on(handle_launcher_screen_key(&mut app, key, &mut last_refresh));
 
         assert!(matches!(outcome, LauncherActionOutcome::Continue));
         assert_eq!(app.screen, Screen::ExitConfirm);
@@ -2217,7 +2234,10 @@ mod tests {
         assert_eq!(app.profiling_progress_current, 0);
         assert_eq!(app.profiling_progress_total, 0);
         assert_eq!(app.profiling_choice_index, 0);
-        assert!(app.profiling_cancel.as_ref().is_some_and(|token| !token.is_cancelled()));
+        assert!(app
+            .profiling_cancel
+            .as_ref()
+            .is_some_and(|token| !token.is_cancelled()));
         assert!(app
             .profiling_progress
             .iter()
@@ -2287,7 +2307,9 @@ mod tests {
             gpu_layers: -1,
             total_layers: 32,
             cpu_layers: 0,
-            quant_k: 1, quant_v: 1, n_parallel: 1,
+            quant_k: 1,
+            quant_v: 1,
+            n_parallel: 1,
             threads: None,
             blas_threads: None,
             mode: crate::planner::RecommendationMode::VramFirst,

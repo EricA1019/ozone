@@ -1,13 +1,16 @@
+use crate::optional_string;
 /// MCP tool: catalog list.
 use crate::OzoneMcpServer;
 use crate::ToolReply;
 use anyhow::Context;
-use serde_json::json;
 use ozone_core::paths;
-use crate::optional_string;
+use serde_json::json;
 use std::fs;
 
-pub fn catalog_list_tool(server: &OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
+pub fn catalog_list_tool(
+    server: &OzoneMcpServer,
+    args: &serde_json::Value,
+) -> anyhow::Result<ToolReply> {
     let sandbox_id = optional_string(args, "sandboxId");
     let (models_dir, prefs_path) = server.with_sandbox_env(sandbox_id.as_deref(), || {
         Ok((paths::models_dir(), paths::preferences_path()))
@@ -46,4 +49,3 @@ pub fn catalog_list_tool(server: &OzoneMcpServer, args: &serde_json::Value) -> a
         }),
     ))
 }
-

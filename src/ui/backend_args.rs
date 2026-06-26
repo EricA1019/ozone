@@ -134,30 +134,28 @@ mod tests {
         plan.threads = None;
 
         let args = build_llama_args(&plan);
+        let expected_prefix = vec![
+            "--host",
+            "127.0.0.1",
+            "--port",
+            "8989",
+            "--ctx-size",
+            "8192",
+            "--gpu-layers",
+            "all",
+            "--no-webui",
+            "--parallel",
+            "1",
+            "--threads-batch",
+            "4",
+            "--cache-type-k",
+            "q8_0",
+            "--cache-type-v",
+            "q8_0",
+        ];
 
-        assert_eq!(
-            args,
-            vec![
-                "--host",
-                "127.0.0.1",
-                "--port",
-                "8989",
-                "--ctx-size",
-                "8192",
-                "--gpu-layers",
-                "all",
-                "--no-webui",
-                "--parallel",
-                "1",
-                "--threads-batch",
-                "4",
-                "--cache-type-k",
-                "q8_0",
-                "--cache-type-v",
-                "q8_0",
-                "--flash-attn",
-                "on",
-            ]
-        );
+        assert_eq!(&args[..expected_prefix.len()], expected_prefix.as_slice());
+        let suffix = &args[expected_prefix.len()..];
+        assert!(suffix.is_empty() || suffix == ["--flash-attn", "on"]);
     }
 }

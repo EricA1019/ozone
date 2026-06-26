@@ -39,33 +39,33 @@ pub(super) enum EvalLauncherOutcome {
     ExitLauncher,
 }
 
-pub(super) fn entries(app: &App) -> Vec<EvalLauncherEntry> {
-    let mut entries: Vec<EvalLauncherEntry> = Vec::new();
-
-    entries.push(EvalLauncherEntry {
-        action: EvalLauncherAction::QuickSweep,
-        label: "Quick Eval Sweep".into(),
-        description: "Health checks + canary gates (~17 tasks)".into(),
-        command: "eval-quick",
-    });
-    entries.push(EvalLauncherEntry {
-        action: EvalLauncherAction::StandardSweep,
-        label: "Standard Eval Sweep".into(),
-        description: "Quick + code micro (~21 tasks)".into(),
-        command: "eval-standard",
-    });
-    entries.push(EvalLauncherEntry {
-        action: EvalLauncherAction::FullSweep,
-        label: "Full Eval Sweep".into(),
-        description: "All 5 suites: health, canary, code, format, math (~36 tasks)".into(),
-        command: "eval-full",
-    });
-    entries.push(EvalLauncherEntry {
-        action: EvalLauncherAction::CreativeWriting,
-        label: "Creative Writing Probe".into(),
-        description: "Diversity & coherence check".into(),
-        command: "eval-creative",
-    });
+pub(super) fn entries(_app: &App) -> Vec<EvalLauncherEntry> {
+    let mut entries: Vec<EvalLauncherEntry> = vec![
+        EvalLauncherEntry {
+            action: EvalLauncherAction::QuickSweep,
+            label: "Quick Eval Sweep".into(),
+            description: "Health checks + canary gates (~17 tasks)".into(),
+            command: "eval-quick",
+        },
+        EvalLauncherEntry {
+            action: EvalLauncherAction::StandardSweep,
+            label: "Standard Eval Sweep".into(),
+            description: "Quick + code micro (~21 tasks)".into(),
+            command: "eval-standard",
+        },
+        EvalLauncherEntry {
+            action: EvalLauncherAction::FullSweep,
+            label: "Full Eval Sweep".into(),
+            description: "All 5 suites: health, canary, code, format, math (~36 tasks)".into(),
+            command: "eval-full",
+        },
+        EvalLauncherEntry {
+            action: EvalLauncherAction::CreativeWriting,
+            label: "Creative Writing Probe".into(),
+            description: "Diversity & coherence check".into(),
+            command: "eval-creative",
+        },
+    ];
 
     for (i, task) in crate::eval::EVAL_TASKS.iter().enumerate() {
         entries.push(EvalLauncherEntry {
@@ -102,11 +102,19 @@ pub(super) fn render(f: &mut Frame, app: &App) {
     let area = f.area();
     let center = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Fill(1), Constraint::Min(24), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Min(24),
+            Constraint::Fill(1),
+        ])
         .split(area)[1];
     let center_h = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Fill(1), Constraint::Max(80), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Max(80),
+            Constraint::Fill(1),
+        ])
         .split(center)[1];
 
     let chunks = Layout::default()
@@ -122,7 +130,11 @@ pub(super) fn render(f: &mut Frame, app: &App) {
         Span::styled(" Eval Launcher ", style_bold_cyan()),
         Span::styled("  ·  pick a sweep level or individual eval", style_muted()),
     ]))
-    .block(Block::default().borders(Borders::ALL).border_style(style_cyan()));
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(style_cyan()),
+    );
     f.render_widget(header, chunks[0]);
 
     let eval_entries = entries(app);
@@ -132,24 +144,29 @@ pub(super) fn render(f: &mut Frame, app: &App) {
         .map(|(idx, entry)| {
             let is_sel = idx == app.eval_launcher_selected;
             let marker = if is_sel { "▶ " } else { "  " };
-            let marker_span = Span::styled(marker, if is_sel { style_lime() } else { style_muted() });
-            let label_style = if is_sel { style_bold_lime() } else { style_bold_cyan() };
+            let marker_span =
+                Span::styled(marker, if is_sel { style_lime() } else { style_muted() });
+            let label_style = if is_sel {
+                style_bold_lime()
+            } else {
+                style_bold_cyan()
+            };
             let desc_style = if is_sel { style_lime() } else { style_gray() };
             ListItem::new(Line::from(vec![
                 marker_span,
                 Span::styled(format!("{} ", entry.label), label_style),
                 Span::styled(entry.description.as_str(), desc_style),
+                Span::styled(format!("  /{}", entry.command), style_muted()),
             ]))
         })
         .collect();
 
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .title(Span::styled(" Sweeps & Evals ", style_bold_cyan()))
-                .borders(Borders::ALL)
-                .border_style(style_gray()),
-        );
+    let list = List::new(items).block(
+        Block::default()
+            .title(Span::styled(" Sweeps & Evals ", style_bold_cyan()))
+            .borders(Borders::ALL)
+            .border_style(style_gray()),
+    );
 
     f.render_stateful_widget(
         list,
@@ -169,7 +186,10 @@ pub(super) fn render(f: &mut Frame, app: &App) {
     f.render_widget(hints, chunks[2]);
 }
 
-pub(super) async fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) -> EvalLauncherOutcome {
+pub(super) async fn handle_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+) -> EvalLauncherOutcome {
     let eval_entries = entries(app);
 
     match key.code {
@@ -178,7 +198,9 @@ pub(super) async fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) -
             return EvalLauncherOutcome::ExitLauncher;
         }
         crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
-            if eval_entries.is_empty() { return EvalLauncherOutcome::Continue; }
+            if eval_entries.is_empty() {
+                return EvalLauncherOutcome::Continue;
+            }
             app.eval_launcher_selected = if app.eval_launcher_selected == 0 {
                 eval_entries.len() - 1
             } else {
@@ -186,7 +208,9 @@ pub(super) async fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) -
             };
         }
         crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
-            if eval_entries.is_empty() { return EvalLauncherOutcome::Continue; }
+            if eval_entries.is_empty() {
+                return EvalLauncherOutcome::Continue;
+            }
             app.eval_launcher_selected = if app.eval_launcher_selected + 1 >= eval_entries.len() {
                 0
             } else {
@@ -227,17 +251,29 @@ async fn dispatch_action(app: &mut App, action: EvalLauncherAction) {
             tokio::spawn(async move {
                 let root = match crate::eval::resolve_project_root() {
                     Ok(r) => r,
-                    Err(e) => { eprintln!("creative writing: {e}"); return; }
+                    Err(e) => {
+                        eprintln!("creative writing: {e}");
+                        return;
+                    }
                 };
                 let prompts = match crate::creative_writing::load_prompt_bank(&root) {
                     Ok(p) => p,
-                    Err(e) => { eprintln!("creative writing: {e}"); return; }
+                    Err(e) => {
+                        eprintln!("creative writing: {e}");
+                        return;
+                    }
                 };
-                let artifacts_dir = root.join("contrib/evals/artifacts").join("creative_writing");
+                let artifacts_dir = root
+                    .join("contrib/evals/artifacts")
+                    .join("creative_writing");
                 let base_url = ozone_core::paths::llamacpp_base_url();
                 let _ = crate::creative_writing::run_creative_writing_eval(
-                    &model, &prompts, &base_url, &artifacts_dir,
-                ).await;
+                    &model,
+                    &prompts,
+                    &base_url,
+                    &artifacts_dir,
+                )
+                .await;
             });
         }
         EvalLauncherAction::RegisteredEval { index } => {

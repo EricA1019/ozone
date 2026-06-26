@@ -19,16 +19,23 @@ fn select_catalog_index(app: &App, preferred_name: Option<&str>) -> usize {
 
 pub(super) fn apply_catalog_refresh(app: &mut App, catalog: Vec<CatalogRecord>) {
     let preferred_name = selected_catalog_name(app)
-        .or_else(|| app.current_plan.as_ref().map(|plan| plan.model_name.clone()))
-        .or_else(|| (!app.prefs.last_model_name.is_empty()).then(|| app.prefs.last_model_name.clone()));
+        .or_else(|| {
+            app.current_plan
+                .as_ref()
+                .map(|plan| plan.model_name.clone())
+        })
+        .or_else(|| {
+            (!app.prefs.last_model_name.is_empty()).then(|| app.prefs.last_model_name.clone())
+        });
 
     app.catalog = catalog;
     app.selected_model = select_catalog_index(app, preferred_name.as_deref());
 
-    let plan_missing = app
-        .current_plan
-        .as_ref()
-        .is_some_and(|plan| !app.catalog.iter().any(|record| record.model_name == plan.model_name));
+    let plan_missing = app.current_plan.as_ref().is_some_and(|plan| {
+        !app.catalog
+            .iter()
+            .any(|record| record.model_name == plan.model_name)
+    });
     if plan_missing {
         app.current_plan = None;
         app.configure_recommended_plan = None;
@@ -39,7 +46,9 @@ pub(super) fn apply_catalog_refresh(app: &mut App, catalog: Vec<CatalogRecord>) 
     }
 }
 
-fn summarize_catalog_issues(issues: &[CatalogLoadIssue]) -> Option<(CatalogLoadIssueLevel, String)> {
+fn summarize_catalog_issues(
+    issues: &[CatalogLoadIssue],
+) -> Option<(CatalogLoadIssueLevel, String)> {
     if issues.is_empty() {
         return None;
     }

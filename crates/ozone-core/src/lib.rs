@@ -5,11 +5,11 @@
 
 pub mod cli;
 pub mod engine;
+pub mod hardware;
 pub mod install;
 pub mod planner;
-pub mod session;
 pub mod prefs;
-pub mod hardware;
+pub mod session;
 
 #[cfg(test)]
 mod test_support;
@@ -43,13 +43,13 @@ pub mod product {
             match self {
                 Self::Ozonelite => "Planned",
                 Self::Ozone => "v0.4.8-alpha",
-                Self::OzonePlus => "v0.4.8-alpha",
+                Self::OzonePlus => "Archived",
             }
         }
     }
 
-    pub const OZONE_PLUS_DOC_PATH: &str = "ozone+/README.md";
-    pub const OZONE_PLUS_DESIGN_DOC_PATH: &str = "ozone+/ozone_v0.4_design.md";
+    pub const OZONE_PLUS_DOC_PATH: &str = "docs/archive/ozone-plus/README.md";
+    pub const OZONE_PLUS_DESIGN_DOC_PATH: &str = "docs/archive/ozone-plus/ozone_v0.4_design.md";
 }
 
 pub mod paths {
@@ -223,12 +223,7 @@ mod tests {
         let cases = [
             (ProductTier::Ozonelite, "ozonelite", "ozonelite", "Planned"),
             (ProductTier::Ozone, "ozone", "ozone", "v0.4.8-alpha"),
-            (
-                ProductTier::OzonePlus,
-                "ozone+",
-                "ozone-plus",
-                "v0.4.8-alpha",
-            ),
+            (ProductTier::OzonePlus, "ozone+", "ozone-plus", "Archived"),
         ];
 
         for (tier, display_name, slug, status_label) in cases {
@@ -237,8 +232,11 @@ mod tests {
             assert_eq!(tier.status_label(), status_label);
         }
 
-        assert_eq!(OZONE_PLUS_DOC_PATH, "ozone+/README.md");
-        assert_eq!(OZONE_PLUS_DESIGN_DOC_PATH, "ozone+/ozone_v0.4_design.md");
+        assert_eq!(OZONE_PLUS_DOC_PATH, "docs/archive/ozone-plus/README.md");
+        assert_eq!(
+            OZONE_PLUS_DESIGN_DOC_PATH,
+            "docs/archive/ozone-plus/ozone_v0.4_design.md"
+        );
     }
 
     #[test]
@@ -275,7 +273,9 @@ mod tests {
         );
         assert_eq!(
             paths::llamacpp_launch_state_path(),
-            data_dir.clone().map(|path| path.join("launcher-state.json"))
+            data_dir
+                .clone()
+                .map(|path| path.join("launcher-state.json"))
         );
         assert_eq!(
             paths::global_db_path(),

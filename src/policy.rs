@@ -3,6 +3,7 @@
 //! Enforces the design doc's min_quality_context policy and provides
 //! the canonical defaults for evaluation behavior.
 
+use crate::preflight::DEFAULT_SAFETY_MARGIN;
 use anyhow::{bail, Result};
 
 /// Context policy configuration matching design doc §7.
@@ -25,7 +26,7 @@ impl Default for ContextPolicy {
         Self {
             min_quality_context: 16_384,
             allow_below_min_context: false,
-            safety_margin_tokens: 512,
+            safety_margin_tokens: DEFAULT_SAFETY_MARGIN,
         }
     }
 }
@@ -41,7 +42,8 @@ pub fn check_task_allowed(
     if context_length < task_min_context {
         bail!(
             "task requires {} context but config has {}",
-            task_min_context, context_length,
+            task_min_context,
+            context_length,
         );
     }
 
@@ -53,17 +55,6 @@ pub fn check_task_allowed(
     }
 
     Ok(())
-}
-
-/// Behavior when context is below minimum quality threshold.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BelowMinBehavior {
-    /// Skip all quality tests.
-    SkipQualityTests,
-    /// Allow raw speed tests only.
-    AllowSpeedOnly,
-    /// Run everything (user explicitly opted in).
-    AllowAll,
 }
 
 #[cfg(test)]

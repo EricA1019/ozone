@@ -7,22 +7,22 @@ pub(super) async fn handle_settings_key(app: &mut App, key: KeyEvent) {
     // If editing a text field, handle input directly
     if app.settings_editing {
         match key.code {
-            KeyCode::Esc | KeyCode::Enter => {
-                // Finish editing
+            KeyCode::Enter => {
                 app.settings_editing = false;
-                // Save the models_dir preference
                 let input = app.settings_input_buffer.trim().to_string();
-                app.prefs.models_dir = if input.is_empty() {
-                    None
-                } else {
-                    Some(input)
-                };
+                app.prefs.models_dir = if input.is_empty() { None } else { Some(input) };
                 let _ = crate::prefs::save_prefs(&app.prefs).await;
-                // Apply immediately
                 if let Some(ref dir) = app.prefs.models_dir {
                     ozone_core::paths::set_models_dir_override(std::path::Path::new(dir));
                 }
                 app.set_status("Model directory saved.".into());
+                app.screen = Screen::Launcher;
+            }
+            KeyCode::Esc => {
+                app.settings_editing = false;
+                app.settings_input_buffer.clear();
+                sync_settings_from_prefs(app);
+                app.set_status("Model directory edit discarded.".into());
                 app.screen = Screen::Launcher;
             }
             KeyCode::Backspace => {
@@ -30,19 +30,7 @@ pub(super) async fn handle_settings_key(app: &mut App, key: KeyEvent) {
             }
             KeyCode::Char(c) => {
                 if c.is_ascii() {
-                    // Accept printable ASCII
                     app.settings_input_buffer.push(c);
-                } else if c == '\n' || c == '\r' {
-                    // Finish on Enter
-                    app.settings_editing = false;
-                    let input = app.settings_input_buffer.trim().to_string();
-                    app.prefs.models_dir = if input.is_empty() { None } else { Some(input) };
-                    let _ = crate::prefs::save_prefs(&app.prefs).await;
-                    if let Some(ref dir) = app.prefs.models_dir {
-                        ozone_core::paths::set_models_dir_override(std::path::Path::new(dir));
-                    }
-                    app.set_status("Model directory saved.".into());
-                    app.screen = Screen::Launcher;
                 }
             }
             _ => {}
@@ -75,11 +63,11 @@ pub(super) async fn handle_settings_key(app: &mut App, key: KeyEvent) {
             } else {
                 // Enter model directory editing
                 app.settings_editing = true;
-                app.settings_input_buffer = app
-                    .prefs
-                    .models_dir
-                    .clone()
-                    .unwrap_or_else(|| ozone_core::paths::models_dir().to_string_lossy().to_string());
+                app.settings_input_buffer = app.prefs.models_dir.clone().unwrap_or_else(|| {
+                    ozone_core::paths::models_dir()
+                        .to_string_lossy()
+                        .to_string()
+                });
             }
         }
         KeyCode::Esc => {

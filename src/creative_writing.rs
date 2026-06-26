@@ -32,8 +32,8 @@ pub fn load_prompt_bank(root: &Path) -> Result<Vec<CreativePrompt>> {
     let path = root.join("contrib/evals/prompts/creative_writing.toml");
     let text = std::fs::read_to_string(&path)
         .with_context(|| format!("failed to read {}", path.display()))?;
-    let bank: PromptBank = toml::from_str(&text)
-        .with_context(|| format!("failed to parse {}", path.display()))?;
+    let bank: PromptBank =
+        toml::from_str(&text).with_context(|| format!("failed to parse {}", path.display()))?;
     Ok(bank.prompts)
 }
 
@@ -66,7 +66,11 @@ pub fn compute_diversity(text: &str) -> DiversityScores {
             .map(|b| format!("{} {}", b[0], b[1]))
             .collect::<HashSet<_>>()
             .len() as f64;
-        if total > 0.0 { unique_count / total } else { 0.0 }
+        if total > 0.0 {
+            unique_count / total
+        } else {
+            0.0
+        }
     } else {
         0.0
     };
@@ -88,7 +92,9 @@ pub fn compute_diversity(text: &str) -> DiversityScores {
                 let mut ref_counts: HashMap<&str, usize> = HashMap::new();
                 let mut total_count = 0usize;
                 for ref_sent in &sentences {
-                    if ref_sent == candidate { continue; }
+                    if ref_sent == candidate {
+                        continue;
+                    }
                     let ref_tokens: Vec<&str> = ref_sent.split_whitespace().collect();
                     let mut seen = HashSet::new();
                     for t in ref_tokens {
@@ -145,8 +151,15 @@ pub async fn run_creative_writing_eval(
     std::fs::create_dir_all(output_dir)?;
     let mut writer = csv::Writer::from_path(&csv_path)?;
     writer.write_record([
-        "model", "prompt_id", "category", "temperature",
-        "distinct_2", "self_bleu", "repetition_ratio", "length", "timestamp",
+        "model",
+        "prompt_id",
+        "category",
+        "temperature",
+        "distinct_2",
+        "self_bleu",
+        "repetition_ratio",
+        "length",
+        "timestamp",
     ])?;
 
     let client = reqwest::Client::builder()
@@ -156,7 +169,8 @@ pub async fn run_creative_writing_eval(
     for prompt in prompts {
         for &temp in temperatures {
             eprintln!("  Generating: prompt='{}', T={}...", prompt.id, temp);
-            let text = generate_one(&client, prompt, temp, base_url).await
+            let text = generate_one(&client, prompt, temp, base_url)
+                .await
                 .unwrap_or_else(|e| format!("[ERROR: {e}]"));
 
             let scores = compute_diversity(&text);
@@ -198,7 +212,12 @@ async fn generate_one(
         .json(&payload)
         .send()
         .await
-        .with_context(|| format!("API request failed for prompt '{}' at T={}", prompt.id, temperature))?;
+        .with_context(|| {
+            format!(
+                "API request failed for prompt '{}' at T={}",
+                prompt.id, temperature
+            )
+        })?;
 
     let body: serde_json::Value = resp
         .json()
@@ -235,13 +254,20 @@ pub fn build_creative_report(csv_path: &Path) -> Result<String> {
         return Ok("No creative writing results found.".to_string());
     }
 
-    let model = rows[0].get("model").map(|s| s.as_str()).unwrap_or("unknown");
+    let model = rows[0]
+        .get("model")
+        .map(|s| s.as_str())
+        .unwrap_or("unknown");
     let mut md = String::new();
 
     md.push_str(&format!("# Creative Writing Report — {model}\n\n"));
     md.push_str("## Per-Temperature Score Summary\n\n");
-    md.push_str("| Temperature | Avg Distinct-2 | Avg Self-BLEU | Avg Repetition Ratio | Avg Length |\n");
-    md.push_str("|------------|---------------|---------------|---------------------|------------|\n");
+    md.push_str(
+        "| Temperature | Avg Distinct-2 | Avg Self-BLEU | Avg Repetition Ratio | Avg Length |\n",
+    );
+    md.push_str(
+        "|------------|---------------|---------------|---------------------|------------|\n",
+    );
 
     let mut by_temp: HashMap<String, Vec<&HashMap<String, String>>> = HashMap::new();
     for row in &rows {
@@ -251,7 +277,8 @@ pub fn build_creative_report(csv_path: &Path) -> Result<String> {
 
     let mut temp_sorted: Vec<&String> = by_temp.keys().collect();
     temp_sorted.sort_by(|a, b| {
-        a.parse::<f64>().unwrap_or(0.0)
+        a.parse::<f64>()
+            .unwrap_or(0.0)
             .partial_cmp(&b.parse::<f64>().unwrap_or(0.0))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
@@ -271,7 +298,10 @@ pub fn build_creative_report(csv_path: &Path) -> Result<String> {
             / n;
         let avg_rr: f64 = group
             .iter()
-            .filter_map(|r| r.get("repetition_ratio").and_then(|v| v.parse::<f64>().ok()))
+            .filter_map(|r| {
+                r.get("repetition_ratio")
+                    .and_then(|v| v.parse::<f64>().ok())
+            })
             .sum::<f64>()
             / n;
         let avg_len: f64 = group

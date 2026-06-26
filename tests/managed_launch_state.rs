@@ -108,10 +108,9 @@ fn launch_state_version_field_is_present() {
 
     write_state(&sandbox.state_path(), &state);
 
-    let json: serde_json::Value = serde_json::from_str(
-        &fs::read_to_string(sandbox.state_path()).expect("read state file"),
-    )
-    .expect("valid state json");
+    let json: serde_json::Value =
+        serde_json::from_str(&fs::read_to_string(sandbox.state_path()).expect("read state file"))
+            .expect("valid state json");
 
     assert_eq!(json["version"], STATE_VERSION);
 }

@@ -467,7 +467,12 @@ fn export_presets_conf_impl(conf_path: &Path, model: Option<&str>, noisy: bool) 
         );
         auto_lines.push(format!(
             "{}|{}|{}|{}|{}|{}",
-            model_name, profile.gpu_layers, profile.context_size, profile.quant_k, profile.quant_v, note,
+            model_name,
+            profile.gpu_layers,
+            profile.context_size,
+            profile.quant_k,
+            profile.quant_v,
+            note,
         ));
     }
     auto_lines.push(AUTO_END.to_string());

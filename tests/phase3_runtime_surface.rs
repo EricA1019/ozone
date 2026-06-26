@@ -31,9 +31,22 @@ fn launcher_and_monitor_surface_only_report_managed_llamacpp_runtime() {
     let launcher = fs::read_to_string(LAUNCHER_RS_PATH).expect("read launcher.rs");
     let monitor = fs::read_to_string(MONITOR_RS_PATH).expect("read monitor.rs");
 
-    for legacy_marker in ["KoboldCpp", "Ollama", "SillyTavern", ":8080", ":11434", ":8000"] {
-        assert!(!launcher.contains(legacy_marker), "launcher still contains {legacy_marker}");
-        assert!(!monitor.contains(legacy_marker), "monitor still contains {legacy_marker}");
+    for legacy_marker in [
+        "KoboldCpp",
+        "Ollama",
+        "SillyTavern",
+        ":8080",
+        ":11434",
+        ":8000",
+    ] {
+        assert!(
+            !launcher.contains(legacy_marker),
+            "launcher still contains {legacy_marker}"
+        );
+        assert!(
+            !monitor.contains(legacy_marker),
+            "monitor still contains {legacy_marker}"
+        );
     }
     assert!(launcher.contains(":8989"));
     assert!(monitor.contains(":8989"));

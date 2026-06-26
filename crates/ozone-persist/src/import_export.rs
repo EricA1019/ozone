@@ -56,11 +56,8 @@ impl CharacterCard {
         let personality = string_field(payload, fallback, &["personality"], false)?;
         let scenario = string_field(payload, fallback, &["scenario"], false)?;
         let greeting = string_field(payload, fallback, &["greeting", "first_mes"], false)?;
-        let example_dialogue = string_field_or_array(
-            payload,
-            fallback,
-            &["example_dialogue", "mes_example"],
-        )?;
+        let example_dialogue =
+            string_field_or_array(payload, fallback, &["example_dialogue", "mes_example"])?;
         let creator = string_field(payload, fallback, &["creator"], false)?;
         let creator_notes = string_field(payload, fallback, &["creator_notes"], false)?;
         let system_prompt = string_field(payload, fallback, &["system_prompt"], false)?;

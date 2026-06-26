@@ -1,20 +1,23 @@
-use crate::OzoneMcpServer;
-use crate::ToolReply;
-use serde_json::Value;
-use serde_json::json;
-use anyhow::anyhow;
-use crate::required_string;
-use crate::optional_string;
-use crate::optional_string_array;
-use crate::parse_session_id;
-use crate::parse_branch_id;
-use crate::session_summary_json;
 use crate::branch_record_json;
 use crate::message_json;
+use crate::optional_string;
+use crate::optional_string_array;
+use crate::parse_branch_id;
+use crate::parse_session_id;
 use crate::probe_session_lock;
+use crate::required_string;
+use crate::session_summary_json;
+use crate::OzoneMcpServer;
+use crate::ToolReply;
+use anyhow::anyhow;
 use ozone_core::session::CreateSessionRequest;
+use serde_json::json;
+use serde_json::Value;
 
-pub fn session_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
+pub fn session_tool(
+    server: &mut OzoneMcpServer,
+    args: &serde_json::Value,
+) -> anyhow::Result<ToolReply> {
     let action = required_string(args, "action")?;
     let sandbox_id = optional_string(args, "sandboxId");
     match action.as_str() {
@@ -133,8 +136,7 @@ pub fn session_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> an
                         .get_active_branch(&session_id)?
                         .ok_or_else(|| anyhow!("session {session_id} has no active branch"))?,
                 };
-                let messages =
-                    repo.list_branch_messages(&session_id, &branch.branch.branch_id)?;
+                let messages = repo.list_branch_messages(&session_id, &branch.branch.branch_id)?;
                 Ok(ToolReply::success(
                     "Loaded transcript".to_owned(),
                     json!({

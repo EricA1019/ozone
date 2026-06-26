@@ -50,13 +50,48 @@ pub(super) fn entries() -> Vec<BenchEvalEntry> {
     }
 
     // Add non-eval entries
-    entries.push(BenchEvalEntry { action: BenchEvalAction::EvalCreativeWriting, label: "Eval Creative Writing", description: "Diversity & coherence probe", command: "eval-creative" });
-    entries.push(BenchEvalEntry { action: BenchEvalAction::EvalRun, label: "Eval Run (Native)", description: "Warm-up, calibration, health gates, suites", command: "eval-run" });
-    entries.push(BenchEvalEntry { action: BenchEvalAction::ProfileModel, label: "Profile Model", description: "Benchmark/sweep workflow", command: "profile" });
-    entries.push(BenchEvalEntry { action: BenchEvalAction::ExportServer, label: "Export Server", description: "Generate standalone launch script", command: "export-server" });
-    entries.push(BenchEvalEntry { action: BenchEvalAction::ViewResults, label: "View Results", description: "Browse past eval/sweep/creative results", command: "results" });
-    entries.push(BenchEvalEntry { action: BenchEvalAction::ViewReport, label: "View Report", description: "Open latest eval markdown report", command: "report" });
-    entries.push(BenchEvalEntry { action: BenchEvalAction::Back, label: "Back", description: "Return to launcher menu", command: "back" });
+    entries.push(BenchEvalEntry {
+        action: BenchEvalAction::EvalCreativeWriting,
+        label: "Eval Creative Writing",
+        description: "Diversity & coherence probe",
+        command: "eval-creative",
+    });
+    entries.push(BenchEvalEntry {
+        action: BenchEvalAction::EvalRun,
+        label: "Eval Run (Native)",
+        description: "Warm-up, calibration, health gates, suites",
+        command: "eval-run",
+    });
+    entries.push(BenchEvalEntry {
+        action: BenchEvalAction::ProfileModel,
+        label: "Profile Model",
+        description: "Benchmark/sweep workflow",
+        command: "profile",
+    });
+    entries.push(BenchEvalEntry {
+        action: BenchEvalAction::ExportServer,
+        label: "Export Server",
+        description: "Generate standalone launch script",
+        command: "export-server",
+    });
+    entries.push(BenchEvalEntry {
+        action: BenchEvalAction::ViewResults,
+        label: "View Results",
+        description: "Browse past eval/sweep/creative results",
+        command: "results",
+    });
+    entries.push(BenchEvalEntry {
+        action: BenchEvalAction::ViewReport,
+        label: "View Report",
+        description: "Open latest eval markdown report",
+        command: "report",
+    });
+    entries.push(BenchEvalEntry {
+        action: BenchEvalAction::Back,
+        label: "Back",
+        description: "Return to launcher menu",
+        command: "back",
+    });
     entries
 }
 
@@ -97,11 +132,19 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
     let area = f.area();
     let center = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Fill(1), Constraint::Min(20), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Min(20),
+            Constraint::Fill(1),
+        ])
         .split(area)[1];
     let center_h = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Fill(1), Constraint::Max(88), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Max(88),
+            Constraint::Fill(1),
+        ])
         .split(center)[1];
 
     let chunks = Layout::default()
@@ -114,8 +157,16 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
         ])
         .split(center_h);
 
-    let title_text = if is_eval_run { "Eval Running" } else { "Bench + Eval Running" };
-    let subtitle_text = if is_eval_run { "  ·  native eval pipeline" } else { "  ·  subprocess output" };
+    let title_text = if is_eval_run {
+        "Eval Running"
+    } else {
+        "Bench + Eval Running"
+    };
+    let subtitle_text = if is_eval_run {
+        "  ·  native eval pipeline"
+    } else {
+        "  ·  subprocess output"
+    };
     let header = Paragraph::new(Line::from(vec![
         Span::styled(format!(" {} oz ", HEX_CURSOR), style_bold_lime()),
         Span::styled(title_text, style_bold_cyan()),
@@ -128,7 +179,7 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
     );
     f.render_widget(header, chunks[0]);
 
-    let mut summary_lines: Vec<Line> = if is_eval_run {
+    let summary_lines: Vec<Line> = if is_eval_run {
         let mut lines = vec![Line::from(vec![
             Span::styled("  Stage: ", style_gray()),
             Span::styled(&app.eval_run_stage, style_cyan()),
@@ -142,7 +193,11 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
         let passed = app.eval_run_tasks_passed;
         let total = app.eval_run_tasks_run;
         if total > 0 {
-            let pct = if total > 0 { (passed as f64 / total as f64 * 100.0) as u32 } else { 0 };
+            let pct = if total > 0 {
+                (passed as f64 / total as f64 * 100.0) as u32
+            } else {
+                0
+            };
             lines.push(Line::from(vec![
                 Span::styled("  Progress: ", style_gray()),
                 Span::styled(format!("{passed}/{total} tasks ({pct}%)"), style_lime()),
@@ -224,7 +279,14 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
         0
     };
     let log_block = Block::default()
-        .title(Span::styled(if is_eval_run { "  Eval Tasks " } else { "  Eval Log " }, style_bold_cyan()))
+        .title(Span::styled(
+            if is_eval_run {
+                "  Eval Tasks "
+            } else {
+                "  Eval Log "
+            },
+            style_bold_cyan(),
+        ))
         .title_bottom(Line::from(Span::styled(
             "  Esc/q return to menu",
             style_gray(),
@@ -232,7 +294,9 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
         .borders(Borders::ALL)
         .border_style(style_lime());
     f.render_widget(
-        Paragraph::new(lines).scroll((scroll_offset, 0)).block(log_block),
+        Paragraph::new(lines)
+            .scroll((scroll_offset, 0))
+            .block(log_block),
         chunks[2],
     );
 
@@ -248,11 +312,19 @@ pub(super) fn render_report(f: &mut Frame, app: &App) {
     let area = f.area();
     let center = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Fill(1), Constraint::Min(20), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Min(20),
+            Constraint::Fill(1),
+        ])
         .split(area)[1];
     let center_h = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Fill(1), Constraint::Max(100), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Max(100),
+            Constraint::Fill(1),
+        ])
         .split(center)[1];
 
     let chunks = Layout::default()
@@ -321,7 +393,9 @@ pub(super) fn render_report(f: &mut Frame, app: &App) {
         .borders(Borders::ALL)
         .border_style(style_lime());
     f.render_widget(
-        Paragraph::new(report_text).scroll((scroll, 0)).block(report_block),
+        Paragraph::new(report_text)
+            .scroll((scroll, 0))
+            .block(report_block),
         chunks[2],
     );
 
@@ -375,12 +449,20 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 style_gray()
             };
-            let cmd_style = if selected { style_hint_key() } else { style_muted() };
+            let cmd_style = if selected {
+                style_hint_key()
+            } else {
+                style_muted()
+            };
 
             ListItem::new(Line::from(vec![
                 Span::styled(
                     format!("{marker} "),
-                    if selected { style_lime() } else { style_muted() },
+                    if selected {
+                        style_lime()
+                    } else {
+                        style_muted()
+                    },
                 ),
                 Span::styled(format!("{}", index + 1), style_gray()),
                 Span::raw("  "),
@@ -400,8 +482,8 @@ fn render_preview(f: &mut Frame, area: Rect, app: &App) {
         .copied()
         .unwrap_or(entries()[0]);
 
-        let resolved_model = resolve_bench_eval_model(app);
-        let model_hint = resolved_model.as_deref().unwrap_or("<MODEL>");
+    let resolved_model = resolve_bench_eval_model(app);
+    let model_hint = resolved_model.as_deref().unwrap_or("<MODEL>");
 
     let preview = match selected.action {
         BenchEvalAction::ProfileModel => {
@@ -533,7 +615,11 @@ fn render_results_list(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("Results", style_bold_cyan()),
         Span::styled("  ·  past eval / sweep / creative runs", style_muted()),
     ]))
-    .block(Block::default().borders(Borders::ALL).border_style(style_lime()));
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(style_lime()),
+    );
     f.render_widget(header, chunks[0]);
 
     // File list
@@ -551,15 +637,26 @@ fn render_results_list(f: &mut Frame, area: Rect, app: &App) {
         )));
         f.render_widget(empty, inner);
     } else {
-        let items: Vec<ListItem> = app.bench_eval_results_files
+        let items: Vec<ListItem> = app
+            .bench_eval_results_files
             .iter()
             .enumerate()
             .map(|(i, file)| {
                 let selected = i == app.bench_eval_results_selected;
                 let marker = if selected {
-                    if (app.ticker / 6).is_multiple_of(2) { HEX_CURSOR } else { HEX_FILLED }
-                } else { " " };
-                let label_style = if selected { Style::default().fg(LIME).add_modifier(Modifier::BOLD) } else { style_gray() };
+                    if (app.ticker / 6).is_multiple_of(2) {
+                        HEX_CURSOR
+                    } else {
+                        HEX_FILLED
+                    }
+                } else {
+                    " "
+                };
+                let label_style = if selected {
+                    Style::default().fg(LIME).add_modifier(Modifier::BOLD)
+                } else {
+                    style_gray()
+                };
                 let kind_color = match file.kind {
                     crate::ui::ResultFileKind::Sweep => style_cyan(),
                     crate::ui::ResultFileKind::Eval => style_lime(),
@@ -567,7 +664,14 @@ fn render_results_list(f: &mut Frame, area: Rect, app: &App) {
                     crate::ui::ResultFileKind::Report => style_lime(),
                 };
                 ListItem::new(Line::from(vec![
-                    Span::styled(format!("{marker} "), if selected { style_lime() } else { style_muted() }),
+                    Span::styled(
+                        format!("{marker} "),
+                        if selected {
+                            style_lime()
+                        } else {
+                            style_muted()
+                        },
+                    ),
                     Span::styled(format!("{:>2} ", i + 1), style_gray()),
                     Span::styled(format!("[{}] ", file.kind.label()), kind_color),
                     Span::styled(&file.model, label_style),
@@ -580,8 +684,16 @@ fn render_results_list(f: &mut Frame, area: Rect, app: &App) {
     }
 
     // Preview of selected file
-    let preview_text = if let Some(file) = app.bench_eval_results_files.get(app.bench_eval_results_selected) {
-        format!("  {}  |  {}  |  {}", file.kind.label(), file.model, file.path.display())
+    let preview_text = if let Some(file) = app
+        .bench_eval_results_files
+        .get(app.bench_eval_results_selected)
+    {
+        format!(
+            "  {}  |  {}  |  {}",
+            file.kind.label(),
+            file.model,
+            file.path.display()
+        )
     } else {
         "  Select a file to preview".into()
     };
@@ -589,7 +701,12 @@ fn render_results_list(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("  File: ", style_gray()),
         Span::styled(preview_text, style_muted()),
     ]))
-    .block(Block::default().title(Span::styled("  Preview ", style_bold_cyan())).borders(Borders::ALL).border_style(style_gray()));
+    .block(
+        Block::default()
+            .title(Span::styled("  Preview ", style_bold_cyan()))
+            .borders(Borders::ALL)
+            .border_style(style_gray()),
+    );
     f.render_widget(preview, chunks[2]);
 
     // Hints
@@ -618,8 +735,18 @@ fn render_results_content(f: &mut Frame, area: Rect, app: &App) {
         .split(area);
 
     // Header
-    let header_title = if let Some(file) = app.bench_eval_results_files.get(app.bench_eval_results_selected) {
-        format!("  {}  |  {}", file.kind.label(), file.path.file_name().and_then(|n| n.to_str()).unwrap_or("?"))
+    let header_title = if let Some(file) = app
+        .bench_eval_results_files
+        .get(app.bench_eval_results_selected)
+    {
+        format!(
+            "  {}  |  {}",
+            file.kind.label(),
+            file.path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("?")
+        )
     } else {
         "  Result File".into()
     };
@@ -629,14 +756,19 @@ fn render_results_content(f: &mut Frame, area: Rect, app: &App) {
         Span::styled("  ·  ", style_muted()),
         Span::styled(&header_title, style_cyan()),
     ]))
-    .block(Block::default().borders(Borders::ALL).border_style(style_lime()));
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(style_lime()),
+    );
     f.render_widget(header, chunks[0]);
 
     // Sub-header with file path
     let sub = Paragraph::new(Line::from(vec![
         Span::styled("  Path: ", style_gray()),
         Span::styled(
-            app.bench_eval_results_files.get(app.bench_eval_results_selected)
+            app.bench_eval_results_files
+                .get(app.bench_eval_results_selected)
                 .map(|f| f.path.display().to_string())
                 .unwrap_or_default(),
             style_muted(),
@@ -653,11 +785,16 @@ fn render_results_content(f: &mut Frame, area: Rect, app: &App) {
 
     let content_block = Block::default()
         .title(Span::styled("  Contents ", style_bold_cyan()))
-        .title_bottom(Line::from(Span::styled("  ↑↓/PgUp/PgDn scroll · Esc/q back to list", style_gray())))
+        .title_bottom(Line::from(Span::styled(
+            "  ↑↓/PgUp/PgDn scroll · Esc/q back to list",
+            style_gray(),
+        )))
         .borders(Borders::ALL)
         .border_style(style_lime());
     f.render_widget(
-        Paragraph::new(content.as_str()).scroll((scroll, 0)).block(content_block),
+        Paragraph::new(content.as_str())
+            .scroll((scroll, 0))
+            .block(content_block),
         chunks[2],
     );
 

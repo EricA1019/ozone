@@ -108,7 +108,11 @@ pub async fn reset_backend_session(base_url: &str) -> Result<()> {
         "temperature": 0.0,
     });
 
-    let _ = client.post(&url).json(&body).send().await
+    let _ = client
+        .post(&url)
+        .json(&body)
+        .send()
+        .await
         .with_context(|| "failed to reset backend session")?;
 
     Ok(())

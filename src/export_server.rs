@@ -176,11 +176,14 @@ mod tests {
             Path::new("/usr/bin/llama-server"),
             8989,
             &dir.join("serve-test.sh"),
-        ).expect("generate_serve_script should succeed");
+        )
+        .expect("generate_serve_script should succeed");
 
         let text = read_script(&script);
-        assert!(text.contains("--threads 4"),
-            "script should use plan.threads=4, got:\n{text}");
+        assert!(
+            text.contains("--threads 4"),
+            "script should use plan.threads=4, got:\n{text}"
+        );
 
         // Clean up
         let _ = std::fs::remove_file(&script);
@@ -202,11 +205,14 @@ mod tests {
             Path::new("/usr/bin/llama-server"),
             8989,
             &dir.join("serve-test-default.sh"),
-        ).expect("generate_serve_script should succeed");
+        )
+        .expect("generate_serve_script should succeed");
 
         let text = read_script(&script);
-        assert!(text.contains("--threads 8"),
-            "script should default to 8 threads when plan.threads is None, got:\n{text}");
+        assert!(
+            text.contains("--threads 8"),
+            "script should default to 8 threads when plan.threads is None, got:\n{text}"
+        );
 
         let _ = std::fs::remove_file(&script);
         let _ = std::fs::remove_file(&model);
@@ -229,13 +235,18 @@ mod tests {
             Path::new("/usr/bin/llama-server"),
             8989,
             &dir.join("serve-kv-test.sh"),
-        ).expect("generate_serve_script should succeed");
+        )
+        .expect("generate_serve_script should succeed");
 
         let text = std::fs::read_to_string(&script).expect("read script");
-        assert!(text.contains("--cache-type-k q8_0"),
-            "q8_0 should add cache-type flags:\n{text}");
-        assert!(text.contains("--cache-type-v q8_0"),
-            "q8_0 should add cache-type flags:\n{text}");
+        assert!(
+            text.contains("--cache-type-k q8_0"),
+            "q8_0 should add cache-type flags:\n{text}"
+        );
+        assert!(
+            text.contains("--cache-type-v q8_0"),
+            "q8_0 should add cache-type flags:\n{text}"
+        );
 
         let _ = std::fs::remove_file(&script);
         let _ = std::fs::remove_file(&model);
@@ -256,11 +267,14 @@ mod tests {
             Path::new("/usr/bin/llama-server"),
             8989,
             &dir.join("serve-f16-test.sh"),
-        ).expect("generate_serve_script should succeed");
+        )
+        .expect("generate_serve_script should succeed");
 
         let text = std::fs::read_to_string(&script).expect("read script");
-        assert!(!text.contains("--cache-type"),
-            "f16 should not include cache-type flags:\n{text}");
+        assert!(
+            !text.contains("--cache-type"),
+            "f16 should not include cache-type flags:\n{text}"
+        );
 
         let _ = std::fs::remove_file(&script);
         let _ = std::fs::remove_file(&model);

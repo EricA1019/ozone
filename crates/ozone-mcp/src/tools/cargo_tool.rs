@@ -1,14 +1,14 @@
+use crate::command_output_data;
+use crate::optional_bool;
+use crate::optional_string;
+use crate::optional_string_array;
+use crate::required_string;
 /// MCP tool: cargo tool.
 use crate::OzoneMcpServer;
 use crate::ToolReply;
-use anyhow::Context;
 use anyhow::bail;
-use crate::required_string;
-use crate::optional_string;
-use crate::optional_bool;
-use crate::optional_string_array;
+use anyhow::Context;
 use std::process::Command;
-use crate::command_output_data;
 
 pub fn cargo_tool(server: &OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
     let action = required_string(args, "action")?;

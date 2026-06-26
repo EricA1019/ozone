@@ -90,8 +90,8 @@ pub fn sandbox_setup_ozone_plus_entry() -> Value {
 // Helper Functions for Journey Building
 // =============================================================================
 
-use std::path::Path;
 use anyhow::{bail, Result};
+use std::path::Path;
 
 use super::{MockUserJourneySpec, MockUserJourneyStep};
 
@@ -106,7 +106,10 @@ pub fn append_args(command: &[String], args: &[&str]) -> Vec<String> {
 /// Resolve binary command, preferring debug build if available, falling back to cargo run.
 #[allow(dead_code)]
 pub fn front_door_binary_command(repo_root: &Path, binary: &str, args: &[&str]) -> Vec<String> {
-    if matches!(std::env::var("OZONE_MCP_FRONT_DOOR_PROFILE").as_deref(), Ok("release")) {
+    if matches!(
+        std::env::var("OZONE_MCP_FRONT_DOOR_PROFILE").as_deref(),
+        Ok("release")
+    ) {
         let binary_path = repo_root.join("target/release").join(binary);
         let mut command = vec![binary_path.display().to_string()];
         command.extend(args.iter().map(|value| (*value).to_owned()));
@@ -157,8 +160,12 @@ pub fn build_mock_user_journey(
         "ozone_plus_chat_journey" => {
             let prompt = crate::optional_string(args, "prompt")
                 .unwrap_or_else(|| "Check the observatory key".to_owned());
-            let mut journey =
-                build_capturable_screen_journey(server, "base_ozone_plus_shell", args, journey_name)?;
+            let mut journey = build_capturable_screen_journey(
+                server,
+                "base_ozone_plus_shell",
+                args,
+                journey_name,
+            )?;
             if let Some(step) = journey.steps.last_mut() {
                 step.settle_ms = 2500;
             }
@@ -314,12 +321,7 @@ pub fn build_base_settings_screen_journey(
 ) -> Result<MockUserJourneySpec> {
     let mut journey = build_base_launcher_screen_journey(repo_root, journey_name, &json!({}))?;
     journey.steps.extend([
-        MockUserJourneyStep::text(
-            "open quick command",
-            "/",
-            150,
-            ["Quick Command", "Matches"],
-        ),
+        MockUserJourneyStep::text("open quick command", "/", 150, ["Quick Command", "Matches"]),
         MockUserJourneyStep::text(
             "filter settings command",
             "settings",
@@ -356,7 +358,8 @@ pub fn build_base_confirm_launch_screen_journey(
     journey_name: &str,
     _args: &Value,
 ) -> Result<MockUserJourneySpec> {
-    let mut journey = build_base_model_picker_launch_screen_journey(repo_root, journey_name, &json!({}))?;
+    let mut journey =
+        build_base_model_picker_launch_screen_journey(repo_root, journey_name, &json!({}))?;
     journey.steps.push(MockUserJourneyStep::key(
         "build launch plan",
         "enter",
@@ -371,7 +374,8 @@ pub fn build_base_frontend_choice_screen_journey(
     journey_name: &str,
     _args: &Value,
 ) -> Result<MockUserJourneySpec> {
-    let mut journey = build_base_confirm_launch_screen_journey(repo_root, journey_name, &json!({}))?;
+    let mut journey =
+        build_base_confirm_launch_screen_journey(repo_root, journey_name, &json!({}))?;
     journey.steps.push(MockUserJourneyStep::key(
         "open frontend choice",
         "enter",
@@ -386,7 +390,8 @@ pub fn build_base_launching_screen_journey(
     journey_name: &str,
     _args: &Value,
 ) -> Result<MockUserJourneySpec> {
-    let mut journey = build_base_frontend_choice_screen_journey(repo_root, journey_name, &json!({}))?;
+    let mut journey =
+        build_base_frontend_choice_screen_journey(repo_root, journey_name, &json!({}))?;
     journey.steps.push(MockUserJourneyStep::key(
         "start launch",
         "enter",
@@ -454,7 +459,8 @@ pub fn build_base_profile_advisory_screen_journey(
     journey_name: &str,
     _args: &Value,
 ) -> Result<MockUserJourneySpec> {
-    let mut journey = build_base_model_picker_profile_screen_journey(repo_root, journey_name, &json!({}))?;
+    let mut journey =
+        build_base_model_picker_profile_screen_journey(repo_root, journey_name, &json!({}))?;
     journey.steps.push(MockUserJourneyStep::key(
         "build profiling advisory",
         "enter",
@@ -469,7 +475,8 @@ pub fn build_base_profile_confirm_screen_journey(
     journey_name: &str,
     _args: &Value,
 ) -> Result<MockUserJourneySpec> {
-    let mut journey = build_base_profile_advisory_screen_journey(repo_root, journey_name, &json!({}))?;
+    let mut journey =
+        build_base_profile_advisory_screen_journey(repo_root, journey_name, &json!({}))?;
     journey.steps.push(MockUserJourneyStep::key(
         "open profiling confirm",
         "enter",
@@ -484,7 +491,8 @@ pub fn build_base_profile_running_screen_journey(
     journey_name: &str,
     _args: &Value,
 ) -> Result<MockUserJourneySpec> {
-    let mut journey = build_base_profile_confirm_screen_journey(repo_root, journey_name, &json!({}))?;
+    let mut journey =
+        build_base_profile_confirm_screen_journey(repo_root, journey_name, &json!({}))?;
     journey.steps.push(MockUserJourneyStep::key(
         "start profiling",
         "enter",
@@ -499,7 +507,8 @@ pub fn build_base_profile_failure_screen_journey(
     journey_name: &str,
     _args: &Value,
 ) -> Result<MockUserJourneySpec> {
-    let mut journey = build_base_profile_advisory_screen_journey(repo_root, journey_name, &json!({}))?;
+    let mut journey =
+        build_base_profile_advisory_screen_journey(repo_root, journey_name, &json!({}))?;
     journey.steps.push(MockUserJourneyStep::key(
         "open profiling failure",
         "enter",
@@ -549,7 +558,11 @@ pub fn build_ozone_plus_main_menu_screen_journey(
     Ok(MockUserJourneySpec {
         name: journey_name.to_owned(),
         cwd: repo_root.to_string_lossy().into_owned(),
-        command: front_door_binary_command(repo_root, "ozone-plus", &["handoff", "--launcher-session"]),
+        command: front_door_binary_command(
+            repo_root,
+            "ozone-plus",
+            &["handoff", "--launcher-session"],
+        ),
         steps: vec![MockUserJourneyStep::wait_for(
             "settle main menu",
             1200,
@@ -563,7 +576,8 @@ pub fn build_ozone_plus_sessions_screen_journey(
     journey_name: &str,
     _args: &Value,
 ) -> Result<MockUserJourneySpec> {
-    let mut journey = build_ozone_plus_main_menu_screen_journey(repo_root, journey_name, &json!({}))?;
+    let mut journey =
+        build_ozone_plus_main_menu_screen_journey(repo_root, journey_name, &json!({}))?;
     journey.steps.push(MockUserJourneyStep::text(
         "open sessions",
         "2",
@@ -578,7 +592,8 @@ pub fn build_ozone_plus_characters_screen_journey(
     journey_name: &str,
     _args: &Value,
 ) -> Result<MockUserJourneySpec> {
-    let mut journey = build_ozone_plus_main_menu_screen_journey(repo_root, journey_name, &json!({}))?;
+    let mut journey =
+        build_ozone_plus_main_menu_screen_journey(repo_root, journey_name, &json!({}))?;
     journey.steps.push(MockUserJourneyStep::text(
         "open characters",
         "3",
@@ -593,7 +608,8 @@ pub fn build_ozone_plus_settings_screen_journey(
     journey_name: &str,
     _args: &Value,
 ) -> Result<MockUserJourneySpec> {
-    let mut journey = build_ozone_plus_main_menu_screen_journey(repo_root, journey_name, &json!({}))?;
+    let mut journey =
+        build_ozone_plus_main_menu_screen_journey(repo_root, journey_name, &json!({}))?;
     journey.steps.push(MockUserJourneyStep::text(
         "open settings",
         "4",
@@ -608,7 +624,8 @@ pub fn build_ozone_plus_character_create_screen_journey(
     journey_name: &str,
     _args: &Value,
 ) -> Result<MockUserJourneySpec> {
-    let mut journey = build_ozone_plus_characters_screen_journey(repo_root, journey_name, &json!({}))?;
+    let mut journey =
+        build_ozone_plus_characters_screen_journey(repo_root, journey_name, &json!({}))?;
     journey.steps.push(MockUserJourneyStep::text(
         "open character create",
         "n",
@@ -623,7 +640,8 @@ pub fn build_ozone_plus_character_import_screen_journey(
     journey_name: &str,
     _args: &Value,
 ) -> Result<MockUserJourneySpec> {
-    let mut journey = build_ozone_plus_characters_screen_journey(repo_root, journey_name, &json!({}))?;
+    let mut journey =
+        build_ozone_plus_characters_screen_journey(repo_root, journey_name, &json!({}))?;
     journey.steps.push(MockUserJourneyStep::text(
         "open character import",
         "i",
@@ -638,7 +656,8 @@ pub fn build_ozone_plus_conversation_screen_journey(
     journey_name: &str,
     _args: &Value,
 ) -> Result<MockUserJourneySpec> {
-    let mut journey = build_ozone_plus_main_menu_screen_journey(repo_root, journey_name, &json!({}))?;
+    let mut journey =
+        build_ozone_plus_main_menu_screen_journey(repo_root, journey_name, &json!({}))?;
     journey.steps.push(MockUserJourneyStep::key(
         "open conversation",
         "enter",
@@ -653,7 +672,8 @@ pub fn build_ozone_plus_help_screen_journey(
     journey_name: &str,
     _args: &Value,
 ) -> Result<MockUserJourneySpec> {
-    let mut journey = build_ozone_plus_conversation_screen_journey(repo_root, journey_name, &json!({}))?;
+    let mut journey =
+        build_ozone_plus_conversation_screen_journey(repo_root, journey_name, &json!({}))?;
     journey.steps.push(MockUserJourneyStep::text(
         "open help",
         "?",

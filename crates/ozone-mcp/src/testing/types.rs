@@ -197,7 +197,11 @@ impl MockUserJourneyStep {
         Self::wait_for(name, ms, [])
     }
 
-    pub fn wait_for(name: &str, ms: u64, expect_any: impl IntoIterator<Item = &'static str>) -> Self {
+    pub fn wait_for(
+        name: &str,
+        ms: u64,
+        expect_any: impl IntoIterator<Item = &'static str>,
+    ) -> Self {
         Self {
             name: name.to_owned(),
             action: MockUserAction::Wait { ms },

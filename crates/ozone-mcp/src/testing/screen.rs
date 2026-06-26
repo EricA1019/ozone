@@ -1168,17 +1168,10 @@ fn ansi_color_rgb(value: &str) -> Option<[u8; 3]> {
 // =============================================================================
 
 pub fn checked_u16(raw: u64, key: &str) -> Result<u16> {
-    u16::try_from(raw).map_err(|_| {
-        anyhow!(
-            "value for `{key}` must be between 0 and 65535"
-        )
-    })
+    u16::try_from(raw).map_err(|_| anyhow!("value for `{key}` must be between 0 and 65535"))
 }
 
 pub fn checked_usize(raw: u64, key: &str) -> Result<usize> {
-    usize::try_from(raw).map_err(|_| {
-        anyhow!(
-            "value for `{key}` must be between 0 and the maximum usize"
-        )
-    })
+    usize::try_from(raw)
+        .map_err(|_| anyhow!("value for `{key}` must be between 0 and the maximum usize"))
 }

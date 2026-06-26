@@ -1,28 +1,30 @@
-use crate::OzoneMcpServer;
-use crate::ToolReply;
-use serde_json::json;
-use anyhow::anyhow;
-use uuid::Uuid;
-use crate::required_string;
 use crate::optional_string;
 use crate::optional_u64;
-use crate::required_u64;
-use crate::parse_session_id;
 use crate::parse_message_id;
+use crate::parse_session_id;
 use crate::parse_swipe_group_id;
-use crate::swipe_group_json;
+use crate::required_string;
+use crate::required_u64;
 use crate::swipe_candidate_json;
-use ozone_core::engine::{SwipeCandidate, SwipeGroup, SwipeCandidateState, ActivateSwipeCommand};
+use crate::swipe_group_json;
+use crate::OzoneMcpServer;
+use crate::ToolReply;
+use anyhow::anyhow;
+use ozone_core::engine::{ActivateSwipeCommand, SwipeCandidate, SwipeCandidateState, SwipeGroup};
 use ozone_persist::{CreateMessageRequest, PersistError};
+use serde_json::json;
+use uuid::Uuid;
 
-pub fn swipe_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
+pub fn swipe_tool(
+    server: &mut OzoneMcpServer,
+    args: &serde_json::Value,
+) -> anyhow::Result<ToolReply> {
     let action = required_string(args, "action")?;
     let sandbox_id = optional_string(args, "sandboxId");
     match action.as_str() {
         "add" => {
             let session_id = parse_session_id(&required_string(args, "sessionId")?)?;
-            let parent_message_id =
-                parse_message_id(&required_string(args, "parentMessageId")?)?;
+            let parent_message_id = parse_message_id(&required_string(args, "parentMessageId")?)?;
             let content = required_string(args, "content")?;
             let parent_context_message_id = optional_string(args, "contextMessageId")
                 .map(|value| parse_message_id(&value))
@@ -70,18 +72,16 @@ pub fn swipe_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyh
                 }
                 let next_ordinal = match ordinal {
                     Some(value) => value,
-                    None => {
-                        match repo.list_swipe_candidates(&session_id, &group.swipe_group_id) {
-                            Ok(candidates) => candidates
-                                .iter()
-                                .map(|candidate| candidate.ordinal)
-                                .max()
-                                .unwrap_or(0)
-                                .saturating_add(1),
-                            Err(PersistError::SwipeGroupNotFound(_)) => 0,
-                            Err(error) => return Err(anyhow!(error.to_string())),
-                        }
-                    }
+                    None => match repo.list_swipe_candidates(&session_id, &group.swipe_group_id) {
+                        Ok(candidates) => candidates
+                            .iter()
+                            .map(|candidate| candidate.ordinal)
+                            .max()
+                            .unwrap_or(0)
+                            .saturating_add(1),
+                        Err(PersistError::SwipeGroupNotFound(_)) => 0,
+                        Err(error) => return Err(anyhow!(error.to_string())),
+                    },
                 };
                 let candidate = repo.record_swipe_candidate(
                     &session_id,

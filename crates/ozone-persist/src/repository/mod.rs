@@ -1,8 +1,4 @@
-use std::{
-    collections::BTreeMap,
-    fs,
-    sync::Arc,
-};
+use std::{collections::BTreeMap, fs, sync::Arc};
 
 use ozone_core::{
     engine::{BranchId, BranchState, ConversationBranch, ConversationMessage, MessageId},
@@ -36,7 +32,10 @@ mod swipe_ops;
 pub use character_ops::StoredCharacter;
 use fs_helpers::{ensure_file_with_contents, open_connection, secure_path};
 use generated_values::{current_timestamp_ms, generate_uuid_like};
-use row_parsers::{parse_i64_as_u16, parse_i64_as_u64, parse_sqlite_text, read_branch_record, read_conversation_message, sqlite_text_parse_error};
+use row_parsers::{
+    parse_i64_as_u16, parse_i64_as_u64, parse_sqlite_text, read_branch_record,
+    read_conversation_message, sqlite_text_parse_error,
+};
 use search_helpers::plain_text_fts_query;
 
 pub use paths::PersistencePaths;

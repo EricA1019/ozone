@@ -35,10 +35,11 @@ pub(super) fn handle_tier_picker_key(app: &mut App, key: KeyEvent) -> TierPicker
                             });
                             app.screen = Screen::Launcher;
                         } else {
-                            app.tier_picker.phase = tier_picker::TierPickerPhase::ConfirmingDownload {
-                                tier: crate::prefs::Tier::Base,
-                                binary,
-                            };
+                            app.tier_picker.phase =
+                                tier_picker::TierPickerPhase::ConfirmingDownload {
+                                    tier: crate::prefs::Tier::Base,
+                                    binary,
+                                };
                         }
                     }
                 }

@@ -34,7 +34,7 @@ pub fn generate_context_steps(native_max: u32) -> Vec<u32> {
     }
 
     // Combine, deduplicate, ensure max is included
-    let mut steps: Vec<u32> = low.iter().copied().collect();
+    let mut steps: Vec<u32> = low.to_vec();
     steps.extend(mid);
     steps.extend(high);
 
@@ -125,13 +125,13 @@ pub fn pick_optimal_profile(
     }
 
     // Pick the one with the highest context; tie-break on speed
-    let best = stable
-        .iter()
-        .max_by(|a, b| {
-            a.context_size
-                .cmp(&b.context_size)
-                .then_with(|| a.tokens_per_sec.partial_cmp(&b.tokens_per_sec).unwrap_or(std::cmp::Ordering::Equal))
-        })?;
+    let best = stable.iter().max_by(|a, b| {
+        a.context_size.cmp(&b.context_size).then_with(|| {
+            a.tokens_per_sec
+                .partial_cmp(&b.tokens_per_sec)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
+    })?;
 
     Some(crate::prefs::SavedLaunchProfile {
         profile_name: "auto-optimal".into(),
@@ -204,10 +204,21 @@ where
             chrono::Utc::now().format("%Y%m%dT%H%M%S"),
         ));
     let mut csv_writer = csv::Writer::from_path(&csv_path)?;
-    csv_writer.write_record(&[
-        "model", "context_size", "gpu_layers", "quant_k", "quant_v",
-        "tokens_per_sec", "ttft_ms", "vram_peak_mb", "ram_peak_mb",
-        "total_tokens", "total_time_ms", "status", "error_detail", "timestamp",
+    csv_writer.write_record([
+        "model",
+        "context_size",
+        "gpu_layers",
+        "quant_k",
+        "quant_v",
+        "tokens_per_sec",
+        "ttft_ms",
+        "vram_peak_mb",
+        "ram_peak_mb",
+        "total_tokens",
+        "total_time_ms",
+        "status",
+        "error_detail",
+        "timestamp",
     ])?;
 
     let mut result = SweepResult {
@@ -310,8 +321,15 @@ where
                         total: total_combos as u32,
                         message: format!(
                             "[{}/{}] ctx={} K=q{qk}/V=q{qv} layers={} ... {} ✗ — {detail}",
-                            step, total_combos, ctx, layers,
-                            if is_timeout { "timeout" } else { "launch-error" },
+                            step,
+                            total_combos,
+                            ctx,
+                            layers,
+                            if is_timeout {
+                                "timeout"
+                            } else {
+                                "launch-error"
+                            },
                         ),
                     });
                     result.configs_failed += 1;
@@ -399,9 +417,14 @@ where
                     total: total_combos as u32,
                     message: format!(
                         "[{}/{}] ctx={} K=q{qk}/V=q{qv} layers={} ... {} ✗{}",
-                        step, total_combos, ctx, layers,
+                        step,
+                        total_combos,
+                        ctx,
+                        layers,
                         bench_result.status,
-                        bench_result.error_detail.as_deref()
+                        bench_result
+                            .error_detail
+                            .as_deref()
                             .map(|d| format!(" — {d}"))
                             .unwrap_or_default(),
                     ),
@@ -415,12 +438,19 @@ where
                 total: total_combos as u32,
                 message: format!(
                     "[{}/{}] ctx={} K=q{qk}/V=q{qv} layers={} ... {:.1} t/s ✓",
-                        step, total_combos, ctx, layers, bench_result.tokens_per_sec,
+                    step, total_combos, ctx, layers, bench_result.tokens_per_sec,
                 ),
             });
             result.configs_tested += 1;
             update_bests(&mut result, &bench_result, ctx);
-            maybe_add_pareto(&mut result.pareto_frontier, layers, ctx, qk, qv, &bench_result);
+            maybe_add_pareto(
+                &mut result.pareto_frontier,
+                layers,
+                ctx,
+                qk,
+                qv,
+                &bench_result,
+            );
             store_quietly(&config, layers, ctx, qk, qv, &bench_result);
             write_csv_row(&mut csv_writer, &config, layers, ctx, qk, qv, &bench_result);
         }
@@ -479,7 +509,12 @@ where
                 total: total_combos as u32,
                 message: format!(
                     "ctx={} layers={} K=q{} V=q{} {:.1} t/s {} MB",
-                    p.context_size, p.gpu_layers, p.quant_k, p.quant_v, p.tokens_per_sec, p.vram_peak_mb,
+                    p.context_size,
+                    p.gpu_layers,
+                    p.quant_k,
+                    p.quant_v,
+                    p.tokens_per_sec,
+                    p.vram_peak_mb,
                 ),
             });
         }
@@ -595,24 +630,34 @@ fn store_quietly(
 }
 
 /// Context sizes to test in a full sweep (filtered against model max).
-pub const SWEEP_CONTEXT_STEPS: &[u32] = &[
-    512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072,
-];
+pub const SWEEP_CONTEXT_STEPS: &[u32] = &[512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072];
+
+#[derive(Debug, Clone, Copy)]
+pub struct ContextSweepRequest<'a> {
+    pub model_name: &'a str,
+    pub model_path: &'a Path,
+    pub server_path: &'a Path,
+    pub gpu_layers: i32,
+    pub quant_k: u8,
+    pub quant_v: u8,
+    pub threads: Option<u32>,
+    pub quick: bool,
+}
 
 /// Run a context sweep: test each context size, stop at OOM.
 /// Returns CSV path and sweet-spot context size.
-pub async fn run_context_sweep(
-    model_name: &str,
-    model_path: &Path,
-    server_path: &Path,
-    gpu_layers: i32,
-    quant_k: u8,
-    quant_v: u8,
-    threads: Option<u32>,
-    quick: bool,
-) -> Result<(PathBuf, u32)> {
-    let max_context = crate::gguf::read_context_length(model_path)
-        .unwrap_or(4096);
+pub async fn run_context_sweep(request: ContextSweepRequest<'_>) -> Result<(PathBuf, u32)> {
+    let ContextSweepRequest {
+        model_name,
+        model_path,
+        server_path,
+        gpu_layers,
+        quant_k,
+        quant_v,
+        threads,
+        quick,
+    } = request;
+    let max_context = crate::gguf::read_context_length(model_path).unwrap_or(4096);
 
     let steps: Vec<u32> = SWEEP_CONTEXT_STEPS
         .iter()
@@ -632,11 +677,21 @@ pub async fn run_context_sweep(
 
     let csv_path = ozone_core::paths::data_dir()
         .unwrap_or_else(|| PathBuf::from("."))
-        .join(format!("sweep_{model_name}_{}.csv",
-            chrono::Utc::now().format("%Y%m%dT%H%M%S")));
+        .join(format!(
+            "sweep_{model_name}_{}.csv",
+            chrono::Utc::now().format("%Y%m%dT%H%M%S")
+        ));
 
     let mut writer = csv::Writer::from_path(&csv_path)?;
-    writer.write_record(["model", "context_size", "tok_s", "ttft_ms", "vram_mb", "ram_mb", "status"])?;
+    writer.write_record([
+        "model",
+        "context_size",
+        "tok_s",
+        "ttft_ms",
+        "vram_mb",
+        "ram_mb",
+        "status",
+    ])?;
 
     let mut sweet_spot = 0u32;
     let mut best_tok_s = 0.0f64;
@@ -644,12 +699,21 @@ pub async fn run_context_sweep(
 
     for &ctx in &steps {
         eprintln!("  Testing context={ctx}...");
-        let result = bench::run_benchmark(
-            model_name, model_path,
-            &crate::bench::BenchBackend::LlamaCpp { server_path: server_path.to_path_buf() },
-            gpu_layers, ctx, quant_k, quant_v, threads,
-            bench::BenchMode::Sweep,
-        ).await;
+        let backend = crate::bench::BenchBackend::LlamaCpp {
+            server_path: server_path.to_path_buf(),
+        };
+        let result = bench::run_benchmark(bench::BenchmarkRunRequest {
+            model_name,
+            model_path,
+            backend: &backend,
+            gpu_layers,
+            context_size: ctx,
+            quant_k,
+            quant_v,
+            threads,
+            mode: bench::BenchMode::Sweep,
+        })
+        .await;
 
         match result {
             Ok(r) => {
@@ -677,7 +741,13 @@ pub async fn run_context_sweep(
             }
             Err(e) => {
                 writer.write_record([
-                    model_name, &ctx.to_string(), "0", "0", "0", "0", "launch_failed",
+                    model_name,
+                    &ctx.to_string(),
+                    "0",
+                    "0",
+                    "0",
+                    "0",
+                    "launch_failed",
                 ])?;
                 eprintln!("  Failed at context={ctx}: {e}");
                 break;

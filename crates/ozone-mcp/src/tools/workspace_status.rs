@@ -1,8 +1,8 @@
 /// MCP tool: workspace status.
 use crate::OzoneMcpServer;
 use crate::ToolReply;
-use serde_json::json;
 use ozone_core::paths;
+use serde_json::json;
 
 pub fn workspace_status_tool(server: &OzoneMcpServer) -> anyhow::Result<ToolReply> {
     let preferences_path = paths::preferences_path();

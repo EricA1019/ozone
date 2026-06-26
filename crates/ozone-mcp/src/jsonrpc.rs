@@ -88,7 +88,9 @@ mod tests {
         framed.extend_from_slice(payload);
         let mut reader = BufReader::new(Cursor::new(framed));
 
-        let request = read_message(&mut reader).expect("parse frame").expect("request");
+        let request = read_message(&mut reader)
+            .expect("parse frame")
+            .expect("request");
 
         assert_eq!(request.jsonrpc, "2.0");
         assert_eq!(request.method, "ping");

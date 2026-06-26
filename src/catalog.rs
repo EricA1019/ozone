@@ -710,7 +710,10 @@ mod tests {
                 && issue.message.contains("contains invalid entries")
         }));
         assert_eq!(report.records.len(), 1);
-        assert_eq!(report.records[0].recommendation.source, RecSource::Heuristic);
+        assert_eq!(
+            report.records[0].recommendation.source,
+            RecSource::Heuristic
+        );
     }
 
     #[test]
@@ -734,7 +737,9 @@ mod tests {
 
         assert!(report.issues.iter().any(|issue| {
             issue.level == CatalogLoadIssueLevel::Error
-                && issue.message.contains("did not produce any usable benchmark entries")
+                && issue
+                    .message
+                    .contains("did not produce any usable benchmark entries")
         }));
     }
 }

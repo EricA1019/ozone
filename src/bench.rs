@@ -40,7 +40,9 @@ const API_TIMEOUT_SECS: u64 = 600;
 /// Read the CPU scaling governor. Returns None if unavailable (non-Linux).
 fn read_cpu_governor() -> Option<String> {
     let path = "/sys/devices/system/cpu/cpu0/cpufreq/scaling_governor";
-    std::fs::read_to_string(path).ok().map(|s| s.trim().to_string())
+    std::fs::read_to_string(path)
+        .ok()
+        .map(|s| s.trim().to_string())
 }
 
 #[derive(Debug, Clone)]
@@ -88,6 +90,31 @@ pub struct BenchmarkStoreRequest<'a> {
     pub launch_profile_name: Option<&'a str>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub struct BenchmarkRunRequest<'a> {
+    pub model_name: &'a str,
+    pub model_path: &'a std::path::Path,
+    pub backend: &'a BenchBackend,
+    pub gpu_layers: i32,
+    pub context_size: u32,
+    pub quant_k: u8,
+    pub quant_v: u8,
+    pub threads: Option<u32>,
+    pub mode: BenchMode,
+}
+
+#[derive(Debug, Clone, Copy)]
+pub struct BatchThreadSweepRequest<'a> {
+    pub model_name: &'a str,
+    pub model_path: &'a std::path::Path,
+    pub backend: &'a BenchBackend,
+    pub gpu_layers: i32,
+    pub context_size: u32,
+    pub quant_k: u8,
+    pub quant_v: u8,
+    pub base_threads: u32,
+}
+
 fn build_llamacpp_bench_args(
     gpu_layers: i32,
     context_size: u32,
@@ -114,27 +141,17 @@ fn build_llamacpp_bench_args(
 }
 
 /// Run a single benchmark: clear → launch → generate → measure → kill → store.
-pub async fn run_benchmark(
-    model_name: &str,
-    model_path: &std::path::Path,
-    backend: &BenchBackend,
-    gpu_layers: i32,
-    context_size: u32,
-    quant_k: u8,
-    quant_v: u8,
-    threads: Option<u32>,
-    mode: BenchMode,
-) -> Result<BenchResult> {
+pub async fn run_benchmark(request: BenchmarkRunRequest<'_>) -> Result<BenchResult> {
     run_benchmark_with_progress(
-        model_name,
-        model_path,
-        backend,
-        gpu_layers,
-        context_size,
-        quant_k,
-        quant_v,
-        threads,
-        mode,
+        request.model_name,
+        request.model_path,
+        request.backend,
+        request.gpu_layers,
+        request.context_size,
+        request.quant_k,
+        request.quant_v,
+        request.threads,
+        request.mode,
         |progress| eprintln!("  ⬡ {}", progress.message),
     )
     .await
@@ -188,7 +205,8 @@ where
 
     match backend {
         BenchBackend::LlamaCpp { server_path } => {
-            let args = build_llamacpp_bench_args(gpu_layers, context_size, quant_k, quant_v, threads);
+            let args =
+                build_llamacpp_bench_args(gpu_layers, context_size, quant_k, quant_v, threads);
             processes::start_llamacpp(server_path, &model_path.to_string_lossy(), &args)
                 .await
                 .map_err(|e| anyhow!("Launch failed: {e}"))?;
@@ -302,14 +320,17 @@ where
                 total_tokens: gen.token_count,
                 total_time_ms: gen.total_ms,
                 status: status.into(),
-                error_detail: if status == "garbage" { Some("Output failed garbage detection".into()) } else { None },
+                error_detail: if status == "garbage" {
+                    Some("Output failed garbage detection".into())
+                } else {
+                    None
+                },
                 threads: None,
             })
-        },
+        }
         Err(e) => {
             let detail = e.to_string();
-            let status = if detail.contains("OOM") || detail.contains("out of memory")
-            {
+            let status = if detail.contains("OOM") || detail.contains("out of memory") {
                 "oom"
             } else if detail.contains("timeout") || detail.contains("Timeout") {
                 "timeout"
@@ -538,7 +559,11 @@ pub fn output_is_garbage(text: &str) -> bool {
         for c in text.chars() {
             *char_counts.entry(c).or_insert(0) += 1;
         }
-        let max_char_ratio = char_counts.values().max().map(|&c| c as f64 / total_chars).unwrap_or(0.0);
+        let max_char_ratio = char_counts
+            .values()
+            .max()
+            .map(|&c| c as f64 / total_chars)
+            .unwrap_or(0.0);
         if max_char_ratio > 0.5 {
             return true; // e.g. "aaaaaaaaaaaaaaaaaaaaaaaa"
         }
@@ -608,14 +633,7 @@ pub async fn run_thread_sweep(
 /// Batch thread count sweep: tests different batch thread counts independently.
 /// Batch threads handle prompt processing; useful for tuning prompt eval speed.
 pub async fn run_batch_thread_sweep(
-    model_name: &str,
-    model_path: &std::path::Path,
-    backend: &BenchBackend,
-    gpu_layers: i32,
-    context_size: u32,
-    quant_k: u8,
-    quant_v: u8,
-    base_threads: u32,
+    request: BatchThreadSweepRequest<'_>,
 ) -> Result<Vec<BenchResult>> {
     let batch_counts: &[u32] = &[1, 2, 4, 6, 8];
     let mut results = Vec::new();
@@ -623,19 +641,34 @@ pub async fn run_batch_thread_sweep(
     for &batch in batch_counts {
         // Build custom args with --threads-batch
         let mut args = vec![
-            "--host".into(), "127.0.0.1".into(),
-            "--port".into(), "8989".into(),
-            "--n-gpu-layers".into(), gpu_layers.to_string(),
-            "--ctx-size".into(), context_size.to_string(),
-            "--threads".into(), base_threads.to_string(),
-            "--threads-batch".into(), batch.to_string(),
-            "--parallel".into(), "1".into(),
+            "--host".into(),
+            "127.0.0.1".into(),
+            "--port".into(),
+            "8989".into(),
+            "--n-gpu-layers".into(),
+            request.gpu_layers.to_string(),
+            "--ctx-size".into(),
+            request.context_size.to_string(),
+            "--threads".into(),
+            request.base_threads.to_string(),
+            "--threads-batch".into(),
+            batch.to_string(),
+            "--parallel".into(),
+            "1".into(),
         ];
-        args.extend(crate::processes::kv_cache_args(quant_k, quant_v));
+        args.extend(crate::processes::kv_cache_args(
+            request.quant_k,
+            request.quant_v,
+        ));
 
         // Launch + benchmark manually since we need custom args
         processes::clear_gpu_backends().await?;
-        processes::start_llamacpp(backend_server_path(backend)?, &model_path.to_string_lossy(), &args).await?;
+        processes::start_llamacpp(
+            backend_server_path(request.backend)?,
+            &request.model_path.to_string_lossy(),
+            &args,
+        )
+        .await?;
 
         eprintln!("  ⬡ [batch={batch}] Running generation…");
         let gen = run_llamacpp_generation(true).await;
@@ -651,18 +684,22 @@ pub async fn run_batch_thread_sweep(
                     ram_peak_mb: 0,
                     total_tokens: g.token_count,
                     total_time_ms: g.total_ms,
-                    status: if output_is_garbage(&g.content) { "garbage".into() } else { "ok".into() },
+                    status: if output_is_garbage(&g.content) {
+                        "garbage".into()
+                    } else {
+                        "ok".into()
+                    },
                     error_detail: None,
                     threads: None,
                 };
                 let _ = store_result_with_profile(
                     BenchmarkStoreRequest {
-                        model_name,
+                        model_name: request.model_name,
                         model_size_gb: 0.0,
-                        gpu_layers,
-                        context_size,
-                        quant_k: quant_k as u32,
-                        quant_v: quant_v as u32,
+                        gpu_layers: request.gpu_layers,
+                        context_size: request.context_size,
+                        quant_k: request.quant_k as u32,
+                        quant_v: request.quant_v as u32,
                         threads: batch, // store batch threads in threads field for now
                         launch_profile_name: Some("batch-sweep"),
                     },
@@ -684,7 +721,10 @@ pub fn print_thread_sweep_summary(thread_results: &[BenchResult]) {
     println!();
     println!("  ⬡ Thread Sweep Results");
     println!("  ─────────────────────────────────────────────────");
-    println!("  {:<10} {:<12} {:<10} {:<10}", "Threads", "Tok/s", "TTFT ms", "Status");
+    println!(
+        "  {:<10} {:<12} {:<10} {:<10}",
+        "Threads", "Tok/s", "TTFT ms", "Status"
+    );
     println!("  ─────────────────────────────────────────────────");
     let thread_counts = [1, 2, 4, 6, 8, 12];
     for (i, result) in thread_results.iter().enumerate() {
@@ -719,7 +759,8 @@ mod garbage_tests {
 
     #[test]
     fn repetitive_looping_is_garbage() {
-        let looping = "the the the the the the the the the the the the the the the the the the the the";
+        let looping =
+            "the the the the the the the the the the the the the the the the the the the the";
         assert!(output_is_garbage(looping));
     }
 

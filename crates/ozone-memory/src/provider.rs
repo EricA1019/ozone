@@ -475,10 +475,8 @@ mod fastembed_backend {
             }
 
             match &mut *state {
-                FastembedState::Ready(model) => {
-                    op(model.as_mut())
-                        .map_err(|error| EmbeddingProviderError::backend(error.to_string()))
-                }
+                FastembedState::Ready(model) => op(model.as_mut())
+                    .map_err(|error| EmbeddingProviderError::backend(error.to_string())),
                 FastembedState::Failed(reason) => {
                     Err(EmbeddingProviderError::unavailable(reason.clone()))
                 }

@@ -1,18 +1,21 @@
-/// MCP tool: launcher smoke test.
-use crate::OzoneMcpServer;
-use crate::ToolReply;
-use anyhow::anyhow;
-use serde_json::Value;
-use serde_json::json;
-use std::fs;
-use crate::required_string;
 use crate::optional_string;
 use crate::optional_u64;
+use crate::required_string;
 use crate::session_summary_json;
 use crate::LauncherSmokeRunnerSpec;
+/// MCP tool: launcher smoke test.
+use crate::OzoneMcpServer;
 use crate::PtyVteCaptureConfig;
+use crate::ToolReply;
+use anyhow::anyhow;
+use serde_json::json;
+use serde_json::Value;
+use std::fs;
 
-pub fn launcher_smoke_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
+pub fn launcher_smoke_tool(
+    server: &mut OzoneMcpServer,
+    args: &serde_json::Value,
+) -> anyhow::Result<ToolReply> {
     let sandbox_id = required_string(args, "sandboxId")?;
     let live_refresh_model_name = optional_string(args, "liveRefreshModelName");
     let enter_count = optional_u64(args, "enterCount").unwrap_or(4);

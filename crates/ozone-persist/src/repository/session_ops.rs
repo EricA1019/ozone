@@ -106,10 +106,7 @@ impl SqliteRepository {
     /// with a non-empty greeting and the transcript is currently empty.
     /// Returns the greeting text if seeded, or None if no greeting was injected.
     /// This enables greetings to fire when loading pre-existing sessions.
-    pub fn maybe_seed_character_greeting(
-        &self,
-        session_id: &SessionId,
-    ) -> Result<Option<String>> {
+    pub fn maybe_seed_character_greeting(&self, session_id: &SessionId) -> Result<Option<String>> {
         // Get session record (not summary — we need character_name from the full record)
         let session = self
             .get_session(session_id)?

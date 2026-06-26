@@ -1,16 +1,19 @@
-use crate::OzoneMcpServer;
-use crate::ToolReply;
-use serde_json::json;
-use crate::required_string;
 use crate::optional_string;
 use crate::optional_u64;
-use crate::parse_session_id;
 use crate::parse_message_id;
+use crate::parse_session_id;
 use crate::pinned_memory_record_json;
 use crate::pinned_memory_view_json;
-use ozone_persist::{CreateNoteMemoryRequest, AuthorId, Provenance, PinMessageMemoryRequest};
+use crate::required_string;
+use crate::OzoneMcpServer;
+use crate::ToolReply;
+use ozone_persist::{AuthorId, CreateNoteMemoryRequest, PinMessageMemoryRequest, Provenance};
+use serde_json::json;
 
-pub fn memory_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
+pub fn memory_tool(
+    server: &mut OzoneMcpServer,
+    args: &serde_json::Value,
+) -> anyhow::Result<ToolReply> {
     let action = required_string(args, "action")?;
     let sandbox_id = optional_string(args, "sandboxId");
     match action.as_str() {
@@ -20,11 +23,7 @@ pub fn memory_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> any
             server.with_repo(sandbox_id.as_deref(), |repo| {
                 let record = repo.create_note_memory(
                     &session_id,
-                    CreateNoteMemoryRequest::new(
-                        content,
-                        AuthorId::User,
-                        Provenance::UserAuthored,
-                    ),
+                    CreateNoteMemoryRequest::new(content, AuthorId::User, Provenance::UserAuthored),
                 )?;
                 Ok(ToolReply::success(
                     "Created note memory".to_owned(),

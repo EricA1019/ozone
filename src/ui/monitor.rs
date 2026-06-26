@@ -191,14 +191,12 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
         .map(|t| format!("  {t:.1} t/s"))
         .unwrap_or_default();
 
-    let lines = vec![
-        Line::from(vec![
-            Span::styled(format!("  {llama_icon} llama.cpp  "), llama_style),
-            Span::styled(llama_model_str, style_violet()),
-            Span::styled("  :8989", style_gray()),
-            Span::styled(tps_str, style_green()),
-        ]),
-    ];
+    let lines = vec![Line::from(vec![
+        Span::styled(format!("  {llama_icon} llama.cpp  "), llama_style),
+        Span::styled(llama_model_str, style_violet()),
+        Span::styled("  :8989", style_gray()),
+        Span::styled(tps_str, style_green()),
+    ])];
     f.render_widget(Paragraph::new(lines), inner);
 }
 

@@ -53,11 +53,7 @@ pub fn check_health_gate(cal: &CalibrationResult) -> GateDecision {
         format!("health gate failed: {}", failures.join(", "))
     };
 
-    let score = if passed {
-        1.0
-    } else {
-        0.0
-    };
+    let score = if passed { 1.0 } else { 0.0 };
 
     GateDecision {
         gate_name: "health",
@@ -71,16 +67,18 @@ pub fn check_health_gate(cal: &CalibrationResult) -> GateDecision {
 ///
 /// Returns a `GateDecision` indicating whether the model/config should
 /// be promoted to advanced tests in this lane.
-pub fn check_lane_gate(
-    gate_name: &'static str,
-    score: f64,
-    required_score: f64,
-) -> GateDecision {
+pub fn check_lane_gate(gate_name: &'static str, score: f64, required_score: f64) -> GateDecision {
     let passed = score >= required_score;
     let reason = if passed {
-        format!("{} score {:.2} >= required {:.2}", gate_name, score, required_score)
+        format!(
+            "{} score {:.2} >= required {:.2}",
+            gate_name, score, required_score
+        )
     } else {
-        format!("{} score {:.2} < required {:.2}", gate_name, score, required_score)
+        format!(
+            "{} score {:.2} < required {:.2}",
+            gate_name, score, required_score
+        )
     };
 
     GateDecision {

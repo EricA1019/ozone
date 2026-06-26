@@ -31,5 +31,8 @@ fn core_metadata_exposes_stable_tier_variants() {
 
     // ProductTier::OzonePlus is a legitimate variant — the test previously
     // asserted it should not exist, but it's a valid product identifier.
-    assert!(core_lib.contains("OzonePlus"), "OzonePlus is a valid product tier variant");
+    assert!(
+        core_lib.contains("OzonePlus"),
+        "OzonePlus is a valid product tier variant"
+    );
 }

@@ -1,16 +1,19 @@
-use crate::OzoneMcpServer;
-use crate::ToolReply;
-use serde_json::json;
-use std::fs;
-use anyhow::anyhow;
-use anyhow::bail;
-use anyhow::Context;
 use crate::optional_string;
 use crate::optional_string_array;
 use crate::session_summary_json;
+use crate::OzoneMcpServer;
+use crate::ToolReply;
+use anyhow::anyhow;
+use anyhow::bail;
+use anyhow::Context;
 use ozone_persist::{CharacterCard, ImportCharacterCardRequest};
+use serde_json::json;
+use std::fs;
 
-pub fn import_card_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
+pub fn import_card_tool(
+    server: &mut OzoneMcpServer,
+    args: &serde_json::Value,
+) -> anyhow::Result<ToolReply> {
     let sandbox_id = optional_string(args, "sandboxId");
     let session_name = optional_string(args, "sessionName");
     let tags = optional_string_array(args, "tags")?;
@@ -23,8 +26,9 @@ pub fn import_card_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -
                 .with_context(|| format!("failed to read character card {}", path))?;
             CharacterCard::from_json_str(&text).map_err(|error| anyhow!(error.to_string()))?
         }
-        (None, Some(card_json)) => CharacterCard::from_json_str(card_json)
-            .map_err(|error| anyhow!(error.to_string()))?,
+        (None, Some(card_json)) => {
+            CharacterCard::from_json_str(card_json).map_err(|error| anyhow!(error.to_string()))?
+        }
         (None, None) => bail!("import_card requires either `path` or `cardJson`"),
     };
     let sillytavern_format = card.source_format.starts_with("chara_card_v2");

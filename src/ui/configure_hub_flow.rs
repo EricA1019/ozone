@@ -1,13 +1,13 @@
 use crossterm::event::{KeyCode, KeyEvent};
 
 use super::configure_plan_flow::{adjust_configure_plan, reset_configure_plan};
-use super::configure_profile_flow::{
-    apply_selected_saved_profile, build_override_from_plans, cycle_saved_profile,
-    delete_selected_saved_profile, save_current_plan_as_profile,
-    set_selected_profile_default, update_selected_profile_from_current_plan,
-};
 #[cfg(feature = "profiling-ui")]
 use super::configure_profile_flow::selected_saved_profile;
+use super::configure_profile_flow::{
+    apply_selected_saved_profile, build_override_from_plans, cycle_saved_profile,
+    delete_selected_saved_profile, save_current_plan_as_profile, set_selected_profile_default,
+    update_selected_profile_from_current_plan,
+};
 use super::{App, Screen};
 #[cfg(feature = "profiling-ui")]
 use crate::profiling::ProfilingAction;
@@ -93,7 +93,10 @@ pub(super) async fn handle_configure_hub_key(app: &mut App, key: KeyEvent) {
                     app.set_status(format!("Loaded saved profile '{profile_name}'."));
                 }
             } else {
-                app.set_error(format!("Profile #{ch} does not exist (have {}).", app.configure_saved_profiles.len()));
+                app.set_error(format!(
+                    "Profile #{ch} does not exist (have {}).",
+                    app.configure_saved_profiles.len()
+                ));
             }
         }
         KeyCode::Enter => {

@@ -31,8 +31,8 @@ pub(super) fn generate_uuid_like() -> String {
     let counter = u128::from(ID_COUNTER.fetch_add(1, Ordering::Relaxed));
     let nanos = safe_unix_duration().as_nanos();
     let pid = u128::from(std::process::id());
-    let mut bytes = (nanos ^ (counter << COUNTER_SHIFT_BITS) ^ (pid << PROCESS_ID_SHIFT_BITS))
-        .to_be_bytes();
+    let mut bytes =
+        (nanos ^ (counter << COUNTER_SHIFT_BITS) ^ (pid << PROCESS_ID_SHIFT_BITS)).to_be_bytes();
 
     bytes[UUID_VERSION_BYTE_INDEX] =
         (bytes[UUID_VERSION_BYTE_INDEX] & UUID_VERSION_MASK) | UUID_VERSION_FOUR;
@@ -89,7 +89,10 @@ mod tests {
             assert_eq!(bytes[index], b'-');
         }
         assert_eq!(bytes[UUID_VERSION_INDEX], b'4');
-        assert!(matches!(bytes[UUID_VARIANT_INDEX], b'8' | b'9' | b'a' | b'b'));
+        assert!(matches!(
+            bytes[UUID_VARIANT_INDEX],
+            b'8' | b'9' | b'a' | b'b'
+        ));
     }
 
     #[test]

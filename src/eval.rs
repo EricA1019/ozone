@@ -42,7 +42,10 @@ impl EvalPreset {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EvalTaskKind {
     /// Runs lm-eval with the given task name and output subdirectory.
-    LmEval { task: &'static str, output_dir: &'static str },
+    LmEval {
+        task: &'static str,
+        output_dir: &'static str,
+    },
     /// Runs EvalPlus codegen.
     EvalPlus { output_dir: &'static str },
     /// Runs the creative writing diversity probe (Phase 2).
@@ -66,56 +69,79 @@ pub const EVAL_TASKS: &[EvalTask] = &[
     EvalTask {
         name: "gsm8k",
         cli_name: "gsm8k",
-        kind: EvalTaskKind::LmEval { task: "gsm8k", output_dir: "lm_eval_gsm8k_probe" },
+        kind: EvalTaskKind::LmEval {
+            task: "gsm8k",
+            output_dir: "lm_eval_gsm8k_probe",
+        },
         description: "lm-eval GSM8K arithmetic reasoning probe",
         report_label: "GSM8K",
     },
     EvalTask {
         name: "instruction",
         cli_name: "instruction",
-        kind: EvalTaskKind::LmEval { task: "leaderboard_instruction_following", output_dir: "lm_eval_instruction_probe" },
+        kind: EvalTaskKind::LmEval {
+            task: "leaderboard_instruction_following",
+            output_dir: "lm_eval_instruction_probe",
+        },
         description: "lm-eval instruction-following leaderboard probe",
         report_label: "Instruction following",
     },
     EvalTask {
         name: "math",
         cli_name: "math",
-        kind: EvalTaskKind::LmEval { task: "leaderboard_math_hard", output_dir: "lm_eval_math_probe" },
+        kind: EvalTaskKind::LmEval {
+            task: "leaderboard_math_hard",
+            output_dir: "lm_eval_math_probe",
+        },
         description: "lm-eval leaderboard_math_hard probe",
         report_label: "Math hard",
     },
     EvalTask {
         name: "humaneval",
         cli_name: "humaneval",
-        kind: EvalTaskKind::EvalPlus { output_dir: "evalplus_probe" },
+        kind: EvalTaskKind::EvalPlus {
+            output_dir: "evalplus_probe",
+        },
         description: "EvalPlus HumanEval codegen probe",
         report_label: "HumanEval / EvalPlus",
     },
     EvalTask {
         name: "mmlu",
         cli_name: "mmlu",
-        kind: EvalTaskKind::LmEval { task: "mmlu", output_dir: "lm_eval_mmlu_probe" },
+        kind: EvalTaskKind::LmEval {
+            task: "mmlu",
+            output_dir: "lm_eval_mmlu_probe",
+        },
         description: "Massive Multitask Language Understanding (57 subjects)",
         report_label: "MMLU",
     },
     EvalTask {
         name: "hellaswag",
         cli_name: "hellaswag",
-        kind: EvalTaskKind::LmEval { task: "hellaswag", output_dir: "lm_eval_hellaswag_probe" },
+        kind: EvalTaskKind::LmEval {
+            task: "hellaswag",
+            output_dir: "lm_eval_hellaswag_probe",
+        },
         description: "Commonsense narrative completion (HellaSwag)",
         report_label: "HellaSwag",
     },
     EvalTask {
         name: "truthfulqa",
         cli_name: "truthfulqa",
-        kind: EvalTaskKind::LmEval { task: "truthfulqa_gen", output_dir: "lm_eval_truthfulqa_probe" },
+        kind: EvalTaskKind::LmEval {
+            task: "truthfulqa_gen",
+            output_dir: "lm_eval_truthfulqa_probe",
+        },
         description: "TruthfulQA generation (misconception resistance)",
         report_label: "TruthfulQA",
     },
     EvalTask {
         name: "bbh",
         cli_name: "bbh",
-        kind: EvalTaskKind::LmEval { task: "bigbench_hard", output_dir: "lm_eval_bbh_probe" },
+        kind: EvalTaskKind::LmEval {
+            task: "bigbench_hard",
+            output_dir: "lm_eval_bbh_probe",
+        },
         description: "BIG-Bench Hard (23 multi-step reasoning tasks)",
         report_label: "BBH",
     },
@@ -150,11 +176,18 @@ pub async fn run_eval_task(
     }
 
     match task.kind {
-        EvalTaskKind::LmEval { task: lm_task, output_dir } => {
+        EvalTaskKind::LmEval {
+            task: lm_task,
+            output_dir,
+        } => {
             let status = run_lm_eval(
-                &venv_bin, model, lm_task, limit,
+                &venv_bin,
+                model,
+                lm_task,
+                limit,
                 &artifacts_dir.join(output_dir),
-                base_url, temperature,
+                base_url,
+                temperature,
             )?;
             if !status.success() {
                 match status.code() {
@@ -165,7 +198,9 @@ pub async fn run_eval_task(
         }
         EvalTaskKind::EvalPlus { output_dir } => {
             let status = run_evalplus_codegen(
-                &venv_bin, model, limit,
+                &venv_bin,
+                model,
+                limit,
                 &artifacts_dir.join(output_dir),
                 base_url,
             )?;
@@ -183,8 +218,12 @@ pub async fn run_eval_task(
             }
             let output_dir = artifacts_dir.join("creative_writing");
             let csv_path = crate::creative_writing::run_creative_writing_eval(
-                model, &prompts, base_url, &output_dir,
-            ).await?;
+                model,
+                &prompts,
+                base_url,
+                &output_dir,
+            )
+            .await?;
             let report_md = crate::creative_writing::build_creative_report(&csv_path)?;
             let report_path = csv_path.with_extension("md");
             std::fs::write(&report_path, &report_md)?;
@@ -196,7 +235,8 @@ pub async fn run_eval_task(
     }
 
     ozone_core::cli::success(&format!(
-        "Completed {} for model '{}'.", task.description, model
+        "Completed {} for model '{}'.",
+        task.description, model
     ));
 
     // Generate CSV output
@@ -234,11 +274,17 @@ fn write_eval_csv(task: &EvalTask, model: &str, artifacts_dir: &Path) -> Result<
     if let Some(results) = json.get("results") {
         for (task_key, task_data) in results.as_object().unwrap_or(&serde_json::Map::new()) {
             for (metric, value) in task_data.as_object().unwrap_or(&serde_json::Map::new()) {
-                if metric == "alias" { continue; }
+                if metric == "alias" {
+                    continue;
+                }
                 let (val, stderr) = extract_metric_value(value);
                 writer.write_record([
-                    model, task_key, metric,
-                    &val.to_string(), &stderr.to_string(), &timestamp,
+                    model,
+                    task_key,
+                    metric,
+                    &val.to_string(),
+                    &stderr.to_string(),
+                    &timestamp,
                 ])?;
             }
         }
@@ -265,7 +311,10 @@ fn disambiguate_csv_path(base: &Path) -> Result<PathBuf> {
         return Ok(base.to_path_buf());
     }
     for n in 1..1000u32 {
-        let stem = base.file_stem().and_then(|s| s.to_str()).unwrap_or("results");
+        let stem = base
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("results");
         let candidate = base.with_file_name(format!("{stem}_run{n}.csv"));
         if !candidate.exists() {
             return Ok(candidate);
@@ -279,7 +328,9 @@ fn disambiguate_csv_path(base: &Path) -> Result<PathBuf> {
 fn latest_csv_source_file(dir: &Path) -> Result<PathBuf> {
     // lm-eval writes results_*.json; pick the latest by name
     let mut entries = Vec::new();
-    for entry in std::fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))? {
+    for entry in
+        std::fs::read_dir(dir).with_context(|| format!("failed to read {}", dir.display()))?
+    {
         let entry = entry.with_context(|| format!("failed to read entry in {}", dir.display()))?;
         let path = entry.path();
         let file_name = match path.file_name().and_then(|name| name.to_str()) {
@@ -293,13 +344,14 @@ fn latest_csv_source_file(dir: &Path) -> Result<PathBuf> {
         }
     }
     entries.sort();
-    entries.last().cloned()
+    entries
+        .last()
+        .cloned()
         .with_context(|| format!("no results JSON found in {}", dir.display()))
 }
 
 pub fn print_comparison(task_name: &str) -> Result<()> {
-    let task = find_task(task_name)
-        .with_context(|| format!("unknown task: {task_name}"))?;
+    let task = find_task(task_name).with_context(|| format!("unknown task: {task_name}"))?;
 
     let output_dir = match task.kind {
         EvalTaskKind::LmEval { output_dir, .. } => output_dir,
@@ -319,12 +371,16 @@ pub fn print_comparison(task_name: &str) -> Result<()> {
     let mut all_rows: Vec<(String, String, f64)> = Vec::new(); // (model, metric, value)
     for entry in std::fs::read_dir(&dir)? {
         let entry = entry?;
-        if !entry.file_type()?.is_dir() { continue; }
+        if !entry.file_type()?.is_dir() {
+            continue;
+        }
         let model_dir = entry.path();
         for file in std::fs::read_dir(&model_dir)? {
             let file = file?;
             let path = file.path();
-            if path.extension().and_then(|e| e.to_str()) != Some("csv") { continue; }
+            if path.extension().and_then(|e| e.to_str()) != Some("csv") {
+                continue;
+            }
             let mut rdr = csv::Reader::from_path(&path)?;
             for result in rdr.records() {
                 let record = result?;
@@ -347,7 +403,9 @@ pub fn print_comparison(task_name: &str) -> Result<()> {
     let mut best: Vec<(String, f64)> = Vec::new();
     for (model, _metric, value) in &all_rows {
         if let Some(existing) = best.iter_mut().find(|(m, _)| m == model) {
-            if *value > existing.1 { existing.1 = *value; }
+            if *value > existing.1 {
+                existing.1 = *value;
+            }
         } else {
             best.push((model.clone(), *value));
         }
@@ -361,7 +419,13 @@ pub fn print_comparison(task_name: &str) -> Result<()> {
     Ok(())
 }
 
-pub async fn run_eval(model: &str, preset: EvalPreset, limit: u32, base_url: &str, temperature: f64) -> Result<()> {
+pub async fn run_eval(
+    model: &str,
+    preset: EvalPreset,
+    limit: u32,
+    base_url: &str,
+    temperature: f64,
+) -> Result<()> {
     if limit == 0 {
         bail!("--limit must be greater than 0");
     }
@@ -370,10 +434,12 @@ pub async fn run_eval(model: &str, preset: EvalPreset, limit: u32, base_url: &st
     let task = EVAL_TASKS
         .iter()
         .find(|t| t.cli_name == preset.cli_name())
-        .ok_or_else(|| anyhow::anyhow!(
-            "Internal error: preset '{}' not found in EVAL_TASKS registry",
-            preset.cli_name()
-        ))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "Internal error: preset '{}' not found in EVAL_TASKS registry",
+                preset.cli_name()
+            )
+        })?;
 
     // Delegate to the task registry — single source of truth for dispatch
     run_eval_task(task, model, limit, base_url, temperature).await?;
@@ -536,18 +602,28 @@ mod tests {
 
     #[test]
     fn normalize_base_url_strips_trailing_slash() {
-        assert_eq!(normalize_base_url("http://127.0.0.1:8989/"), "http://127.0.0.1:8989");
-        assert_eq!(normalize_base_url("http://127.0.0.1:8989"), "http://127.0.0.1:8989");
+        assert_eq!(
+            normalize_base_url("http://127.0.0.1:8989/"),
+            "http://127.0.0.1:8989"
+        );
+        assert_eq!(
+            normalize_base_url("http://127.0.0.1:8989"),
+            "http://127.0.0.1:8989"
+        );
     }
 
     #[test]
     fn eval_registry_bbh_has_correct_lm_eval_task_name() {
-        let task = EVAL_TASKS.iter().find(|t| t.cli_name == "bbh")
+        let task = EVAL_TASKS
+            .iter()
+            .find(|t| t.cli_name == "bbh")
             .expect("bbh should be in EVAL_TASKS");
         match &task.kind {
             super::EvalTaskKind::LmEval { task, .. } => {
-                assert_eq!(*task, "bigbench_hard",
-                    "BBH lm-eval task name mismatch between registry and lm-eval");
+                assert_eq!(
+                    *task, "bigbench_hard",
+                    "BBH lm-eval task name mismatch between registry and lm-eval"
+                );
             }
             _ => panic!("expected LmEval kind for bbh"),
         }
@@ -555,12 +631,16 @@ mod tests {
 
     #[test]
     fn eval_registry_truthfulqa_has_correct_lm_eval_task_name() {
-        let task = EVAL_TASKS.iter().find(|t| t.cli_name == "truthfulqa")
+        let task = EVAL_TASKS
+            .iter()
+            .find(|t| t.cli_name == "truthfulqa")
             .expect("truthfulqa should be in EVAL_TASKS");
         match &task.kind {
             super::EvalTaskKind::LmEval { task, .. } => {
-                assert_eq!(*task, "truthfulqa_gen",
-                    "TruthfulQA lm-eval task name mismatch between registry and lm-eval");
+                assert_eq!(
+                    *task, "truthfulqa_gen",
+                    "TruthfulQA lm-eval task name mismatch between registry and lm-eval"
+                );
             }
             _ => panic!("expected LmEval kind for truthfulqa"),
         }
@@ -577,14 +657,21 @@ mod tests {
                 // Some presets may not be in EVAL_TASKS (e.g. creative writing)
                 continue;
             };
-            let super::EvalTaskKind::LmEval { task: expected_task, .. } = &registry_task.kind else {
+            let super::EvalTaskKind::LmEval {
+                task: expected_task,
+                ..
+            } = &registry_task.kind
+            else {
                 // Skip non-lm-eval presets
                 continue;
             };
             // We can't inspect the internal dispatch strings directly, but we
             // can verify the registry has the right name — that's the source of truth.
             // If this test fails, the dispatch in run_eval() is using a stale name.
-            assert!(!expected_task.is_empty(), "lm-eval task name for {cli} must not be empty");
+            assert!(
+                !expected_task.is_empty(),
+                "lm-eval task name for {cli} must not be empty"
+            );
         }
     }
 }

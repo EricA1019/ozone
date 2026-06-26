@@ -38,7 +38,9 @@ fn evalplus_success_fixture_exposes_task_and_solution() {
     let json: Value = serde_json::from_str(first_line).expect("valid evalplus fixture json");
 
     assert_eq!(json["task_id"], "HumanEval/0");
-    assert!(json["solution"].as_str().is_some_and(|solution| !solution.is_empty()));
+    assert!(json["solution"]
+        .as_str()
+        .is_some_and(|solution| !solution.is_empty()));
 }
 
 #[test]

@@ -1,5 +1,5 @@
-use std::io::ErrorKind;
 use std::fs;
+use std::io::ErrorKind;
 
 use anyhow::{Context, Result};
 use serde_json::Value;
@@ -22,7 +22,8 @@ pub fn read_preferences_json() -> Result<Option<Value>> {
             Ok(Some(value))
         }
         Err(error) if error.kind() == ErrorKind::NotFound => Ok(None),
-        Err(error) => Err(error).with_context(|| format!("Failed to read preferences file {}", path.display())),
+        Err(error) => Err(error)
+            .with_context(|| format!("Failed to read preferences file {}", path.display())),
     }
 }
 

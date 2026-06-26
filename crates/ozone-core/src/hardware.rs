@@ -79,7 +79,9 @@ fn query_amd_gpu_memory() -> Option<GpuMemory> {
     }
 
     // Fallback: legacy text format (rocm-smi < 5.x)
-    if let Ok(out) = Command::new("rocm-smi").args(["--showmeminfo", "vram"]).output()
+    if let Ok(out) = Command::new("rocm-smi")
+        .args(["--showmeminfo", "vram"])
+        .output()
     {
         if out.status.success() {
             let text = String::from_utf8_lossy(&out.stdout);
@@ -152,7 +154,9 @@ fn query_gpu_name() -> Option<String> {
         .ok()
         .and_then(|out| {
             if out.status.success() {
-                String::from_utf8(out.stdout).ok().map(|s| s.trim().to_string())
+                String::from_utf8(out.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
             } else {
                 None
             }
@@ -167,7 +171,9 @@ fn query_cuda_driver_version() -> Option<String> {
         .ok()
         .and_then(|out| {
             if out.status.success() {
-                String::from_utf8(out.stdout).ok().map(|s| s.trim().to_string())
+                String::from_utf8(out.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
             } else {
                 None
             }
@@ -182,7 +188,9 @@ fn query_compute_capability() -> Option<String> {
         .ok()
         .and_then(|out| {
             if out.status.success() {
-                String::from_utf8(out.stdout).ok().map(|s| s.trim().to_string())
+                String::from_utf8(out.stdout)
+                    .ok()
+                    .map(|s| s.trim().to_string())
             } else {
                 None
             }
@@ -205,9 +213,7 @@ fn check_cuda_available() -> bool {
         .args(["-p"])
         .output()
         .ok()
-        .map(|out| {
-            String::from_utf8_lossy(&out.stdout).contains("libcuda.so")
-        })
+        .map(|out| String::from_utf8_lossy(&out.stdout).contains("libcuda.so"))
         .unwrap_or(false)
 }
 
@@ -232,8 +238,16 @@ pub fn collect_hardware_profile() -> HardwareProfile {
     let gpu = query_gpu_memory();
     let gpu_name = query_gpu_name();
     let cuda_available = check_cuda_available();
-    let cuda_version = if cuda_available { query_cuda_driver_version() } else { None };
-    let compute_capability = if cuda_available { query_compute_capability() } else { None };
+    let cuda_version = if cuda_available {
+        query_cuda_driver_version()
+    } else {
+        None
+    };
+    let compute_capability = if cuda_available {
+        query_compute_capability()
+    } else {
+        None
+    };
     let flash_attn_supported = compute_flash_attn_supported(compute_capability.as_deref());
 
     HardwareProfile {
@@ -283,7 +297,9 @@ pub fn load_cached_hardware() -> Option<HardwareProfile> {
 }
 
 pub fn save_hardware_profile(profile: &HardwareProfile) {
-    let Some(data_dir) = crate::paths::data_dir() else { return };
+    let Some(data_dir) = crate::paths::data_dir() else {
+        return;
+    };
     let path = data_dir.join("hardware-cache.json");
     if let Ok(text) = serde_json::to_string_pretty(profile) {
         let _ = std::fs::create_dir_all(&data_dir);
@@ -337,7 +353,9 @@ pub fn load_system_profile() -> Option<HardwareProfile> {
 
 /// Save a hardware profile to disk as the system profile.
 pub fn save_system_profile(profile: &HardwareProfile) {
-    let Some(data_dir) = crate::paths::data_dir() else { return };
+    let Some(data_dir) = crate::paths::data_dir() else {
+        return;
+    };
     let path = data_dir.join("system-profile.json");
     if let Ok(text) = serde_json::to_string_pretty(profile) {
         let _ = std::fs::create_dir_all(&data_dir);

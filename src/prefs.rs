@@ -112,9 +112,7 @@ fn coerce_supported_tier(tier: Option<Tier>) -> Option<Tier> {
     tier
 }
 
-fn coerce_supported_frontend(
-    frontend: Option<FrontendPreference>,
-) -> Option<FrontendPreference> {
+fn coerce_supported_frontend(frontend: Option<FrontendPreference>) -> Option<FrontendPreference> {
     frontend
 }
 
@@ -513,19 +511,19 @@ mod tests {
         assert!(message.contains(&path.display().to_string()));
     }
 
-        #[test]
-        fn load_prefs_rejects_legacy_plus_tier() {
-            let _env_guard = env_lock();
-                let sandbox = TestSandbox::new("coerce-plus-state");
-                std::fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
-                let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
-                let _home = ScopedEnvVar::set("HOME", sandbox.root.join("home"));
+    #[test]
+    fn load_prefs_rejects_legacy_plus_tier() {
+        let _env_guard = env_lock();
+        let sandbox = TestSandbox::new("coerce-plus-state");
+        std::fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
+        let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
+        let _home = ScopedEnvVar::set("HOME", sandbox.root.join("home"));
 
-                let path = ozone_core::paths::preferences_path().expect("prefs path should resolve");
-                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-                std::fs::write(
-                        &path,
-                        r#"{
+        let path = ozone_core::paths::preferences_path().expect("prefs path should resolve");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{
     "version": 1,
     "last_model_name": "legacy.gguf",
     "no_browser": true,
@@ -547,50 +545,56 @@ mod tests {
     }
 }
 "#,
-                )
-                .unwrap();
+        )
+        .unwrap();
 
-                let prefs = tokio::runtime::Runtime::new()
-                        .unwrap()
-                        .block_on(super::load_prefs())
-                        .expect("legacy plus prefs should migrate");
+        let prefs = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(super::load_prefs())
+            .expect("legacy plus prefs should migrate");
 
-                assert_eq!(prefs.preferred_tier, None, "legacy plus tier should be rejected");
-                assert_eq!(prefs.preferred_frontend, None, "ozone-plus frontend should be rejected");
-                assert_eq!(
-                        prefs.default_saved_launch_profile_name_for("legacy.gguf"),
-                        Some("custom-1")
-                );
-        }
+        assert_eq!(
+            prefs.preferred_tier, None,
+            "legacy plus tier should be rejected"
+        );
+        assert_eq!(
+            prefs.preferred_frontend, None,
+            "ozone-plus frontend should be rejected"
+        );
+        assert_eq!(
+            prefs.default_saved_launch_profile_name_for("legacy.gguf"),
+            Some("custom-1")
+        );
+    }
 
-        #[test]
-        fn load_prefs_preserves_lite_preference() {
-            let _env_guard = env_lock();
-                let sandbox = TestSandbox::new("preserve-lite-state");
-                std::fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
-                let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
-                let _home = ScopedEnvVar::set("HOME", sandbox.root.join("home"));
+    #[test]
+    fn load_prefs_preserves_lite_preference() {
+        let _env_guard = env_lock();
+        let sandbox = TestSandbox::new("preserve-lite-state");
+        std::fs::create_dir_all(sandbox.xdg_data_home()).unwrap();
+        let _xdg_data_home = ScopedEnvVar::set("XDG_DATA_HOME", sandbox.xdg_data_home());
+        let _home = ScopedEnvVar::set("HOME", sandbox.root.join("home"));
 
-                let path = ozone_core::paths::preferences_path().expect("prefs path should resolve");
-                std::fs::create_dir_all(path.parent().unwrap()).unwrap();
-                std::fs::write(
-                        &path,
-                        r#"{
+        let path = ozone_core::paths::preferences_path().expect("prefs path should resolve");
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(
+            &path,
+            r#"{
     "version": 1,
     "last_model_name": "lite.gguf",
     "preferred_tier": "lite"
 }
 "#,
-                )
-                .unwrap();
+        )
+        .unwrap();
 
-                let prefs = tokio::runtime::Runtime::new()
-                        .unwrap()
-                        .block_on(super::load_prefs())
-                        .expect("lite prefs should migrate");
+        let prefs = tokio::runtime::Runtime::new()
+            .unwrap()
+            .block_on(super::load_prefs())
+            .expect("lite prefs should migrate");
 
-                assert_eq!(prefs.preferred_tier, Some(Tier::Lite));
-        }
+        assert_eq!(prefs.preferred_tier, Some(Tier::Lite));
+    }
 
     #[test]
     fn load_prefs_coerces_legacy_backend_to_llamacpp() {

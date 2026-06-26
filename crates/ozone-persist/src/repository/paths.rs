@@ -64,10 +64,13 @@ mod tests {
     #[test]
     fn persistence_paths_build_expected_session_layout() {
         let paths = PersistencePaths::from_data_dir("/tmp/ozone-persist-test");
-        let session_id = SessionId::parse("123e4567-e89b-12d3-a456-426614174000")
-            .expect("valid session id");
+        let session_id =
+            SessionId::parse("123e4567-e89b-12d3-a456-426614174000").expect("valid session id");
 
-        assert_eq!(paths.data_dir(), PathBuf::from("/tmp/ozone-persist-test").as_path());
+        assert_eq!(
+            paths.data_dir(),
+            PathBuf::from("/tmp/ozone-persist-test").as_path()
+        );
         assert_eq!(
             paths.global_db_path(),
             PathBuf::from("/tmp/ozone-persist-test/global.db")

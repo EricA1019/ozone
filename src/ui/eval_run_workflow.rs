@@ -22,39 +22,58 @@ pub(crate) enum EvalRunEvent {
     /// Task was skipped (e.g. context too small).
     TaskSkipped { task_key: String, reason: String },
     /// Pipeline completed successfully.
-    Completed { tasks_run: usize, tasks_passed: usize, duration_ms: u64 },
+    Completed {
+        tasks_run: usize,
+        tasks_passed: usize,
+        duration_ms: u64,
+    },
     /// Pipeline failed with an error.
     Failed { message: String },
 }
 
 /// Apply an eval run event to the App state.
-pub(super) fn apply_eval_run_event(
-    app: &mut super::App,
-    event: EvalRunEvent,
-) {
+pub(super) fn apply_eval_run_event(app: &mut super::App, event: EvalRunEvent) {
     match event {
         EvalRunEvent::Stage { name, detail } => {
             app.eval_run_stage = name;
             app.eval_run_progress.push(format!("  {}", detail));
         }
-        EvalRunEvent::TaskResult { task_key, passed, score, detail: _, latency_ms } => {
+        EvalRunEvent::TaskResult {
+            task_key,
+            passed,
+            score,
+            detail,
+            latency_ms,
+        } => {
             let mark = if passed { "[PASS]" } else { "[FAIL]" };
-            let line = format!("  {mark} {task_key} ({:.1}s) score={score:.2}", latency_ms as f64 / 1000.0);
+            let line = format!(
+                "  {mark} {task_key} ({:.1}s) score={score:.2} {detail}",
+                latency_ms as f64 / 1000.0
+            );
             app.eval_run_progress.push(line);
             app.eval_run_tasks_run += 1;
-            if passed { app.eval_run_tasks_passed += 1; }
+            if passed {
+                app.eval_run_tasks_passed += 1;
+            }
         }
         EvalRunEvent::TaskSkipped { task_key, reason } => {
-            app.eval_run_progress.push(format!("  [SKIP] {task_key} {reason}"));
+            app.eval_run_progress
+                .push(format!("  [SKIP] {task_key} {reason}"));
         }
-        EvalRunEvent::Completed { tasks_run, tasks_passed, duration_ms } => {
+        EvalRunEvent::Completed {
+            tasks_run,
+            tasks_passed,
+            duration_ms,
+        } => {
             app.eval_run_event_rx = None;
             app.eval_run_running = false;
             app.eval_run_progress.push(format!(
                 "  Done: {tasks_passed}/{tasks_run} passed in {:.1}s",
                 duration_ms as f64 / 1000.0
             ));
-            app.set_status(format!("Eval run complete: {tasks_passed}/{tasks_run} passed"));
+            app.set_status(format!(
+                "Eval run complete: {tasks_passed}/{tasks_run} passed"
+            ));
             if matches!(app.screen, super::Screen::EvalRunRunning) {
                 app.screen = super::Screen::BenchEval;
             }
@@ -72,10 +91,7 @@ pub(super) fn apply_eval_run_event(
 }
 
 /// Spawn the eval runner as a background task with a TUI event channel.
-pub(super) fn spawn_eval_run(
-    config: EvalRunConfig,
-    tx: UnboundedSender<EvalRunEvent>,
-) {
+pub(super) fn spawn_eval_run(config: EvalRunConfig, tx: UnboundedSender<EvalRunEvent>) {
     tokio::spawn(async move {
         let _ = tx.send(EvalRunEvent::Stage {
             name: "Starting".into(),

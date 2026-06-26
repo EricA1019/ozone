@@ -4,7 +4,9 @@
 //! strongly-typed Rust structures. All parsers handle column validation and
 //! conversion errors with explicit error messages.
 
-use ozone_core::engine::{BranchId, BranchState, ConversationBranch, ConversationMessage, MessageId};
+use ozone_core::engine::{
+    BranchId, BranchState, ConversationBranch, ConversationMessage, MessageId,
+};
 use ozone_core::session::SessionId;
 use rusqlite::Row;
 
@@ -25,9 +27,7 @@ use super::BranchRecord;
 /// 6. created_at (integer)
 /// 7. edited_at (integer)
 /// 8. is_hidden (integer, nonzero = true)
-pub(super) fn read_conversation_message(
-    row: &Row<'_>,
-) -> rusqlite::Result<ConversationMessage> {
+pub(super) fn read_conversation_message(row: &Row<'_>) -> rusqlite::Result<ConversationMessage> {
     let message_id = parse_sqlite_text::<MessageId>(row.get(0)?, 0)?;
     let session_id = SessionId::parse(row.get::<_, String>(1)?)
         .map_err(|error| sqlite_text_parse_error(1, error))?;

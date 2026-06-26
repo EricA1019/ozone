@@ -1,12 +1,15 @@
+use crate::required_string;
 /// MCP tool: sandbox operations (create, destroy).
 use crate::OzoneMcpServer;
 use crate::ToolReply;
-use crate::required_string;
 use anyhow::anyhow;
 use anyhow::Context;
 use serde_json::json;
 
-pub fn sandbox_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
+pub fn sandbox_tool(
+    server: &mut OzoneMcpServer,
+    args: &serde_json::Value,
+) -> anyhow::Result<ToolReply> {
     let action = required_string(args, "action")?;
     match action.as_str() {
         "create" => server.sandbox_tool(args),

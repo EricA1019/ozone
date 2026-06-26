@@ -87,7 +87,11 @@ pub async fn run_calibration(base_url: &str) -> CalibrationResult {
         repetition_flag: collapse_result.repetition,
         aaaa_flag: collapse_result.aaaa,
         stop_obeyed: stop_result.obeyed,
-        backend_status: if speed_result.success { "ok".into() } else { "speed_probe_failed".into() },
+        backend_status: if speed_result.success {
+            "ok".into()
+        } else {
+            "speed_probe_failed".into()
+        },
         total_duration_ms: total_ms,
     }
 }
@@ -120,7 +124,8 @@ async fn run_speed_probe(client: &reqwest::Client, base: &str) -> SpeedProbe {
             match resp.json::<serde_json::Value>().await {
                 Ok(json) => {
                     let prompt_tokens = json["usage"]["prompt_tokens"].as_u64().unwrap_or(0);
-                    let completion_tokens = json["usage"]["completion_tokens"].as_u64().unwrap_or(0);
+                    let completion_tokens =
+                        json["usage"]["completion_tokens"].as_u64().unwrap_or(0);
                     // Estimate TTFT from first token timing (not available from API directly)
                     let first_token_ms = (elapsed_ms as f64 * 0.3) as u64;
 
@@ -175,30 +180,29 @@ async fn run_collapse_probe(client: &reqwest::Client, base: &str) -> CollapsePro
     });
 
     match client.post(&url).json(&body).send().await {
-        Ok(resp) => {
-            match resp.json::<serde_json::Value>().await {
-                Ok(json) => {
-                    let text = json["choices"][0]["text"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_lowercase();
+        Ok(resp) => match resp.json::<serde_json::Value>().await {
+            Ok(json) => {
+                let text = json["choices"][0]["text"]
+                    .as_str()
+                    .unwrap_or("")
+                    .to_lowercase();
 
-                    let aaaa = text.len() > 3 && text.chars().all(|c| c == 'a' || c == ' ' || c == '\n');
-                    let repetition = detect_repetition(&text);
+                let aaaa =
+                    text.len() > 3 && text.chars().all(|c| c == 'a' || c == ' ' || c == '\n');
+                let repetition = detect_repetition(&text);
 
-                    CollapseProbe {
-                        repetition,
-                        aaaa,
-                        success: !text.is_empty(),
-                    }
+                CollapseProbe {
+                    repetition,
+                    aaaa,
+                    success: !text.is_empty(),
                 }
-                Err(_) => CollapseProbe {
-                    repetition: true,
-                    aaaa: true,
-                    success: false,
-                },
             }
-        }
+            Err(_) => CollapseProbe {
+                repetition: true,
+                aaaa: true,
+                success: false,
+            },
+        },
         Err(_) => CollapseProbe {
             repetition: true,
             aaaa: true,
@@ -225,9 +229,7 @@ async fn run_stop_probe(client: &reqwest::Client, base: &str) -> StopProbe {
         Ok(resp) => {
             match resp.json::<serde_json::Value>().await {
                 Ok(json) => {
-                    let text = json["choices"][0]["text"]
-                        .as_str()
-                        .unwrap_or("");
+                    let text = json["choices"][0]["text"].as_str().unwrap_or("");
                     // Stop is obeyed if the response doesn't contain "5"
                     let obeyed = !text.contains('5');
                     StopProbe { obeyed }

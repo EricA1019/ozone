@@ -1,19 +1,22 @@
+use crate::branch_record_json;
+use crate::now_timestamp_ms;
+use crate::optional_bool;
+use crate::optional_string;
+use crate::parse_branch_id;
+use crate::parse_message_id;
+use crate::parse_session_id;
+use crate::required_string;
 use crate::OzoneMcpServer;
 use crate::ToolReply;
-use serde_json::json;
 use anyhow::anyhow;
+use ozone_core::engine::{BranchState, ConversationBranch, CreateBranchCommand};
+use serde_json::json;
 use uuid::Uuid;
-use crate::required_string;
-use crate::optional_string;
-use crate::optional_bool;
-use crate::parse_session_id;
-use crate::parse_message_id;
-use crate::parse_branch_id;
-use crate::now_timestamp_ms;
-use crate::branch_record_json;
-use ozone_core::engine::{ConversationBranch, BranchState, CreateBranchCommand};
 
-pub fn branch_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
+pub fn branch_tool(
+    server: &mut OzoneMcpServer,
+    args: &serde_json::Value,
+) -> anyhow::Result<ToolReply> {
     let action = required_string(args, "action")?;
     let sandbox_id = optional_string(args, "sandboxId");
     match action.as_str() {
@@ -29,9 +32,7 @@ pub fn branch_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> any
                     Some(value) => value,
                     None => {
                         repo.get_active_branch(&session_id)?
-                            .ok_or_else(|| {
-                                anyhow!("session {session_id} has no active branch")
-                            })?
+                            .ok_or_else(|| anyhow!("session {session_id} has no active branch"))?
                             .branch
                             .tip_message_id
                     }

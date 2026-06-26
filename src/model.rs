@@ -19,11 +19,11 @@ pub enum ModelCommand {
         #[arg(long, value_name = "REPO")]
         hf: Option<String>,
 
-        /// Link an Ollama model blob into ~/models/
+        /// Link an Ollama model blob into the configured model directory
         #[arg(long, value_name = "MODEL")]
         ollama: Option<String>,
 
-        /// Symlink an existing file into ~/models/
+        /// Symlink an existing file into the configured model directory
         #[arg(long, value_name = "PATH")]
         link: Option<String>,
 
@@ -31,7 +31,7 @@ pub enum ModelCommand {
         #[arg(value_name = "FILENAME")]
         filename: Option<String>,
     },
-    /// Remove a model from ~/models/
+    /// Remove a model from the configured model directory
     Remove {
         /// Model filename to remove
         name: String,
@@ -161,7 +161,11 @@ fn pick_preferred_candidate(candidates: &[PathBuf]) -> Option<PathBuf> {
 fn link_model_into_library(source: &Path, preferred_name: Option<&str>) -> Result<PathBuf> {
     let target = crate::llama::model_library_target(source, preferred_name)?;
     if target.exists() {
-        bail!("{} already exists in ~/models/", target.display());
+        bail!(
+            "{} already exists in {}",
+            target.display(),
+            models_dir().display()
+        );
     }
     unix_fs::symlink(source, &target)
         .with_context(|| format!("Failed to create symlink {}", target.display()))?;
@@ -339,30 +343,34 @@ async fn cmd_list(json: bool) -> Result<()> {
     }
 
     if json {
-        println!("[");
-        for (i, e) in entries.iter().enumerate() {
-            let comma = if i + 1 < entries.len() { "," } else { "" };
-            let quant = e.quant.as_deref().unwrap_or("");
-            let kind = if e.is_broken {
-                "broken"
-            } else if e.is_symlink {
-                "symlink"
-            } else {
-                "file"
-            };
-            println!(
-                "  {{\"model\": \"{}\", \"size_bytes\": {}, \"quant\": \"{}\", \"type\": \"{}\", \"broken\": {}}}{}",
-                e.name, e.size, quant, kind, e.is_broken, comma
-            );
-        }
-        println!("]");
+        let rows: Vec<_> = entries
+            .iter()
+            .map(|e| {
+                let quant = e.quant.as_deref().unwrap_or("");
+                let kind = if e.is_broken {
+                    "broken"
+                } else if e.is_symlink {
+                    "symlink"
+                } else {
+                    "file"
+                };
+                serde_json::json!({
+                    "model": e.name,
+                    "size_bytes": e.size,
+                    "quant": quant,
+                    "type": kind,
+                    "broken": e.is_broken,
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&rows)?);
         return Ok(());
     }
 
     let max_name = entries.iter().map(|e| e.name.len()).max().unwrap_or(20);
     let col_name = max_name.max(4);
 
-    println!("Models in ~/models/");
+    println!("Models in {}", dir.display());
     println!(
         "  {:<col_name$}  {:>8}  {:<8}  TYPE",
         "NAME", "SIZE", "QUANT"
@@ -544,7 +552,7 @@ fn add_ollama(model: &str) -> Result<()> {
     let link_path = model_dir.join(&link_name);
 
     if link_path.exists() {
-        bail!("{} already exists in ~/models/", link_name);
+        bail!("{} already exists in {}", link_name, model_dir.display());
     }
 
     unix_fs::symlink(&blob_path, &link_path)
@@ -568,7 +576,11 @@ fn add_link(path: &str) -> Result<()> {
     let link_path = model_dir.join(fname);
 
     if link_path.exists() {
-        bail!("{} already exists in ~/models/", fname.to_string_lossy());
+        bail!(
+            "{} already exists in {}",
+            fname.to_string_lossy(),
+            model_dir.display()
+        );
     }
 
     unix_fs::symlink(&source, &link_path)
@@ -666,10 +678,9 @@ async fn cmd_info(name: &str) -> Result<()> {
         println!("  Type:     file");
     }
 
-    // Check KoboldCpp
-    match check_koboldcpp_model(name).await {
-        Some(true) => println!("  KoboldCpp: loaded ✓"),
-        Some(false) => println!("  KoboldCpp: running (different model)"),
+    match check_llamacpp_model(name).await {
+        Some(true) => println!("  llama.cpp: loaded"),
+        Some(false) => println!("  llama.cpp: running (different model)"),
         None => {}
     }
 
@@ -677,20 +688,10 @@ async fn cmd_info(name: &str) -> Result<()> {
     Ok(())
 }
 
-/// Check if KoboldCpp is running on port 5001 and if this model is loaded.
+/// Check if managed llama.cpp is running and whether this model is loaded.
 /// Returns Some(true) if loaded, Some(false) if running but different model, None if not running.
-async fn check_koboldcpp_model(model_name: &str) -> Option<bool> {
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(2))
-        .build()
-        .ok()?;
-    let resp = client
-        .get(ozone_core::paths::koboldcpp_ready_url())
-        .send()
-        .await
-        .ok()?;
-    let body: serde_json::Value = resp.json().await.ok()?;
-    let loaded = body["result"].as_str().unwrap_or_default();
+async fn check_llamacpp_model(model_name: &str) -> Option<bool> {
+    let loaded = crate::processes::get_llamacpp_model().await?;
     Some(loaded.contains(model_name.trim_end_matches(".gguf")))
 }
 

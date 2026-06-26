@@ -120,10 +120,7 @@ fn preferences_get_handler(server: &mut OzoneMcpServer, arguments: &Value) -> Re
     tools::preferences_get_tool(server, arguments)
 }
 
-fn screen_nav_targets_handler(
-    server: &mut OzoneMcpServer,
-    arguments: &Value,
-) -> Result<ToolReply> {
+fn screen_nav_targets_handler(server: &mut OzoneMcpServer, arguments: &Value) -> Result<ToolReply> {
     tools::screen_nav_targets_tool(server, arguments)
 }
 

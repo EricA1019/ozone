@@ -319,44 +319,11 @@ pub async fn get_service_status() -> ServiceStatus {
 }
 
 pub async fn clear_gpu_backends() -> Result<Vec<String>> {
-    let output = std::process::Command::new("ps")
-        .args(["-eo", "pid=,args="])
-        .output()?;
-    let text = String::from_utf8_lossy(&output.stdout);
-    let mut killed = Vec::new();
-    for raw_line in text.lines() {
-        let line = raw_line.trim(); // ps pads PIDs with leading spaces
-        let parts: Vec<&str> = line.splitn(2, ' ').collect();
-        if parts.len() < 2 {
-            continue;
-        }
-        let pid: u32 = match parts[0].trim().parse() {
-            Ok(p) => p,
-            Err(_) => continue,
-        };
-        let args = parts[1];
-        if (args.contains("koboldcpp")
-            || args.contains("llama-server")
-            || (args.contains("ollama") && args.contains("runner")))
-            && nix_kill(pid)
-        {
-            killed.push(args.split('/').next_back().unwrap_or(args).to_string());
-        }
-    }
-    // Give killed processes time to release their ports before the caller
-    // re-checks service status, otherwise the HTTP probe may still succeed.
-    if !killed.is_empty() {
-        tokio::time::sleep(tokio::time::Duration::from_millis(600)).await;
-    }
-    Ok(killed)
-}
-
-fn nix_kill(pid: u32) -> bool {
-    std::process::Command::new("kill")
-        .args(["-9", &pid.to_string()])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
+    let stopped = purge_last_model().await?;
+    Ok(stopped
+        .into_iter()
+        .map(|pid| format!("llama.cpp pid {pid}"))
+        .collect())
 }
 
 #[cfg(test)]
@@ -392,7 +359,10 @@ pub async fn start_llamacpp(server_path: &Path, model_name: &str, args: &[String
     let timestamp = chrono::Utc::now().format("%Y%m%dT%H%M%S");
     let log_path = if let Some(stem) = log_base.file_stem().and_then(|s| s.to_str()) {
         if let Some(parent) = log_base.parent() {
-            let ext = log_base.extension().and_then(|e| e.to_str()).unwrap_or("log");
+            let ext = log_base
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("log");
             parent.join(format!("{stem}-{timestamp}.{ext}"))
         } else {
             log_base
@@ -592,40 +562,6 @@ fn describe_exit_status(status: std::process::ExitStatus) -> String {
     }
 }
 
-pub fn open_browser_app(url: &str) {
-    let candidates = [
-        "chromium-browser",
-        "chromium",
-        "google-chrome",
-        "google-chrome-stable",
-    ];
-    for candidate in &candidates {
-        if which_exists(candidate) {
-            let _ = std::process::Command::new(candidate)
-                .arg(format!("--app={url}"))
-                .args([
-                    "--disable-gpu-compositing",
-                    "--disable-extensions",
-                    "--window-size=1400,900",
-                ])
-                .stdin(Stdio::null())
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .spawn();
-            return;
-        }
-    }
-    let _ = std::process::Command::new("xdg-open").arg(url).spawn();
-}
-
-fn which_exists(cmd: &str) -> bool {
-    std::process::Command::new("which")
-        .arg(cmd)
-        .output()
-        .map(|o| o.status.success())
-        .unwrap_or(false)
-}
-
 #[cfg(test)]
 mod tests {
     use crate::test_support::env_lock;
@@ -633,9 +569,8 @@ mod tests {
 
     use super::{
         classify_startup_failure, clear_llamacpp_launch_state, describe_exit_status,
-        load_llamacpp_launch_state, resolved_kobold_launcher_path,
-        save_llamacpp_launch_state, KoboldStartupFailureKind,
-        ManagedLlamaCppLaunchState, LLAMACPP_LAUNCH_STATE_VERSION,
+        load_llamacpp_launch_state, resolved_kobold_launcher_path, save_llamacpp_launch_state,
+        KoboldStartupFailureKind, ManagedLlamaCppLaunchState, LLAMACPP_LAUNCH_STATE_VERSION,
     };
 
     #[tokio::test]
@@ -885,28 +820,46 @@ mod kv_cache_tests {
 
     #[test]
     fn kv_cache_args_default_to_empty_for_f16() {
-        assert!(kv_cache_args(1, 1).is_empty(), "quant_k=1 (f16) needs no flags");
-        assert!(kv_cache_args(0, 0).is_empty(), "quant_k=0 should default to no flags");
-        assert!(kv_cache_args(99, 99).is_empty(), "unknown quant should default to no flags");
+        assert!(
+            kv_cache_args(1, 1).is_empty(),
+            "quant_k=1 (f16) needs no flags"
+        );
+        assert!(
+            kv_cache_args(0, 0).is_empty(),
+            "quant_k=0 should default to no flags"
+        );
+        assert!(
+            kv_cache_args(99, 99).is_empty(),
+            "unknown quant should default to no flags"
+        );
     }
 
     #[test]
     fn kv_cache_args_maps_to_q8_0_for_quant_2() {
         let args = kv_cache_args(2, 2);
-        assert_eq!(args, vec!["--cache-type-k", "q8_0", "--cache-type-v", "q8_0"]);
+        assert_eq!(
+            args,
+            vec!["--cache-type-k", "q8_0", "--cache-type-v", "q8_0"]
+        );
     }
 
     #[test]
     fn kv_cache_args_maps_to_q4_0_for_quant_3() {
         let args = kv_cache_args(3, 3);
-        assert_eq!(args, vec!["--cache-type-k", "q4_0", "--cache-type-v", "q4_0"]);
+        assert_eq!(
+            args,
+            vec!["--cache-type-k", "q4_0", "--cache-type-v", "q4_0"]
+        );
     }
 
     #[test]
     fn kv_cache_args_allows_asymmetric_k_and_v() {
         // K=q8_0 (2), V=q4_0 (3) — saves VRAM on V while keeping K precise
         let args = kv_cache_args(2, 3);
-        assert_eq!(args, vec!["--cache-type-k", "q8_0", "--cache-type-v", "q4_0"]);
+        assert_eq!(
+            args,
+            vec!["--cache-type-k", "q8_0", "--cache-type-v", "q4_0"]
+        );
     }
 
     #[test]

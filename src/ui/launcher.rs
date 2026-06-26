@@ -320,7 +320,12 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
             };
             let label = Line::from(vec![
                 Span::styled(
-                    format!("  {gpu_name}  {}/{} MB  ({:.0}%)", gpu.used_mb, gpu.total_mb, ratio * 100.0),
+                    format!(
+                        "  {gpu_name}  {}/{} MB  ({:.0}%)",
+                        gpu.used_mb,
+                        gpu.total_mb,
+                        ratio * 100.0
+                    ),
                     Style::default().fg(color),
                 ),
                 Span::styled(&cuda_flag, Style::default().fg(LIME)),
@@ -368,13 +373,11 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
     };
 
     let llama_model_label = app.services.llamacpp_model.as_deref().unwrap_or("—");
-    let lines = vec![
-        Line::from(vec![
-            Span::styled(format!("  {llama_icon} llama.cpp  "), llama_style),
-            Span::styled(llama_model_label, style_violet()),
-            Span::styled("  :8989", style_gray()),
-        ]),
-    ];
+    let lines = vec![Line::from(vec![
+        Span::styled(format!("  {llama_icon} llama.cpp  "), llama_style),
+        Span::styled(llama_model_label, style_violet()),
+        Span::styled("  :8989", style_gray()),
+    ])];
     f.render_widget(Paragraph::new(lines), inner);
 }
 
@@ -590,9 +593,7 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
                 if (app.ticker / 6).is_multiple_of(2) {
                     Style::default().fg(CYAN).add_modifier(Modifier::BOLD)
                 } else {
-                    Style::default()
-                        .fg(VIOLET)
-                        .add_modifier(Modifier::BOLD)
+                    Style::default().fg(VIOLET).add_modifier(Modifier::BOLD)
                 }
             } else {
                 style_gray()
@@ -671,10 +672,7 @@ pub fn render_launching(f: &mut Frame, app: &App) {
     };
 
     let lines = vec![
-        Line::from(Span::styled(
-            "  Launching llama.cpp…",
-            style_bold_violet(),
-        )),
+        Line::from(Span::styled("  Launching llama.cpp…", style_bold_violet())),
         Line::from(Span::styled(format!("  {model}"), style_cyan())),
         Line::from(Span::raw("")),
         Line::from(Span::styled(format!("  Loading {dots}"), style_amber())),
@@ -858,10 +856,7 @@ pub fn render_configure_hub(f: &mut Frame, app: &App) {
                 },
             ),
             Span::styled("  ", style_gray()),
-            Span::styled(
-                format!("{}", effective.threads.unwrap_or(8)),
-                style_amber(),
-            ),
+            Span::styled(format!("{}", effective.threads.unwrap_or(8)), style_amber()),
         ]),
         Line::from(vec![
             Span::styled(
@@ -2064,7 +2059,7 @@ pub fn render_settings(f: &mut Frame, app: &App) {
         Line::from(Span::styled(" Navigation ", style_bold_cyan())),
         style_gray(),
     ));
-    f.render_widget(hint, chunks[3]);
+    f.render_widget(hint, chunks[4]);
 }
 
 #[cfg(test)]
@@ -2090,7 +2085,8 @@ mod tests {
             recommendation: Recommendation {
                 context_size: 8192,
                 gpu_layers: -1,
-                quant_k: 1, quant_v: 1,
+                quant_k: 1,
+                quant_v: 1,
                 note: "test".into(),
                 source: RecSource::Heuristic,
             },
@@ -2135,7 +2131,8 @@ mod tests {
         }));
         assert!(actions
             .iter()
-            .any(|action| action.id == LauncherActionId::BenchLauncher && action.command == "benchmarks"));
+            .any(|action| action.id == LauncherActionId::BenchLauncher
+                && action.command == "benchmarks"));
         assert!(actions
             .iter()
             .any(|action| action.id == LauncherActionId::Settings && action.command == "settings"));

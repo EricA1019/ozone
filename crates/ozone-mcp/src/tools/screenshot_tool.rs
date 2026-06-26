@@ -1,18 +1,24 @@
+use crate::optional_string;
+use crate::required_string;
+use crate::screenshot_capture_config;
 /// MCP tool: screenshot capture.
 use crate::OzoneMcpServer;
 use crate::ToolReply;
 use anyhow::Context;
 use serde_json::Value;
-use std::path::PathBuf;
 use std::fs;
-use crate::required_string;
-use crate::optional_string;
-use crate::screenshot_capture_config;
+use std::path::PathBuf;
 
-pub fn screenshot_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
+pub fn screenshot_tool(
+    server: &mut OzoneMcpServer,
+    args: &serde_json::Value,
+) -> anyhow::Result<ToolReply> {
     let target = required_string(args, "target")?;
     let output_dir = PathBuf::from(required_string(args, "outputDir")?);
-    let prepared_sandbox = server.prepare_target_sandbox(optional_string(args, "sandboxId").map(|s| s.to_string()), &target)?;
+    let prepared_sandbox = server.prepare_target_sandbox(
+        optional_string(args, "sandboxId").map(|s| s.to_string()),
+        &target,
+    )?;
     let journey = server.build_mock_user_target_journey(&target)?;
     fs::create_dir_all(&output_dir)
         .with_context(|| format!("failed to create output dir {}", output_dir.display()))?;

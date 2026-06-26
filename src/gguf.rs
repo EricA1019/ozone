@@ -268,7 +268,9 @@ fn read_single_u32_key(path: &Path, target_key: &str) -> Option<u32> {
 
     let mut magic = [0u8; 4];
     reader.read_exact(&mut magic).ok()?;
-    if &magic != GGUF_MAGIC { return None; }
+    if &magic != GGUF_MAGIC {
+        return None;
+    }
 
     read_u32(&mut reader).ok()?; // version
     read_u64(&mut reader).ok()?; // tensor_count
@@ -289,14 +291,38 @@ fn read_single_u32_key(path: &Path, target_key: &str) -> Option<u32> {
 
 fn skip_gguf_value<R: Read>(reader: &mut R, value_type: u32) -> anyhow::Result<()> {
     match value_type {
-        GGUF_TYPE_UINT8 | GGUF_TYPE_BOOL => { let mut b = [0u8; 1]; reader.read_exact(&mut b)?; }
-        GGUF_TYPE_INT8 => { let mut b = [0u8; 1]; reader.read_exact(&mut b)?; }
-        GGUF_TYPE_UINT16 => { let mut b = [0u8; 2]; reader.read_exact(&mut b)?; }
-        GGUF_TYPE_INT16 => { let mut b = [0u8; 2]; reader.read_exact(&mut b)?; }
-        GGUF_TYPE_UINT32 | GGUF_TYPE_FLOAT32 => { let mut b = [0u8; 4]; reader.read_exact(&mut b)?; }
-        GGUF_TYPE_INT32 => { let mut b = [0u8; 4]; reader.read_exact(&mut b)?; }
-        GGUF_TYPE_UINT64 | GGUF_TYPE_FLOAT64 => { let mut b = [0u8; 8]; reader.read_exact(&mut b)?; }
-        GGUF_TYPE_INT64 => { let mut b = [0u8; 8]; reader.read_exact(&mut b)?; }
+        GGUF_TYPE_UINT8 | GGUF_TYPE_BOOL => {
+            let mut b = [0u8; 1];
+            reader.read_exact(&mut b)?;
+        }
+        GGUF_TYPE_INT8 => {
+            let mut b = [0u8; 1];
+            reader.read_exact(&mut b)?;
+        }
+        GGUF_TYPE_UINT16 => {
+            let mut b = [0u8; 2];
+            reader.read_exact(&mut b)?;
+        }
+        GGUF_TYPE_INT16 => {
+            let mut b = [0u8; 2];
+            reader.read_exact(&mut b)?;
+        }
+        GGUF_TYPE_UINT32 | GGUF_TYPE_FLOAT32 => {
+            let mut b = [0u8; 4];
+            reader.read_exact(&mut b)?;
+        }
+        GGUF_TYPE_INT32 => {
+            let mut b = [0u8; 4];
+            reader.read_exact(&mut b)?;
+        }
+        GGUF_TYPE_UINT64 | GGUF_TYPE_FLOAT64 => {
+            let mut b = [0u8; 8];
+            reader.read_exact(&mut b)?;
+        }
+        GGUF_TYPE_INT64 => {
+            let mut b = [0u8; 8];
+            reader.read_exact(&mut b)?;
+        }
         GGUF_TYPE_STRING => {
             let len = read_u64(reader)?;
             let mut buf = vec![0u8; len as usize];
@@ -408,8 +434,7 @@ mod tests {
 
         let result = read_context_length(&path);
         assert_eq!(
-            result,
-            None,
+            result, None,
             "read_context_length should return None when 'llama.context_length' key is absent"
         );
 

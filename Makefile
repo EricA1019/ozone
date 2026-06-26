@@ -1,4 +1,4 @@
-.PHONY: install install-lite install-base install-plus build test lint preflight release-smoke release-gates prune-artifacts prune-artifacts-dry-run sync verify-install-parity setup-hooks graphify-refresh graphify-scope graphify-tui-core
+.PHONY: install install-lite install-base build test lint preflight release-smoke release-gates prune-artifacts prune-artifacts-dry-run sync verify-install-parity setup-hooks graphify-refresh graphify-scope graphify-tui-core
 
 # Build release binaries and sync into ~/.cargo/bin + ~/.local/bin (checksum-aware)
 install: sync
@@ -27,9 +27,6 @@ install-lite:
 
 install-base:
 	cargo install --path . --locked --features full --profile release
-
-install-plus:
-	cargo install --path apps/ozone-plus --locked
 
 build:
 	cargo build --release

@@ -84,7 +84,11 @@ pub fn default_artifact_base() -> Result<PathBuf> {
 }
 
 /// Write a response artifact and return its path.
-pub fn write_response(artifact_dirs: &ArtifactDirs, task_key: &str, content: &str) -> Result<PathBuf> {
+pub fn write_response(
+    artifact_dirs: &ArtifactDirs,
+    task_key: &str,
+    content: &str,
+) -> Result<PathBuf> {
     let path = artifact_dirs.responses.join(format!("{}.txt", task_key));
     std::fs::write(&path, content)
         .with_context(|| format!("failed to write response artifact {}", path.display()))?;
@@ -92,7 +96,11 @@ pub fn write_response(artifact_dirs: &ArtifactDirs, task_key: &str, content: &st
 }
 
 /// Write a prompt artifact and return its path.
-pub fn write_prompt(artifact_dirs: &ArtifactDirs, task_key: &str, content: &str) -> Result<PathBuf> {
+pub fn write_prompt(
+    artifact_dirs: &ArtifactDirs,
+    task_key: &str,
+    content: &str,
+) -> Result<PathBuf> {
     let path = artifact_dirs.prompts.join(format!("{}.txt", task_key));
     std::fs::write(&path, content)
         .with_context(|| format!("failed to write prompt artifact {}", path.display()))?;

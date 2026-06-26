@@ -52,7 +52,9 @@ fn assert_mock_user_success(data: &Value, context: &str) {
     );
 }
 
-fn build_fresh_base_launcher_journey(server: &OzoneMcpServer) -> crate::testing::MockUserJourneySpec {
+fn build_fresh_base_launcher_journey(
+    server: &OzoneMcpServer,
+) -> crate::testing::MockUserJourneySpec {
     crate::testing::MockUserJourneySpec {
         name: "release_fresh_base_launcher".to_owned(),
         cwd: server.repo_root.to_string_lossy().into_owned(),
@@ -80,16 +82,17 @@ fn run_release_binary(
 ) -> super::CommandOutput {
     let program = server.repo_root.join("target/release").join(binary);
     let program = program.display().to_string();
-    let args = args.iter().map(|value| (*value).to_owned()).collect::<Vec<_>>();
+    let args = args
+        .iter()
+        .map(|value| (*value).to_owned())
+        .collect::<Vec<_>>();
     let output = server
         .run_workspace_command(&program, &args, Some(sandbox_id))
         .expect("release binary command");
     assert!(
         output.success,
         "release command failed: {}\nstdout:\n{}\nstderr:\n{}",
-        output.command,
-        output.stdout,
-        output.stderr
+        output.command, output.stdout, output.stderr
     );
     output
 }
@@ -110,7 +113,9 @@ fn first_session_id(server: &OzoneMcpServer, sandbox_id: &str) -> String {
 fn active_transcript_len(server: &OzoneMcpServer, sandbox_id: &str, session_id: &str) -> usize {
     let session_id = SessionId::parse(session_id).expect("valid session id");
     server
-        .with_repo(Some(sandbox_id), |repo| Ok(repo.get_active_branch_transcript(&session_id)?.len()))
+        .with_repo(Some(sandbox_id), |repo| {
+            Ok(repo.get_active_branch_transcript(&session_id)?.len())
+        })
         .expect("active transcript")
 }
 
@@ -132,7 +137,10 @@ fn mock_user_launcher_monitor_journey_contains_monitor_markers() {
     let journey = server
         .build_mock_user_journey("launcher_monitor_roundtrip", &json!({}))
         .expect("journey");
-    assert!(matches!(journey.steps[2].action, MockUserAction::Key { .. }));
+    assert!(matches!(
+        journey.steps[2].action,
+        MockUserAction::Key { .. }
+    ));
     assert!(journey.steps[2]
         .expect_any
         .iter()
@@ -152,14 +160,23 @@ fn mock_user_chat_journey_includes_insert_and_response_markers() {
             &json!({ "prompt": "Check the observatory key" }),
         )
         .expect("journey");
-    assert!(matches!(journey.steps[4].action, MockUserAction::Key { .. }));
+    assert!(matches!(
+        journey.steps[4].action,
+        MockUserAction::Key { .. }
+    ));
     assert!(journey.steps[4]
         .expect_any
         .iter()
         .any(|marker| marker == "Composer"));
-    assert!(matches!(journey.steps[5].action, MockUserAction::Text { .. }));
+    assert!(matches!(
+        journey.steps[5].action,
+        MockUserAction::Text { .. }
+    ));
     assert!(journey.steps[5].expect_any.is_empty());
-    assert!(matches!(journey.steps[6].action, MockUserAction::Key { .. }));
+    assert!(matches!(
+        journey.steps[6].action,
+        MockUserAction::Key { .. }
+    ));
     assert!(journey.steps[6]
         .expect_any
         .iter()
@@ -217,7 +234,11 @@ fn capturable_screen_journeys_build_expected_commands_and_markers() {
         ("base_frontend_choice", "ozone", "Choose Frontend"),
         ("base_launching", "ozone", "Launching KoboldCpp"),
         ("base_monitor", "ozone", "Ozone Monitor"),
-        ("base_model_picker_profile", "ozone", "Model Picker · Profile"),
+        (
+            "base_model_picker_profile",
+            "ozone",
+            "Model Picker · Profile",
+        ),
         ("base_profile_advisory", "ozone", "Profiling Advisor"),
         ("base_profile_confirm", "ozone", "Confirm Profiling Step"),
         ("base_profile_running", "ozone", "Profiling In Progress"),
@@ -227,7 +248,11 @@ fn capturable_screen_journeys_build_expected_commands_and_markers() {
         ("ozone_plus_sessions", "ozone-plus", "Sessions"),
         ("ozone_plus_characters", "ozone-plus", "Characters"),
         ("ozone_plus_character_create", "ozone-plus", "New Character"),
-        ("ozone_plus_character_import", "ozone-plus", "Import Character Card"),
+        (
+            "ozone_plus_character_import",
+            "ozone-plus",
+            "Import Character Card",
+        ),
         ("ozone_plus_settings", "ozone-plus", "config.toml"),
         ("ozone_plus_conversation", "ozone-plus", "Conversation"),
         ("ozone_plus_help", "ozone-plus", "Slash Commands"),
@@ -296,10 +321,16 @@ fn mock_user_tool_is_listed_with_capture_inputs() {
         definition.input_schema["properties"]["captureScreenshots"]["default"],
         json!(false)
     );
-    assert!(definition.input_schema["properties"].get("outputDir").is_some());
+    assert!(definition.input_schema["properties"]
+        .get("outputDir")
+        .is_some());
     assert!(definition.input_schema["properties"].get("rows").is_some());
-    assert!(definition.input_schema["properties"].get("columns").is_some());
-    assert!(definition.input_schema["properties"].get("fontSize").is_some());
+    assert!(definition.input_schema["properties"]
+        .get("columns")
+        .is_some());
+    assert!(definition.input_schema["properties"]
+        .get("fontSize")
+        .is_some());
     assert!(definition.input_schema.get("required").is_none());
     assert_eq!(
         definition.input_schema["anyOf"],
@@ -336,7 +367,10 @@ fn mock_user_capture_settings_add_step_artifacts_when_enabled() {
     )
     .expect("capture settings");
     assert!(settings.capture_screenshots);
-    assert_eq!(settings.output_dir.as_deref(), Some("/sandbox/captures/custom"));
+    assert_eq!(
+        settings.output_dir.as_deref(),
+        Some("/sandbox/captures/custom")
+    );
     assert_eq!(settings.capture.rows, 55);
     assert_eq!(settings.capture.columns, 140);
     assert_eq!(settings.capture.font_size, 18);
@@ -357,7 +391,10 @@ fn screenshot_tool_is_listed_with_required_inputs() {
         .into_iter()
         .find(|tool| tool.name == "screenshot_tool")
         .expect("screenshot tool");
-    assert_eq!(definition.input_schema["required"], json!(["target", "outputDir"]));
+    assert_eq!(
+        definition.input_schema["required"],
+        json!(["target", "outputDir"])
+    );
     assert_eq!(
         definition.input_schema["properties"]["target"]["enum"]
             .as_array()
@@ -384,8 +421,14 @@ fn screenshot_capture_config_uses_requested_output_settings() {
     assert_eq!(config.columns, 140);
     assert_eq!(config.font_size, 18);
     assert_eq!(config.tail_chars, 2048);
-    assert_eq!(config.png_path.as_deref(), Some("/repo/captures/launcher.png"));
-    assert_eq!(config.json_path.as_deref(), Some("/repo/captures/launcher.json"));
+    assert_eq!(
+        config.png_path.as_deref(),
+        Some("/repo/captures/launcher.png")
+    );
+    assert_eq!(
+        config.json_path.as_deref(),
+        Some("/repo/captures/launcher.json")
+    );
 }
 
 #[test]
@@ -526,7 +569,10 @@ fn screen_check_tool_passes_baseline_compare_against_matching_sidecar() {
         reply.data["checks"][0]["detail"]["differenceSummary"],
         json!("No grid differences detected")
     );
-    assert_eq!(reply.data["checks"][0]["detail"]["matchPercent"], json!(100.0));
+    assert_eq!(
+        reply.data["checks"][0]["detail"]["matchPercent"],
+        json!(100.0)
+    );
 }
 
 #[test]
@@ -549,8 +595,14 @@ fn screen_check_tool_reports_baseline_compare_differences() {
     assert_eq!(reply.data["summary"]["failed"], json!(1));
     assert_eq!(reply.data["checks"][0]["passed"], json!(false));
     assert_eq!(reply.data["checks"][0]["detail"]["diffCount"], json!(1));
-    assert_eq!(reply.data["checks"][0]["detail"]["changedCells"][0], json!({ "row": 0, "column": 2 }));
-    assert_eq!(reply.data["checks"][0]["detail"]["sampleDiffs"][0]["kind"], json!("changed"));
+    assert_eq!(
+        reply.data["checks"][0]["detail"]["changedCells"][0],
+        json!({ "row": 0, "column": 2 })
+    );
+    assert_eq!(
+        reply.data["checks"][0]["detail"]["sampleDiffs"][0]["kind"],
+        json!("changed")
+    );
     assert!(reply.data["checks"][0]["detail"]["differenceSummary"]
         .as_str()
         .expect("difference summary")
@@ -731,13 +783,16 @@ fn release_smoke_gate_fresh_temp_xdg_user_path() {
             .expect("confirm launch run");
         assert_mock_user_success(&confirm_launch_run, "fresh temp-XDG base confirm launch");
 
-        let confirm_launch_sidecar = confirm_launch_run["paths"]["json"].as_str().unwrap_or_else(|| {
-            panic!(
-                "fresh temp-XDG base confirm launch capture did not produce a sidecar\n{}",
-                serde_json::to_string_pretty(&confirm_launch_run)
-                    .unwrap_or_else(|_| confirm_launch_run.to_string())
-            )
-        });
+        let confirm_launch_sidecar =
+            confirm_launch_run["paths"]["json"]
+                .as_str()
+                .unwrap_or_else(|| {
+                    panic!(
+                        "fresh temp-XDG base confirm launch capture did not produce a sidecar\n{}",
+                        serde_json::to_string_pretty(&confirm_launch_run)
+                            .unwrap_or_else(|_| confirm_launch_run.to_string())
+                    )
+                });
         assert!(
             Path::new(confirm_launch_sidecar).is_file(),
             "fresh temp-XDG base confirm launch sidecar missing: {confirm_launch_sidecar}"
@@ -792,13 +847,15 @@ fn release_smoke_gate_fresh_temp_xdg_user_path() {
             .expect("frontend choice run");
         assert_mock_user_success(&frontend_choice_run, "fresh temp-XDG base frontend choice");
 
-        let frontend_choice_sidecar = frontend_choice_run["paths"]["json"].as_str().unwrap_or_else(|| {
-            panic!(
-                "fresh temp-XDG base frontend choice capture did not produce a sidecar\n{}",
-                serde_json::to_string_pretty(&frontend_choice_run)
-                    .unwrap_or_else(|_| frontend_choice_run.to_string())
-            )
-        });
+        let frontend_choice_sidecar = frontend_choice_run["paths"]["json"]
+            .as_str()
+            .unwrap_or_else(|| {
+                panic!(
+                    "fresh temp-XDG base frontend choice capture did not produce a sidecar\n{}",
+                    serde_json::to_string_pretty(&frontend_choice_run)
+                        .unwrap_or_else(|_| frontend_choice_run.to_string())
+                )
+            });
         assert!(
             Path::new(frontend_choice_sidecar).is_file(),
             "fresh temp-XDG base frontend choice sidecar missing: {frontend_choice_sidecar}"
@@ -879,18 +936,22 @@ fn release_smoke_gate_existing_user_data_path() {
         );
 
         let existing_session_count = server
-            .with_repo(Some(&prepared.sandbox_id), |repo| Ok(repo.list_sessions()?.len()))
+            .with_repo(Some(&prepared.sandbox_id), |repo| {
+                Ok(repo.list_sessions()?.len())
+            })
             .expect("existing session count");
         assert!(
             existing_session_count >= 1,
             "existing-user smoke needs persisted data before the second pass"
         );
-        let initial_transcript_len = active_transcript_len(&server, &prepared.sandbox_id, &session_id);
+        let initial_transcript_len =
+            active_transcript_len(&server, &prepared.sandbox_id, &session_id);
 
         let second_args = json!({
             "prompt": "Use the existing data path and answer again"
         });
-        let list_output = run_release_binary(&server, &prepared.sandbox_id, "ozone-plus", &["list"]);
+        let list_output =
+            run_release_binary(&server, &prepared.sandbox_id, "ozone-plus", &["list"]);
         assert!(
             list_output.stdout.contains(&session_id),
             "existing-user smoke should list the persisted session"
@@ -907,13 +968,16 @@ fn release_smoke_gate_existing_user_data_path() {
         );
 
         let final_session_count = server
-            .with_repo(Some(&prepared.sandbox_id), |repo| Ok(repo.list_sessions()?.len()))
+            .with_repo(Some(&prepared.sandbox_id), |repo| {
+                Ok(repo.list_sessions()?.len())
+            })
             .expect("final session count");
         assert!(
             final_session_count >= existing_session_count,
             "existing-user smoke should preserve or grow persisted session state"
         );
-        let final_transcript_len = active_transcript_len(&server, &prepared.sandbox_id, &session_id);
+        let final_transcript_len =
+            active_transcript_len(&server, &prepared.sandbox_id, &session_id);
         assert!(
             final_transcript_len > initial_transcript_len,
             "existing-user smoke should append to the persisted transcript"

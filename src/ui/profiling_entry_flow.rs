@@ -3,11 +3,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::profiling::{self, ProfilingAction, WorkflowRequest};
 
-use super::{
-    configure_profile_flow::selected_saved_profile,
-    App,
-    Screen,
-};
+use super::{configure_profile_flow::selected_saved_profile, App, Screen};
 
 pub(super) fn handle_profile_advisory_key(app: &mut App, key: KeyEvent) {
     match key.code {
@@ -53,9 +49,7 @@ pub(super) fn handle_profile_advisory_key(app: &mut App, key: KeyEvent) {
                         }
                         ProfilingAction::ReviewIssue => {
                             if let Some(record) = app.filtered_catalog_get(app.selected_model) {
-                                app.open_profile_failure(profiling::blocking_issue_report(
-                                    &record,
-                                ));
+                                app.open_profile_failure(profiling::blocking_issue_report(&record));
                             }
                         }
                         action => {

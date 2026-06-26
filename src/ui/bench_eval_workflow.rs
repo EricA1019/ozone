@@ -10,19 +10,24 @@ use crate::eval::EvalPreset;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub(super) enum BenchEvalWorkflowEvent {
-    Status { title: String, detail: String },
-    Output { is_stderr: bool, line: String },
+    Status {
+        title: String,
+        detail: String,
+    },
+    Output {
+        is_stderr: bool,
+        line: String,
+    },
     Completed {
         exit_code: Option<i32>,
         report: Option<crate::eval_report::EvalMarkdownReport>,
     },
-    Failed { message: String },
+    Failed {
+        message: String,
+    },
 }
 
-pub(super) fn apply_bench_eval_event(
-    app: &mut super::App,
-    event: BenchEvalWorkflowEvent,
-) {
+pub(super) fn apply_bench_eval_event(app: &mut super::App, event: BenchEvalWorkflowEvent) {
     match event {
         BenchEvalWorkflowEvent::Status { title, detail } => {
             app.bench_eval_progress_title = title;
@@ -142,7 +147,10 @@ pub(super) async fn run_bench_eval_workflow_with_cli_name(
         }
     });
 
-    let status = child.wait().await.context("failed to wait for eval command")?;
+    let status = child
+        .wait()
+        .await
+        .context("failed to wait for eval command")?;
     let _ = stdout_task.await;
     let _ = stderr_task.await;
 
@@ -190,15 +198,20 @@ mod tests {
         let report = build_report_or_warn("nonexistent-model-for-testing", preset, &tx).await;
 
         // The function should return None when the report builder fails.
-        assert!(report.is_none(), "should return None on report build failure");
+        assert!(
+            report.is_none(),
+            "should return None on report build failure"
+        );
 
         // It should also send an Output event describing the error.
         let event = rx.try_recv().expect("should have sent an error event");
         match event {
             BenchEvalWorkflowEvent::Output { is_stderr, line } => {
                 assert!(is_stderr, "error should be sent as stderr");
-                assert!(line.contains("Report generation failed"),
-                    "error line should mention failure: {line}");
+                assert!(
+                    line.contains("Report generation failed"),
+                    "error line should mention failure: {line}"
+                );
             }
             other => panic!("expected Output event, got {other:?}"),
         }

@@ -25,8 +25,8 @@ pub fn hash_model_file(path: &Path) -> Result<String> {
         .with_context(|| format!("failed to read metadata for {}", path.display()))?;
     let file_size = metadata.len();
 
-    let mut file = std::fs::File::open(path)
-        .with_context(|| format!("failed to open {}", path.display()))?;
+    let mut file =
+        std::fs::File::open(path).with_context(|| format!("failed to open {}", path.display()))?;
 
     // Read up to HASH_READ_SIZE bytes
     let mut buffer = vec![0u8; HASH_READ_SIZE as usize];
@@ -37,7 +37,7 @@ pub fn hash_model_file(path: &Path) -> Result<String> {
 
     let mut hasher = Sha256::new();
     hasher.update(&buffer);
-    hasher.update(&file_size.to_be_bytes());
+    hasher.update(file_size.to_be_bytes());
 
     let result = hasher.finalize();
     Ok(format!("{:x}", result))
@@ -49,23 +49,26 @@ pub fn hash_model_file(path: &Path) -> Result<String> {
 /// making it deterministic and order-independent. Two configs with identical
 /// parameters will always produce the same hash regardless of how the
 /// parameters were provided.
-pub fn hash_run_config(
-    model_hash: &str,
-    backend: &str,
-    quant: &str,
-    kv_quant: &str,
-    context_length: u32,
-    batch_size: u32,
-    gpu_layers: u32,
-    threads: u32,
-    sampler_profile: &str,
-    seed: u64,
-) -> String {
+#[derive(Debug, Clone, Copy)]
+pub struct RunConfigIdentity<'a> {
+    pub model_hash: &'a str,
+    pub backend: &'a str,
+    pub quant: &'a str,
+    pub kv_quant: &'a str,
+    pub context_length: u32,
+    pub batch_size: u32,
+    pub gpu_layers: u32,
+    pub threads: u32,
+    pub sampler_profile: &'a str,
+    pub seed: u64,
+}
+
+pub fn hash_run_config(config: &RunConfigIdentity<'_>) -> String {
     let canonical = format!(
         "model_hash={}|backend={}|quant={}|kv_quant={}|ctx={}|batch={}|gpu={}|threads={}|sampler={}|seed={}",
-        model_hash, backend, quant, kv_quant,
-        context_length, batch_size, gpu_layers, threads,
-        sampler_profile, seed,
+        config.model_hash, config.backend, config.quant, config.kv_quant,
+        config.context_length, config.batch_size, config.gpu_layers, config.threads,
+        config.sampler_profile, config.seed,
     );
 
     let mut hasher = Sha256::new();
@@ -112,35 +115,57 @@ mod tests {
 
         let hash_a = hash_model_file(&path1).expect("hash a");
         let hash_b = hash_model_file(&path2).expect("hash b");
-        assert_ne!(hash_a, hash_b, "different sizes must produce different hashes");
+        assert_ne!(
+            hash_a, hash_b,
+            "different sizes must produce different hashes"
+        );
 
         let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
     fn test_hash_run_config_deterministic() {
-        let hash1 = hash_run_config(
-            "abc123", "llama.cpp", "Q4_K_M", "q8_0",
-            16384, 512, 35, 12, "coding_low_temp", 42,
-        );
-        let hash2 = hash_run_config(
-            "abc123", "llama.cpp", "Q4_K_M", "q8_0",
-            16384, 512, 35, 12, "coding_low_temp", 42,
-        );
+        let config = RunConfigIdentity {
+            model_hash: "abc123",
+            backend: "llama.cpp",
+            quant: "Q4_K_M",
+            kv_quant: "q8_0",
+            context_length: 16384,
+            batch_size: 512,
+            gpu_layers: 35,
+            threads: 12,
+            sampler_profile: "coding_low_temp",
+            seed: 42,
+        };
+        let hash1 = hash_run_config(&config);
+        let hash2 = hash_run_config(&config);
         assert_eq!(hash1, hash2, "same config must produce same hash");
         assert_eq!(hash1.len(), 12, "hash must be 12 hex chars");
     }
 
     #[test]
     fn test_hash_run_config_different_params_differ() {
-        let hash1 = hash_run_config(
-            "abc", "llama.cpp", "Q4_K_M", "q8_0",
-            16384, 512, 35, 12, "default", 42,
+        let base = RunConfigIdentity {
+            model_hash: "abc",
+            backend: "llama.cpp",
+            quant: "Q4_K_M",
+            kv_quant: "q8_0",
+            context_length: 16384,
+            batch_size: 512,
+            gpu_layers: 35,
+            threads: 12,
+            sampler_profile: "default",
+            seed: 42,
+        };
+        let changed = RunConfigIdentity {
+            context_length: 32768,
+            ..base
+        };
+        let hash1 = hash_run_config(&base);
+        let hash2 = hash_run_config(&changed);
+        assert_ne!(
+            hash1, hash2,
+            "different context must produce different hash"
         );
-        let hash2 = hash_run_config(
-            "abc", "llama.cpp", "Q4_K_M", "q8_0",
-            32768, 512, 35, 12, "default", 42,
-        );
-        assert_ne!(hash1, hash2, "different context must produce different hash");
     }
 }

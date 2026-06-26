@@ -18,7 +18,10 @@ fn native_benchmark_surface_is_managed_llamacpp_only() {
         "KoboldCpp",
         "8080",
     ] {
-        assert!(!bench_rs.contains(legacy_marker), "bench.rs still contains {legacy_marker}");
+        assert!(
+            !bench_rs.contains(legacy_marker),
+            "bench.rs still contains {legacy_marker}"
+        );
     }
 
     assert!(!main_rs.contains("BenchBackend::KoboldCpp"));

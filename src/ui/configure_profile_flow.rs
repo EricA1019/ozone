@@ -22,11 +22,13 @@ pub(super) fn build_effective_plan(
                     recommended,
                     record,
                     hw,
-                    saved_profile.context_size,
-                    saved_profile.gpu_layers,
-                    saved_profile.quant_k,
-                    saved_profile.quant_v,
-                    saved_profile.threads,
+                    crate::planner::SavedProfileSelection {
+                        context_size: saved_profile.context_size,
+                        gpu_layers: saved_profile.gpu_layers,
+                        quant_k: saved_profile.quant_k,
+                        quant_v: saved_profile.quant_v,
+                        threads: saved_profile.threads,
+                    },
                 );
             }
         }
@@ -46,8 +48,9 @@ pub(super) fn selected_saved_profile(app: &App) -> Option<SavedLaunchProfile> {
 
 #[cfg(feature = "profiling-ui")]
 fn refresh_configure_profile_reports(app: &mut App, model_name: &str) {
-    let reports = crate::profiling::saved_profile_reports(model_name, &app.configure_saved_profiles)
-        .unwrap_or_default();
+    let reports =
+        crate::profiling::saved_profile_reports(model_name, &app.configure_saved_profiles)
+            .unwrap_or_default();
     app.configure_profile_reports = reports;
 }
 
@@ -150,11 +153,13 @@ pub(super) fn apply_selected_saved_profile(app: &mut App) -> Option<String> {
         &recommended,
         &record,
         hw,
-        profile.context_size,
-        profile.gpu_layers,
-        profile.quant_k,
-        profile.quant_v,
-        profile.threads,
+        crate::planner::SavedProfileSelection {
+            context_size: profile.context_size,
+            gpu_layers: profile.gpu_layers,
+            quant_k: profile.quant_k,
+            quant_v: profile.quant_v,
+            threads: profile.threads,
+        },
     ));
     Some(profile.profile_name)
 }
@@ -202,16 +207,15 @@ pub(super) fn build_override_from_plans(
     ModelLaunchOverride {
         context_size: (effective.context_size != recommended.context_size)
             .then_some(effective.context_size),
-        gpu_layers: (effective.gpu_layers != recommended_gpu_layers).then_some(effective.gpu_layers),
+        gpu_layers: (effective.gpu_layers != recommended_gpu_layers)
+            .then_some(effective.gpu_layers),
         threads: (effective.threads != recommended.threads)
             .then_some(effective.threads)
             .flatten(),
         blas_threads: (effective.blas_threads != recommended.blas_threads)
             .then_some(effective.blas_threads)
             .flatten(),
-        quant_k: (effective.quant_k != recommended.quant_k)
-            .then_some(effective.quant_k),
-        quant_v: (effective.quant_v != recommended.quant_v)
-            .then_some(effective.quant_v),
+        quant_k: (effective.quant_k != recommended.quant_k).then_some(effective.quant_k),
+        quant_v: (effective.quant_v != recommended.quant_v).then_some(effective.quant_v),
     }
 }

@@ -4,7 +4,6 @@ use super::configure_profile_flow::build_override_from_plans;
 use super::{selected_record, App};
 
 const CONFIGURE_FIELD_CONTEXT_SIZE: usize = 0;
-const CONFIGURE_FIELD_GPU_LAYERS: usize = 1;
 const CONFIGURE_FIELD_QUANT_K: usize = 2;
 const CONFIGURE_FIELD_QUANT_V: usize = 3;
 const CONFIGURE_FIELD_THREADS: usize = 4;
@@ -32,7 +31,8 @@ pub(super) fn adjust_configure_plan(app: &mut App, direction: i32) {
                 .as_ref()
                 .map(|plan| plan.context_size)
                 .unwrap_or(recommended.context_size);
-            override_state.context_size = Some(crate::planner::step_context_size(current, direction));
+            override_state.context_size =
+                Some(crate::planner::step_context_size(current, direction));
         }
         CONFIGURE_FIELD_THREADS => {
             let current = app
@@ -78,7 +78,7 @@ pub(super) fn adjust_configure_plan(app: &mut App, direction: i32) {
                 override_state.quant_v = Some(next);
             }
         }
-        CONFIGURE_FIELD_GPU_LAYERS | _ => {
+        _ => {
             let current = app
                 .current_plan
                 .as_ref()

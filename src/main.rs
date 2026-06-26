@@ -1,45 +1,45 @@
 #[cfg(feature = "analyze")]
 mod analyze;
+mod artifacts;
 #[cfg(feature = "bench")]
 mod bench;
+mod calibration;
 mod catalog;
 mod creative_writing;
+#[cfg(any(feature = "bench", feature = "analyze", feature = "profiling-ui"))]
+mod csv_export;
+#[cfg(any(feature = "bench", feature = "analyze", feature = "profiling-ui"))]
+mod db;
 mod eval;
 mod eval_report;
 mod eval_types;
-mod warmup;
-mod artifacts;
-mod calibration;
-mod timeout;
-mod preflight;
-mod policy;
-mod suites;
-mod gate;
-mod scorers;
-mod runner;
 mod export_server;
-#[cfg(any(feature = "bench", feature = "analyze", feature = "profiling-ui"))]
-mod db;
-#[cfg(any(feature = "bench", feature = "analyze", feature = "profiling-ui"))]
-mod csv_export;
+mod gate;
 #[cfg(any(feature = "profiling-ui", feature = "sweep"))]
 mod gguf;
 mod hardware;
+mod hash;
 mod llama;
 #[cfg(feature = "model-mgmt")]
 mod model;
 mod planner;
+mod policy;
+mod preflight;
 mod prefs;
 mod processes;
 #[cfg(feature = "profiling-ui")]
 mod profiling;
+mod runner;
+mod scorers;
+mod suites;
 #[cfg(feature = "sweep")]
 mod sweep;
-mod hash;
-mod theme;
 #[cfg(test)]
 mod test_support;
+mod theme;
+mod timeout;
 mod ui;
+mod warmup;
 
 use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -73,7 +73,7 @@ fn detect_tier_from_binary_name(name: &str) -> Option<prefs::Tier> {
 #[command(
     name = "oz",
     about = "⬡ oz — local AI stack operator & launcher",
-    after_help = "Source builds keep default features empty. Use `cargo build --release -p ozone --features full` or `./contrib/sync-local-install.sh` for profiling and `oz model ...` commands in the base binary.",
+    after_help = "Ozone is focused on local model launch, profiling, benchmarking, and capability evaluation. The old chat shell is deprecated and archived.",
     version = concat!(env!("CARGO_PKG_VERSION"), "+", env!("OZONE_GIT_HASH"))
 )]
 struct Cli {
@@ -100,7 +100,7 @@ enum Commands {
         #[arg(long, help = "Output as JSON")]
         json: bool,
     },
-    /// Clear GPU backends (KoboldCpp, llama.cpp, Ollama)
+    /// Stop the managed llama.cpp backend
     Clear,
     /// Stop the managed llama.cpp model and clear its tracked launch state
     PurgeLastModel,
@@ -122,15 +122,30 @@ enum Commands {
         gpu_layers: i32,
         #[arg(long, default_value = "4096", help = "Context size")]
         context: u32,
-        #[arg(long, default_value = "1", help = "K-cache quantization: 1=f16, 2=q8_0, 3=q4_0")]
+        #[arg(
+            long,
+            default_value = "1",
+            help = "K-cache quantization: 1=f16, 2=q8_0, 3=q4_0"
+        )]
         quant_k: u8,
-        #[arg(long, default_value = "1", help = "V-cache quantization: 1=f16, 2=q8_0, 3=q4_0 (defaults to quant-k)")]
+        #[arg(
+            long,
+            default_value = "1",
+            help = "V-cache quantization: 1=f16, 2=q8_0, 3=q4_0 (defaults to quant-k)"
+        )]
         quant_v: Option<u8>,
-        #[arg(long, default_value = "1", help = "Shorthand to set both K and V cache quantization at once")]
+        #[arg(
+            long,
+            default_value = "1",
+            help = "Shorthand to set both K and V cache quantization at once"
+        )]
         quant_kv: Option<u8>,
         #[arg(long, help = "CPU threads (auto if omitted)")]
         threads: Option<u32>,
-        #[arg(long, help = "Save the tested config as a named profile in launcher prefs")]
+        #[arg(
+            long,
+            help = "Save the tested config as a named profile in launcher prefs"
+        )]
         save_profile: Option<String>,
     },
     /// Analyze benchmark results and generate profiles
@@ -158,9 +173,16 @@ enum Commands {
         quick: bool,
         #[arg(long, help = "Run context-size sweep instead of parameter sweep")]
         context_sweep: bool,
-        #[arg(long, default_value = "1", help = "KV cache quantization: 1=f16, 2=q8_0, 3=q4_0 (sets both K and V)")]
+        #[arg(
+            long,
+            default_value = "1",
+            help = "KV cache quantization: 1=f16, 2=q8_0, 3=q4_0 (sets both K and V)"
+        )]
         quant_kv: u8,
-        #[arg(long, help = "When set, sweep across multiple KV cache quant levels (1,2,3) per context")]
+        #[arg(
+            long,
+            help = "When set, sweep across multiple KV cache quant levels (1,2,3) per context"
+        )]
         sweep_quant: bool,
     },
     /// Sweep thread counts to find the optimal setting for a model
@@ -168,7 +190,12 @@ enum Commands {
     ThreadSweep {
         /// Model filename
         model: String,
-        #[arg(long, default_value = "-1", allow_hyphen_values = true, help = "GPU layers (-1 = all)")]
+        #[arg(
+            long,
+            default_value = "-1",
+            allow_hyphen_values = true,
+            help = "GPU layers (-1 = all)"
+        )]
         gpu_layers: i32,
         #[arg(long, default_value = "4096", help = "Context size")]
         context: u32,
@@ -183,7 +210,12 @@ enum Commands {
     Eval {
         /// Model filename reported by the local API
         model: String,
-        #[arg(long, value_enum, default_value = "gsm8k", help = "Evaluation preset to run")]
+        #[arg(
+            long,
+            value_enum,
+            default_value = "gsm8k",
+            help = "Evaluation preset to run"
+        )]
         preset: eval::EvalPreset,
         #[arg(long, default_value = "1", help = "Number of samples/examples to run")]
         limit: u32,
@@ -193,7 +225,11 @@ enum Commands {
             help = "Base URL for OpenAI-compatible local API"
         )]
         base_url: String,
-        #[arg(long, default_value = "0.0", help = "Temperature for generation (0.0 = deterministic)")]
+        #[arg(
+            long,
+            default_value = "0.0",
+            help = "Temperature for generation (0.0 = deterministic)"
+        )]
         temperature: f64,
         #[arg(long, help = "Compare all models with prior results for this preset")]
         compare: bool,
@@ -213,9 +249,17 @@ enum Commands {
     CreativeWrite {
         /// Model filename
         model: String,
-        #[arg(long, default_value = "http://127.0.0.1:8989", help = "Base URL for OpenAI-compatible local API")]
+        #[arg(
+            long,
+            default_value = "http://127.0.0.1:8989",
+            help = "Base URL for OpenAI-compatible local API"
+        )]
         base_url: String,
-        #[arg(long, default_value = "contrib/evals/prompts/creative_writing.toml", help = "Path to prompt bank TOML")]
+        #[arg(
+            long,
+            default_value = "contrib/evals/prompts/creative_writing.toml",
+            help = "Path to prompt bank TOML"
+        )]
         prompts: Option<String>,
     },
     /// Manage local model files (list, add, remove, info)
@@ -230,7 +274,11 @@ enum Commands {
         model_path: String,
         #[arg(long, default_value = "llama.cpp", help = "Backend type")]
         backend: String,
-        #[arg(long, default_value = "http://127.0.0.1:8989", help = "Base URL for OpenAI-compatible local API")]
+        #[arg(
+            long,
+            default_value = "http://127.0.0.1:8989",
+            help = "Base URL for OpenAI-compatible local API"
+        )]
         base_url: String,
         #[arg(long, default_value_t = 16384, help = "Configured context length")]
         context_length: u32,
@@ -296,15 +344,25 @@ async fn main() -> Result<()> {
             if let Some(ref gpu) = profile.gpu {
                 ozone_core::cli::field("VRAM:", &format!("{} MB", gpu.total_mb));
             }
-            ozone_core::cli::field("CUDA:", &if profile.cuda_available {
-                format!("✓ v{}", profile.cuda_version.as_deref().unwrap_or("?"))
-            } else {
-                "✗".to_string()
-            });
+            ozone_core::cli::field(
+                "CUDA:",
+                &if profile.cuda_available {
+                    format!("✓ v{}", profile.cuda_version.as_deref().unwrap_or("?"))
+                } else {
+                    "✗".to_string()
+                },
+            );
             if let Some(ref cap) = profile.compute_capability {
                 ozone_core::cli::field("Compute Cap:", cap);
             }
-            ozone_core::cli::field("Flash Attn:", &if profile.flash_attn_supported { "✓".to_string() } else { "✗".to_string() });
+            ozone_core::cli::field(
+                "Flash Attn:",
+                &if profile.flash_attn_supported {
+                    "✓".to_string()
+                } else {
+                    "✗".to_string()
+                },
+            );
             ozone_core::cli::field(
                 "CPU:",
                 &format!(
@@ -321,24 +379,24 @@ async fn main() -> Result<()> {
             let model_dir = ozone_core::paths::models_dir();
             let preset_file = ozone_core::paths::catalog_preset_path();
             let bench_file = model_dir.join("bench-results.txt");
-            let report = catalog::load_catalog_report(&model_dir, &preset_file, &bench_file)
-                .await?;
+            let report =
+                catalog::load_catalog_report(&model_dir, &preset_file, &bench_file).await?;
             for issue in &report.issues {
                 eprintln!("catalog {}: {}", issue.level.label(), issue.message);
             }
             let records = report.records;
             if json {
-                println!("[");
-                for (i, r) in records.iter().enumerate() {
-                    let comma = if i + 1 < records.len() { "," } else { "" };
-                    println!(
-                        "  {{\"model\": \"{}\", \"size_gb\": {}, \"source\": \"{}\"}}{comma}",
-                        r.model_name,
-                        r.model_size_gb,
-                        r.recommendation.source.label()
-                    );
-                }
-                println!("]");
+                let rows: Vec<_> = records
+                    .iter()
+                    .map(|r| {
+                        serde_json::json!({
+                            "model": r.model_name,
+                            "size_gb": r.model_size_gb,
+                            "source": r.recommendation.source.label(),
+                        })
+                    })
+                    .collect();
+                println!("{}", serde_json::to_string_pretty(&rows)?);
             } else {
                 #[cfg(feature = "model-mgmt")]
                 {
@@ -351,9 +409,7 @@ async fn main() -> Result<()> {
                     eprintln!(
                         "        for `oz model ...`, install via `./contrib/sync-local-install.sh`"
                     );
-                    eprintln!(
-                        "        or build `cargo build --release -p ozone --features full`."
-                    );
+                    eprintln!("        or build `cargo build --release -p ozone --features full`.");
                     eprintln!();
                 }
                 println!("  {:<6}  {:>8}  MODEL", "SOURCE", "SIZE");
@@ -368,8 +424,13 @@ async fn main() -> Result<()> {
                     }
                     #[cfg(not(feature = "model-mgmt"))]
                     {
-                        println!("  next: place a `.gguf` file or symlink in `~/models/`,");
-                        println!("        then rerun `oz list` or use the installed full base build.");
+                        println!(
+                            "  next: place a `.gguf` file or symlink in {},",
+                            model_dir.display()
+                        );
+                        println!(
+                            "        then rerun `oz list` or use the installed full base build."
+                        );
                     }
                 } else {
                     for r in &records {
@@ -430,20 +491,27 @@ async fn main() -> Result<()> {
             }
             ozone_core::cli::spacer();
 
-            let result = bench::run_benchmark(
+            let result = bench::run_benchmark(bench::BenchmarkRunRequest {
+                model_name: &model,
+                model_path: &model_path,
+                backend: &backend,
+                gpu_layers,
+                context_size: context,
+                quant_k: effective_k,
+                quant_v: effective_v,
+                threads,
+                mode: bench::BenchMode::Precise,
+            })
+            .await?;
+
+            bench::print_result(
                 &model,
-                &model_path,
-                &backend,
                 gpu_layers,
                 context,
                 effective_k,
                 effective_v,
-                threads,
-                bench::BenchMode::Precise,
-            )
-            .await?;
-
-            bench::print_result(&model, gpu_layers, context, effective_k, effective_v, &result);
+                &result,
+            );
 
             // Store result
             let thread_count = threads.unwrap_or(0);
@@ -466,14 +534,17 @@ async fn main() -> Result<()> {
             // Save config as a named launch profile if requested
             if let Some(ref profile_name) = save_profile {
                 let mut prefs = crate::prefs::load_prefs().await?;
-                prefs.upsert_saved_launch_profile(&model, crate::prefs::SavedLaunchProfile {
-                    profile_name: profile_name.clone(),
-                    context_size: context,
-                    gpu_layers,
-                    quant_k: effective_k,
-                    quant_v: effective_v,
-                    threads,
-                });
+                prefs.upsert_saved_launch_profile(
+                    &model,
+                    crate::prefs::SavedLaunchProfile {
+                        profile_name: profile_name.clone(),
+                        context_size: context,
+                        gpu_layers,
+                        quant_k: effective_k,
+                        quant_v: effective_v,
+                        threads,
+                    },
+                );
                 crate::prefs::save_prefs(&prefs).await?;
                 ozone_core::cli::success(&format!("Saved profile '{profile_name}' for {model}"));
             }
@@ -497,15 +568,31 @@ async fn main() -> Result<()> {
                     // Test each quant level (1=f16, 2=q8_0, 3=q4_0) at each context
                     for &qkv in &[1u8, 2u8, 3u8] {
                         eprintln!("\n  --- Sweep with quant_k={qkv} quant_v={qkv} ---");
-                        let _ = sweep::run_context_sweep(
-                            &model, &model_path, &server_path, -1, qkv, qkv, None, quick,
-                        ).await;
+                        let _ = sweep::run_context_sweep(sweep::ContextSweepRequest {
+                            model_name: &model,
+                            model_path: &model_path,
+                            server_path: &server_path,
+                            gpu_layers: -1,
+                            quant_k: qkv,
+                            quant_v: qkv,
+                            threads: None,
+                            quick,
+                        })
+                        .await;
                     }
                     return Ok(());
                 }
-                let (csv_path, sweet_spot) = sweep::run_context_sweep(
-                    &model, &model_path, &server_path, -1, quant_kv, quant_kv, None, quick,
-                ).await?;
+                let (csv_path, sweet_spot) = sweep::run_context_sweep(sweep::ContextSweepRequest {
+                    model_name: &model,
+                    model_path: &model_path,
+                    server_path: &server_path,
+                    gpu_layers: -1,
+                    quant_k: quant_kv,
+                    quant_v: quant_kv,
+                    threads: None,
+                    quick,
+                })
+                .await?;
                 ozone_core::cli::success(&format!(
                     "Sweep complete. Sweet spot: context={sweet_spot}. CSV: {}",
                     csv_path.display()
@@ -557,11 +644,9 @@ async fn main() -> Result<()> {
             let result = sweep::run_sweep(sweep_config).await?;
 
             // Auto-save the optimal profile for quick loading
-            if let Some(optimal) = sweep::pick_optimal_profile(
-                &model,
-                &result.pareto_frontier,
-                None,
-            ) {
+            if let Some(optimal) =
+                sweep::pick_optimal_profile(&model, &result.pareto_frontier, None)
+            {
                 let mut prefs = crate::prefs::load_prefs().await?;
                 prefs.upsert_saved_launch_profile(&model, optimal.clone());
                 prefs.set_default_saved_launch_profile(&model, "auto-optimal");
@@ -603,10 +688,16 @@ async fn main() -> Result<()> {
                 ozone_core::cli::field("Context:", &context);
                 ozone_core::cli::spacer();
 
-                let results = bench::run_batch_thread_sweep(
-                    &model, &model_path, &backend,
-                    gpu_layers, context, quant_k, quant_v, 6,
-                )
+                let results = bench::run_batch_thread_sweep(bench::BatchThreadSweepRequest {
+                    model_name: &model,
+                    model_path: &model_path,
+                    backend: &backend,
+                    gpu_layers,
+                    context_size: context,
+                    quant_k,
+                    quant_v,
+                    base_threads: 6,
+                })
                 .await?;
                 bench::print_thread_sweep_summary(&results);
             } else {
@@ -618,8 +709,13 @@ async fn main() -> Result<()> {
                 ozone_core::cli::spacer();
 
                 let results = bench::run_thread_sweep(
-                    &model, &model_path, &backend,
-                    gpu_layers, context, quant_k, quant_v,
+                    &model,
+                    &model_path,
+                    &backend,
+                    gpu_layers,
+                    context,
+                    quant_k,
+                    quant_v,
                 )
                 .await?;
                 bench::print_thread_sweep_summary(&results);
@@ -676,7 +772,11 @@ async fn main() -> Result<()> {
             eval::run_eval(&model, preset, limit, &base_url, temperature).await?;
             Ok(())
         }
-        Some(Commands::ExportServer { model, output, port }) => {
+        Some(Commands::ExportServer {
+            model,
+            output,
+            port,
+        }) => {
             let model_dir = ozone_core::paths::models_dir();
             let model_path = model_dir.join(&model);
             if !model_path.exists() {
@@ -691,8 +791,11 @@ async fn main() -> Result<()> {
                     &model_dir,
                     &ozone_core::paths::catalog_preset_path(),
                     &model_dir.join("bench-results.txt"),
-                ).await?;
-                let record = report.records.iter()
+                )
+                .await?;
+                let record = report
+                    .records
+                    .iter()
                     .find(|r| r.model_name == model)
                     .ok_or_else(|| anyhow::anyhow!("Model '{}' not found in catalog", model))?;
                 crate::planner::plan_launch(record, &Default::default())
@@ -700,7 +803,11 @@ async fn main() -> Result<()> {
 
             let output_path = output.as_deref().map(PathBuf::from).unwrap_or_default();
             let written = export_server::generate_serve_script(
-                &plan, &model_path, &server_path, port, &output_path,
+                &plan,
+                &model_path,
+                &server_path,
+                port,
+                &output_path,
             )?;
             ozone_core::cli::success(&format!("Server script written to {}", written.display()));
             Ok(())
@@ -729,11 +836,13 @@ async fn main() -> Result<()> {
                 ..Default::default()
             };
             let result = runner::run_eval(&config).await?;
-            println!("Status: {} ({}/{} passed in {:.1}s)",
+            println!(
+                "Status: {} ({}/{} passed in {:.1}s)",
                 result.status,
                 result.tasks_passed,
                 result.tasks_run,
-                result.total_duration_ms as f64 / 1000.0);
+                result.total_duration_ms as f64 / 1000.0
+            );
             Ok(())
         }
         Some(Commands::EvalList) => {
@@ -744,21 +853,34 @@ async fn main() -> Result<()> {
                     eval::EvalTaskKind::EvalPlus { .. } => "evalplus",
                     eval::EvalTaskKind::CreativeWriting => "creative-writing",
                 };
-                println!("{:<20} {:<50} {}", task.cli_name, task.description, kind_label);
+                println!(
+                    "{:<20} {:<50} {}",
+                    task.cli_name, task.description, kind_label
+                );
             }
             Ok(())
         }
-        Some(Commands::CreativeWrite { model, base_url, prompts: _prompts }) => {
+        Some(Commands::CreativeWrite {
+            model,
+            base_url,
+            prompts: _prompts,
+        }) => {
             let root = crate::eval::resolve_project_root()?;
             let prompt_bank = creative_writing::load_prompt_bank(&root)?;
             if prompt_bank.is_empty() {
                 anyhow::bail!("No prompts found in creative writing prompt bank");
             }
 
-            let artifacts_dir = root.join("contrib/evals/artifacts").join("creative_writing");
+            let artifacts_dir = root
+                .join("contrib/evals/artifacts")
+                .join("creative_writing");
             let csv_path = creative_writing::run_creative_writing_eval(
-                &model, &prompt_bank, &base_url, &artifacts_dir,
-            ).await?;
+                &model,
+                &prompt_bank,
+                &base_url,
+                &artifacts_dir,
+            )
+            .await?;
 
             // Build and write markdown report
             let report_md = creative_writing::build_creative_report(&csv_path)?;
@@ -787,7 +909,8 @@ async fn main() -> Result<()> {
                 println!("Saved launch profiles:");
                 for (model, profiles) in profs {
                     for p in profiles {
-                        let default_marker = prefs.default_saved_launch_profile_name_for(model)
+                        let default_marker = prefs
+                            .default_saved_launch_profile_name_for(model)
                             .filter(|d| d == &p.profile_name)
                             .map(|_| " [default]")
                             .unwrap_or("");
@@ -798,7 +921,9 @@ async fn main() -> Result<()> {
                             p.gpu_layers,
                             p.quant_k,
                             p.quant_v,
-                            p.threads.map(|t| t.to_string()).unwrap_or_else(|| "auto".into()),
+                            p.threads
+                                .map(|t| t.to_string())
+                                .unwrap_or_else(|| "auto".into()),
                             default_marker,
                         );
                     }

@@ -3,12 +3,15 @@ use crate::optional_string;
 use crate::OzoneMcpServer;
 use crate::ToolReply;
 use anyhow::Context;
-use serde_json::Value;
-use serde_json::json;
 use ozone_core::paths;
+use serde_json::json;
+use serde_json::Value;
 use std::fs;
 
-pub fn preferences_get_tool(server: &OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
+pub fn preferences_get_tool(
+    server: &OzoneMcpServer,
+    args: &serde_json::Value,
+) -> anyhow::Result<ToolReply> {
     let sandbox_id = optional_string(args, "sandboxId");
     let preferences_path =
         server.with_sandbox_env(sandbox_id.as_deref(), || Ok(paths::preferences_path()))?;
@@ -43,4 +46,3 @@ pub fn preferences_get_tool(server: &OzoneMcpServer, args: &serde_json::Value) -
         data,
     ))
 }
-

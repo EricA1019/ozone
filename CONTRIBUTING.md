@@ -1,128 +1,114 @@
 # Contributing to Ozone
 
-Thanks for wanting to improve Ozone. This is a focused tool family — contributions should stay within that scope.
+Ozone is being prepared for an RC as a local model/config capability profiler.
+Keep contributions aligned with that scope.
 
-## Before opening a PR
+## Current Scope
 
-- **Check existing issues first.** If there isn't one for your change, open one so we can discuss before you write code.
-- **Keep it focused.** One fix or feature per PR. If your change touches five unrelated things, split it up.
-- **Test on real hardware.** Ozone's core value is correct mixed-memory planning on an actual NVIDIA + RAM setup. Changes to `src/planner.rs`, `src/hardware.rs`, or `src/processes.rs` need to be tested against a real model, not just compiled.
-- **Target `dev` for feature work.** Branch from `dev` and open your PR back to `dev`. Only release merges from `dev` and urgent hotfixes should target `main`.
+In scope:
 
-## What's in scope
+- llama.cpp-backed local model launch and monitoring
+- GGUF model inventory and import/link workflows
+- hardware-aware profiling, benchmark, sweep, and analysis flows
+- native Ozone capability evaluation: health, canary, code, math, JSON/tool, long-context, and reporting
+- CSV, JSONL, SQLite, artifact, and report export improvements
+- TUI views that explain what passed, failed, skipped, and why
+- developer automation that supports the active launcher/eval/profiling workflows
 
-- Bug fixes in any tier (ozonelite, ozone base, ozone+)
-- Hardware compatibility (different GPU counts, AMD ROCm support)
-- New preset/benchmark format improvements
-- Monitor metrics and display improvements
-- CLI ergonomics for any ozone command
-- ozone+ memory, session, or context assembly improvements
+Out of scope for RC:
 
-## What's out of scope
-
-- Support for vLLM, llama.cpp-direct, or other inference backends beyond KoboldCpp, llama.cpp, and Ollama — this needs an abstraction layer first; open an issue to discuss
+- chat, roleplay, character-card, memory, branch, swipe, or transcript UX
+- ozone+ as a shipping end-user binary
 - GUI or web frontend
-- Breaking changes to the preset, benchmark, or session file formats without a migration path
+- cloud-only benchmarks
+- full SWE-bench or Terminal-Bench by default
+- new inference backends without a clear adapter boundary and tests
 
-## Workspace structure
+The old chat work is archived under `docs/archive/ozone-plus/`. Do not add new
+features to that path unless the change is an archival correction.
 
-The project is a Cargo workspace:
+## Before Opening A PR
 
-```
-src/                        # ozone base (launcher, profiling, bench, sweep)
-  main.rs, planner.rs, hardware.rs, processes.rs, ...
-apps/
-  ozone-plus/               # ozone+ binary entry point
+- Keep one fix or feature per PR.
+- Open an issue first for scope changes, benchmark policy changes, or new adapters.
+- Test hardware/planner/process changes on real hardware when possible.
+- Prefer behavior tests over source-string tests.
+- Do not reintroduce ozone+ chat, SillyTavern handoff, or active roleplay flows.
+
+## Workspace Structure
+
+```text
+src/                        # active ozone launcher, profiling, bench, eval, model management
 crates/
-  ozone-core/               # shared product metadata and path helpers
-  ozone-engine/             # conversation engine, context assembly
-  ozone-inference/          # backend adapters, config, prompt templates
-  ozone-memory/             # memory types, embeddings, retrieval
-  ozone-persist/            # session and global databases, schema migrations
-  ozone-tui/                # shared terminal UI shell and render layer
+  ozone-core/               # shared metadata, paths, hardware, planner/domain helpers
+  ozone-mcp/                # developer automation around the active project
+  ozone-engine/             # archived/deprecated chat engine support
+  ozone-inference/          # legacy inference gateway pieces plus reusable backend code
+  ozone-memory/             # archived/deprecated memory domain
+  ozone-persist/            # archived/deprecated session persistence plus reusable storage code
+docs/archive/ozone-plus/    # deprecated chat design and documentation
 ```
 
 ## Development
 
 ```bash
-cargo build                            # debug build (all crates)
-cargo build --workspace --release      # release build (workspace outputs)
+cargo build --workspace
 cargo build --release -p ozone --features full
-cargo build --release -p ozone-plus -p ozone-mcp-app
-./contrib/sync-local-install.sh        # release build + checksum-aware local install sync
-./contrib/prune-build-artifacts.sh     # prune rebuildable build outputs, keep current binaries
-cargo clippy --workspace --all-targets # lints
-cargo test --workspace                 # all tests
+cargo clippy --workspace --all-targets -- -D warnings
+cargo test --workspace
+./contrib/sync-local-install.sh
+./contrib/prune-build-artifacts.sh --dry-run
 ```
 
-Build just one target:
+Build just the active end-user binary:
 
 ```bash
-cargo build -p ozone --release --features full   # installable base launcher artifact
-cargo build -p ozone-plus       # ozone+ binary only
-cargo build -p ozone-mcp-app    # ozone-mcp stdio binary only
+cargo build -p ozone --release --features full
 ```
-
-For front-door PTY smoke work, prefer `cargo build --workspace` or at least
-`cargo build -p ozone -p ozone-plus -p ozone-mcp-app` so `mock_user_tool` and
-`screenshot_tool` do not reuse stale `target/debug` binaries.
 
 The project uses stable Rust. No nightly features.
 
-## Build artifact hygiene
+## Code Style
 
-Cargo outputs in this repo can grow quickly, especially when switching profiles
-or using alternate `RUSTFLAGS` for linker workarounds. Do not keep every old
-artifact forever.
+- Run `make lint` before submitting.
+- Run `make preflight` before marking a PR ready.
+- No runtime `unwrap()` in fallible production paths.
+- Keep `unsafe` out unless there is a concrete reason and a safety comment.
+- Use structured JSON serialization instead of manual string formatting.
+- Keep constants and policy values named or data-driven.
+- Keep UI behavior discoverable from the screen itself; no hidden mode assumptions.
 
-- Use `./contrib/prune-build-artifacts.sh` after big live-test / build sessions
-  or whenever `target/` grows unexpectedly.
-- Default pruning keeps the current top-level binaries in `target/debug` and
-  `target/release`, but removes heavyweight rebuildable state like `deps`,
-  `incremental`, `build`, `.fingerprint`, docs, and `release-lite`.
-- Use `./contrib/prune-build-artifacts.sh --dry-run` first when you want to see
-  what would be reclaimed.
-- Use `--full` only when you intentionally want a near-`cargo clean` reset.
+## Evaluation Rules
 
-## Code style
+- New eval tasks must declare the lane, size class, context requirement, max output budget, and scorer.
+- Exact-answer tasks must have an explicit expected answer.
+- Skips must be recorded with a reason; do not silently omit gated work.
+- Warm-up generations are calibration only and must not be scored.
+- Public benchmark adapters should normalize results into Ozone's run/task/gate model.
 
-- Run `make lint` (or `cargo clippy --workspace --all-targets -- -D warnings`) before submitting. Fix all warnings — **zero warnings is enforced**.
-- Run `make preflight` before every commit — it runs lint + test in sequence and confirms everything passes.
-- No `unwrap()` in paths that can fail at runtime — use `?` or log and continue.
-- Keep `unsafe` out unless there's a real reason.
-- Comments only where the code doesn't speak for itself.
+## Commit Messages
 
-## Commit messages
+Use conventional commits:
 
-Use the conventional commit format:
-
-```
+```text
 <type>(<scope>): short summary in present tense
-
-Optional longer body explaining why, not what.
 ```
 
-Types: `fix`, `feat`, `refactor`, `docs`, `chore`
-Scopes: `profiling`, `launcher`, `tui`, `memory`, `persist`, `inference`, `engine`, `core`
+Common scopes: `launcher`, `model`, `profiling`, `bench`, `eval`, `runner`,
+`storage`, `tui`, `docs`, `mcp`, `core`.
 
 Examples:
 
+```text
+fix(launcher): use configured model directory during launch
+feat(eval): record skipped lane gates in CSV export
+docs(readme): clarify RC scope and deprecated chat shell
 ```
-fix(profiling): trim leading whitespace from ps output when parsing PIDs
-feat(launcher): add ROCm GPU memory detection via rocm-smi
-fix(memory): normalize FTS query terms to avoid hyphen operator parse errors
-docs(readme): document CPU-only mode and OZONE_KOBOLDCPP_LAUNCHER
-```
 
-## Pull request checklist
+## Pull Request Checklist
 
-Before marking a PR ready for review:
-
-- [ ] `make preflight` passes (runs lint + test in one command)
-- [ ] Tested against a real model on real hardware (for anything touching planner/hardware/processes/inference)
-- [ ] Commit messages follow the format above
-- [ ] PR description explains what changed and why
-
-## License
-
-By contributing, you agree that your code will be licensed under the [MIT License](LICENSE).
+- Scope matches the RC product direction.
+- Docs and implementation agree.
+- New behavior has tests at the behavior boundary.
+- `cargo fmt`, `make lint`, and `make test` pass or failures are explicitly explained.
+- No deprecated chat or ozone+ flows are reactivated.

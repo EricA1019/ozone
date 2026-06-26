@@ -10,35 +10,31 @@ use sandbox::Sandbox;
 
 use anyhow::{anyhow, bail, Context, Result};
 use ozone_core::{
-    engine::{
-        BranchId, ConversationMessage, MessageId, SwipeCandidate, SwipeGroup,
-        SwipeGroupId,
-    },
+    engine::{BranchId, ConversationMessage, MessageId, SwipeCandidate, SwipeGroup, SwipeGroupId},
     session::SessionId,
 };
-use ozone_persist::{
-    BranchRecord, PersistError, PinnedMemoryView, SqliteRepository,
-};
+use ozone_persist::{BranchRecord, PersistError, PinnedMemoryView, SqliteRepository};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
 use uuid::Uuid;
 
+mod jsonrpc;
 mod sandbox;
 mod testing;
-mod tools;
-mod jsonrpc;
 mod tool_dispatch;
+mod tools;
 
-use self::jsonrpc::{error_response, read_message, success_response, write_message, JsonRpcRequest};
+use self::jsonrpc::{
+    error_response, read_message, success_response, write_message, JsonRpcRequest,
+};
 
 use testing::{
     sandbox_setup_base_launch_path, sandbox_setup_base_launcher,
     sandbox_setup_base_ozone_plus_shell, sandbox_setup_base_profile_review,
-    sandbox_setup_base_profile_run, sandbox_setup_base_splash,
-    sandbox_setup_base_tier_picker, sandbox_setup_ozone_plus_entry,
-    CapturableScreenJourneyDefinition, LauncherSmokeRunnerSpec, MockUserCaptureSettings, MockUserJourneySpec,
-    MockUserRunnerSpec, PtyVteCaptureArtifacts, PtyVteCaptureConfig,
-    PreparedSandbox,
+    sandbox_setup_base_profile_run, sandbox_setup_base_splash, sandbox_setup_base_tier_picker,
+    sandbox_setup_ozone_plus_entry, CapturableScreenJourneyDefinition, LauncherSmokeRunnerSpec,
+    MockUserCaptureSettings, MockUserJourneySpec, MockUserRunnerSpec, PreparedSandbox,
+    PtyVteCaptureArtifacts, PtyVteCaptureConfig,
 };
 
 const JSONRPC_VERSION: &str = "2.0";
@@ -243,7 +239,6 @@ impl OzoneMcpServer {
             .sandbox_setup)())
     }
 
-
     fn recommended_mock_user_journey_sandbox_setup(&self, journey_name: &str) -> Result<Value> {
         match journey_name {
             "launcher_monitor_roundtrip" => self.capturable_target_sandbox_setup("base_monitor"),
@@ -301,11 +296,14 @@ impl OzoneMcpServer {
                 .and_then(|models| models.first())
                 .and_then(Value::as_str)
                 .unwrap_or("mock-model.gguf");
-            tools::mock_backend_tool(self, &json!({
-                "action": "start",
-                "sandboxId": sandbox_id,
-                "modelName": model_name,
-            }))?;
+            tools::mock_backend_tool(
+                self,
+                &json!({
+                    "action": "start",
+                    "sandboxId": sandbox_id,
+                    "modelName": model_name,
+                }),
+            )?;
         }
         Ok(PreparedSandbox {
             sandbox_id,
@@ -617,7 +615,8 @@ impl Drop for OzoneMcpServer {
     }
 }
 
-pub fn capturable_screen_journey_builders() -> &'static [testing::CapturableScreenJourneyDefinition] {
+pub fn capturable_screen_journey_builders() -> &'static [testing::CapturableScreenJourneyDefinition]
+{
     &[
         CapturableScreenJourneyDefinition {
             target_screen: "base_splash",
@@ -1963,15 +1962,17 @@ fn normalize_preferences_enum_value(value: &str) -> String {
         }
 
         if ch.is_ascii_uppercase() {
-            let prev = index.checked_sub(1).and_then(|prev_index| chars.get(prev_index));
+            let prev = index
+                .checked_sub(1)
+                .and_then(|prev_index| chars.get(prev_index));
             let next = chars.get(index + 1);
             let should_insert_separator = index > 0
                 && !normalized.ends_with('-')
                 && prev.is_some_and(|prev| prev.is_ascii_lowercase() || prev.is_ascii_digit())
-                    || index > 0
-                        && !normalized.ends_with('-')
-                        && prev.is_some_and(|prev| prev.is_ascii_uppercase())
-                        && next.is_some_and(|next| next.is_ascii_lowercase());
+                || index > 0
+                    && !normalized.ends_with('-')
+                    && prev.is_some_and(|prev| prev.is_ascii_uppercase())
+                    && next.is_some_and(|next| next.is_ascii_lowercase());
             if should_insert_separator {
                 normalized.push('-');
             }

@@ -60,11 +60,19 @@ pub(super) fn render(f: &mut Frame, app: &App) {
     let area = f.area();
     let center = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Fill(1), Constraint::Min(18), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Min(18),
+            Constraint::Fill(1),
+        ])
         .split(area)[1];
     let center_h = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Fill(1), Constraint::Max(70), Constraint::Fill(1)])
+        .constraints([
+            Constraint::Fill(1),
+            Constraint::Max(70),
+            Constraint::Fill(1),
+        ])
         .split(center)[1];
 
     let chunks = Layout::default()
@@ -80,7 +88,11 @@ pub(super) fn render(f: &mut Frame, app: &App) {
         Span::styled(" Benchmarks ", style_bold_cyan()),
         Span::styled("  ·  profile, sweep & export", style_muted()),
     ]))
-    .block(Block::default().borders(Borders::ALL).border_style(style_cyan()));
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .border_style(style_cyan()),
+    );
     f.render_widget(header, chunks[0]);
 
     let bench_entries = entries(app);
@@ -90,29 +102,35 @@ pub(super) fn render(f: &mut Frame, app: &App) {
         .map(|(idx, entry)| {
             let is_sel = idx == app.bench_launcher_selected;
             let marker = if is_sel { "▶ " } else { "  " };
-            let marker_span = Span::styled(marker, if is_sel { style_lime() } else { style_muted() });
-            let label_style = if is_sel { style_bold_lime() } else { style_bold_cyan() };
+            let marker_span =
+                Span::styled(marker, if is_sel { style_lime() } else { style_muted() });
+            let label_style = if is_sel {
+                style_bold_lime()
+            } else {
+                style_bold_cyan()
+            };
             let desc_style = if is_sel { style_lime() } else { style_gray() };
             ListItem::new(Line::from(vec![
                 marker_span,
                 Span::styled(format!("{} ", entry.label), label_style),
                 Span::styled(entry.description.as_str(), desc_style),
+                Span::styled(format!("  /{}", entry.command), style_muted()),
             ]))
         })
         .collect();
 
-    let list = List::new(items)
-        .block(
-            Block::default()
-                .title(Span::styled(" Benchmarks ", style_bold_cyan()))
-                .borders(Borders::ALL)
-                .border_style(style_gray()),
-        );
+    let list = List::new(items).block(
+        Block::default()
+            .title(Span::styled(" Benchmarks ", style_bold_cyan()))
+            .borders(Borders::ALL)
+            .border_style(style_gray()),
+    );
 
     f.render_stateful_widget(
         list,
         chunks[1],
-        &mut ratatui::widgets::ListState::default().with_selected(Some(app.bench_launcher_selected)),
+        &mut ratatui::widgets::ListState::default()
+            .with_selected(Some(app.bench_launcher_selected)),
     );
 
     let hints = Paragraph::new(Line::from(vec![
@@ -127,7 +145,10 @@ pub(super) fn render(f: &mut Frame, app: &App) {
     f.render_widget(hints, chunks[2]);
 }
 
-pub(super) async fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) -> BenchLauncherOutcome {
+pub(super) async fn handle_key(
+    app: &mut App,
+    key: crossterm::event::KeyEvent,
+) -> BenchLauncherOutcome {
     let bench_entries = entries(app);
 
     match key.code {
@@ -136,7 +157,9 @@ pub(super) async fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) -
             return BenchLauncherOutcome::ExitLauncher;
         }
         crossterm::event::KeyCode::Up | crossterm::event::KeyCode::Char('k') => {
-            if bench_entries.is_empty() { return BenchLauncherOutcome::Continue; }
+            if bench_entries.is_empty() {
+                return BenchLauncherOutcome::Continue;
+            }
             app.bench_launcher_selected = if app.bench_launcher_selected == 0 {
                 bench_entries.len() - 1
             } else {
@@ -144,8 +167,11 @@ pub(super) async fn handle_key(app: &mut App, key: crossterm::event::KeyEvent) -
             };
         }
         crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
-            if bench_entries.is_empty() { return BenchLauncherOutcome::Continue; }
-            app.bench_launcher_selected = if app.bench_launcher_selected + 1 >= bench_entries.len() {
+            if bench_entries.is_empty() {
+                return BenchLauncherOutcome::Continue;
+            }
+            app.bench_launcher_selected = if app.bench_launcher_selected + 1 >= bench_entries.len()
+            {
                 0
             } else {
                 app.bench_launcher_selected + 1
@@ -172,7 +198,9 @@ fn dispatch_action(app: &mut App, action: BenchLauncherAction) {
             }
             #[cfg(not(feature = "profiling-ui"))]
             {
-                app.set_error("Profiling UI not compiled in. Rebuild with --features profiling-ui.".into());
+                app.set_error(
+                    "Profiling UI not compiled in. Rebuild with --features profiling-ui.".into(),
+                );
             }
         }
         BenchLauncherAction::ExportServer => {

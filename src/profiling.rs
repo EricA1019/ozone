@@ -93,7 +93,9 @@ impl ProfilingAction {
                 "Use the best available profile and launch the backend."
             }
             ProfilingAction::ImportSpecs => "Capture and save system hardware specs to disk.",
-            ProfilingAction::ThreadSweep => "Test thread counts 1-12 to find the sweet spot for this model.",
+            ProfilingAction::ThreadSweep => {
+                "Test thread counts 1-12 to find the sweet spot for this model."
+            }
             ProfilingAction::ReviewIssue => "Show the blocking issue and recommended fixes.",
         }
     }
@@ -647,7 +649,8 @@ pub fn build_advisory(
     if services.llamacpp_running {
         warnings.push(ProfilingWarning {
             severity: WarningSeverity::Warning,
-            message: "Profiling will interrupt the currently running managed llama.cpp runtime.".into(),
+            message: "Profiling will interrupt the currently running managed llama.cpp runtime."
+                .into(),
         });
     } else {
         warnings.push(ProfilingWarning {
@@ -810,9 +813,10 @@ fn build_success_report(
         ProfilingAction::ExportPresets => {
             format!("Profile export completed: {}", presets_path().display())
         }
-        ProfilingAction::LaunchRecommended | ProfilingAction::ReviewIssue | ProfilingAction::ImportSpecs | ProfilingAction::ThreadSweep => {
-            "Workflow finished.".into()
-        }
+        ProfilingAction::LaunchRecommended
+        | ProfilingAction::ReviewIssue
+        | ProfilingAction::ImportSpecs
+        | ProfilingAction::ThreadSweep => "Workflow finished.".into(),
     };
 
     let mut suggestions = Vec::new();
@@ -984,7 +988,11 @@ pub async fn run_workflow(
                 "CUDA ✓ v{} · compute {} · flash-attn {}",
                 profile.cuda_version.as_deref().unwrap_or("?"),
                 profile.compute_capability.as_deref().unwrap_or("?"),
-                if profile.flash_attn_supported { "✓" } else { "✗" },
+                if profile.flash_attn_supported {
+                    "✓"
+                } else {
+                    "✗"
+                },
             )
         } else {
             "CUDA ✗".into()
@@ -1022,15 +1030,17 @@ pub async fn run_workflow(
                 request.profiling_backend.display_name()
             )
         })?;
-        let plan = request.launch_plan_override.clone().unwrap_or_else(|| {
-            planner::plan_profiling_launch(&request.record, &request.hardware)
-        });
+        let plan = request
+            .launch_plan_override
+            .clone()
+            .unwrap_or_else(|| planner::plan_profiling_launch(&request.record, &request.hardware));
 
         let _ = tx.send(WorkflowEvent::Status {
             title: "Thread Sweep".into(),
             detail: format!(
                 "Testing thread counts 1-12 at ctx={} gpu={}…",
-                plan.context_size, plan.gpu_layers_display(),
+                plan.context_size,
+                plan.gpu_layers_display(),
             ),
         });
 
@@ -1046,10 +1056,11 @@ pub async fn run_workflow(
         .await
         {
             Ok(results) => {
-                let best = results
-                    .iter()
-                    .filter(|r| r.status == "ok")
-                    .max_by(|a, b| a.tokens_per_sec.partial_cmp(&b.tokens_per_sec).unwrap_or(std::cmp::Ordering::Equal));
+                let best = results.iter().filter(|r| r.status == "ok").max_by(|a, b| {
+                    a.tokens_per_sec
+                        .partial_cmp(&b.tokens_per_sec)
+                        .unwrap_or(std::cmp::Ordering::Equal)
+                });
                 let summary = if let Some(best) = best {
                     format!(
                         "Thread sweep complete. {} configs tested. Best: {:.1} t/s",
@@ -1057,7 +1068,10 @@ pub async fn run_workflow(
                         best.tokens_per_sec,
                     )
                 } else {
-                    format!("Thread sweep complete. {} configs tested, none successful.", results.len())
+                    format!(
+                        "Thread sweep complete. {} configs tested, none successful.",
+                        results.len()
+                    )
                 };
                 let report = ProfilingSuccessReport {
                     model_name: request.record.model_name.clone(),
@@ -1069,19 +1083,17 @@ pub async fn run_workflow(
                     best_tokens_per_sec: best.map(|r| r.tokens_per_sec),
                     recommended_profile: None,
                     saved_profile_report: None,
-                    suggestions: vec!["Review the benchmark history for 'thread-sweep' to compare thread counts.".into()],
+                    suggestions: vec![
+                        "Review the benchmark history for 'thread-sweep' to compare thread counts."
+                            .into(),
+                    ],
                     export_detail: None,
                     auto_saved_profile: None,
                 };
                 send_completed(&tx, report);
             }
             Err(error) => {
-                let report = build_failure_report(
-                    &request.record,
-                    action,
-                    error.to_string(),
-                    None,
-                );
+                let report = build_failure_report(&request.record, action, error.to_string(), None);
                 send_failed(&tx, report);
             }
         }
@@ -1221,8 +1233,8 @@ pub async fn run_workflow(
             let (context_sizes, quant_kv_levels) = if quick {
                 (vec![4096, 8192], vec![(1u8, 1u8)])
             } else {
-                let native_max = crate::gguf::read_context_length(&request.record.model_path)
-                    .unwrap_or(131072);
+                let native_max =
+                    crate::gguf::read_context_length(&request.record.model_path).unwrap_or(131072);
                 let ctxs = sweep::generate_context_steps(native_max);
                 // Test asymmetric K/V pairs: (K, V) = (f16, f16), (q8_0, q8_0), (q8_0, q4_0)
                 (ctxs, vec![(1u8, 1u8), (2u8, 2u8), (2u8, 3u8)])
@@ -1301,8 +1313,14 @@ pub async fn run_workflow(
                     );
                     if let Some(ref optimal) = auto_profile {
                         if let Ok(mut prefs) = crate::prefs::load_prefs().await {
-                            prefs.upsert_saved_launch_profile(&request.record.model_name, optimal.clone());
-                            prefs.set_default_saved_launch_profile(&request.record.model_name, "auto-optimal");
+                            prefs.upsert_saved_launch_profile(
+                                &request.record.model_name,
+                                optimal.clone(),
+                            );
+                            prefs.set_default_saved_launch_profile(
+                                &request.record.model_name,
+                                "auto-optimal",
+                            );
                             let _ = crate::prefs::save_prefs(&prefs).await;
                             let _ = tx.send(WorkflowEvent::Status {
                                 title: "Profile saved".into(),
@@ -1384,7 +1402,7 @@ pub async fn run_workflow(
 
                     let action = request.action.clone();
                     let auto_saved = auto_profile.clone();
-                    let mut report = match build_success_report(
+                    let report = match build_success_report(
                         &request.record,
                         request.action,
                         request.launch_profile_name.as_deref(),
@@ -1587,7 +1605,10 @@ pub async fn run_workflow(
                 }
             }
         }
-        ProfilingAction::LaunchRecommended | ProfilingAction::ReviewIssue | ProfilingAction::ImportSpecs | ProfilingAction::ThreadSweep => {}
+        ProfilingAction::LaunchRecommended
+        | ProfilingAction::ReviewIssue
+        | ProfilingAction::ImportSpecs
+        | ProfilingAction::ThreadSweep => {}
         // ExportPresets is handled before the launcher prerequisite check above.
         ProfilingAction::ExportPresets => unreachable!("ExportPresets handled before match"),
     }

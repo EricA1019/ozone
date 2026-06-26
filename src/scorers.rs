@@ -25,7 +25,11 @@ pub fn score_exact(response: &str, expected: &str) -> ScoredResult {
     ScoredResult {
         score: if passed { 1.0 } else { 0.0 },
         passed,
-        failure: if passed { FailureType::None } else { FailureType::WrongAnswer },
+        failure: if passed {
+            FailureType::None
+        } else {
+            FailureType::WrongAnswer
+        },
         detail: if passed {
             "exact match".into()
         } else {
@@ -124,7 +128,8 @@ pub fn score_code_python(response: &str, _expected: &str) -> ScoredResult {
     }
 
     // Check for function definition keyword (def, fn, or function)
-    let has_def = trimmed.contains("def ") || trimmed.contains("fn ") || trimmed.contains("function ");
+    let has_def =
+        trimmed.contains("def ") || trimmed.contains("fn ") || trimmed.contains("function ");
     let has_parens = trimmed.contains('(') && trimmed.contains(')');
     let has_return_like = trimmed.contains("return") || trimmed.contains("->");
 
@@ -140,7 +145,11 @@ pub fn score_code_python(response: &str, _expected: &str) -> ScoredResult {
         } else {
             FailureType::None
         },
-        detail: format!("{}/{} structure checks passed", passed_count, checks_passed.len()),
+        detail: format!(
+            "{}/{} structure checks passed",
+            passed_count,
+            checks_passed.len()
+        ),
     }
 }
 
@@ -150,8 +159,16 @@ pub fn score_latency(response: &str, _expected: &str) -> ScoredResult {
     ScoredResult {
         score: if passed { 1.0 } else { 0.0 },
         passed,
-        failure: if passed { FailureType::None } else { FailureType::EmptyOutput },
-        detail: if passed { "response received".into() } else { "empty response".into() },
+        failure: if passed {
+            FailureType::None
+        } else {
+            FailureType::EmptyOutput
+        },
+        detail: if passed {
+            "response received".into()
+        } else {
+            "empty response".into()
+        },
     }
 }
 

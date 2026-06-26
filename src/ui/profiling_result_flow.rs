@@ -2,11 +2,7 @@ use crossterm::event::{KeyCode, KeyEvent};
 
 use crate::profiling::{self, ProfilingAction, WorkflowEvent};
 
-use super::{
-    configure_profile_flow::refresh_configure_profiles,
-    App,
-    Screen,
-};
+use super::{configure_profile_flow::refresh_configure_profiles, App, Screen};
 
 pub(super) enum ProfilingResultOutcome {
     Continue,
@@ -22,10 +18,7 @@ pub(super) fn handle_profile_running_key(app: &mut App, key: KeyEvent) {
     }
 }
 
-pub(super) fn handle_profile_success_key(
-    app: &mut App,
-    key: KeyEvent,
-) -> ProfilingResultOutcome {
+pub(super) fn handle_profile_success_key(app: &mut App, key: KeyEvent) -> ProfilingResultOutcome {
     match key.code {
         KeyCode::Esc => {
             if matches!(
@@ -97,10 +90,7 @@ pub(super) fn handle_profile_success_key(
     ProfilingResultOutcome::Continue
 }
 
-pub(super) fn handle_profile_failure_key(
-    app: &mut App,
-    key: KeyEvent,
-) -> ProfilingResultOutcome {
+pub(super) fn handle_profile_failure_key(app: &mut App, key: KeyEvent) -> ProfilingResultOutcome {
     match key.code {
         KeyCode::Esc => {
             if matches!(
@@ -172,7 +162,12 @@ pub(super) fn apply_workflow_event(app: &mut App, event: WorkflowEvent) {
             app.profiling_progress_title = title;
             app.push_profile_progress(detail);
         }
-        WorkflowEvent::Progress { title, detail, current, total } => {
+        WorkflowEvent::Progress {
+            title,
+            detail,
+            current,
+            total,
+        } => {
             app.profiling_progress_title = title;
             app.profiling_progress_current = current;
             app.profiling_progress_total = total;
@@ -190,7 +185,8 @@ pub(super) fn apply_workflow_event(app: &mut App, event: WorkflowEvent) {
             if let Some(ref saved) = report.auto_saved_profile {
                 let model = report.model_name.clone();
                 app.prefs.upsert_saved_launch_profile(&model, saved.clone());
-                app.prefs.set_default_saved_launch_profile(&model, &saved.profile_name);
+                app.prefs
+                    .set_default_saved_launch_profile(&model, &saved.profile_name);
             }
             // Refresh configure profiles if we have a model name
             if let Some(plan) = app.current_plan.as_ref() {

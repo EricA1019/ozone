@@ -1,11 +1,14 @@
+use crate::optional_string;
+use crate::required_string;
 use crate::OzoneMcpServer;
 use crate::ToolReply;
-use serde_json::json;
-use crate::required_string;
-use crate::optional_string;
 use crate::OZONE_PLUS_PACKAGE;
+use serde_json::json;
 
-pub fn message_tool(server: &mut OzoneMcpServer, args: &serde_json::Value) -> anyhow::Result<ToolReply> {
+pub fn message_tool(
+    server: &mut OzoneMcpServer,
+    args: &serde_json::Value,
+) -> anyhow::Result<ToolReply> {
     let action = required_string(args, "action")?;
     if action != "send" {
         return Ok(ToolReply::error(

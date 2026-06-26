@@ -1,6 +1,10 @@
 use anyhow::{Context, Result};
 use serde_json::Value;
-use std::{collections::BTreeMap, fs, path::{Path, PathBuf}};
+use std::{
+    collections::BTreeMap,
+    fs,
+    path::{Path, PathBuf},
+};
 
 use crate::eval::EvalPreset;
 
@@ -37,9 +41,11 @@ pub(crate) fn build_eval_report_for_preset(
         crate::eval::EvalTaskKind::LmEval { .. } => {
             build_lm_eval_report(&title, &artifacts_dir.join(output_dir).join(model))
         }
-        crate::eval::EvalTaskKind::EvalPlus { .. } => {
-            build_evalplus_report(&title, &artifacts_dir.join(output_dir).join("humaneval"), model)
-        }
+        crate::eval::EvalTaskKind::EvalPlus { .. } => build_evalplus_report(
+            &title,
+            &artifacts_dir.join(output_dir).join("humaneval"),
+            model,
+        ),
         crate::eval::EvalTaskKind::CreativeWriting => {
             // Creative writing reports are generated alongside the CSV by the runner
             let csv_path = artifacts_dir
@@ -83,7 +89,11 @@ fn build_lm_eval_report(title: &str, model_dir: &Path) -> Result<EvalMarkdownRep
     })
 }
 
-fn build_evalplus_report(title: &str, report_dir: &Path, model: &str) -> Result<EvalMarkdownReport> {
+fn build_evalplus_report(
+    title: &str,
+    report_dir: &Path,
+    model: &str,
+) -> Result<EvalMarkdownReport> {
     let source_path = report_dir.join(format!("{model}_openai_temp_0.0.jsonl"));
     let markdown_path = source_path.with_extension("md");
     let jsonl = fs::read_to_string(&source_path)
@@ -266,7 +276,8 @@ fn render_evalplus_markdown(title: &str, jsonl: &str, source_path: &Path) -> Str
     markdown.push_str(&format!("- Samples rendered: `{sample_count}`\n\n"));
     markdown.push_str("## Reading the output\n\n");
     markdown.push_str("- This report shows code generation output only.\n");
-    markdown.push_str("- Run `evalplus.evaluate` on the generated JSONL if you want pass@k scores.\n");
+    markdown
+        .push_str("- Run `evalplus.evaluate` on the generated JSONL if you want pass@k scores.\n");
 
     markdown
 }
@@ -287,11 +298,8 @@ mod tests {
         let json_text = fs::read_to_string("tests/fixtures/eval/lm-eval-gsm8k-success.json")
             .expect("read fixture");
         let json: Value = serde_json::from_str(&json_text).expect("valid fixture json");
-        let markdown = render_lm_eval_markdown(
-            "GSM8K eval report",
-            &json,
-            Path::new("/tmp/results.json"),
-        );
+        let markdown =
+            render_lm_eval_markdown("GSM8K eval report", &json, Path::new("/tmp/results.json"));
 
         assert!(markdown.contains("GSM8K eval report"));
         assert!(markdown.contains("exact_match,strict-match"));

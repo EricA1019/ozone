@@ -12,8 +12,8 @@ use ratatui::{
 
 use crate::prefs::Tier;
 use crate::theme::{
-    style_bold_lime, style_cyan, style_gray, style_green, style_lime, style_red, HEX,
-    HEX_FILLED, LIME, TAGLINE,
+    style_bold_lime, style_cyan, style_gray, style_green, style_lime, style_red, HEX, HEX_FILLED,
+    LIME, TAGLINE,
 };
 
 /// Phases of the tier picker flow
