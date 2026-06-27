@@ -81,8 +81,21 @@ pub(super) fn apply_eval_run_event(app: &mut super::App, event: EvalRunEvent) {
         EvalRunEvent::Failed { message } => {
             app.eval_run_event_rx = None;
             app.eval_run_running = false;
-            app.set_error(format!("Eval run failed: {message}"));
+            let error_msg = format!("Eval run failed: {message}");
+            app.set_error(error_msg.clone());
             app.eval_run_progress.push(format!("  ERROR: {message}"));
+            // Log to file
+            let model = app.eval_run_model.as_deref().unwrap_or("unknown");
+            if let Ok(root) = crate::eval::resolve_project_root() {
+                let log_dir = root.join("results").join("logs");
+                let _ = std::fs::create_dir_all(&log_dir);
+                let log_path = log_dir.join("eval-errors.log");
+                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+                    use std::io::Write;
+                    let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
+                    let _ = writeln!(f, "[{ts}] model={model} {error_msg}");
+                }
+            }
             if matches!(app.screen, super::Screen::EvalRunRunning) {
                 app.screen = super::Screen::BenchEval;
             }

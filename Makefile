@@ -56,7 +56,7 @@ prune-artifacts-dry-run:
 
 # Quick alias update: build release binary and copy to ~/.local/bin/oz
 update-oz:
-	cargo build --release --bin ozone
-	cp target/release/ozone $(HOME)/.local/bin/oz
-	cp target/release/ozone $(HOME)/.local/bin/ozone
-	@echo "✅ oz/ozone aliases updated to $(shell target/release/ozone --version 2>/dev/null)"
+	cd "$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))" && cargo build --release --bin ozone
+	cp "$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))/target/release/ozone" $(HOME)/.local/bin/oz
+	cp "$(shell dirname $(realpath $(firstword $(MAKEFILE_LIST))))/target/release/ozone" $(HOME)/.local/bin/ozone
+	@echo "✅ oz/ozone aliases updated"

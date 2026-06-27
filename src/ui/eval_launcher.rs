@@ -22,6 +22,7 @@ pub(super) enum EvalLauncherAction {
     RegisteredEval { index: usize },
     ViewResults,
     ViewReport,
+    LaunchModel,
     Back,
 }
 
@@ -97,10 +98,23 @@ pub(super) fn entries(_app: &App) -> Vec<EvalLauncherEntry> {
         command: "report",
     });
     entries.push(EvalLauncherEntry {
+        action: EvalLauncherAction::LaunchModel,
+        label: "[Server] Launch Model".into(),
+        description: "Start a llama.cpp server for evals".into(),
+        command: "launch-model",
+    });
+    entries.push(EvalLauncherEntry {
         action: EvalLauncherAction::Back,
         label: "Back".into(),
         description: "Return to main launcher".into(),
         command: "back",
+    });
+    // Launch Model: picks a model and starts llama.cpp
+    entries.push(EvalLauncherEntry {
+        action: EvalLauncherAction::LaunchModel,
+        label: "[Server] Launch Model".into(),
+        description: "Start a llama.cpp server for evals".into(),
+        command: "launch-model",
     });
 
     entries
@@ -134,9 +148,19 @@ pub(super) fn render(f: &mut Frame, app: &App) {
         ])
         .split(center_h);
 
+    let server_status = if app.services.llamacpp_running {
+        Span::styled(" ● server running", style_green())
+    } else {
+        Span::styled(" ○ no server", style_red())
+    };
+    let model_line = super::bench_eval_flow::resolve_bench_eval_model(app)
+        .map(|m| format!("  |  {}", m))
+        .unwrap_or_default();
     let header = Paragraph::new(Line::from(vec![
         Span::styled(" Eval Launcher ", style_bold_cyan()),
-        Span::styled("  ·  pick a sweep level or individual eval", style_muted()),
+        Span::styled("  ·  ", style_muted()),
+        server_status,
+        Span::styled(format!("{model_line}"), style_violet()),
     ]))
     .block(
         Block::default()
@@ -240,15 +264,27 @@ pub(super) async fn handle_key(
 async fn dispatch_action(app: &mut App, action: EvalLauncherAction) {
     match action {
         EvalLauncherAction::QuickSweep => {
+            if !check_server_ready(app).await {
+                return;
+            }
             start_eval_sweep(app, crate::runner::SweepLevel::Quick);
         }
         EvalLauncherAction::StandardSweep => {
+            if !check_server_ready(app).await {
+                return;
+            }
             start_eval_sweep(app, crate::runner::SweepLevel::Standard);
         }
         EvalLauncherAction::FullSweep => {
+            if !check_server_ready(app).await {
+                return;
+            }
             start_eval_sweep(app, crate::runner::SweepLevel::Full);
         }
         EvalLauncherAction::CreativeWriting => {
+            if !check_server_ready(app).await {
+                return;
+            }
             let Some(model_name) = super::bench_eval_flow::resolve_bench_eval_model(app) else {
                 app.set_error("No model selected. Select or launch a model first.".into());
                 return;
@@ -285,6 +321,9 @@ async fn dispatch_action(app: &mut App, action: EvalLauncherAction) {
             });
         }
         EvalLauncherAction::RegisteredEval { index } => {
+            if !check_server_ready(app).await {
+                return;
+            }
             if let Some(task) = crate::eval::EVAL_TASKS.get(index) {
                 super::bench_eval_flow::start_eval_with_cli_name(app, task.cli_name).await;
             }
@@ -295,15 +334,34 @@ async fn dispatch_action(app: &mut App, action: EvalLauncherAction) {
         EvalLauncherAction::ViewReport => {
             app.screen = Screen::BenchEvalReport;
         }
+        EvalLauncherAction::LaunchModel => {
+            // Open model picker in launch mode, then return to eval launcher
+            app.model_picker_mode = super::ModelPickerMode::BenchEval;
+            app.screen = Screen::ModelPicker;
+        }
         EvalLauncherAction::Back => {
             app.screen = Screen::Launcher;
         }
     }
 }
 
+async fn check_server_ready(app: &mut App) -> bool {
+    let base_url = ozone_core::paths::llamacpp_base_url();
+    let health_url = format!("{base_url}/health");
+    if crate::processes::is_url_ready(&health_url).await {
+        return true;
+    }
+    // Update service status so the UI reflects reality
+    app.services = crate::processes::get_service_status().await;
+    app.set_error(
+        "No llama.cpp server is running. Launch a model first from the Launcher, or select 'Launch Model' below.".into(),
+    );
+    false
+}
+
 fn start_eval_sweep(app: &mut App, level: crate::runner::SweepLevel) {
     let Some(model_name) = super::bench_eval_flow::resolve_bench_eval_model(app) else {
-        app.set_error("No model selected. Select or launch a model first.".into());
+        app.set_error("No model selected. Open Model Picker or launch a model first.".into());
         return;
     };
     if app.eval_run_event_rx.is_some() {
