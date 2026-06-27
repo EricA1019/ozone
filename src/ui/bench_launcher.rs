@@ -15,6 +15,7 @@ use crate::theme::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum BenchLauncherAction {
     ProfileModel,
+    QuickSweep,
     ExportServer,
     Back,
 }
@@ -40,6 +41,12 @@ pub(super) fn entries(_app: &App) -> Vec<BenchLauncherEntry> {
             label: "Profile Model".into(),
             description: "Benchmark/sweep workflow — auto-tune GPU layers".into(),
             command: "profile",
+        },
+        BenchLauncherEntry {
+            action: BenchLauncherAction::QuickSweep,
+            label: "Quick Sweep".into(),
+            description: "Run context sweep against loaded model".into(),
+            command: "quick-sweep",
         },
         BenchLauncherEntry {
             action: BenchLauncherAction::ExportServer,
@@ -195,6 +202,20 @@ fn dispatch_action(app: &mut App, action: BenchLauncherAction) {
             #[cfg(feature = "profiling-ui")]
             {
                 app.screen = Screen::ProfileAdvisory;
+            }
+            #[cfg(not(feature = "profiling-ui"))]
+            {
+                app.set_error(
+                    "Profiling UI not compiled in. Rebuild with --features profiling-ui.".into(),
+                );
+            }
+        }
+        BenchLauncherAction::QuickSweep => {
+            #[cfg(feature = "profiling-ui")]
+            {
+                use crate::profiling::ProfilingAction;
+                app.profiling_pending_action = Some(ProfilingAction::QuickSweep);
+                app.screen = Screen::ProfileConfirm;
             }
             #[cfg(not(feature = "profiling-ui"))]
             {

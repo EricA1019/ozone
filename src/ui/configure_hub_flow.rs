@@ -80,7 +80,9 @@ pub(super) async fn handle_configure_hub_key(app: &mut App, key: KeyEvent) {
                 app.profiling_pending_action = Some(ProfilingAction::BenchmarkSavedProfile);
                 app.screen = Screen::ProfileConfirm;
             } else {
-                app.set_error("Save and select a profile before benchmarking it.".into());
+                // No saved profile? Run a quick sweep against the current model directly.
+                app.profiling_pending_action = Some(ProfilingAction::QuickSweep);
+                app.screen = Screen::ProfileConfirm;
             }
         }
         KeyCode::Char('r') | KeyCode::Char('R') => reset_configure_plan(app),
