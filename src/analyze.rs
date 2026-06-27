@@ -213,6 +213,7 @@ pub fn show_pareto(model_name: &str) -> Result<()> {
 }
 
 /// Assign profile labels to Pareto frontier points.
+#[allow(clippy::expect_used)]
 fn assign_profile_labels(frontier: &[ParetoPoint]) -> Vec<String> {
     let mut labels = vec![String::new(); frontier.len()];
     if frontier.is_empty() {
@@ -227,9 +228,9 @@ fn assign_profile_labels(frontier: &[ParetoPoint]) -> Vec<String> {
     let speed_idx = frontier
         .iter()
         .enumerate()
-        .max_by(|(_, a), (_, b)| a.tokens_per_sec.partial_cmp(&b.tokens_per_sec).unwrap())
+        .max_by(|(_, a), (_, b)| a.tokens_per_sec.partial_cmp(&b.tokens_per_sec).unwrap_or(std::cmp::Ordering::Equal))
         .map(|(i, _)| i)
-        .unwrap();
+        .expect("frontier is non-empty after early return check");
 
     // Context: largest context_size (frontier is sorted by context asc, so last)
     let context_idx = frontier.len() - 1;

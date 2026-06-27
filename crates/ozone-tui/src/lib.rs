@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 //! `ozone-tui` — chat-first TUI shell for ozone+.
 //!
 //! Provides the ratatui/crossterm terminal interface: session list, conversation

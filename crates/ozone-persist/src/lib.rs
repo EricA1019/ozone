@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 //! `ozone-persist` — SQLite persistence layer for ozone+.
 //!
 //! Manages global and per-session databases: sessions, messages, branches,

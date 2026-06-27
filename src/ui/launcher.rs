@@ -320,8 +320,8 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
             let pct = ratio * 100.0;
             let bar_len = 12usize;
             let filled = (ratio * bar_len as f64).round() as usize;
-            let bar: String = std::iter::repeat("\u{2588}").take(filled)
-                .chain(std::iter::repeat("\u{2591}").take(bar_len.saturating_sub(filled)))
+            let bar: String = std::iter::repeat_n("\u{2588}", filled)
+                .chain(std::iter::repeat_n("\u{2591}", bar_len.saturating_sub(filled)))
                 .collect();
             let cuda_flag = if hw.cuda_available {
                 let ver = hw.cuda_version.as_deref().unwrap_or("?");
@@ -344,8 +344,8 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
         let ram_pct = ram_ratio * 100.0;
         let bar_len = 12usize;
         let filled = (ram_ratio * bar_len as f64).round() as usize;
-        let ram_bar: String = std::iter::repeat("\u{2588}").take(filled)
-            .chain(std::iter::repeat("\u{2591}").take(bar_len.saturating_sub(filled)))
+        let ram_bar: String = std::iter::repeat_n("\u{2588}", filled)
+            .chain(std::iter::repeat_n("\u{2591}", bar_len.saturating_sub(filled)))
             .collect();
         let ram_label = Line::from(vec![
             Span::styled("  RAM ", style_bold_cyan()),

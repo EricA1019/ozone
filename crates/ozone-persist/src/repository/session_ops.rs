@@ -147,7 +147,7 @@ impl SqliteRepository {
         let message_id = MessageId::parse(message.message_id)?;
         let now = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
-            .unwrap()
+            .unwrap_or_default()
             .as_millis() as i64;
 
         let branch = ConversationBranch::new(

@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 //! `ozone-memory` — memory system for ozone+.
 //!
 //! Provides pinned/note memories, embedding providers (fastembed),

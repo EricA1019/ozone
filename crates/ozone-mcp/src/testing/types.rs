@@ -38,6 +38,7 @@ pub struct MockUserCaptureSettings {
     pub step_captures: Vec<PtyVteCaptureArtifacts>,
 }
 
+// Serde deserialization-only struct — never directly constructed.
 #[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -66,6 +67,7 @@ pub struct PtyVteCaptureResult {
     pub font: Option<PtyVteCaptureFont>,
 }
 
+// Serde deserialization-only struct — never directly constructed.
 #[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PtyVteCursor {
@@ -73,6 +75,7 @@ pub struct PtyVteCursor {
     pub column: u16,
 }
 
+// Serde deserialization-only struct — never directly constructed.
 #[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 pub struct PtyVteCaptureRow {
@@ -84,6 +87,7 @@ pub struct PtyVteCaptureRow {
     pub cells: Vec<PtyVteCaptureCell>,
 }
 
+// Serde deserialization-only struct — never directly constructed.
 #[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]
@@ -104,6 +108,7 @@ pub struct PtyVteCaptureCell {
     pub resolved_bg: Vec<u8>,
 }
 
+// Serde deserialization-only struct — never directly constructed.
 #[allow(dead_code)]
 #[derive(Debug, Serialize, Deserialize, Clone)]
 #[serde(rename_all = "camelCase")]

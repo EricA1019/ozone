@@ -93,10 +93,7 @@ pub struct KoboldCppClient {
 impl KoboldCppClient {
     /// Create a new client pointing at `base_url` (e.g. `"http://localhost:5001"`).
     pub fn new(base_url: impl Into<String>) -> anyhow::Result<Self> {
-        let http = reqwest::Client::builder()
-            .connect_timeout(Duration::from_secs(10))
-            .timeout(Duration::from_secs(30))
-            .build()
+        let http = ozone_core::http::client_with_timeouts(10, 30)
             .context("failed to build reqwest client")?;
         Ok(Self {
             base_url: base_url.into().trim_end_matches('/').to_string(),

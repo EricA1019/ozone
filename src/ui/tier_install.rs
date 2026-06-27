@@ -21,15 +21,20 @@ pub fn install_tier_from_github(tier_binary_name: &str) -> Result<PathBuf, Strin
     let install_dir = install_target_dir()?;
     let asset_name = github_asset_name(tier_binary_name)?;
 
+    let client = reqwest::blocking::Client::builder()
+        .user_agent("ozone/0.4")
+        .build()
+        .map_err(|e| format!("Failed to build HTTP client: {e}"))?;
+
     let release_url = "https://api.github.com/repos/EricA1019/ozone/releases/latest";
 
-    let response = ureq::get(release_url)
-        .set("User-Agent", "ozone/0.4")
-        .call()
+    // Fetch release metadata
+    let response = client
+        .get(release_url)
+        .send()
         .map_err(|e| format!("Failed to fetch release info: {e}"))?;
-
     let json: serde_json::Value = response
-        .into_json()
+        .json()
         .map_err(|e| format!("Failed to parse release JSON: {e}"))?;
 
     let assets = json["assets"]
@@ -48,16 +53,20 @@ pub fn install_tier_from_github(tier_binary_name: &str) -> Result<PathBuf, Strin
         })?
         .to_string();
 
-    let response = ureq::get(&asset_url)
-        .set("User-Agent", "ozone/0.4")
-        .call()
+    // Download the asset
+    let response = client
+        .get(&asset_url)
+        .send()
         .map_err(|e| format!("Download failed: {e}"))?;
+    let bytes = response
+        .bytes()
+        .map_err(|e| format!("Read failed: {e}"))?;
 
     let dest_path = install_dir.join(tier_binary_name);
     let mut dest_file = std::fs::File::create(&dest_path)
         .map_err(|e| format!("Cannot write to {}: {e}", dest_path.display()))?;
 
-    std::io::copy(&mut response.into_reader(), &mut dest_file)
+    std::io::copy(&mut bytes.as_ref(), &mut dest_file)
         .map_err(|e| format!("Write failed: {e}"))?;
 
     #[cfg(unix)]

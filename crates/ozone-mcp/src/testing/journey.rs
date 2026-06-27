@@ -96,6 +96,7 @@ use std::path::Path;
 use super::{MockUserJourneySpec, MockUserJourneyStep};
 
 /// Helper function to append arguments to a command vector.
+// Used through the MCP testing journey builder; not directly invoked from production paths.
 #[allow(dead_code)]
 pub fn append_args(command: &[String], args: &[&str]) -> Vec<String> {
     let mut full = command.to_vec();
@@ -104,6 +105,7 @@ pub fn append_args(command: &[String], args: &[&str]) -> Vec<String> {
 }
 
 /// Resolve binary command, preferring debug build if available, falling back to cargo run.
+// Used through the MCP testing journey builder; not directly invoked from production paths.
 #[allow(dead_code)]
 pub fn front_door_binary_command(repo_root: &Path, binary: &str, args: &[&str]) -> Vec<String> {
     if matches!(

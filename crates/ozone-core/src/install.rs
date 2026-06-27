@@ -359,6 +359,7 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[serial_test::serial(env_vars)]
     #[test]
     fn read_install_source_root_requires_recorded_marker() {
         let _guard = env_lock().lock().unwrap();
@@ -382,6 +383,7 @@ mod tests {
         let _ = fs::remove_dir_all(root);
     }
 
+    #[serial_test::serial(env_vars)]
     #[test]
     fn read_install_source_root_uses_recorded_marker() {
         let _guard = env_lock().lock().unwrap();

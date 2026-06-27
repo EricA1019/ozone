@@ -186,7 +186,7 @@ pub fn dispatch_key(input_mode: InputMode, key: KeyEvent) -> KeyAction {
             KeyCode::Char('k') => KeyAction::ScrollConversationUp,
             KeyCode::Char('j') => KeyAction::ScrollConversationDown,
             KeyCode::Char(ch) if ch.is_ascii_digit() && ch != '0' => {
-                KeyAction::AccumulateCount(ch.to_digit(10).unwrap())
+                KeyAction::AccumulateCount(ch.to_digit(10).expect("guard ensures digit 1-9"))
             }
             KeyCode::Char('i') => KeyAction::EnterInsert,
             KeyCode::Char('I') => KeyAction::ToggleInspector,

@@ -94,8 +94,8 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
                 VIOLET
             };
             let filled = (ratio * bar_len as f64).round() as usize;
-            let bar: String = std::iter::repeat("\u{2588}").take(filled)
-                .chain(std::iter::repeat("\u{2591}").take(bar_len.saturating_sub(filled)))
+            let bar: String = std::iter::repeat_n("\u{2588}", filled)
+                .chain(std::iter::repeat_n("\u{2591}", bar_len.saturating_sub(filled)))
                 .collect();
             let label = Line::from(vec![
                 Span::styled("  GPU ", style_bold_violet()),
@@ -109,8 +109,8 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
         }
         let ram_ratio = (hw.ram_used_mb as f64 / hw.ram_total_mb as f64).clamp(0.0, 1.0);
         let ram_filled = (ram_ratio * bar_len as f64).round() as usize;
-        let ram_bar: String = std::iter::repeat("\u{2588}").take(ram_filled)
-            .chain(std::iter::repeat("\u{2591}").take(bar_len.saturating_sub(ram_filled)))
+        let ram_bar: String = std::iter::repeat_n("\u{2588}", ram_filled)
+            .chain(std::iter::repeat_n("\u{2591}", bar_len.saturating_sub(ram_filled)))
             .collect();
         let ram_label = Line::from(vec![
             Span::styled("  RAM ", style_bold_cyan()),

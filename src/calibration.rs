@@ -9,7 +9,7 @@
 //! Calibration never fails an eval run — it reports results and the
 //! runner decides whether to gate promotion.
 
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
 /// Results of a calibration health check.
 #[derive(Debug, Clone)]
@@ -46,9 +46,7 @@ pub struct CalibrationResult {
 pub async fn run_calibration(base_url: &str) -> CalibrationResult {
     let overall_start = Instant::now();
 
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(60))
-        .build()
+    let client = match ozone_core::http::client_with_timeout(60)
     {
         Ok(c) => c,
         Err(e) => {

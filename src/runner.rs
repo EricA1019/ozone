@@ -2,7 +2,6 @@
 //! scoring into a single configurable execution flow.
 
 use anyhow::Result;
-use std::time::Duration;
 
 use crate::artifacts::{self};
 use crate::calibration::{run_calibration, CalibrationResult};
@@ -211,9 +210,7 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
     // ---- Step 6: Run suites ----
     let suites = config.sweep_level.suites();
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(HARD_CAP_SECS))
-        .build()?;
+    let client = ozone_core::http::client_with_timeout(HARD_CAP_SECS)?;
 
     let art_dir = artifacts::default_artifact_base().ok();
     let run_dirs = if let Some(ref base) = art_dir {
@@ -462,9 +459,7 @@ pub async fn run_eval_with_events(
     // ---- Step 6: Run suites ----
     let suites = config.sweep_level.suites();
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(HARD_CAP_SECS))
-        .build()?;
+    let client = ozone_core::http::client_with_timeout(HARD_CAP_SECS)?;
 
     for suite in suites {
         let suite_name = suite.first().map(|t| t.suite).unwrap_or("unknown");

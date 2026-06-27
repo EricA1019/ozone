@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 //! `ozone-engine` — conversation engine for ozone+.
 //!
 //! Implements the single-writer conversation engine: command processing,
@@ -626,6 +627,7 @@ impl ConversationStore for InMemoryConversationStore {
             .max_by_key(|record| record.branch.created_at))
     }
 
+        #[allow(clippy::expect_used)]
     fn activate_branch(
         &mut self,
         command: ActivateBranchCommand,

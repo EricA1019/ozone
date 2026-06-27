@@ -49,15 +49,14 @@ pub enum EvalTaskKind {
     /// Runs EvalPlus codegen.
     EvalPlus { output_dir: &'static str },
     /// Runs the creative writing diversity probe (Phase 2).
+    // Constructed indirectly via eval dispatch; never explicitly instantiated.
     #[allow(dead_code)]
     CreativeWriting,
 }
 
 /// A named eval task with metadata for CLI and UI.
 #[derive(Debug, Clone, Copy)]
-#[allow(dead_code)]
 pub struct EvalTask {
-    pub name: &'static str,
     pub cli_name: &'static str,
     pub kind: EvalTaskKind,
     pub description: &'static str,
@@ -67,7 +66,6 @@ pub struct EvalTask {
 /// Canonical task registry. Adding a new task = adding one entry here.
 pub const EVAL_TASKS: &[EvalTask] = &[
     EvalTask {
-        name: "gsm8k",
         cli_name: "gsm8k",
         kind: EvalTaskKind::LmEval {
             task: "gsm8k",
@@ -77,7 +75,6 @@ pub const EVAL_TASKS: &[EvalTask] = &[
         report_label: "GSM8K",
     },
     EvalTask {
-        name: "instruction",
         cli_name: "instruction",
         kind: EvalTaskKind::LmEval {
             task: "leaderboard_instruction_following",
@@ -87,7 +84,6 @@ pub const EVAL_TASKS: &[EvalTask] = &[
         report_label: "Instruction following",
     },
     EvalTask {
-        name: "math",
         cli_name: "math",
         kind: EvalTaskKind::LmEval {
             task: "leaderboard_math_hard",
@@ -97,7 +93,6 @@ pub const EVAL_TASKS: &[EvalTask] = &[
         report_label: "Math hard",
     },
     EvalTask {
-        name: "humaneval",
         cli_name: "humaneval",
         kind: EvalTaskKind::EvalPlus {
             output_dir: "evalplus_probe",
@@ -106,7 +101,6 @@ pub const EVAL_TASKS: &[EvalTask] = &[
         report_label: "HumanEval / EvalPlus",
     },
     EvalTask {
-        name: "mmlu",
         cli_name: "mmlu",
         kind: EvalTaskKind::LmEval {
             task: "mmlu",
@@ -116,7 +110,6 @@ pub const EVAL_TASKS: &[EvalTask] = &[
         report_label: "MMLU",
     },
     EvalTask {
-        name: "hellaswag",
         cli_name: "hellaswag",
         kind: EvalTaskKind::LmEval {
             task: "hellaswag",
@@ -126,7 +119,6 @@ pub const EVAL_TASKS: &[EvalTask] = &[
         report_label: "HellaSwag",
     },
     EvalTask {
-        name: "truthfulqa",
         cli_name: "truthfulqa",
         kind: EvalTaskKind::LmEval {
             task: "truthfulqa_gen",
@@ -136,7 +128,6 @@ pub const EVAL_TASKS: &[EvalTask] = &[
         report_label: "TruthfulQA",
     },
     EvalTask {
-        name: "bbh",
         cli_name: "bbh",
         kind: EvalTaskKind::LmEval {
             task: "bigbench_hard",

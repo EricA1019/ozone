@@ -83,13 +83,9 @@ pub async fn is_url_ready(url: &str) -> bool {
     // Build a client with a short timeout. The fallback path also enforces
     // a timeout so that an unreachable server doesn't hang for the OS default
     // (30-120s).
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()
+    let client = ozone_core::http::client_with_timeout(2)
         .unwrap_or_else(|_| {
-            reqwest::Client::builder()
-                .timeout(Duration::from_secs(5))
-                .build()
+            ozone_core::http::client_with_timeout(5)
                 .unwrap_or_else(|_| reqwest::Client::new())
         });
     client
@@ -111,9 +107,7 @@ pub async fn get_llamacpp_model() -> Option<String> {
         id: String,
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()
+    let client = ozone_core::http::client_with_timeout(2)
         .ok()?;
     let resp = client
         .get(format!("{}/v1/models", paths::llamacpp_base_url()))

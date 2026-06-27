@@ -910,26 +910,6 @@ pub(super) fn selected_record(app: &App) -> Option<CatalogRecord> {
 }
 
 
-// ── Shared hint bar ───────────────────────────────────────────────────────────
-
-/// Render a consistent bottom hint bar showing available key bindings.
-/// Each element in `pairs` is a `(key_label, description)` tuple.
-/// Example: `render_hint_bar(f, area, &[("j/k", "navigate"), ("Enter", "select"), ("q", "quit")])`
-pub fn render_hint_bar(f: &mut ratatui::Frame, area: ratatui::layout::Rect, pairs: &[(&'static str, &'static str)]) {
-    use ratatui::widgets::Paragraph;
-    use ratatui::text::{Line, Span};
-
-    let mut spans: Vec<Span<'static>> = Vec::new();
-    for (i, (key, desc)) in pairs.iter().enumerate() {
-        if i > 0 {
-            spans.push(Span::raw("  "));
-        }
-        spans.push(Span::styled(*key, crate::theme::style_hint_key()));
-        spans.push(Span::styled(format!(" {}", desc), crate::theme::style_muted()));
-    }
-    let bar = Paragraph::new(Line::from(spans));
-    f.render_widget(bar, area);
-}
 
 
 struct TerminalRestoreGuard {

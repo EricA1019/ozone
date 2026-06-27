@@ -377,9 +377,7 @@ async fn run_llamacpp_generation(measured: bool) -> Result<GenerationResult> {
         timings: Option<BenchTimings>,
     }
 
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(API_TIMEOUT_SECS))
-        .build()?;
+    let client = ozone_core::http::client_with_timeout(API_TIMEOUT_SECS)?;
 
     let temperature = if measured { 0.0 } else { 0.7 };
     let max_tokens = if measured { BENCH_MAX_TOKENS } else { 10 };

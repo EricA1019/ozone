@@ -153,7 +153,7 @@ pub(super) fn render(f: &mut Frame, app: &App) {
         Span::styled(" Eval Launcher ", style_bold_cyan()),
         Span::styled("  ·  ", style_muted()),
         server_status,
-        Span::styled(format!("{model_line}"), style_violet()),
+        Span::styled(model_line.to_string(), style_violet()),
     ]))
     .block(
         Block::default()

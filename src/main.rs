@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 #[cfg(feature = "analyze")]
 mod analyze;
 mod artifacts;

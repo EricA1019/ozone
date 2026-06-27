@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 //! `ozone-inference` — Phase 1D inference gateway, layered config, and prompt
 //! templates for the ozone+ product family.
 //!

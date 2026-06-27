@@ -1,3 +1,4 @@
+#![cfg_attr(not(test), deny(clippy::unwrap_used, clippy::expect_used))]
 //! `ozone-core` — shared foundations for the Ozone product family.
 //!
 //! Provides product metadata, data/config path helpers (with env var overrides),
@@ -6,6 +7,7 @@
 pub mod cli;
 pub mod engine;
 pub mod hardware;
+pub mod http;
 pub mod install;
 pub mod planner;
 pub mod prefs;

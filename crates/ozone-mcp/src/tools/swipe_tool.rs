@@ -15,6 +15,7 @@ use ozone_persist::{CreateMessageRequest, PersistError};
 use serde_json::json;
 use uuid::Uuid;
 
+#[allow(clippy::expect_used)]
 pub fn swipe_tool(
     server: &mut OzoneMcpServer,
     args: &serde_json::Value,

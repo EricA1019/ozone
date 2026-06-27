@@ -376,3 +376,126 @@ pub fn import_system_specs() -> HardwareProfile {
 
     profile
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn gpu_memory_defaults_are_zero() {
+        let mem = GpuMemory::default();
+        assert_eq!(mem.used_mb, 0);
+        assert_eq!(mem.free_mb, 0);
+        assert_eq!(mem.total_mb, 0);
+    }
+
+    #[test]
+    fn hardware_profile_defaults_are_sane() {
+        let profile = HardwareProfile::default();
+        assert!(profile.gpu.is_none());
+        assert!(profile.gpu_name.is_none());
+        assert_eq!(profile.ram_total_mb, 0);
+        assert_eq!(profile.cpu_logical, 0);
+        assert_eq!(profile.cpu_physical, 0);
+        assert!(!profile.cuda_available);
+        assert!(profile.cuda_version.is_none());
+        assert!(profile.compute_capability.is_none());
+        assert!(!profile.flash_attn_supported);
+    }
+
+    #[test]
+    fn gpu_memory_json_roundtrip() {
+        let mem = GpuMemory {
+            used_mb: 2048,
+            free_mb: 8192,
+            total_mb: 10240,
+        };
+        let json = serde_json::to_string(&mem).expect("serialize");
+        assert_eq!(json, r#"{"usedMb":2048,"freeMb":8192,"totalMb":10240}"#);
+        let deserialized: GpuMemory = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(deserialized.used_mb, 2048);
+        assert_eq!(deserialized.free_mb, 8192);
+        assert_eq!(deserialized.total_mb, 10240);
+    }
+
+    #[test]
+    fn hardware_profile_json_roundtrip() {
+        let profile = HardwareProfile {
+            gpu: Some(GpuMemory { used_mb: 512, free_mb: 11776, total_mb: 12288 }),
+            gpu_name: Some("NVIDIA GeForce RTX 3060".into()),
+            ram_total_mb: 32000,
+            ram_free_mb: 16000,
+            ram_used_mb: 16000,
+            cpu_logical: 12,
+            cpu_physical: 6,
+            cuda_available: true,
+            cuda_version: Some("12.4".into()),
+            compute_capability: Some("8.6".into()),
+            flash_attn_supported: true,
+            captured_at_unix: Some(1_700_000_000),
+        };
+        let json = serde_json::to_string(&profile).expect("serialize");
+        let deserialized: HardwareProfile = serde_json::from_str(&json).expect("deserialize");
+        assert_eq!(deserialized.gpu.unwrap().total_mb, 12288);
+        assert_eq!(deserialized.gpu_name.unwrap(), "NVIDIA GeForce RTX 3060");
+        assert_eq!(deserialized.ram_total_mb, 32000);
+        assert_eq!(deserialized.cpu_logical, 12);
+        assert!(deserialized.cuda_available);
+        assert_eq!(deserialized.cuda_version.unwrap(), "12.4");
+        assert_eq!(deserialized.compute_capability.unwrap(), "8.6");
+        assert!(deserialized.flash_attn_supported);
+        assert_eq!(deserialized.captured_at_unix.unwrap(), 1_700_000_000);
+    }
+
+    #[test]
+    fn hardware_profile_unknown_fields_ignored() {
+        // Forward compatibility: extra fields should not break deserialization.
+        let json = r#"{"ramTotalMb":16000,"ramFreeMb":8000,"ramUsedMb":8000,"cpuLogical":8,"cpuPhysical":4,"unknownField":"ignored"}"#;
+        let profile: HardwareProfile = serde_json::from_str(json).expect("deserialize with unknown field");
+        assert_eq!(profile.ram_total_mb, 16000);
+        assert_eq!(profile.cpu_logical, 8);
+    }
+
+    #[test]
+    fn compute_flash_attn_supported_various_capabilities() {
+        // None → false (no GPU info)
+        assert!(!compute_flash_attn_supported(None));
+        // Empty string → false
+        assert!(!compute_flash_attn_supported(Some("")));
+        // Below 8.0 → false
+        assert!(!compute_flash_attn_supported(Some("7.5")));
+        assert!(!compute_flash_attn_supported(Some("6.0")));
+        assert!(!compute_flash_attn_supported(Some("3.5")));
+        // At 8.0 → true
+        assert!(compute_flash_attn_supported(Some("8.0")));
+        // Above 8.0 → true
+        assert!(compute_flash_attn_supported(Some("8.6")));
+        assert!(compute_flash_attn_supported(Some("9.0")));
+        assert!(compute_flash_attn_supported(Some("10.0")));
+        // Invalid format → false
+        assert!(!compute_flash_attn_supported(Some("invalid")));
+        assert!(!compute_flash_attn_supported(Some("eight-point-six")));
+    }
+
+    #[test]
+    fn hardware_profile_serde_rename_all_camel_case() {
+        // Verify serde field naming convention.
+        let profile = HardwareProfile {
+            ram_total_mb: 16000,
+            ram_free_mb: 8000,
+            ram_used_mb: 8000,
+            cpu_logical: 8,
+            cpu_physical: 4,
+            ..Default::default()
+        };
+        let json = serde_json::to_string(&profile).expect("serialize");
+        // Field names should use camelCase
+        assert!(json.contains("ramTotalMb"));
+        assert!(json.contains("ramFreeMb"));
+        assert!(json.contains("ramUsedMb"));
+        assert!(json.contains("cpuLogical"));
+        assert!(json.contains("cpuPhysical"));
+        // Should NOT contain snake_case names
+        assert!(!json.contains("ram_total_mb"));
+    }
+}

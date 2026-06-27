@@ -162,6 +162,7 @@ impl GatewayBackend {
         }
     }
 
+    #[allow(clippy::expect_used)]
     fn request_body(&self, req: &InferenceRequest) -> Value {
         match self {
             Self::KoboldCpp(_) => serde_json::to_value(build_kobold_request(req))

@@ -162,9 +162,7 @@ pub async fn run_creative_writing_eval(
         "timestamp",
     ])?;
 
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(120))
-        .build()?;
+    let client = ozone_core::http::client_with_timeout(120)?;
 
     for prompt in prompts {
         for &temp in temperatures {
