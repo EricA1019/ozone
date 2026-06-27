@@ -630,7 +630,9 @@ fn store_quietly(
 }
 
 /// Context sizes to test in a full sweep (filtered against model max).
-pub const SWEEP_CONTEXT_STEPS: &[u32] = &[512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072];
+pub const SWEEP_CONTEXT_STEPS: &[u32] = &[
+    512, 1024, 2048, 4096, 8192, 16384, 32768, 65536, 131072, 262144,
+];
 
 #[derive(Debug, Clone, Copy)]
 pub struct ContextSweepRequest<'a> {
@@ -657,7 +659,10 @@ pub async fn run_context_sweep(request: ContextSweepRequest<'_>) -> Result<(Path
         threads,
         quick,
     } = request;
-    let max_context = crate::gguf::read_context_length(model_path).unwrap_or(4096);
+    let max_context = crate::gguf::read_context_length(model_path).unwrap_or_else(|| {
+        eprintln!("  ⚠ Could not read context length from GGUF metadata; defaulting to 131072");
+        131072
+    });
 
     let steps: Vec<u32> = SWEEP_CONTEXT_STEPS
         .iter()
