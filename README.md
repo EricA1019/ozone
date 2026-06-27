@@ -51,6 +51,13 @@ Build manually:
 cargo build --release -p ozone --features full
 ```
 
+Quick alias update (rebuild + install to `~/.local/bin/oz`):
+
+```bash
+make update-oz      # from the project directory
+oz-update           # from anywhere (after adding alias to .zshrc)
+```
+
 During development:
 
 ```bash
@@ -104,6 +111,25 @@ oz model remove <model>.gguf
 Broken symlinks appear as broken entries in `oz model list` and in the model
 picker. Ozone reports them instead of crashing.
 
+## TUI Navigation
+
+The terminal launcher supports keyboard-driven navigation across all screens:
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` or `↑` / `↓` | Navigate lists |
+| `Enter` | Select / confirm |
+| `Esc` | Go back |
+| `q` | Quit |
+| `/` | Open command palette |
+| `Tab` | Switch focus (where supported) |
+
+The launcher shows a hint bar at the bottom of each screen with available keys.
+Press `?` for help on supported screens.
+
+Three theme presets are available: **DarkMint** (default), **OzoneDark** (original),
+and **HighContrast** (accessibility). Configure in the Settings screen.
+
 ## Main Commands
 
 ```bash
@@ -128,20 +154,43 @@ oz profiles
 The legacy `oz list` command still works as a lightweight catalog view, but
 `oz model list` is the canonical model inventory command.
 
-## Evaluation Direction
+## Evaluation
 
-Ozone evaluation is designed as a model/config decision system, not a benchmark
-collector. It should explain capability by lane:
+Evals run against a running llama.cpp server on `http://127.0.0.1:8989`. The eval
+launcher checks server health before running and offers to launch a model if none
+is running.
 
-- health and stability
-- JSON/tool formatting
-- Python and Rust basics
-- math
-- long-context recall
-- summarization and code reading
-- skipped lanes and promotion decisions
+### Sweep Levels
 
-Important policies:
+| Level | Scope | ~Tasks |
+|-------|-------|--------|
+| Quick | Health + canary gates | ~17 |
+| Standard | Quick + code micro | ~21 |
+| Full | All 5 suites | ~36 |
+
+### Eval Categories
+
+Each registered eval is bracketed by category in the launcher:
+
+| Bracket | What It Tests |
+|---------|---------------|
+| `[Math]` | Arithmetic & competition-level problem solving |
+| `[Reasoning]` | Multi-step logic, knowledge across 57 domains |
+| `[Code]` | Python function completion (HumanEval) |
+| `[Safety]` | Commonsense reasoning, factual accuracy |
+| `[Follow]` | Multi-constraint instruction adherence |
+| `[Creative]` | Diversity & coherence in long-form writing |
+
+### Error Handling
+
+- **Server check**: If no server is running, the eval launcher shows a helpful
+  message instead of cryptic backend errors.
+- **Error logs**: All eval failures are written to `results/logs/eval-errors.log`
+  with timestamps and model name.
+- **Recovery**: On failure, the UI returns to the Bench+Eval screen so you can
+  adjust and retry.
+
+### Policies
 
 - quality evaluation starts at 16k context by default
 - warm-up generations are discarded and never scored
@@ -150,16 +199,14 @@ Important policies:
 - skipped work must be recorded with a reason
 - CSV and reports are human-facing views, not the only source of truth
 
-See the evaluation expansion design notes in the project planning docs for the
-full target architecture.
-
 ## Data Locations
 
 | Path | Contents |
 | --- | --- |
 | `~/.local/share/ozone/` | preferences, launch state, benchmark data, logs |
 | `~/models/` or `OZONE_MODELS_DIR` | GGUF model library and symlinks |
-| `results/` | local eval artifacts and generated reports |
+| `results/` | eval artifacts, generated reports, and error logs |
+| `results/logs/` | timestamped eval error logs |
 | `docs/archive/ozone-plus/` | deprecated chat documentation |
 
 ## Developer Automation
