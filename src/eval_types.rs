@@ -154,3 +154,93 @@ impl SizeClass {
         }
     }
 }
+
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn size_class_token_limits_are_monotonic() {
+        // Each size class must have a strictly larger token limit than
+        // the previous one. If this fails, someone reordered or changed
+        // the limits without thinking about monotonicity.
+        assert!(SizeClass::Tiny.max_output_tokens() < SizeClass::Small.max_output_tokens());
+        assert!(SizeClass::Small.max_output_tokens() < SizeClass::Medium.max_output_tokens());
+        assert!(SizeClass::Medium.max_output_tokens() < SizeClass::Large.max_output_tokens());
+        assert!(SizeClass::Large.max_output_tokens() < SizeClass::Heavy.max_output_tokens());
+    }
+
+    #[test]
+    fn failure_type_as_str_all_variants_non_empty_snake_case() {
+        // Every FailureType variant must produce a non-empty, snake_case
+        // string for CSV export stability.
+        use FailureType::*;
+        let all = [
+            None,
+            WrongAnswer,
+            FormatInvalid,
+            JsonInvalid,
+            SchemaInvalid,
+            SyntaxError,
+            CompileError,
+            TestFailure,
+            Timeout,
+            RuntimeError,
+            ForbiddenImport,
+            HallucinatedDependency,
+            WrongLanguage,
+            EmptyOutput,
+            TruncatedOutput,
+            Underanswered,
+            OverlongOutput,
+            RepetitionCollapse,
+            AaaaCollapse,
+            StopIgnored,
+            PatchInvalid,
+            WrongFileModified,
+            ContextTooSmall,
+            SandboxError,
+            AdapterError,
+            BackendError,
+        ];
+        for v in &all {
+            let s = v.as_str();
+            assert!(!s.is_empty(), "empty as_str for {v:?}");
+            assert!(
+                s.chars().all(|c| c.is_lowercase() || c == '_'),
+                "non-snake-case as_str '{s}' for {v:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn eval_status_as_str_all_variants_non_empty_snake_case() {
+        // Every EvalStatus variant must produce a non-empty, snake_case
+        // string for CSV export stability.
+        use EvalStatus::*;
+        let all = [
+            Passed,
+            Failed,
+            SkippedGate,
+            SkippedBudget,
+            SkippedUser,
+            Crashed,
+            Timeout,
+            Invalid,
+            Unstable,
+            AdapterError,
+            SandboxError,
+            ContextTooSmall,
+            CacheHit,
+        ];
+        for v in &all {
+            let s = v.as_str();
+            assert!(!s.is_empty(), "empty as_str for {v:?}");
+            assert!(
+                s.chars().all(|c| c.is_lowercase() || c == '_'),
+                "non-snake-case as_str '{s}' for {v:?}"
+            );
+        }
+    }
+}

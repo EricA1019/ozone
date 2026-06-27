@@ -940,10 +940,26 @@ mod tests {
     use super::*;
 
     #[test]
-    fn detects_tier_from_binary_name() {
+    fn detect_tier_oz_binary_maps_to_base() {
+        // The \`oz\` binary name is the shorthand alias for the Base tier.
         assert_eq!(detect_tier_from_binary_name("oz"), Some(prefs::Tier::Base));
+    }
+
+    #[test]
+    fn detect_tier_unrecognized_binary_names_return_none() {
+        // Only \`oz\` is recognized. All other names return None.
         assert_eq!(detect_tier_from_binary_name("ozone"), None);
         assert_eq!(detect_tier_from_binary_name("ozone-lite"), None);
         assert_eq!(detect_tier_from_binary_name("oz+"), None);
+        assert_eq!(detect_tier_from_binary_name("foo"), None);
+        assert_eq!(detect_tier_from_binary_name("ozonelite"), None);
+        assert_eq!(detect_tier_from_binary_name(""), None);
+    }
+
+    #[test]
+    fn detect_tier_is_case_sensitive() {
+        // Binary name detection is case-sensitive. "OZ" is not "oz".
+        assert_eq!(detect_tier_from_binary_name("OZ"), None);
+        assert_eq!(detect_tier_from_binary_name("Oz"), None);
     }
 }

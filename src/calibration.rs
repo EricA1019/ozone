@@ -283,4 +283,33 @@ mod tests {
         let result = run_calibration("http://127.0.0.1:1").await;
         assert!(result.repetition_flag);
     }
+
+    #[test]
+    fn test_calibration_result_struct_all_fields_accessible() {
+        // Verify that all fields of CalibrationResult are accessible
+        // and that constructing one works correctly. This guards against
+        // accidental field removal or renaming that breaks downstream
+        // consumers (gate.rs, CSV export, TUI views).
+        let result = CalibrationResult {
+            prompt_tok_per_sec: 150.5,
+            decode_tok_per_sec: 25.3,
+            first_token_ms: 200,
+            basic_stability: true,
+            repetition_flag: false,
+            aaaa_flag: false,
+            stop_obeyed: true,
+            backend_status: "ok".into(),
+            total_duration_ms: 5000,
+        };
+
+        assert_eq!(result.prompt_tok_per_sec, 150.5);
+        assert_eq!(result.decode_tok_per_sec, 25.3);
+        assert_eq!(result.first_token_ms, 200);
+        assert!(result.basic_stability);
+        assert!(!result.repetition_flag);
+        assert!(!result.aaaa_flag);
+        assert!(result.stop_obeyed);
+        assert_eq!(result.backend_status, "ok");
+        assert_eq!(result.total_duration_ms, 5000);
+    }
 }
