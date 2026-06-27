@@ -16,12 +16,12 @@ pub(super) fn handle_model_picker_key(app: &mut App, key: KeyEvent) {
                 app.screen = Screen::Launcher;
             }
         }
-        KeyCode::Up => {
+        KeyCode::Up | KeyCode::Char('k') => {
             if app.selected_model > 0 {
                 app.selected_model -= 1;
             }
         }
-        KeyCode::Down => {
+        KeyCode::Down | KeyCode::Char('j') => {
             let count = app.filtered_catalog_len();
             if app.selected_model + 1 < count {
                 app.selected_model += 1;

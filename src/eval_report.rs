@@ -21,7 +21,7 @@ pub(crate) fn build_eval_report_for_preset(
     preset: EvalPreset,
 ) -> Result<EvalMarkdownReport> {
     let root = crate::eval::resolve_project_root()?;
-    let artifacts_dir = root.join("contrib/evals/artifacts");
+    let artifacts_dir = root.join("results");
 
     // Look up output directory from the task registry
     let task = crate::eval::EVAL_TASKS

@@ -165,7 +165,7 @@ pub async fn run_eval_task(
     }
 
     let root = resolve_project_root()?;
-    let artifacts_dir = root.join("contrib/evals/artifacts");
+    let artifacts_dir = root.join("results");
     let venv_bin = root.join("contrib/evals/.venv/bin");
 
     if !root.join("contrib/evals").is_dir() {
@@ -360,7 +360,7 @@ pub fn print_comparison(task_name: &str) -> Result<()> {
     };
 
     let root = resolve_project_root()?;
-    let dir = root.join("contrib/evals/artifacts").join(output_dir);
+    let dir = root.join("results").join(output_dir);
 
     if !dir.exists() {
         println!("No results yet. Run `oz eval <model> --preset {task_name}` first.");

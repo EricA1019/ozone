@@ -103,10 +103,11 @@ pub fn render(f: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(4), // header (increased for badge line)
-            Constraint::Length(6), // resources
-            Constraint::Length(6), // services
+            Constraint::Length(4), // resources
+            Constraint::Length(4), // services
             Constraint::Fill(1),   // actions
             Constraint::Length(2), // status bar
+            Constraint::Length(1), // hint bar
         ])
         .split(area);
 
@@ -115,6 +116,7 @@ pub fn render(f: &mut Frame, app: &App) {
     render_services(f, chunks[2], app);
     render_actions(f, chunks[3], app);
     render_status_bar(f, chunks[4], app);
+    render_hint_bar(f, chunks[5]);
 }
 
 pub(super) fn render_command_overlay(f: &mut Frame, app: &App) {
@@ -216,7 +218,6 @@ pub(super) fn render_command_overlay(f: &mut Frame, app: &App) {
             ]))
         })
         .collect();
-
     let mut state = ListState::default().with_selected(Some(app.command_overlay_selected));
     let list = List::new(items).block(chrome_block(
         Line::from(Span::styled(" Matches ", style_bold_cyan())),
@@ -294,10 +295,8 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // GPU label
-            Constraint::Length(1), // GPU braille bar
-            Constraint::Length(1), // RAM label
-            Constraint::Length(1), // RAM braille bar
+            Constraint::Length(1), // GPU
+            Constraint::Length(1), // RAM
         ])
         .split(inner);
 
@@ -312,47 +311,48 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
                 LIME
             };
             let gpu_name = hw.gpu_name.as_deref().unwrap_or("GPU");
+            let pct = ratio * 100.0;
+            let bar_len = 12usize;
+            let filled = (ratio * bar_len as f64).round() as usize;
+            let bar: String = std::iter::repeat("\u{2588}").take(filled)
+                .chain(std::iter::repeat("\u{2591}").take(bar_len.saturating_sub(filled)))
+                .collect();
             let cuda_flag = if hw.cuda_available {
                 let ver = hw.cuda_version.as_deref().unwrap_or("?");
-                format!("  CUDA v{ver} ✓")
+                format!("  CUDA v{ver} \u{2713}")
             } else {
-                "  CUDA ✗".into()
+                "  CUDA \u{2717}".into()
             };
             let label = Line::from(vec![
+                Span::styled(format!("  {gpu_name} "), style_bold_lime()),
+                Span::styled(&bar, Style::default().fg(color)),
                 Span::styled(
-                    format!(
-                        "  {gpu_name}  {}/{} MB  ({:.0}%)",
-                        gpu.used_mb,
-                        gpu.total_mb,
-                        ratio * 100.0
-                    ),
+                    format!(" {}/{} MB ({:.0}%)", gpu.used_mb, gpu.total_mb, pct),
                     Style::default().fg(color),
                 ),
                 Span::styled(&cuda_flag, Style::default().fg(LIME)),
             ]);
             f.render_widget(Paragraph::new(label), rows[0]);
-
-            let bar = BrailleBar::new(gpu.used_mb as f64, gpu.total_mb as f64).fill_color(color);
-            f.render_widget(bar, rows[1]);
         }
         let ram_ratio = (hw.ram_used_mb as f64 / hw.ram_total_mb as f64).clamp(0.0, 1.0);
-        let ram_label = Line::from(vec![Span::styled(
-            format!(
-                "  System RAM  {}/{} MB  ({:.0}%)",
-                hw.ram_used_mb,
-                hw.ram_total_mb,
-                ram_ratio * 100.0
+        let ram_pct = ram_ratio * 100.0;
+        let bar_len = 12usize;
+        let filled = (ram_ratio * bar_len as f64).round() as usize;
+        let ram_bar: String = std::iter::repeat("\u{2588}").take(filled)
+            .chain(std::iter::repeat("\u{2591}").take(bar_len.saturating_sub(filled)))
+            .collect();
+        let ram_label = Line::from(vec![
+            Span::styled("  RAM ", style_bold_cyan()),
+            Span::styled(&ram_bar, style_cyan()),
+            Span::styled(
+                format!(" {}/{} MB ({:.0}%)", hw.ram_used_mb, hw.ram_total_mb, ram_pct),
+                style_cyan(),
             ),
-            style_cyan(),
-        )]);
-        f.render_widget(Paragraph::new(ram_label), rows[2]);
-
-        let ram_bar =
-            BrailleBar::new(hw.ram_used_mb as f64, hw.ram_total_mb as f64).fill_color(CYAN);
-        f.render_widget(ram_bar, rows[3]);
+        ]);
+        f.render_widget(Paragraph::new(ram_label), rows[1]);
     } else {
         f.render_widget(
-            Paragraph::new(Span::styled("  Loading hardware…", style_gray())),
+            Paragraph::new(Span::styled("  Loading hardware\u{2026}", style_gray())),
             rows[0],
         );
     }
@@ -390,10 +390,23 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(area);
     f.render_widget(block, area);
 
-    let items: Vec<ListItem> = launcher_actions(app)
-        .iter()
-        .enumerate()
-        .map(|(i, action)| {
+    let items: Vec<ListItem> = {
+        // Optional model info banner at the top
+        let mut all: Vec<ListItem> = Vec::new();
+        if let Some(record) = super::selected_record(app) {
+            all.push(ListItem::new(Line::from(vec![
+                Span::styled("  Model: ", crate::theme::style_gray()),
+                Span::styled(record.model_name.clone(), crate::theme::style_bold_lime()),
+                Span::styled(
+                    format!("  {:.1}GB  ctx:{}", record.model_size_gb, record.recommendation.context_size),
+                    crate::theme::style_cyan(),
+                ),
+            ])));
+        }
+        let action_items: Vec<ListItem> = launcher_actions(app)
+            .iter()
+            .enumerate()
+            .map(|(i, action)| {
             if i == app.selected_action {
                 let marker = if (app.ticker / 6).is_multiple_of(2) {
                     HEX_CURSOR
@@ -426,6 +439,9 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
             }
         })
         .collect();
+        all.extend(action_items);
+        all
+    };
     f.render_widget(List::new(items), inner);
 }
 
@@ -629,6 +645,29 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
             &mut scrollbar_state,
         );
     }
+}
+
+
+/// Bottom hint bar showing key bindings for the launcher screen.
+fn render_hint_bar(f: &mut Frame, area: Rect) {
+    use crate::theme::{style_hint_key, style_muted};
+    use ratatui::text::{Line, Span};
+    use ratatui::widgets::Paragraph;
+
+    let spans = vec![
+        Span::styled("↑↓/jk", style_hint_key()),
+        Span::styled(" navigate  ", style_muted()),
+        Span::styled("Enter", style_hint_key()),
+        Span::styled(" select  ", style_muted()),
+        Span::styled("Esc", style_hint_key()),
+        Span::styled(" exit  ", style_muted()),
+        Span::styled("q", style_hint_key()),
+        Span::styled(" quit  ", style_muted()),
+        Span::styled("/", style_hint_key()),
+        Span::styled(" command", style_muted()),
+    ];
+    let bar = Paragraph::new(Line::from(spans));
+    f.render_widget(bar, area);
 }
 
 fn model_picker_scroll_offset(total: usize, visible_count: usize, selected: usize) -> usize {

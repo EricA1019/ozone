@@ -14,11 +14,11 @@ pub(super) async fn handle_launcher_screen_key(
             open_exit_confirm(app);
             LauncherActionOutcome::Continue
         }
-        KeyCode::Up if app.selected_action > 0 => {
+        KeyCode::Up | KeyCode::Char('k') if app.selected_action > 0 => {
             app.selected_action -= 1;
             LauncherActionOutcome::Continue
         }
-        KeyCode::Down => {
+        KeyCode::Down | KeyCode::Char('j') => {
             let count = launcher::visible_launcher_actions(app).len();
             if app.selected_action < count - 1 {
                 app.selected_action += 1;

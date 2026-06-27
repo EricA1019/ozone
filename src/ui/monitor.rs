@@ -1,4 +1,3 @@
-use ratatui_braille_bar::BrailleBar;
 
 use super::App;
 use crate::theme::*;
@@ -17,10 +16,10 @@ pub fn render(f: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(3), // header
-            Constraint::Length(6), // VRAM + RAM bars
+            Constraint::Length(4), // VRAM + RAM bars
             Constraint::Length(3), // CPU + disk info
             Constraint::Length(3), // disk sparkline
-            Constraint::Length(6), // services
+            Constraint::Length(4), // services
             Constraint::Fill(1),   // spacer
             Constraint::Length(2), // key hints
         ])
@@ -34,9 +33,9 @@ pub fn render(f: &mut Frame, app: &App) {
     render_hints(f, chunks[6]);
 }
 
-fn render_header(f: &mut Frame, area: Rect, _app: &App) {
+fn render_header(f: &mut Frame, area: Rect, app: &App) {
     let now = Local::now().format("%H:%M:%S");
-    let title = Line::from(vec![
+    let mut title = vec![
         Span::styled(
             format!(" {} Ozone ", crate::theme::HEX_CURSOR),
             style_bold_lime(),
@@ -45,11 +44,26 @@ fn render_header(f: &mut Frame, area: Rect, _app: &App) {
         Span::styled("  ·  ", style_muted()),
         Span::styled("live", style_green()),
         Span::styled(format!("  {now}"), style_gray()),
-    ]);
+    ];
+
+    // Model status on the same line, right-aligned via padding
+    if let Some(model) = &app.services.llamacpp_model {
+        let is_running = app.services.llamacpp_running;
+        title.push(Span::styled("  │  ", style_gray()));
+        title.push(Span::styled(model.as_str(), style_violet()));
+        title.push(Span::styled(
+            if is_running { "  ●" } else { "  ○" },
+            if is_running { style_green() } else { style_gray() },
+        ));
+        if let Some(tps) = app.tokens_per_sec {
+            title.push(Span::styled(format!("  {tps:.1} t/s"), style_lime()));
+        }
+    }
+
     let block = Block::default()
         .borders(Borders::ALL)
         .border_style(style_lime());
-    f.render_widget(Paragraph::new(title).block(block), area);
+    f.render_widget(Paragraph::new(Line::from(title)).block(block), area);
 }
 
 fn render_resources(f: &mut Frame, area: Rect, app: &App) {
@@ -63,14 +77,13 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
     let rows = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(1), // GPU label
-            Constraint::Length(1), // GPU braille bar
-            Constraint::Length(1), // RAM label
-            Constraint::Length(1), // RAM braille bar
+            Constraint::Length(1), // GPU
+            Constraint::Length(1), // RAM
         ])
         .split(inner);
 
     if let Some(hw) = &app.hardware {
+        let bar_len = 12usize;
         if let Some(gpu) = &hw.gpu {
             let ratio = (gpu.used_mb as f64 / gpu.total_mb as f64).clamp(0.0, 1.0);
             let color = if ratio > 0.9 {
@@ -80,35 +93,34 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
             } else {
                 VIOLET
             };
-            let label = Line::from(vec![Span::styled(
-                format!(
-                    "  GPU  {}/{} MB  ({:.0}%)",
-                    gpu.used_mb,
-                    gpu.total_mb,
-                    ratio * 100.0
+            let filled = (ratio * bar_len as f64).round() as usize;
+            let bar: String = std::iter::repeat("\u{2588}").take(filled)
+                .chain(std::iter::repeat("\u{2591}").take(bar_len.saturating_sub(filled)))
+                .collect();
+            let label = Line::from(vec![
+                Span::styled("  GPU ", style_bold_violet()),
+                Span::styled(&bar, Style::default().fg(color)),
+                Span::styled(
+                    format!(" {}/{} MB ({:.0}%)", gpu.used_mb, gpu.total_mb, ratio * 100.0),
+                    Style::default().fg(color),
                 ),
-                Style::default().fg(color),
-            )]);
+            ]);
             f.render_widget(Paragraph::new(label), rows[0]);
-
-            let bar = BrailleBar::new(gpu.used_mb as f64, gpu.total_mb as f64).fill_color(color);
-            f.render_widget(bar, rows[1]);
         }
         let ram_ratio = (hw.ram_used_mb as f64 / hw.ram_total_mb as f64).clamp(0.0, 1.0);
-        let ram_label = Line::from(vec![Span::styled(
-            format!(
-                "  RAM  {}/{} MB  ({:.0}%)",
-                hw.ram_used_mb,
-                hw.ram_total_mb,
-                ram_ratio * 100.0
+        let ram_filled = (ram_ratio * bar_len as f64).round() as usize;
+        let ram_bar: String = std::iter::repeat("\u{2588}").take(ram_filled)
+            .chain(std::iter::repeat("\u{2591}").take(bar_len.saturating_sub(ram_filled)))
+            .collect();
+        let ram_label = Line::from(vec![
+            Span::styled("  RAM ", style_bold_cyan()),
+            Span::styled(&ram_bar, style_cyan()),
+            Span::styled(
+                format!(" {}/{} MB ({:.0}%)", hw.ram_used_mb, hw.ram_total_mb, ram_ratio * 100.0),
+                style_cyan(),
             ),
-            style_cyan(),
-        )]);
-        f.render_widget(Paragraph::new(ram_label), rows[2]);
-
-        let ram_bar =
-            BrailleBar::new(hw.ram_used_mb as f64, hw.ram_total_mb as f64).fill_color(CYAN);
-        f.render_widget(ram_bar, rows[3]);
+        ]);
+        f.render_widget(Paragraph::new(ram_label), rows[1]);
     }
 }
 

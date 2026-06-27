@@ -11,3 +11,6 @@ graphify-out/cache/
 
 # Local eval tooling environments
 contrib/evals/.venv/
+
+# Generated eval/bench results
+results/

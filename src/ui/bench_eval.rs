@@ -151,7 +151,7 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
         .direction(Direction::Vertical)
         .constraints([
             Constraint::Length(4),
-            Constraint::Length(4),
+            Constraint::Length(5),
             Constraint::Fill(1),
             Constraint::Length(2),
         ])
@@ -236,6 +236,15 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
         lines
     };
 
+    // Summary text
+    let summary_inner = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(summary_lines.len() as u16),
+            Constraint::Length(1),
+        ])
+        .split(chunks[1]);
+
     let summary = Paragraph::new(summary_lines).block(
         Block::default()
             .title(Span::styled("  Running ", style_bold_cyan()))
@@ -243,6 +252,21 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
             .border_style(style_gray()),
     );
     f.render_widget(summary, chunks[1]);
+
+    // Progress gauge (only when there are tasks)
+    if app.eval_run_tasks_run > 0 && is_eval_run {
+        let ratio = app.eval_run_tasks_passed as f64 / app.eval_run_tasks_run as f64;
+        let gauge = ratatui::widgets::Gauge::default()
+            .block(Block::default().borders(Borders::NONE))
+            .gauge_style(if (ratio - 1.0).abs() < f64::EPSILON {
+                crate::theme::style_green()
+            } else {
+                crate::theme::style_lime()
+            })
+            .percent((ratio * 100.0) as u16)
+            .label(format!("{}/{} tasks ({:.0}%)", app.eval_run_tasks_passed, app.eval_run_tasks_run, ratio * 100.0));
+        f.render_widget(gauge, summary_inner[1]);
+    }
 
     let progress_lines: &Vec<String> = if is_eval_run {
         &app.eval_run_progress

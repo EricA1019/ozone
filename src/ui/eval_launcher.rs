@@ -264,7 +264,7 @@ async fn dispatch_action(app: &mut App, action: EvalLauncherAction) {
                     }
                 };
                 let artifacts_dir = root
-                    .join("contrib/evals/artifacts")
+                    .join("results")
                     .join("creative_writing");
                 let base_url = ozone_core::paths::llamacpp_base_url();
                 let _ = crate::creative_writing::run_creative_writing_eval(

@@ -872,7 +872,7 @@ async fn main() -> Result<()> {
             }
 
             let artifacts_dir = root
-                .join("contrib/evals/artifacts")
+                .join("results")
                 .join("creative_writing");
             let csv_path = creative_writing::run_creative_writing_eval(
                 &model,

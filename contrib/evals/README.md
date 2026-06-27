@@ -29,7 +29,7 @@ contrib/evals/.venv/bin/lm-eval run \
   --model_args model=gemma-4-E4B-it-UD-Q8_K_XL.gguf,base_url=http://127.0.0.1:8989/v1/completions,tokenizer_backend=None \
   --tasks gsm8k \
   --limit 1 \
-  --output_path contrib/evals/artifacts/lm_eval_gsm8k_probe
+  --output_path results/lm_eval_gsm8k_probe
 ```
 
 ### lm-eval instruction-following probe
@@ -41,7 +41,7 @@ contrib/evals/.venv/bin/lm-eval run \
   --model_args model=gemma-4-E4B-it-UD-Q8_K_XL.gguf,base_url=http://127.0.0.1:8989/v1/completions,tokenizer_backend=None \
   --tasks leaderboard_instruction_following \
   --limit 1 \
-  --output_path contrib/evals/artifacts/lm_eval_instruction_probe
+  --output_path results/lm_eval_instruction_probe
 ```
 
 ### lm-eval math probe
@@ -53,7 +53,7 @@ contrib/evals/.venv/bin/lm-eval run \
   --model_args model=gemma-4-E4B-it-UD-Q8_K_XL.gguf,base_url=http://127.0.0.1:8989/v1/completions,tokenizer_backend=None \
   --tasks leaderboard_math_hard \
   --limit 1 \
-  --output_path contrib/evals/artifacts/lm_eval_math_probe
+  --output_path results/lm_eval_math_probe
 ```
 
 ### EvalPlus codegen probe
@@ -64,7 +64,7 @@ contrib/evals/.venv/bin/evalplus.codegen \
   gemma-4-E4B-it-UD-Q8_K_XL.gguf humaneval \
   --backend openai \
   --base_url http://127.0.0.1:8989/v1 \
-  --root contrib/evals/artifacts/evalplus_probe \
+  --root results/evalplus_probe \
   --n_samples 1 \
   --temperature 0.0 \
   --greedy \
@@ -79,7 +79,7 @@ contrib/evals/.venv/bin/evalplus.codegen \
 
 ## Artifact expectations
 
-- lm-eval writes timestamped result JSON under `contrib/evals/artifacts/<probe>/<model>/`.
+- lm-eval writes timestamped result JSON under `results/<probe>/<model>/`.
 - EvalPlus codegen writes:
   - sanitized JSONL: `.../<dataset>/<model>_openai_temp_0.0.jsonl`
   - raw JSONL: `.../<dataset>/<model>_openai_temp_0.0.raw.jsonl`

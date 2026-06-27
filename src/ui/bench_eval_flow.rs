@@ -149,7 +149,7 @@ async fn activate_selected(app: &mut App) {
                     }
                 };
                 let artifacts_dir = root
-                    .join("contrib/evals/artifacts")
+                    .join("results")
                     .join("creative_writing");
                 let base_url = ozone_core::paths::llamacpp_base_url();
                 eprintln!("Creative writing eval starting for {model}…");
@@ -374,10 +374,10 @@ pub(super) fn handle_bench_eval_report_key(app: &mut App, key: KeyEvent) {
         KeyCode::Esc | KeyCode::Char('q') => {
             app.screen = Screen::BenchEval;
         }
-        KeyCode::Up => {
+        KeyCode::Up | KeyCode::Char('k') => {
             app.bench_eval_report_scroll = app.bench_eval_report_scroll.saturating_sub(1);
         }
-        KeyCode::Down => {
+        KeyCode::Down | KeyCode::Char('j') => {
             app.bench_eval_report_scroll = app.bench_eval_report_scroll.saturating_add(1);
         }
         KeyCode::PageUp => {
@@ -403,10 +403,10 @@ pub(super) fn handle_bench_eval_results_key(app: &mut App, key: KeyEvent) {
             KeyCode::Esc | KeyCode::Char('q') => {
                 app.bench_eval_results_viewing = false;
             }
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k') => {
                 app.bench_eval_results_scroll = app.bench_eval_results_scroll.saturating_sub(1);
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Char('j') => {
                 app.bench_eval_results_scroll = app.bench_eval_results_scroll.saturating_add(1);
             }
             KeyCode::PageUp => {
@@ -429,12 +429,12 @@ pub(super) fn handle_bench_eval_results_key(app: &mut App, key: KeyEvent) {
             KeyCode::Esc | KeyCode::Char('q') => {
                 app.screen = Screen::BenchEval;
             }
-            KeyCode::Up => {
+            KeyCode::Up | KeyCode::Char('k') => {
                 if app.bench_eval_results_selected > 0 {
                     app.bench_eval_results_selected -= 1;
                 }
             }
-            KeyCode::Down => {
+            KeyCode::Down | KeyCode::Char('j') => {
                 let max = app.bench_eval_results_files.len().saturating_sub(1);
                 if app.bench_eval_results_selected < max {
                     app.bench_eval_results_selected += 1;

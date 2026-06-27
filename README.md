@@ -159,7 +159,7 @@ full target architecture.
 | --- | --- |
 | `~/.local/share/ozone/` | preferences, launch state, benchmark data, logs |
 | `~/models/` or `OZONE_MODELS_DIR` | GGUF model library and symlinks |
-| `contrib/evals/artifacts/` | local eval artifacts and generated reports |
+| `results/` | local eval artifacts and generated reports |
 | `docs/archive/ozone-plus/` | deprecated chat documentation |
 
 ## Developer Automation
