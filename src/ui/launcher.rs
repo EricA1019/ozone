@@ -504,6 +504,10 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
             "Model Picker · Bench+Eval",
             "↑↓ scroll · Enter select model · Esc back · type to filter",
         ),
+        ModelPickerMode::EvalLauncher => (
+            "Model Picker · Evals",
+            "↑↓ scroll · Enter select model · Esc back · type to filter",
+        ),
         #[cfg(feature = "profiling-ui")]
         ModelPickerMode::Profile => (
             "Model Picker · Profile",

@@ -144,6 +144,8 @@ pub enum ModelPickerMode {
     Profile,
     /// Opened from Bench+Eval — returns to BenchEval after selection.
     BenchEval,
+    /// Opened from EvalLauncher — returns to EvalLauncher after selection.
+    EvalLauncher,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]

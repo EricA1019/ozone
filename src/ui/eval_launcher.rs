@@ -109,13 +109,6 @@ pub(super) fn entries(_app: &App) -> Vec<EvalLauncherEntry> {
         description: "Return to main launcher".into(),
         command: "back",
     });
-    // Launch Model: picks a model and starts llama.cpp
-    entries.push(EvalLauncherEntry {
-        action: EvalLauncherAction::LaunchModel,
-        label: "[Server] Launch Model".into(),
-        description: "Start a llama.cpp server for evals".into(),
-        command: "launch-model",
-    });
 
     entries
 }
@@ -335,8 +328,8 @@ async fn dispatch_action(app: &mut App, action: EvalLauncherAction) {
             app.screen = Screen::BenchEvalReport;
         }
         EvalLauncherAction::LaunchModel => {
-            // Open model picker in launch mode, then return to eval launcher
-            app.model_picker_mode = super::ModelPickerMode::BenchEval;
+            // Open model picker, return to EvalLauncher after selection
+            app.model_picker_mode = super::ModelPickerMode::EvalLauncher;
             app.screen = Screen::ModelPicker;
         }
         EvalLauncherAction::Back => {

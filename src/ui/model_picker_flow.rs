@@ -42,6 +42,13 @@ pub(super) fn handle_model_picker_key(app: &mut App, key: KeyEvent) {
                         app.configure_recommended_plan = None;
                         app.screen = Screen::BenchEval;
                     }
+                    ModelPickerMode::EvalLauncher => {
+                        // Return to EvalLauncher — the selected model index
+                        // is used by eval actions via resolve_bench_eval_model.
+                        app.current_plan = None;
+                        app.configure_recommended_plan = None;
+                        app.screen = Screen::EvalLauncher;
+                    }
                     ModelPickerMode::Launch | ModelPickerMode::Configure => {
                         if let Some(hw) = &app.hardware {
                             let recommended = crate::planner::plan_launch(&record, hw);
