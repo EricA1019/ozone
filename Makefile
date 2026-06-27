@@ -1,4 +1,4 @@
-.PHONY: install install-lite install-base build test lint preflight release-smoke release-gates prune-artifacts prune-artifacts-dry-run sync verify-install-parity setup-hooks graphify-refresh graphify-scope graphify-tui-core
+.PHONY: install install-lite install-base build test lint preflight release-smoke release-gates prune-artifacts prune-artifacts-dry-run sync verify-install-parity setup-hooks graphify-refresh graphify-scope graphify-tui-core update-oz
 
 # Build release binaries and sync into ~/.cargo/bin + ~/.local/bin (checksum-aware)
 install: sync
@@ -53,3 +53,10 @@ prune-artifacts:
 
 prune-artifacts-dry-run:
 	./contrib/prune-build-artifacts.sh --dry-run
+
+# Quick alias update: build release binary and copy to ~/.local/bin/oz
+update-oz:
+	cargo build --release --bin ozone
+	cp target/release/ozone $(HOME)/.local/bin/oz
+	cp target/release/ozone $(HOME)/.local/bin/ozone
+	@echo "✅ oz/ozone aliases updated to $(shell target/release/ozone --version 2>/dev/null)"
