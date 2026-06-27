@@ -132,14 +132,25 @@ pub enum SizeClass {
 }
 
 impl SizeClass {
+    /// Maximum output tokens for the Tiny size class.
+    pub const TINY_MAX_TOKENS: u32 = 64;
+    /// Maximum output tokens for the Small size class.
+    pub const SMALL_MAX_TOKENS: u32 = 256;
+    /// Maximum output tokens for the Medium size class.
+    pub const MEDIUM_MAX_TOKENS: u32 = 1024;
+    /// Maximum output tokens for the Large size class.
+    pub const LARGE_MAX_TOKENS: u32 = 2048;
+    /// Maximum output tokens for the Heavy size class.
+    pub const HEAVY_MAX_TOKENS: u32 = 4096;
+
     /// Default maximum output tokens for this size class.
     pub fn max_output_tokens(&self) -> u32 {
         match self {
-            Self::Tiny => 64,
-            Self::Small => 256,
-            Self::Medium => 1024,
-            Self::Large => 2048,
-            Self::Heavy => 4096,
+            Self::Tiny => Self::TINY_MAX_TOKENS,
+            Self::Small => Self::SMALL_MAX_TOKENS,
+            Self::Medium => Self::MEDIUM_MAX_TOKENS,
+            Self::Large => Self::LARGE_MAX_TOKENS,
+            Self::Heavy => Self::HEAVY_MAX_TOKENS,
         }
     }
 }

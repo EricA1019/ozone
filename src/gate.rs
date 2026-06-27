@@ -90,20 +90,23 @@ pub fn check_lane_gate(gate_name: &'static str, score: f64, required_score: f64)
 }
 
 /// Promotion thresholds for each lane (design doc §16).
-///
+const PROMOTION_THRESHOLDS: &[(&str, f64)] = &[
+    ("python_basic", 0.60),
+    ("rust_basic", 0.50),
+    ("code_edit_basic", 0.60),
+    ("math_basic", 0.60),
+    ("json_tool_basic", 0.75),
+    ("long_context_basic", 0.50),
+    ("summarization_basic", 0.50),
+    ("code_reading_basic", 0.60),
+];
+
 /// Returns the minimum score required to unlock the next tier of tests.
 pub fn promotion_threshold(lane: &str) -> Option<f64> {
-    match lane {
-        "python_basic" => Some(0.60),
-        "rust_basic" => Some(0.50),
-        "code_edit_basic" => Some(0.60),
-        "math_basic" => Some(0.60),
-        "json_tool_basic" => Some(0.75),
-        "long_context_basic" => Some(0.50),
-        "summarization_basic" => Some(0.50),
-        "code_reading_basic" => Some(0.60),
-        _ => None,
-    }
+    PROMOTION_THRESHOLDS
+        .iter()
+        .find(|(name, _)| *name == lane)
+        .map(|(_, threshold)| *threshold)
 }
 
 /// Determine whether a lane gate result justifies promotion to the
