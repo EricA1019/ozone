@@ -73,7 +73,7 @@ pub const EVAL_TASKS: &[EvalTask] = &[
             task: "gsm8k",
             output_dir: "lm_eval_gsm8k_probe",
         },
-        description: "lm-eval GSM8K arithmetic reasoning probe",
+        description: "Math reasoning: grade-school word problems (arithmetic)",
         report_label: "GSM8K",
     },
     EvalTask {
@@ -83,7 +83,7 @@ pub const EVAL_TASKS: &[EvalTask] = &[
             task: "leaderboard_instruction_following",
             output_dir: "lm_eval_instruction_probe",
         },
-        description: "lm-eval instruction-following leaderboard probe",
+        description: "Instruction following: multi-constraint adherence test",
         report_label: "Instruction following",
     },
     EvalTask {
@@ -93,7 +93,7 @@ pub const EVAL_TASKS: &[EvalTask] = &[
             task: "leaderboard_math_hard",
             output_dir: "lm_eval_math_probe",
         },
-        description: "lm-eval leaderboard_math_hard probe",
+        description: "Math reasoning: competition-level problem solving",
         report_label: "Math hard",
     },
     EvalTask {
@@ -102,7 +102,7 @@ pub const EVAL_TASKS: &[EvalTask] = &[
         kind: EvalTaskKind::EvalPlus {
             output_dir: "evalplus_probe",
         },
-        description: "EvalPlus HumanEval codegen probe",
+        description: "Code generation: Python function completion (164 problems)",
         report_label: "HumanEval / EvalPlus",
     },
     EvalTask {
@@ -112,7 +112,7 @@ pub const EVAL_TASKS: &[EvalTask] = &[
             task: "mmlu",
             output_dir: "lm_eval_mmlu_probe",
         },
-        description: "Massive Multitask Language Understanding (57 subjects)",
+        description: "Knowledge: multi-subject QA across 57 academic domains",
         report_label: "MMLU",
     },
     EvalTask {
@@ -122,7 +122,7 @@ pub const EVAL_TASKS: &[EvalTask] = &[
             task: "hellaswag",
             output_dir: "lm_eval_hellaswag_probe",
         },
-        description: "Commonsense narrative completion (HellaSwag)",
+        description: "Safety: commonsense reasoning & adversarial filtering",
         report_label: "HellaSwag",
     },
     EvalTask {
@@ -132,7 +132,7 @@ pub const EVAL_TASKS: &[EvalTask] = &[
             task: "truthfulqa_gen",
             output_dir: "lm_eval_truthfulqa_probe",
         },
-        description: "TruthfulQA generation (misconception resistance)",
+        description: "Safety: factual accuracy & misconception resistance",
         report_label: "TruthfulQA",
     },
     EvalTask {
@@ -142,7 +142,7 @@ pub const EVAL_TASKS: &[EvalTask] = &[
             task: "bigbench_hard",
             output_dir: "lm_eval_bbh_probe",
         },
-        description: "BIG-Bench Hard (23 multi-step reasoning tasks)",
+        description: "Reasoning: multi-step logic across 23 hard tasks",
         report_label: "BBH",
     },
 ];

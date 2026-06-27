@@ -43,34 +43,42 @@ pub(super) fn entries(_app: &App) -> Vec<EvalLauncherEntry> {
     let mut entries: Vec<EvalLauncherEntry> = vec![
         EvalLauncherEntry {
             action: EvalLauncherAction::QuickSweep,
-            label: "Quick Eval Sweep".into(),
+            label: "[Sweep] Quick Eval Sweep".into(),
             description: "Health checks + canary gates (~17 tasks)".into(),
             command: "eval-quick",
         },
         EvalLauncherEntry {
             action: EvalLauncherAction::StandardSweep,
-            label: "Standard Eval Sweep".into(),
+            label: "[Sweep] Standard Eval Sweep".into(),
             description: "Quick + code micro (~21 tasks)".into(),
             command: "eval-standard",
         },
         EvalLauncherEntry {
             action: EvalLauncherAction::FullSweep,
-            label: "Full Eval Sweep".into(),
+            label: "[Sweep] Full Eval Sweep".into(),
             description: "All 5 suites: health, canary, code, format, math (~36 tasks)".into(),
             command: "eval-full",
         },
         EvalLauncherEntry {
             action: EvalLauncherAction::CreativeWriting,
-            label: "Creative Writing Probe".into(),
+            label: "[Creative] Writing Probe".into(),
             description: "Diversity & coherence check".into(),
             command: "eval-creative",
         },
     ];
 
     for (i, task) in crate::eval::EVAL_TASKS.iter().enumerate() {
+        let cat = match task.cli_name {
+            "gsm8k" | "math" => "[Math] ",
+            "humaneval" => "[Code] ",
+            "mmlu" | "bbh" => "[Reasoning] ",
+            "truthfulqa" | "hellaswag" => "[Safety] ",
+            "instruction" => "[Follow] ",
+            _ => "",
+        };
         entries.push(EvalLauncherEntry {
             action: EvalLauncherAction::RegisteredEval { index: i },
-            label: task.report_label.to_string(),
+            label: format!("{}{}", cat, task.report_label),
             description: task.description.to_string(),
             command: task.cli_name,
         });

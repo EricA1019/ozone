@@ -60,6 +60,12 @@ fn launcher_actions(_app: &App) -> Vec<LauncherAction> {
             description: "Run eval sweeps, creative probes & view results".into(),
             command: "evals",
         },
+        LauncherAction {
+            id: LauncherActionId::Results,
+            label: "Results".into(),
+            description: "Browse past eval and benchmark results".into(),
+            command: "results",
+        },
     ];
     #[cfg(feature = "profiling-ui")]
     actions.push(LauncherAction {

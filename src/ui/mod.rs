@@ -154,6 +154,7 @@ pub enum LauncherActionId {
     ProfileModel,
     BenchLauncher,
     EvalLauncher,
+    Results,
     Settings,
     ClearGpu,
     Monitor,
@@ -254,7 +255,7 @@ fn scan_result_dir(dir: &std::path::Path, out: &mut Vec<ResultFile>) {
             if path.is_dir() {
                 scan_result_dir(&path, out);
             } else if fname.ends_with(".csv")
-                && (fname.contains("eval") || fname.contains("sweep") || fname.contains("creative"))
+                && (fname.contains("eval") || fname.contains("sweep") || fname.contains("creative") || fname.starts_with("results_"))
             {
                 let kind = if fname.contains("creative")
                     || path.to_string_lossy().contains("creative_writing")
@@ -278,7 +279,7 @@ fn scan_result_dir(dir: &std::path::Path, out: &mut Vec<ResultFile>) {
                     model,
                     summary,
                 });
-            } else if fname.ends_with(".md") && fname.contains("creative") {
+            } else if fname.ends_with(".md") && (fname.contains("creative") || fname.starts_with("results_")) {
                 let summary = std::fs::read_to_string(&path)
                     .ok()
                     .and_then(|t| {
@@ -800,7 +801,7 @@ impl App {
         self.screen = Screen::BenchEvalReport;
     }
 
-    fn discover_result_files(&mut self) {
+    pub(super) fn discover_result_files(&mut self) {
         self.bench_eval_results_files.clear();
         let data_dir = ozone_core::paths::data_dir();
 
