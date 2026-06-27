@@ -193,4 +193,23 @@ mod tests {
         let d = check_lane_gate("python_basic", 0.55, 0.60);
         assert!(!should_promote(&d));
     }
+    #[test]
+    fn test_health_gate_fails_backend_error() {
+        let cal = mock_cal(false, false, true, true, false);
+        let d = check_health_gate(&cal);
+        assert!(!d.passed);
+        assert!(d.reason.contains("backend_error"));
+    }
+
+    #[test]
+    fn test_should_promote_at_exact_threshold() {
+        let d = check_lane_gate("python_basic", 0.60, 0.60);
+        assert!(should_promote(&d));
+    }
+
+    #[test]
+    fn test_should_promote_unrecognized_lane() {
+        let d = check_lane_gate("unknown_lane", 0.90, 0.50);
+        assert!(!should_promote(&d));
+    }
 }
