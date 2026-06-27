@@ -168,18 +168,22 @@ is running.
 | Standard | Quick + code micro | ~21 |
 | Full | All 5 suites | ~36 |
 
-### Eval Categories
+### All Registered Evals
 
-Each registered eval is bracketed by category in the launcher:
+Each eval appears in the launcher with a category bracket and description:
 
-| Bracket | What It Tests |
-|---------|---------------|
-| `[Math]` | Arithmetic & competition-level problem solving |
-| `[Reasoning]` | Multi-step logic, knowledge across 57 domains |
-| `[Code]` | Python function completion (HumanEval) |
-| `[Safety]` | Commonsense reasoning, factual accuracy |
-| `[Follow]` | Multi-constraint instruction adherence |
-| `[Creative]` | Diversity & coherence in long-form writing |
+| Eval | Category | Framework | What It Tests |
+|------|----------|-----------|---------------|
+| **Native Pipeline** | `[Sweep]` | ozone | Health gates, canary, code, format, math (36 tasks in Full) |
+| **GSM8K** | `[Math]` | lm-eval | Grade-school arithmetic word problems |
+| **Math Hard** | `[Math]` | lm-eval | Competition-level problem solving |
+| **MMLU** | `[Reasoning]` | lm-eval | Multi-subject QA across 57 academic domains |
+| **BBH** | `[Reasoning]` | lm-eval | Multi-step logic across 23 hard tasks |
+| **HumanEval** | `[Code]` | EvalPlus | Python function completion (164 problems) |
+| **Instruction** | `[Follow]` | lm-eval | Multi-constraint instruction adherence |
+| **TruthfulQA** | `[Safety]` | lm-eval | Factual accuracy & misconception resistance |
+| **HellaSwag** | `[Safety]` | lm-eval | Commonsense reasoning & adversarial filtering |
+| **Creative Writing** | `[Creative]` | ozone | Diversity & coherence in long-form generation |
 
 ### Error Handling
 
