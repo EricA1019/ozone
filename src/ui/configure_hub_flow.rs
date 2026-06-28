@@ -80,9 +80,8 @@ pub(super) async fn handle_configure_hub_key(app: &mut App, key: KeyEvent) {
                 app.profiling_pending_action = Some(ProfilingAction::BenchmarkSavedProfile);
                 app.screen = Screen::ProfileConfirm;
             } else {
-                // No saved profile? Run a quick sweep against the current model directly.
-                app.profiling_pending_action = Some(ProfilingAction::QuickSweep);
-                app.screen = Screen::ProfileConfirm;
+                // No saved profile? Start a quick sweep against the current model immediately.
+                start_quick_sweep(app);
             }
         }
         KeyCode::Char('r') | KeyCode::Char('R') => reset_configure_plan(app),
@@ -115,4 +114,35 @@ pub(super) async fn handle_configure_hub_key(app: &mut App, key: KeyEvent) {
         }
         _ => {}
     }
+}
+
+#[cfg(feature = "profiling-ui")]
+pub(super) fn start_quick_sweep(app: &mut App) {
+    // Use the same pattern as handle_profile_confirm_key: get model from catalog
+    let Some(record) = app
+        .filtered_catalog_get(app.selected_model)
+        .map(|r| r.clone())
+    else {
+        app.set_error("No model selected. Open the launcher and pick a model first.".into());
+        return;
+    };
+
+    let model_name = record.model_name.clone();
+    let request = crate::profiling::WorkflowRequest {
+        record,
+        hardware: app.hardware.clone().unwrap_or_default(),
+        action: crate::profiling::ProfilingAction::QuickSweep,
+        profiling_backend: crate::profiling::ProfilingBackend::LlamaCpp,
+        launch_plan_override: app.current_plan.clone(),
+        launch_profile_name: None,
+    };
+
+    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+    let cancel = tokio_util::sync::CancellationToken::new();
+    let cancel_clone = cancel.clone();
+    app.start_profile_workflow(rx, cancel);
+    let _handle = tokio::spawn(async move {
+        crate::profiling::run_workflow(request, tx, cancel_clone).await;
+    });
+    app.set_status(format!("Quick sweep started for '{}'...", model_name));
 }
