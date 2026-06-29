@@ -299,7 +299,7 @@ enum Commands {
         gate_attempts: Option<u32>,
         #[arg(long, help = "Skip server management — connect to already-running server")]
         no_manage_server: bool,
-        #[arg(long, help = "Allow eval below min quality context threshold")]
+        #[arg(long, help = "Allow eval below 16k min quality context threshold")]
         allow_below_min_context: bool,
     },
     /// List saved launch profiles from preferences
@@ -850,10 +850,10 @@ async fn main() -> Result<()> {
             } else {
                 SweepLevel::Full // default (also when --full is set)
             };
-            let policy = crate::policy::ContextPolicy {
-                allow_below_min_context,
-                ..Default::default()
-            };
+            let mut policy = crate::policy::ContextPolicy::default();
+            if allow_below_min_context {
+                policy.allow_below_min_context = true;
+            }
             let config = if no_manage_server {
                 EvalRunConfig {
                     model_name: std::path::Path::new(&model_path)
@@ -867,11 +867,11 @@ async fn main() -> Result<()> {
                     context_length,
                     skip_warmup,
                     skip_health_gate,
+                    policy,
                     sweep_level,
                     gate_attempts: gate_attempts.unwrap_or(0),
                     regular_attempts: attempts.unwrap_or(0),
                     manage_server: false,
-                    policy: policy.clone(),
                     ..Default::default()
                 }
             } else {
@@ -888,12 +888,12 @@ async fn main() -> Result<()> {
                     context_length,
                     skip_warmup,
                     skip_health_gate,
+                    policy,
                     sweep_level,
                     gate_attempts: gate_attempts.unwrap_or(0),
                     regular_attempts: attempts.unwrap_or(0),
                     manage_server: true,
                     server_path: Some(server_path),
-                    policy: policy.clone(),
                     ..Default::default()
                 }
             };
