@@ -297,6 +297,8 @@ enum Commands {
         attempts: Option<u32>,
         #[arg(long, help = "Number of attempts for gate tasks (overrides sweep-level default)")]
         gate_attempts: Option<u32>,
+        #[arg(long, help = "Skip server management — connect to already-running server")]
+        no_manage_server: bool,
     },
     /// List saved launch profiles from preferences
     Profiles,
@@ -835,6 +837,7 @@ async fn main() -> Result<()> {
             full: _full,
             attempts,
             gate_attempts,
+            no_manage_server,
         }) => {
             use crate::runner::{EvalRunConfig, SweepLevel};
             let sweep_level = if quick {
@@ -844,25 +847,46 @@ async fn main() -> Result<()> {
             } else {
                 SweepLevel::Full // default (also when --full is set)
             };
-            let server_path = processes::resolved_llamacpp_server_path()?;
-            let config = EvalRunConfig {
-                model_name: std::path::Path::new(&model_path)
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("unknown")
-                    .to_string(),
-                model_path,
-                backend,
-                base_url,
-                context_length,
-                skip_warmup,
-                skip_health_gate,
-                sweep_level,
-                gate_attempts: gate_attempts.unwrap_or(0),
-                regular_attempts: attempts.unwrap_or(0),
-                manage_server: true,
-                server_path: Some(server_path),
-                ..Default::default()
+            let config = if no_manage_server {
+                EvalRunConfig {
+                    model_name: std::path::Path::new(&model_path)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    model_path,
+                    backend,
+                    base_url,
+                    context_length,
+                    skip_warmup,
+                    skip_health_gate,
+                    sweep_level,
+                    gate_attempts: gate_attempts.unwrap_or(0),
+                    regular_attempts: attempts.unwrap_or(0),
+                    manage_server: false,
+                    ..Default::default()
+                }
+            } else {
+                let server_path = processes::resolved_llamacpp_server_path()?;
+                EvalRunConfig {
+                    model_name: std::path::Path::new(&model_path)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("unknown")
+                        .to_string(),
+                    model_path,
+                    backend,
+                    base_url,
+                    context_length,
+                    skip_warmup,
+                    skip_health_gate,
+                    sweep_level,
+                    gate_attempts: gate_attempts.unwrap_or(0),
+                    regular_attempts: attempts.unwrap_or(0),
+                    manage_server: true,
+                    server_path: Some(server_path),
+                    ..Default::default()
+                }
             };
             let result = runner::run_eval(&config).await?;
             println!(

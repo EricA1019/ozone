@@ -284,7 +284,10 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
         eprintln!("[eval] step 2a: clearing GPU backends...");
         let stopped = processes::clear_gpu_backends().await?;
         eprintln!("[eval] stopped backends: {stopped:?}");
-        eprintln!("[eval] step 2b: launching {server_path:?} with args: {server_args:?}", );
+        // Wait for GPU memory to fully release before re-launching
+        eprintln!("[eval] step 2b: waiting 3s for GPU memory release...");
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        eprintln!("[eval] step 2c: launching {server_path:?} with ctx={}...", config.context_length);
         processes::start_llamacpp(
             server_path,
             &config.model_path,
@@ -602,9 +605,15 @@ pub async fn run_eval_with_events(
             .context("server_path is required when manage_server is true")?;
         let _ = tx.send(crate::ui::eval_run_workflow::EvalRunEvent::Stage {
             name: "Server".into(),
-            detail: format!("Launching {} with ctx={}...", server_path.display(), config.context_length),
+            detail: "Clearing GPU backends...".into(),
         });
         processes::clear_gpu_backends().await?;
+        // Wait for GPU memory to fully release before re-launching
+        tokio::time::sleep(std::time::Duration::from_secs(3)).await;
+        let _ = tx.send(crate::ui::eval_run_workflow::EvalRunEvent::Stage {
+            name: "Server".into(),
+            detail: format!("Launching {} with ctx={}...", server_path.display(), config.context_length),
+        });
         processes::start_llamacpp(
             server_path,
             &config.model_path,
