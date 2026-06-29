@@ -595,6 +595,9 @@ fn save_eval_results(config: &EvalRunConfig, result: &EvalRunResult) -> Option<s
     });
 
     std::fs::write(&path, serde_json::to_string_pretty(&json).ok()?).ok()?;
+    // Also write a stable "latest" copy
+    let latest = root.join("latest.json");
+    let _ = std::fs::copy(&path, &latest);
     Some(path)
 }
 
@@ -627,6 +630,9 @@ fn save_eval_csv(config: &EvalRunConfig, result: &EvalRunResult) -> Option<std::
         ]);
     }
     let _ = w.flush();
+    // Also write a stable "latest" copy
+    let latest = root.join("latest.csv");
+    let _ = std::fs::copy(&path, &latest);
     Some(path)
 }
 
