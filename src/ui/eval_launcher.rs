@@ -300,9 +300,7 @@ async fn dispatch_action(app: &mut App, action: EvalLauncherAction) {
                         return;
                     }
                 };
-                let artifacts_dir = root
-                    .join("results")
-                    .join("creative_writing");
+                let artifacts_dir = root.join("results").join("creative_writing");
                 let base_url = ozone_core::paths::llamacpp_base_url();
                 let _ = crate::creative_writing::run_creative_writing_eval(
                     &model,
@@ -369,7 +367,7 @@ fn start_eval_sweep(app: &mut App, level: crate::runner::SweepLevel) {
         model_path: model_path.to_string_lossy().to_string(),
         backend: "llama.cpp".into(),
         base_url,
-        context_length: 4096,
+        context_length: 32768,
         skip_warmup: false,
         skip_health_gate: false,
         sweep_level: level,
