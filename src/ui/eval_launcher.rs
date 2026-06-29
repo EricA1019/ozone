@@ -362,12 +362,18 @@ fn start_eval_sweep(app: &mut App, level: crate::runner::SweepLevel) {
     let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
     let model_path = ozone_core::paths::models_dir().join(&model_name);
     let base_url = ozone_core::paths::llamacpp_base_url();
+    // Use the server's actual context, falling back to 32k
+    let context_length = tokio::task::block_in_place(|| {
+        tokio::runtime::Handle::current()
+            .block_on(async { crate::processes::get_llamacpp_context().await })
+    })
+    .unwrap_or(32768);
     let config = crate::runner::EvalRunConfig {
         model_name: model_name.clone(),
         model_path: model_path.to_string_lossy().to_string(),
         backend: "llama.cpp".into(),
         base_url,
-        context_length: 32768,
+        context_length,
         skip_warmup: false,
         skip_health_gate: false,
         sweep_level: level,

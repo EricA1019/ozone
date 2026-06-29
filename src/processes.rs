@@ -9,7 +9,7 @@ use std::time::Duration;
 use tokio::time::sleep;
 
 const LLAMACPP_START_TIMEOUT_SECS: u64 = 300;
-const LLAMACPP_MANAGED_PORT: u16 = 8989;
+const LLAMACPP_MANAGED_PORT: u16 = paths::DEFAULT_LLAMACPP_PORT;
 const LLAMACPP_LAUNCH_STATE_VERSION: u32 = 1;
 const LLAMACPP_GRACEFUL_STOP_TIMEOUT_MILLIS: u64 = 2_000;
 const LLAMACPP_PORT_RELEASE_TIMEOUT_MILLIS: u64 = 4_000;
@@ -83,17 +83,36 @@ pub async fn is_url_ready(url: &str) -> bool {
     // Build a client with a short timeout. The fallback path also enforces
     // a timeout so that an unreachable server doesn't hang for the OS default
     // (30-120s).
-    let client = ozone_core::http::client_with_timeout(2)
-        .unwrap_or_else(|_| {
-            ozone_core::http::client_with_timeout(5)
-                .unwrap_or_else(|_| reqwest::Client::new())
-        });
+    let client = ozone_core::http::client_with_timeout(2).unwrap_or_else(|_| {
+        ozone_core::http::client_with_timeout(5).unwrap_or_else(|_| reqwest::Client::new())
+    });
     client
         .get(url)
         .send()
         .await
         .map(|r| r.status().is_success())
         .unwrap_or(false)
+}
+
+/// Query the running llama.cpp server for its configured context length.
+pub async fn get_llamacpp_context() -> Option<u32> {
+    #[derive(serde::Deserialize)]
+    struct PropsResponse {
+        default_generation_settings: Option<GenerationSettings>,
+    }
+    #[derive(serde::Deserialize)]
+    struct GenerationSettings {
+        n_ctx: Option<u32>,
+    }
+
+    let client = ozone_core::http::client_with_timeout(2).ok()?;
+    let resp = client
+        .get(format!("{}/props", paths::llamacpp_base_url()))
+        .send()
+        .await
+        .ok()?;
+    let data: PropsResponse = resp.json().await.ok()?;
+    data.default_generation_settings?.n_ctx
 }
 
 pub async fn get_llamacpp_model() -> Option<String> {
@@ -107,8 +126,7 @@ pub async fn get_llamacpp_model() -> Option<String> {
         id: String,
     }
 
-    let client = ozone_core::http::client_with_timeout(2)
-        .ok()?;
+    let client = ozone_core::http::client_with_timeout(2).ok()?;
     let resp = client
         .get(format!("{}/v1/models", paths::llamacpp_base_url()))
         .send()
@@ -565,6 +583,7 @@ mod tests {
         classify_startup_failure, clear_llamacpp_launch_state, describe_exit_status,
         load_llamacpp_launch_state, resolved_kobold_launcher_path, save_llamacpp_launch_state,
         KoboldStartupFailureKind, ManagedLlamaCppLaunchState, LLAMACPP_LAUNCH_STATE_VERSION,
+        LLAMACPP_MANAGED_PORT,
     };
 
     #[tokio::test]
@@ -577,7 +596,7 @@ mod tests {
         let state = ManagedLlamaCppLaunchState {
             version: LLAMACPP_LAUNCH_STATE_VERSION,
             pid: std::process::id(),
-            port: 8989,
+            port: LLAMACPP_MANAGED_PORT,
             model_id: "gemma-4-E4B-it-UD-Q8_K_XL.gguf".to_string(),
             profile_name: Some("balanced".to_string()),
             config_fingerprint: "fingerprint".to_string(),
@@ -604,7 +623,7 @@ mod tests {
         let state = ManagedLlamaCppLaunchState {
             version: LLAMACPP_LAUNCH_STATE_VERSION,
             pid: std::process::id(),
-            port: 8989,
+            port: LLAMACPP_MANAGED_PORT,
             model_id: "gemma-4-E4B-it-UD-Q8_K_XL.gguf".to_string(),
             profile_name: None,
             config_fingerprint: "fingerprint".to_string(),
