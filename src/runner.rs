@@ -201,6 +201,24 @@ pub struct EvalRunResult {
     pub tasks_passed: usize,
     pub tasks_skipped_gate: usize,
     pub total_duration_ms: u64,
+    /// Per-task results for persistence.
+    pub tasks: Vec<TaskResult>,
+}
+
+/// Per-task result for JSON persistence.
+#[derive(Debug, Clone, serde::Serialize)]
+pub struct TaskResult {
+    pub task_key: String,
+    pub suite: String,
+    pub lane: Option<String>,
+    pub avg_score: f64,
+    pub pass_count: u32,
+    pub total_attempts: u32,
+    pub passed: bool,
+    pub status: String,
+    pub failure: String,
+    pub stability: String,
+    pub latency_ms: u64,
 }
 
 /// Build llama.cpp server arguments for eval mode.
@@ -247,6 +265,7 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
         tasks_passed: 0,
         tasks_skipped_gate: 0,
         total_duration_ms: 0,
+        tasks: Vec::new(),
     };
 
     // ---- Step 1: Model hash ----
@@ -508,6 +527,21 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
                 multi.stability.label(),
                 task.lane.unwrap_or("none"),
             );
+
+            // Collect for persistence
+            result.tasks.push(TaskResult {
+                task_key: task.key.to_string(),
+                suite: task.suite.to_string(),
+                lane: task.lane.map(|s| s.to_string()),
+                avg_score: multi.avg_score,
+                pass_count: multi.pass_count,
+                total_attempts: multi.total_attempts,
+                passed: multi.passed,
+                status: status.as_str().to_string(),
+                failure: multi.failure.as_str().to_string(),
+                stability: multi.stability.label().to_string(),
+                latency_ms: total_latency_ms,
+            });
         }
     }
 
@@ -526,7 +560,39 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
         processes::clear_gpu_backends().await?;
     }
 
+    // ---- Save results ----
+    if let Some(path) = save_eval_results(config, &result) {
+        println!("  Results saved: {}", path.display());
+    }
+
     Ok(result)
+}
+
+/// Save eval results as JSON to results/native/{model}_{timestamp}.json.
+fn save_eval_results(config: &EvalRunConfig, result: &EvalRunResult) -> Option<std::path::PathBuf> {
+    let root = std::path::Path::new("results/native");
+    let _ = std::fs::create_dir_all(root);
+    let ts = chrono::Utc::now().format("%Y%m%dT%H%M%S");
+    let filename = format!("{}_{ts}.json", config.model_name);
+    let path = root.join(filename);
+
+    let json = serde_json::json!({
+        "model": config.model_name,
+        "model_path": config.model_path,
+        "sweep_level": config.sweep_level.label(),
+        "context_length": config.context_length,
+        "timestamp": ts.to_string(),
+        "status": result.status,
+        "warmup_passed": result.warmup_passed,
+        "tasks_run": result.tasks_run,
+        "tasks_passed": result.tasks_passed,
+        "tasks_skipped_gate": result.tasks_skipped_gate,
+        "total_duration_ms": result.total_duration_ms,
+        "tasks": serde_json::to_value(&result.tasks).ok()?,
+    });
+
+    std::fs::write(&path, serde_json::to_string_pretty(&json).ok()?).ok()?;
+    Some(path)
 }
 
 /// Run the eval pipeline with TUI event emission (multi-attempt).
@@ -550,6 +616,7 @@ pub async fn run_eval_with_events(
         tasks_passed: 0,
         tasks_skipped_gate: 0,
         total_duration_ms: 0,
+        tasks: Vec::new(),
     };
 
     // ---- Step 1: Model hash ----
@@ -829,6 +896,14 @@ pub async fn run_eval_with_events(
             detail: "Shutting down server...".into(),
         });
         processes::clear_gpu_backends().await?;
+    }
+
+    // ---- Save results ----
+    if let Some(path) = save_eval_results(config, &result) {
+        let _ = tx.send(crate::ui::eval_run_workflow::EvalRunEvent::Stage {
+            name: "Results".into(),
+            detail: format!("Saved: {}", path.display()),
+        });
     }
 
     Ok(result)

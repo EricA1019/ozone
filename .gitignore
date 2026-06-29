@@ -20,3 +20,4 @@ contrib/evals/.venv/
 # Generated eval/bench results
 results/
 test_lint
+results/native/
