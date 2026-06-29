@@ -844,6 +844,7 @@ async fn main() -> Result<()> {
             } else {
                 SweepLevel::Full // default (also when --full is set)
             };
+            let server_path = processes::resolved_llamacpp_server_path()?;
             let config = EvalRunConfig {
                 model_name: std::path::Path::new(&model_path)
                     .file_stem()
@@ -859,6 +860,8 @@ async fn main() -> Result<()> {
                 sweep_level,
                 gate_attempts: gate_attempts.unwrap_or(0),
                 regular_attempts: attempts.unwrap_or(0),
+                manage_server: true,
+                server_path: Some(server_path),
                 ..Default::default()
             };
             let result = runner::run_eval(&config).await?;

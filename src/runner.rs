@@ -4,9 +4,13 @@
 //! Supports multi-attempt scoring: each task can be run N times with
 //! different seeds, and results are aggregated using majority-rule pass/fail
 //! with stability classification.
+//!
+//! When `manage_server` is set, the runner handles the full server lifecycle:
+//! clear → launch → eval → kill.
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use std::collections::HashMap;
+use std::path::PathBuf;
 
 use crate::artifacts::{self};
 use crate::calibration::{run_calibration, CalibrationResult};
@@ -16,6 +20,7 @@ use crate::gate::{
 use crate::hash::{hash_model_file, hash_run_config, RunConfigIdentity};
 use crate::policy::{check_task_allowed, ContextPolicy};
 use crate::preflight::check_context_fit;
+use crate::processes;
 use crate::scorers::{self, aggregate_multi, multi_to_status};
 use crate::suites::{EvalTask, CANARY_SUITE, CODE_MICRO, FORMAT_MICRO, HEALTH_SUITE, MATH_MICRO};
 use crate::timeout::{compute_timeout, TimeoutEstimate, HARD_CAP_SECS};
@@ -132,6 +137,15 @@ pub struct EvalRunConfig {
     /// Number of attempts for regular (non-gate) tasks.
     /// If 0, uses the default for the sweep level.
     pub regular_attempts: u32,
+    /// Whether to manage the server lifecycle (clear → launch → eval → kill).
+    /// Set to true for CLI usage; false for TUI (server already running).
+    pub manage_server: bool,
+    /// Path to llama.cpp server binary. Required when manage_server is true.
+    pub server_path: Option<PathBuf>,
+    /// GPU layers to offload (for server launch).
+    pub gpu_layers: i32,
+    /// Thread count for server launch (None = auto).
+    pub threads: Option<u32>,
 }
 
 impl EvalRunConfig {
@@ -168,6 +182,10 @@ impl Default for EvalRunConfig {
             sweep_level: SweepLevel::Full,
             gate_attempts: 0,
             regular_attempts: 0,
+            manage_server: false,
+            server_path: None,
+            gpu_layers: 35,
+            threads: None,
         }
     }
 }
@@ -183,6 +201,30 @@ pub struct EvalRunResult {
     pub tasks_passed: usize,
     pub tasks_skipped_gate: usize,
     pub total_duration_ms: u64,
+}
+
+/// Build llama.cpp server arguments for eval mode.
+///
+/// Uses conservative defaults suitable for evaluation: temp=0, deterministic
+/// seed, and the configured context length (NOT the model's native max).
+fn build_eval_server_args(config: &EvalRunConfig) -> Vec<String> {
+    let mut args = vec![
+        "--host".into(),
+        "127.0.0.1".into(),
+        "--port".into(),
+        "8989".into(),
+        "--n-gpu-layers".into(),
+        config.gpu_layers.to_string(),
+        "--ctx-size".into(),
+        config.context_length.to_string(),
+        "--threads".into(),
+        config.threads.unwrap_or(8).to_string(),
+        "--parallel".into(),
+        "1".into(),
+    ];
+    // Use Q8 KV cache by default (safer for GPU memory, matches bench pattern)
+    args.extend(processes::kv_cache_args(8, 8));
+    args
 }
 
 /// Run the full eval pipeline with multi-attempt scoring.
@@ -222,7 +264,29 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
         seed: 42,
     });
 
-    // ---- Step 2: Warm-up ----
+    // ---- Step 2: Server launch (when managed) ----
+    if config.manage_server {
+        let server_path = config
+            .server_path
+            .as_deref()
+            .context("server_path is required when manage_server is true")?;
+        println!("  Launching {} with ctx={}...", server_path.display(), config.context_length);
+        processes::clear_gpu_backends().await?;
+        processes::start_llamacpp(
+            server_path,
+            &config.model_path,
+            &build_eval_server_args(config),
+        )
+        .await
+        .context("Failed to launch llama.cpp server for eval")?;
+        // Verify model is loaded
+        let loaded = processes::get_llamacpp_model()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("Server launched but model not available"))?;
+        println!("  Model loaded: {loaded}");
+    }
+
+    // ---- Step 3: Warm-up ----
     if !config.skip_warmup {
         let warmup = run_warmup(&config.base_url, 30).await;
         result.warmup_passed = warmup.success;
@@ -456,6 +520,12 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
         skipped = result.tasks_skipped_gate,
     );
 
+    // ---- Cleanup: kill managed server ----
+    if config.manage_server {
+        println!("  Shutting down server...");
+        processes::clear_gpu_backends().await?;
+    }
+
     Ok(result)
 }
 
@@ -498,7 +568,34 @@ pub async fn run_eval_with_events(
         seed: 42,
     });
 
-    // ---- Step 2: Warm-up ----
+    // ---- Step 2: Server launch (when managed) ----
+    if config.manage_server {
+        let server_path = config
+            .server_path
+            .as_deref()
+            .context("server_path is required when manage_server is true")?;
+        let _ = tx.send(crate::ui::eval_run_workflow::EvalRunEvent::Stage {
+            name: "Server".into(),
+            detail: format!("Launching {} with ctx={}...", server_path.display(), config.context_length),
+        });
+        processes::clear_gpu_backends().await?;
+        processes::start_llamacpp(
+            server_path,
+            &config.model_path,
+            &build_eval_server_args(config),
+        )
+        .await
+        .context("Failed to launch llama.cpp server for eval")?;
+        let loaded = processes::get_llamacpp_model()
+            .await
+            .ok_or_else(|| anyhow::anyhow!("Server launched but model not available"))?;
+        let _ = tx.send(crate::ui::eval_run_workflow::EvalRunEvent::Stage {
+            name: "Server".into(),
+            detail: format!("Model loaded: {loaded}"),
+        });
+    }
+
+    // ---- Step 3: Warm-up ----
     let _ = tx.send(crate::ui::eval_run_workflow::EvalRunEvent::Stage {
         name: "Warm-up".into(),
         detail: "Running discard generation...".into(),
@@ -718,6 +815,15 @@ pub async fn run_eval_with_events(
         tasks_passed: result.tasks_passed,
         duration_ms: duration,
     });
+
+    // ---- Cleanup: kill managed server ----
+    if config.manage_server {
+        let _ = tx.send(crate::ui::eval_run_workflow::EvalRunEvent::Stage {
+            name: "Cleanup".into(),
+            detail: "Shutting down server...".into(),
+        });
+        processes::clear_gpu_backends().await?;
+    }
 
     Ok(result)
 }
