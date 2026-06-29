@@ -237,13 +237,6 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
     let gate_attempts = config.effective_gate_attempts();
     let regular_attempts = config.effective_regular_attempts();
 
-    eprintln!("[eval] run_eval starting");
-    eprintln!("[eval] model_path={}", config.model_path);
-    eprintln!("[eval] context_length={}", config.context_length);
-    eprintln!("[eval] sweep_level={}", config.sweep_level.label());
-    eprintln!("[eval] gate_attempts={} regular_attempts={}", gate_attempts, regular_attempts);
-    eprintln!("[eval] manage_server={}", config.manage_server);
-    eprintln!("[eval] base_url={}", config.base_url);
 
     let mut result = EvalRunResult {
         status: "running".into(),
@@ -257,7 +250,6 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
     };
 
     // ---- Step 1: Model hash ----
-    eprintln!("[eval] step 1: hashing model file...");
     let model_hash = hash_model_file(std::path::Path::new(&config.model_path))
         .unwrap_or_else(|_| "unknown".into());
     let config_hash = hash_run_config(&RunConfigIdentity {
@@ -272,7 +264,6 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
         sampler_profile: "default",
         seed: 42,
     });
-    eprintln!("[eval] model_hash={model_hash}");
 
     // ---- Step 2: Server launch (when managed) ----
     if config.manage_server {
@@ -281,13 +272,9 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
             .as_deref()
             .context("server_path is required when manage_server is true")?;
         let server_args = build_eval_server_args(config);
-        eprintln!("[eval] step 2a: clearing GPU backends...");
-        let stopped = processes::clear_gpu_backends().await?;
-        eprintln!("[eval] stopped backends: {stopped:?}");
+        let _stopped = processes::clear_gpu_backends().await?;
         // Wait for GPU memory to fully release before re-launching
-        eprintln!("[eval] step 2b: waiting 3s for GPU memory release...");
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-        eprintln!("[eval] step 2c: launching {server_path:?} with ctx={}...", config.context_length);
         processes::start_llamacpp(
             server_path,
             &config.model_path,
@@ -295,17 +282,12 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
         )
         .await
         .context("Failed to launch llama.cpp server for eval")?;
-        eprintln!("[eval] step 2c: verifying model loaded...");
-        let loaded = processes::get_llamacpp_model()
+        let _loaded = processes::get_llamacpp_model()
             .await
             .ok_or_else(|| anyhow::anyhow!("Server launched but model not available"))?;
-        eprintln!("[eval] model loaded: {loaded}");
-    } else {
-        eprintln!("[eval] step 2: skipping server launch (manage_server=false)");
     }
 
     // ---- Step 3: Warm-up ----
-    eprintln!("[eval] step 3: warm-up...");
     if !config.skip_warmup {
         let warmup = run_warmup(&config.base_url, 30).await;
         result.warmup_passed = warmup.success;
@@ -331,7 +313,6 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
     }
 
     // ---- Step 4: Calibration ----
-    eprintln!("[eval] step 4: calibration...");
     let cal = run_calibration(&config.base_url).await;
     result.calibration = Some(cal.clone());
     println!(
@@ -340,7 +321,6 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
     );
 
     // ---- Step 5: Health gate ----
-    eprintln!("[eval] step 5: health gate...");
     let health = check_health_gate(&cal);
     result.health_gate = Some(health.clone());
     println!(
@@ -354,7 +334,6 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
     }
 
     // ---- Step 6: Context check ----
-    eprintln!("[eval] step 6: context check...");
     if let Err(e) = check_task_allowed(config.context_length, 0, &config.policy) {
         result.status = format!("blocked: {e}");
         result.total_duration_ms = overall_start.elapsed().as_millis() as u64;
@@ -362,7 +341,6 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
     }
 
     // ---- Step 7: Run suites ----
-    eprintln!("[eval] step 7: running suites...");
     let suites = config.sweep_level.suites();
 
     let client = ozone_core::http::client_with_timeout(HARD_CAP_SECS)?;
@@ -391,10 +369,8 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
     for suite in suites {
         let suite_name = suite.first().map(|t| t.suite).unwrap_or("unknown");
         let is_canary = suite_name == "canary";
-        eprintln!("[eval] suite: {suite_name} ({} tasks)", suite.len());
 
         for task in suite {
-            eprintln!("[eval] task: {} lane={:?} scorer={}", task.key, task.lane, task.scorer);
             // ---- Gate skip check (for non-canary lane tasks) ----
             if !is_canary {
                 if let Some(lane) = task.lane {
@@ -453,13 +429,11 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
             let url = format!("{}/v1/completions", config.base_url.trim_end_matches('/'));
 
             // ---- Multi-attempt loop ----
-            eprintln!("[eval]   running {attempts} attempts...");
             let mut attempt_results = Vec::with_capacity(attempts as usize);
             let mut total_latency_ms: u64 = 0;
 
             for attempt_idx in 0..attempts {
                 let seed: i64 = 42 + attempt_idx as i64;
-                eprintln!("[eval]   attempt {}/{} seed={}", attempt_idx + 1, attempts, seed);
                 let body = serde_json::json!({
                     "prompt": task.prompt,
                     "max_tokens": task.max_output_tokens,
@@ -549,11 +523,8 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
 
     // ---- Cleanup: kill managed server ----
     if config.manage_server {
-        eprintln!("[eval] cleanup: shutting down server...");
         processes::clear_gpu_backends().await?;
-        eprintln!("[eval] cleanup: done");
     }
-    eprintln!("[eval] run_eval complete: status={}", result.status);
 
     Ok(result)
 }
@@ -621,12 +592,12 @@ pub async fn run_eval_with_events(
         )
         .await
         .context("Failed to launch llama.cpp server for eval")?;
-        let loaded = processes::get_llamacpp_model()
+        let _loaded = processes::get_llamacpp_model()
             .await
             .ok_or_else(|| anyhow::anyhow!("Server launched but model not available"))?;
         let _ = tx.send(crate::ui::eval_run_workflow::EvalRunEvent::Stage {
             name: "Server".into(),
-            detail: format!("Model loaded: {loaded}"),
+            detail: format!("Model loaded: {_loaded}"),
         });
     }
 
