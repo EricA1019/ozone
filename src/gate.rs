@@ -12,15 +12,20 @@ use crate::calibration::CalibrationResult;
 
 /// A gate decision for a lane or suite.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct GateDecision {
     /// Name of the gate that produced this decision.
     pub gate_name: &'static str,
-    /// Score that triggered this decision (0.0–1.0).
+    /// Average score across attempts (0.0–1.0).
     pub score: f64,
     /// Whether the model/config passed this gate.
     pub passed: bool,
     /// Human-readable reason.
     pub reason: String,
+    /// Number of passed attempts (for multi-attempt gates).
+    pub pass_count: u32,
+    /// Total number of attempts.
+    pub total_attempts: u32,
 }
 
 /// Check health gate (Level 1) based on calibration results.
@@ -60,13 +65,16 @@ pub fn check_health_gate(cal: &CalibrationResult) -> GateDecision {
         score,
         passed,
         reason,
+        pass_count: if passed { 1 } else { 0 },
+        total_attempts: 1,
     }
 }
 
-/// Check a lane-specific gate (Level 2).
+/// Check a lane-specific gate (Level 2) — single attempt.
 ///
 /// Returns a `GateDecision` indicating whether the model/config should
 /// be promoted to advanced tests in this lane.
+#[allow(dead_code)]
 pub fn check_lane_gate(gate_name: &'static str, score: f64, required_score: f64) -> GateDecision {
     let passed = score >= required_score;
     let reason = if passed {
@@ -86,6 +94,80 @@ pub fn check_lane_gate(gate_name: &'static str, score: f64, required_score: f64)
         score,
         passed,
         reason,
+        pass_count: if passed { 1 } else { 0 },
+        total_attempts: 1,
+    }
+}
+
+/// Check a lane-specific gate (Level 2) — multi-attempt using 2-of-3 rule.
+///
+/// For 3 attempts:
+/// - 3/3 passes → passed, clean
+/// - 2/3 passes → passed, unstable
+/// - 1/3 passes → failed, unstable
+/// - 0/3 passes → failed
+///
+/// For 1 attempt: falls back to simple threshold check.
+pub fn check_lane_gate_multi(
+    gate_name: &'static str,
+    scores: &[f64],
+    required_score: f64,
+) -> GateDecision {
+    let total = scores.len() as u32;
+    let avg_score = if total > 0 {
+        scores.iter().sum::<f64>() / total as f64
+    } else {
+        0.0
+    };
+
+    let pass_count = scores.iter().filter(|&&s| s >= required_score).count() as u32;
+    let _fail_count = total - pass_count;
+
+    // Majority rule: need > half (ceil division)
+    let required_passes = total.div_ceil(2);
+    let passed = pass_count >= required_passes;
+
+    let reason = if total == 1 {
+        if passed {
+            format!(
+                "{} score {:.2} >= required {:.2}",
+                gate_name, avg_score, required_score
+            )
+        } else {
+            format!(
+                "{} score {:.2} < required {:.2}",
+                gate_name, avg_score, required_score
+            )
+        }
+    } else if pass_count == total {
+        format!(
+            "{} avg {:.2} ({}/{}) >= required {:.2} — clean",
+            gate_name, avg_score, pass_count, total, required_score
+        )
+    } else if passed {
+        format!(
+            "{} avg {:.2} ({}/{}) >= required {:.2} — unstable (one failed attempt)",
+            gate_name, avg_score, pass_count, total, required_score
+        )
+    } else if pass_count == 0 {
+        format!(
+            "{} avg {:.2} ({}/{}) < required {:.2} — all failed",
+            gate_name, avg_score, pass_count, total, required_score
+        )
+    } else {
+        format!(
+            "{} avg {:.2} ({}/{}) < required {:.2} — majority failed",
+            gate_name, avg_score, pass_count, total, required_score
+        )
+    };
+
+    GateDecision {
+        gate_name,
+        score: avg_score,
+        passed,
+        reason,
+        pass_count,
+        total_attempts: total,
     }
 }
 
@@ -111,6 +193,7 @@ pub fn promotion_threshold(lane: &str) -> Option<f64> {
 
 /// Determine whether a lane gate result justifies promotion to the
 /// next tier of tests.
+#[allow(dead_code)]
 pub fn should_promote(decision: &GateDecision) -> bool {
     if !decision.passed {
         return false;

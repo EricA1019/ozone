@@ -281,12 +281,22 @@ enum Commands {
             help = "Base URL for OpenAI-compatible local API"
         )]
         base_url: String,
-        #[arg(long, default_value_t = 16384, help = "Configured context length")]
+        #[arg(long, default_value_t = 32768, help = "Configured context length (default 32k)")]
         context_length: u32,
         #[arg(long, help = "Skip warm-up phase")]
         skip_warmup: bool,
         #[arg(long, help = "Skip health gate (force run suites)")]
         skip_health_gate: bool,
+        #[arg(long, help = "Quick sweep (health + canary, 1 attempt each)")]
+        quick: bool,
+        #[arg(long, help = "Standard sweep (health + canary + code_micro, 3 attempts for gates)")]
+        standard: bool,
+        #[arg(long, help = "Full sweep (all 5 suites, 3 attempts for all tasks)")]
+        full: bool,
+        #[arg(long, help = "Number of attempts per task (overrides sweep-level default)")]
+        attempts: Option<u32>,
+        #[arg(long, help = "Number of attempts for gate tasks (overrides sweep-level default)")]
+        gate_attempts: Option<u32>,
     },
     /// List saved launch profiles from preferences
     Profiles,
@@ -820,8 +830,20 @@ async fn main() -> Result<()> {
             context_length,
             skip_warmup,
             skip_health_gate,
+            quick,
+            standard,
+            full: _full,
+            attempts,
+            gate_attempts,
         }) => {
-            use crate::runner::EvalRunConfig;
+            use crate::runner::{EvalRunConfig, SweepLevel};
+            let sweep_level = if quick {
+                SweepLevel::Quick
+            } else if standard {
+                SweepLevel::Standard
+            } else {
+                SweepLevel::Full // default (also when --full is set)
+            };
             let config = EvalRunConfig {
                 model_name: std::path::Path::new(&model_path)
                     .file_stem()
@@ -834,14 +856,18 @@ async fn main() -> Result<()> {
                 context_length,
                 skip_warmup,
                 skip_health_gate,
+                sweep_level,
+                gate_attempts: gate_attempts.unwrap_or(0),
+                regular_attempts: attempts.unwrap_or(0),
                 ..Default::default()
             };
             let result = runner::run_eval(&config).await?;
             println!(
-                "Status: {} ({}/{} passed in {:.1}s)",
+                "Status: {} ({}/{} passed, {} skipped by gate, in {:.1}s)",
                 result.status,
                 result.tasks_passed,
                 result.tasks_run,
+                result.tasks_skipped_gate,
                 result.total_duration_ms as f64 / 1000.0
             );
             Ok(())
@@ -872,9 +898,7 @@ async fn main() -> Result<()> {
                 anyhow::bail!("No prompts found in creative writing prompt bank");
             }
 
-            let artifacts_dir = root
-                .join("results")
-                .join("creative_writing");
+            let artifacts_dir = root.join("results").join("creative_writing");
             let csv_path = creative_writing::run_creative_writing_eval(
                 &model,
                 &prompt_bank,

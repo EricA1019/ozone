@@ -8,6 +8,7 @@ use crate::eval_types::SizeClass;
 
 /// A single native evaluation task.
 #[derive(Debug, Clone)]
+#[allow(dead_code)]
 pub struct EvalTask {
     /// Unique key for this task (e.g. "health_001_short_answer").
     pub key: &'static str,

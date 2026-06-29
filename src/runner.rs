@@ -1,19 +1,22 @@
 //! Eval runner pipeline — wires warmup, calibration, gates, suites, and
 //! scoring into a single configurable execution flow.
+//!
+//! Supports multi-attempt scoring: each task can be run N times with
+//! different seeds, and results are aggregated using majority-rule pass/fail
+//! with stability classification.
 
 use anyhow::Result;
+use std::collections::HashMap;
 
 use crate::artifacts::{self};
 use crate::calibration::{run_calibration, CalibrationResult};
-use crate::eval_types::EvalStatus;
-
 use crate::gate::{
-    check_health_gate, check_lane_gate, promotion_threshold, should_promote, GateDecision,
+    check_health_gate, check_lane_gate_multi, promotion_threshold, GateDecision,
 };
 use crate::hash::{hash_model_file, hash_run_config, RunConfigIdentity};
 use crate::policy::{check_task_allowed, ContextPolicy};
 use crate::preflight::check_context_fit;
-use crate::scorers;
+use crate::scorers::{self, aggregate_multi, multi_to_status};
 use crate::suites::{EvalTask, CANARY_SUITE, CODE_MICRO, FORMAT_MICRO, HEALTH_SUITE, MATH_MICRO};
 use crate::timeout::{compute_timeout, TimeoutEstimate, HARD_CAP_SECS};
 use crate::warmup::{reset_backend_session, run_warmup};
@@ -33,11 +36,13 @@ fn expected_answer(task: &EvalTask) -> &'static str {
     }
 }
 
-/// Sweep depth for eval runs — controls which suites are executed.
+/// Sweep depth for eval runs — controls which suites are executed and
+/// default attempt counts.
 ///
-/// Quick: health + canary (~17 tasks). Good for fast sanity checks.
-/// Standard: health + canary + code_micro (~21 tasks). Covers coding quality.
-/// Full: all 5 suites (~36 tasks). Comprehensive evaluation.
+/// Quick: health + canary (~17 tasks). 1 attempt each. Fast sanity check.
+/// Standard: health + canary + code_micro (~21 tasks). 3 attempts for gate
+///           tasks, 1 for others.
+/// Full: all 5 suites (~36 tasks). 3 attempts for all tasks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SweepLevel {
     Quick,
@@ -74,6 +79,30 @@ impl SweepLevel {
     pub fn task_count(&self) -> usize {
         self.suites().iter().map(|s| s.len()).sum()
     }
+
+    /// Default gate attempts for this sweep level.
+    ///
+    /// Gate tasks (canary suite lane tasks) get this many attempts.
+    /// Quick=1, Standard=3, Full=3.
+    pub fn default_gate_attempts(&self) -> u32 {
+        match self {
+            Self::Quick => 1,
+            Self::Standard => 3,
+            Self::Full => 3,
+        }
+    }
+
+    /// Default regular attempts for this sweep level.
+    ///
+    /// Non-gate tasks get this many attempts.
+    /// Quick=1, Standard=1, Full=3.
+    pub fn default_regular_attempts(&self) -> u32 {
+        match self {
+            Self::Quick => 1,
+            Self::Standard => 1,
+            Self::Full => 3,
+        }
+    }
 }
 
 /// Configuration for an eval run.
@@ -97,6 +126,32 @@ pub struct EvalRunConfig {
     pub policy: ContextPolicy,
     /// Sweep depth (which suites to run).
     pub sweep_level: SweepLevel,
+    /// Number of attempts for gate tasks (canary suite lane tasks).
+    /// If 0, uses the default for the sweep level.
+    pub gate_attempts: u32,
+    /// Number of attempts for regular (non-gate) tasks.
+    /// If 0, uses the default for the sweep level.
+    pub regular_attempts: u32,
+}
+
+impl EvalRunConfig {
+    /// Effective gate attempt count, falling back to sweep-level default.
+    pub fn effective_gate_attempts(&self) -> u32 {
+        if self.gate_attempts > 0 {
+            self.gate_attempts
+        } else {
+            self.sweep_level.default_gate_attempts()
+        }
+    }
+
+    /// Effective regular attempt count, falling back to sweep-level default.
+    pub fn effective_regular_attempts(&self) -> u32 {
+        if self.regular_attempts > 0 {
+            self.regular_attempts
+        } else {
+            self.sweep_level.default_regular_attempts()
+        }
+    }
 }
 
 impl Default for EvalRunConfig {
@@ -105,12 +160,14 @@ impl Default for EvalRunConfig {
             model_name: String::new(),
             model_path: String::new(),
             backend: "llama.cpp".into(),
-            base_url: "http://127.0.0.1:8989".into(),
-            context_length: 16384,
+            base_url: ozone_core::paths::DEFAULT_LLAMACPP_BASE_URL.into(),
+            context_length: 32768,
             skip_warmup: false,
             skip_health_gate: false,
             policy: ContextPolicy::default(),
             sweep_level: SweepLevel::Full,
+            gate_attempts: 0,
+            regular_attempts: 0,
         }
     }
 }
@@ -124,12 +181,20 @@ pub struct EvalRunResult {
     pub health_gate: Option<GateDecision>,
     pub tasks_run: usize,
     pub tasks_passed: usize,
+    pub tasks_skipped_gate: usize,
     pub total_duration_ms: u64,
 }
 
-/// Run the full eval pipeline.
+/// Run the full eval pipeline with multi-attempt scoring.
+///
+/// Each task is run N times (configurable per sweep level) with varied seeds.
+/// Gate tasks use a 2-of-3 pass rule; failed gates skip deeper tasks in
+/// that lane while other lanes continue.
 pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
     let overall_start = std::time::Instant::now();
+    let gate_attempts = config.effective_gate_attempts();
+    let regular_attempts = config.effective_regular_attempts();
+
     let mut result = EvalRunResult {
         status: "running".into(),
         warmup_passed: false,
@@ -137,6 +202,7 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
         health_gate: None,
         tasks_run: 0,
         tasks_passed: 0,
+        tasks_skipped_gate: 0,
         total_duration_ms: 0,
     };
 
@@ -161,9 +227,11 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
         let warmup = run_warmup(&config.base_url, 30).await;
         result.warmup_passed = warmup.success;
         println!(
-            "Sweep level: {} ({} tasks)",
+            "Sweep level: {} ({} tasks, gate×{} / regular×{})",
             config.sweep_level.label(),
-            config.sweep_level.task_count()
+            config.sweep_level.task_count(),
+            gate_attempts,
+            regular_attempts,
         );
         println!(
             "Warm-up: {} ({} ms, {} chars)",
@@ -230,8 +298,27 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
         );
     }
 
+    // Track lane gate results: lane_name → GateDecision
+    let mut lane_gates: HashMap<&'static str, GateDecision> = HashMap::new();
+
     for suite in suites {
+        let suite_name = suite.first().map(|t| t.suite).unwrap_or("unknown");
+        let is_canary = suite_name == "canary";
+
         for task in suite {
+            // ---- Gate skip check (for non-canary lane tasks) ----
+            if !is_canary {
+                if let Some(lane) = task.lane {
+                    if let Some(gate) = lane_gates.get(lane) {
+                        if !gate.passed {
+                            println!("  [SKIP] {} — gate '{}' failed: {}", task.key, lane, gate.reason);
+                            result.tasks_skipped_gate += 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+
             // Context fit check
             if let Err(error) =
                 check_task_allowed(config.context_length, task.min_context, &config.policy)
@@ -258,8 +345,15 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
                 continue;
             }
 
-            // Compute timeout
-            let timeout = compute_timeout(TimeoutEstimate::new(
+            // Determine attempt count for this task
+            let attempts = if is_canary && task.lane.is_some() {
+                gate_attempts
+            } else {
+                regular_attempts
+            };
+
+            // Compute timeout once (reserved for future per-task timeout enforcement)
+            let _timeout = compute_timeout(TimeoutEstimate::new(
                 1024,
                 expected_budget,
                 cal.prompt_tok_per_sec,
@@ -267,84 +361,105 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
                 cal.first_token_ms,
             ));
 
-            // Run task
             let url = format!("{}/v1/completions", config.base_url.trim_end_matches('/'));
-            let body = serde_json::json!({
-                "prompt": task.prompt,
-                "max_tokens": task.max_output_tokens,
-                "temperature": 0.0,
-                "seed": 42,
-            });
 
-            let start = std::time::Instant::now();
-            let response = match client.post(&url).json(&body).send().await {
-                Ok(resp) => match resp.json::<serde_json::Value>().await {
-                    Ok(json) => json["choices"][0]["text"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string(),
+            // ---- Multi-attempt loop ----
+            let mut attempt_results = Vec::with_capacity(attempts as usize);
+            let mut total_latency_ms: u64 = 0;
+
+            for attempt_idx in 0..attempts {
+                let seed: i64 = 42 + attempt_idx as i64;
+                let body = serde_json::json!({
+                    "prompt": task.prompt,
+                    "max_tokens": task.max_output_tokens,
+                    "temperature": 0.0,
+                    "seed": seed,
+                });
+
+                let start = std::time::Instant::now();
+                let response = match client.post(&url).json(&body).send().await {
+                    Ok(resp) => match resp.json::<serde_json::Value>().await {
+                        Ok(json) => json["choices"][0]["text"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string(),
+                        Err(_) => String::new(),
+                    },
                     Err(_) => String::new(),
-                },
-                Err(_) => String::new(),
-            };
-            let latency_ms = start.elapsed().as_millis() as u64;
+                };
+                let latency_ms = start.elapsed().as_millis() as u64;
+                total_latency_ms += latency_ms;
 
-            // Score
-            let scored = scorers::score(task.scorer, &response, expected_answer(task));
-            result.tasks_run += 1;
-            if scored.passed {
-                result.tasks_passed += 1;
-            }
+                // Score this attempt
+                let scored = scorers::score(task.scorer, &response, expected_answer(task));
+                attempt_results.push(scored);
 
-            // Log
-            if let Some(lane) = task.lane {
-                if let Some(required) = promotion_threshold(lane) {
-                    let decision = check_lane_gate(lane, scored.score, required);
-                    let _promoted = should_promote(&decision);
+                // Store artifact (last attempt only to save space)
+                if attempt_idx == attempts.saturating_sub(1) {
+                    if let Some(ref dirs) = run_dirs {
+                        let _ = artifacts::write_prompt(dirs, task.key, task.prompt);
+                        let _ = artifacts::write_response(dirs, task.key, &response);
+                    }
                 }
             }
 
-            let status = if scored.passed {
-                EvalStatus::Passed
-            } else {
-                EvalStatus::Failed
-            };
-            let mark = if scored.passed { "[PASS]" } else { "[FAIL]" };
-            println!(
-                "  {mark} {} ({:.1}s) score={:.2} {} status={} failure={} lane={} difficulty={} language={} timeout={}s",
-                task.key,
-                latency_ms as f64 / 1000.0,
-                scored.score,
-                scored.detail,
-                status.as_str(),
-                scored.failure.as_str(),
-                task.lane.unwrap_or("none"),
-                task.difficulty,
-                task.language,
-                timeout,
-            );
-
-            // Store artifact
-            if let Some(ref dirs) = run_dirs {
-                let _ = artifacts::write_prompt(dirs, task.key, task.prompt);
-                let _ = artifacts::write_response(dirs, task.key, &response);
+            // ---- Aggregate results ----
+            let multi = aggregate_multi(&attempt_results);
+            let status = multi_to_status(&multi);
+            result.tasks_run += 1;
+            if multi.passed {
+                result.tasks_passed += 1;
             }
+
+            // ---- Gate check for canary lane tasks ----
+            if is_canary {
+                if let Some(lane) = task.lane {
+                    if let Some(required) = promotion_threshold(lane) {
+                        let decision = check_lane_gate_multi(lane, &multi.scores, required);
+                        lane_gates.insert(lane, decision);
+                    }
+                }
+            }
+
+            // ---- Print result ----
+            let mark = match (multi.passed, multi.stability) {
+                (true, scorers::Stability::Clean) => "[PASS]",
+                (true, _) => "[PASS*]",
+                (false, scorers::Stability::Unstable) => "[FAIL*]",
+                (false, _) => "[FAIL]",
+            };
+            let attempts_str = if attempts > 1 {
+                format!(" {}/{})", multi.pass_count, multi.total_attempts)
+            } else {
+                String::new()
+            };
+            println!(
+                "  {mark} {} ({:.1}s) avg={:.2}{attempts_str} status={} failure={} stability={} lane={}",
+                task.key,
+                total_latency_ms as f64 / 1000.0,
+                multi.avg_score,
+                status.as_str(),
+                multi.failure.as_str(),
+                multi.stability.label(),
+                task.lane.unwrap_or("none"),
+            );
         }
     }
 
     result.total_duration_ms = overall_start.elapsed().as_millis() as u64;
     result.status = "completed".into();
     println!(
-        "Eval run complete ({sweep}): {passed}/{total} passed",
+        "Eval run complete ({sweep}): {passed}/{total} passed ({skipped} skipped by gate)",
         sweep = config.sweep_level.label(),
         passed = result.tasks_passed,
-        total = result.tasks_run
+        total = result.tasks_run,
+        skipped = result.tasks_skipped_gate,
     );
 
     Ok(result)
 }
 
-/// Run the eval pipeline with TUI event emission.
+/// Run the eval pipeline with TUI event emission (multi-attempt).
 ///
 /// Same as `run_eval` but sends progress events through an unbounded channel
 /// for real-time TUI display. The sender is consumed by the function.
@@ -353,6 +468,9 @@ pub async fn run_eval_with_events(
     tx: tokio::sync::mpsc::UnboundedSender<crate::ui::eval_run_workflow::EvalRunEvent>,
 ) -> Result<EvalRunResult> {
     let overall_start = std::time::Instant::now();
+    let gate_attempts = config.effective_gate_attempts();
+    let regular_attempts = config.effective_regular_attempts();
+
     let mut result = EvalRunResult {
         status: "running".into(),
         warmup_passed: false,
@@ -360,6 +478,7 @@ pub async fn run_eval_with_events(
         health_gate: None,
         tasks_run: 0,
         tasks_passed: 0,
+        tasks_skipped_gate: 0,
         total_duration_ms: 0,
     };
 
@@ -461,14 +580,34 @@ pub async fn run_eval_with_events(
 
     let client = ozone_core::http::client_with_timeout(HARD_CAP_SECS)?;
 
+    // Track lane gate results
+    let mut lane_gates: HashMap<&'static str, GateDecision> = HashMap::new();
+
     for suite in suites {
         let suite_name = suite.first().map(|t| t.suite).unwrap_or("unknown");
+        let is_canary = suite_name == "canary";
         let _ = tx.send(crate::ui::eval_run_workflow::EvalRunEvent::Stage {
             name: format!("Suite: {}", suite_name),
             detail: format!("Running {} tasks...", suite.len()),
         });
 
         for task in suite {
+            // ---- Gate skip check (for non-canary lane tasks) ----
+            if !is_canary {
+                if let Some(lane) = task.lane {
+                    if let Some(gate) = lane_gates.get(lane) {
+                        if !gate.passed {
+                            let _ = tx.send(crate::ui::eval_run_workflow::EvalRunEvent::TaskSkipped {
+                                task_key: task.key.into(),
+                                reason: format!("gate '{}' failed: {}", lane, gate.reason),
+                            });
+                            result.tasks_skipped_gate += 1;
+                            continue;
+                        }
+                    }
+                }
+            }
+
             // Context fit check
             if let Err(error) =
                 check_task_allowed(config.context_length, task.min_context, &config.policy)
@@ -497,42 +636,75 @@ pub async fn run_eval_with_events(
                 continue;
             }
 
-            // Run task
-            let url = format!("{}/v1/completions", config.base_url.trim_end_matches('/'));
-            let body = serde_json::json!({
-                "prompt": task.prompt,
-                "max_tokens": task.max_output_tokens,
-                "temperature": 0.0,
-                "seed": 42,
-            });
-
-            let start = std::time::Instant::now();
-            let response = match client.post(&url).json(&body).send().await {
-                Ok(resp) => match resp.json::<serde_json::Value>().await {
-                    Ok(json) => json["choices"][0]["text"]
-                        .as_str()
-                        .unwrap_or("")
-                        .to_string(),
-                    Err(_) => String::new(),
-                },
-                Err(_) => String::new(),
+            // Determine attempt count
+            let attempts = if is_canary && task.lane.is_some() {
+                gate_attempts
+            } else {
+                regular_attempts
             };
-            let latency_ms = start.elapsed().as_millis() as u64;
 
-            // Score
-            let scored = scorers::score(task.scorer, &response, expected_answer(task));
+            let url = format!("{}/v1/completions", config.base_url.trim_end_matches('/'));
+
+            // ---- Multi-attempt loop ----
+            let mut attempt_results = Vec::with_capacity(attempts as usize);
+            let mut total_latency_ms: u64 = 0;
+
+            for attempt_idx in 0..attempts {
+                let seed: i64 = 42 + attempt_idx as i64;
+                let body = serde_json::json!({
+                    "prompt": task.prompt,
+                    "max_tokens": task.max_output_tokens,
+                    "temperature": 0.0,
+                    "seed": seed,
+                });
+
+                let start = std::time::Instant::now();
+                let response = match client.post(&url).json(&body).send().await {
+                    Ok(resp) => match resp.json::<serde_json::Value>().await {
+                        Ok(json) => json["choices"][0]["text"]
+                            .as_str()
+                            .unwrap_or("")
+                            .to_string(),
+                        Err(_) => String::new(),
+                    },
+                    Err(_) => String::new(),
+                };
+                let latency_ms = start.elapsed().as_millis() as u64;
+                total_latency_ms += latency_ms;
+
+                let scored = scorers::score(task.scorer, &response, expected_answer(task));
+                attempt_results.push(scored);
+            }
+
+            // ---- Aggregate results ----
+            let multi = aggregate_multi(&attempt_results);
             result.tasks_run += 1;
-            if scored.passed {
+            if multi.passed {
                 result.tasks_passed += 1;
             }
 
-            // Emit event
+            // ---- Gate check for canary lane tasks ----
+            if is_canary {
+                if let Some(lane) = task.lane {
+                    if let Some(required) = promotion_threshold(lane) {
+                        let decision = check_lane_gate_multi(lane, &multi.scores, required);
+                        lane_gates.insert(lane, decision);
+                    }
+                }
+            }
+
+            // Emit event with multi-attempt detail
+            let detail = if attempts > 1 {
+                format!("{}/{} {}", multi.pass_count, multi.total_attempts, multi.detail)
+            } else {
+                multi.detail.clone()
+            };
             let _ = tx.send(crate::ui::eval_run_workflow::EvalRunEvent::TaskResult {
                 task_key: task.key.into(),
-                passed: scored.passed,
-                score: scored.score,
-                detail: scored.detail,
-                latency_ms,
+                passed: multi.passed,
+                score: multi.avg_score,
+                detail,
+                latency_ms: total_latency_ms,
             });
         }
     }
