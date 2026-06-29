@@ -564,6 +564,9 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
     if let Some(path) = save_eval_results(config, &result) {
         println!("  Results saved: {}", path.display());
     }
+    if let Some(path) = save_eval_csv(config, &result) {
+        println!("  CSV saved: {}", path.display());
+    }
 
     Ok(result)
 }
@@ -592,6 +595,38 @@ fn save_eval_results(config: &EvalRunConfig, result: &EvalRunResult) -> Option<s
     });
 
     std::fs::write(&path, serde_json::to_string_pretty(&json).ok()?).ok()?;
+    Some(path)
+}
+
+/// Save eval results as CSV to results/native/{model}_{timestamp}.csv.
+fn save_eval_csv(config: &EvalRunConfig, result: &EvalRunResult) -> Option<std::path::PathBuf> {
+    let root = std::path::Path::new("results/native");
+    let _ = std::fs::create_dir_all(root);
+    let ts = chrono::Utc::now().format("%Y%m%dT%H%M%S");
+    let filename = format!("{}_{ts}.csv", config.model_name);
+    let path = root.join(filename);
+
+    let mut w = csv::Writer::from_path(path.clone()).ok()?;
+    let _ = w.write_record([
+        "task_key", "suite", "lane", "avg_score", "pass_count",
+        "total_attempts", "passed", "status", "failure", "stability", "latency_ms",
+    ]);
+    for t in &result.tasks {
+        let _ = w.write_record([
+            &t.task_key,
+            &t.suite,
+            t.lane.as_deref().unwrap_or(""),
+            &format!("{:.3}", t.avg_score),
+            &t.pass_count.to_string(),
+            &t.total_attempts.to_string(),
+            &t.passed.to_string(),
+            &t.status,
+            &t.failure,
+            &t.stability,
+            &t.latency_ms.to_string(),
+        ]);
+    }
+    let _ = w.flush();
     Some(path)
 }
 
@@ -902,6 +937,12 @@ pub async fn run_eval_with_events(
     if let Some(path) = save_eval_results(config, &result) {
         let _ = tx.send(crate::ui::eval_run_workflow::EvalRunEvent::Stage {
             name: "Results".into(),
+            detail: format!("Saved: {}", path.display()),
+        });
+    }
+    if let Some(path) = save_eval_csv(config, &result) {
+        let _ = tx.send(crate::ui::eval_run_workflow::EvalRunEvent::Stage {
+            name: "CSV".into(),
             detail: format!("Saved: {}", path.display()),
         });
     }
