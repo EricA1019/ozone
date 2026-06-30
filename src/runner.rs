@@ -242,6 +242,8 @@ fn build_eval_server_args(config: &EvalRunConfig) -> Vec<String> {
     ];
     // Use Q8 KV cache by default (safer for GPU memory, matches bench pattern)
     args.extend(processes::kv_cache_args(8, 8));
+    // Enable logprobs for MMLU/HellaSwag-style multiple-choice scoring
+    args.push("--logprobs".into());
     args
 }
 
