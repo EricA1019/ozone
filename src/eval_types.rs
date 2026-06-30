@@ -155,7 +155,6 @@ impl SizeClass {
     }
 }
 
-
 #[cfg(test)]
 mod tests {
     use super::*;
