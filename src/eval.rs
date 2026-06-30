@@ -508,7 +508,7 @@ fn run_evalplus_codegen(
     let evalplus_codegen = venv_bin.join("evalplus.codegen");
     ensure_executable(&evalplus_codegen)?;
 
-    let upper_bound = limit.saturating_sub(1);
+    let upper_bound = limit;
     let id_range = format!("[0,{upper_bound}]");
 
     let suite_name = "EvalPlus (humaneval)";
