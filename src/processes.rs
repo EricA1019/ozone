@@ -408,6 +408,14 @@ pub async fn start_llamacpp(server_path: &Path, model_name: &str, args: &[String
         .stdout(log_file)
         .stderr(log_file2);
 
+    // Auto-set library path to the binary's directory for CUDA builds
+    if let Some(parent) = server_path.parent() {
+        // Prepend binary dir to LD_LIBRARY_PATH so bundled .so files are found
+        let existing = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
+        let new_path = format!("{}:{}", parent.display(), existing);
+        cmd.env("LD_LIBRARY_PATH", new_path);
+    }
+
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;

@@ -146,6 +146,8 @@ pub struct EvalRunConfig {
     pub gpu_layers: i32,
     /// Thread count for server launch (None = auto).
     pub threads: Option<u32>,
+    /// Enable flash attention (None = auto/default).
+    pub flash_attn: Option<bool>,
 }
 
 impl EvalRunConfig {
@@ -186,6 +188,7 @@ impl Default for EvalRunConfig {
             server_path: None,
             gpu_layers: 35,
             threads: None,
+            flash_attn: None,
         }
     }
 }
@@ -240,6 +243,13 @@ fn build_eval_server_args(config: &EvalRunConfig) -> Vec<String> {
         "--parallel".into(),
         "1".into(),
     ];
+    // Flash attention (default on for speed)
+    let fa = match config.flash_attn {
+        Some(false) => "off",
+        _ => "on",
+    };
+    args.push("--flash-attn".into());
+    args.push(fa.into());
     // Use Q8 KV cache by default (safer for GPU memory, matches bench pattern)
     args.extend(processes::kv_cache_args(8, 8));
     args

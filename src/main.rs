@@ -309,6 +309,8 @@ enum Commands {
         threads: Option<u32>,
         #[arg(long, help = "Path to llama-server binary (auto-discover if not set)")]
         server_path: Option<String>,
+        #[arg(long, help = "Enable flash attention (default on, set --flash-attn off to disable)")]
+        flash_attn: Option<bool>,
     },
     /// List saved launch profiles from preferences
     Profiles,
@@ -853,6 +855,7 @@ async fn main() -> Result<()> {
             gpu_layers,
             threads,
             server_path: cli_server_path,
+            flash_attn,
         }) => {
             use crate::runner::{EvalRunConfig, SweepLevel};
             let sweep_level = if quick {
@@ -887,6 +890,7 @@ async fn main() -> Result<()> {
                     threads,
                     manage_server: false,
                     server_path: None,
+                    flash_attn,
                 }
             } else {
                 let resolved_server_path = if let Some(ref p) = cli_server_path {
@@ -914,6 +918,7 @@ async fn main() -> Result<()> {
                     threads,
                     manage_server: true,
                     server_path: Some(resolved_server_path),
+                    flash_attn,
                 }
             };
             let result = runner::run_eval(&config).await?;
