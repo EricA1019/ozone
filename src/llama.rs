@@ -19,15 +19,25 @@ pub fn discover_llama_cli_binary() -> Result<PathBuf> {
 
 pub fn discover_llama_server_binary() -> Result<PathBuf> {
     // 1. Explicit CUDA server override
-    if let Ok(path) = discover_binary(ENV_LLAMACPP_CUDA_SERVER, &[]) {
-        return Ok(path);
+    if let Ok(val) = env::var(ENV_LLAMACPP_CUDA_SERVER) {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            return resolve_binary(trimmed).with_context(|| {
+                format!("{ENV_LLAMACPP_CUDA_SERVER}={trimmed} but binary not found")
+            });
+        }
     }
     // 2. Explicit server override
-    if let Ok(path) = discover_binary(ENV_LLAMACPP_SERVER, &[]) {
-        return Ok(path);
+    if let Ok(val) = env::var(ENV_LLAMACPP_SERVER) {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            return resolve_binary(trimmed).with_context(|| {
+                format!("{ENV_LLAMACPP_SERVER}={trimmed} but binary not found")
+            });
+        }
     }
     // 3. CUDA-named binary on PATH first, then generic
-    discover_binary("OZONE_LLAMACPP_SERVER", &["llama-server-cuda", "llama-server"])
+    discover_binary(ENV_LLAMACPP_SERVER, &["llama-server-cuda", "llama-server"])
 }
 
 fn discover_binary(override_env: &str, candidates: &[&str]) -> Result<PathBuf> {
