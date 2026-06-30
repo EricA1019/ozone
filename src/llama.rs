@@ -10,6 +10,7 @@ use std::path::Path;
 #[cfg(feature = "model-mgmt")]
 pub const ENV_LLAMACPP_CLI: &str = "OZONE_LLAMACPP_CLI";
 pub const ENV_LLAMACPP_SERVER: &str = "OZONE_LLAMACPP_SERVER";
+pub const ENV_LLAMACPP_CUDA_SERVER: &str = "OZONE_LLAMACPP_CUDA_SERVER";
 
 #[cfg(feature = "model-mgmt")]
 pub fn discover_llama_cli_binary() -> Result<PathBuf> {
@@ -17,7 +18,16 @@ pub fn discover_llama_cli_binary() -> Result<PathBuf> {
 }
 
 pub fn discover_llama_server_binary() -> Result<PathBuf> {
-    discover_binary(ENV_LLAMACPP_SERVER, &["llama-server"])
+    // 1. Explicit CUDA server override
+    if let Ok(path) = discover_binary(ENV_LLAMACPP_CUDA_SERVER, &[]) {
+        return Ok(path);
+    }
+    // 2. Explicit server override
+    if let Ok(path) = discover_binary(ENV_LLAMACPP_SERVER, &[]) {
+        return Ok(path);
+    }
+    // 3. CUDA-named binary on PATH first, then generic
+    discover_binary("OZONE_LLAMACPP_SERVER", &["llama-server-cuda", "llama-server"])
 }
 
 fn discover_binary(override_env: &str, candidates: &[&str]) -> Result<PathBuf> {

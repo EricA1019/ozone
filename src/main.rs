@@ -307,6 +307,8 @@ enum Commands {
         gpu_layers: i32,
         #[arg(long, help = "CPU threads (auto if omitted)")]
         threads: Option<u32>,
+        #[arg(long, help = "Path to llama-server binary (auto-discover if not set)")]
+        server_path: Option<String>,
     },
     /// List saved launch profiles from preferences
     Profiles,
@@ -850,6 +852,7 @@ async fn main() -> Result<()> {
             allow_below_min_context,
             gpu_layers,
             threads,
+            server_path: cli_server_path,
         }) => {
             use crate::runner::{EvalRunConfig, SweepLevel};
             let sweep_level = if quick {
@@ -883,9 +886,14 @@ async fn main() -> Result<()> {
                     gpu_layers,
                     threads,
                     manage_server: false,
+                    server_path: None,
                 }
             } else {
-                let server_path = processes::resolved_llamacpp_server_path()?;
+                let resolved_server_path = if let Some(ref p) = cli_server_path {
+                    std::path::PathBuf::from(p)
+                } else {
+                    processes::resolved_llamacpp_server_path()?
+                };
                 EvalRunConfig {
                     model_name: std::path::Path::new(&model_path)
                         .file_stem()
@@ -905,7 +913,7 @@ async fn main() -> Result<()> {
                     gpu_layers,
                     threads,
                     manage_server: true,
-                    server_path: Some(server_path),
+                    server_path: Some(resolved_server_path),
                 }
             };
             let result = runner::run_eval(&config).await?;
