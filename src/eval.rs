@@ -553,7 +553,56 @@ fn run_evalplus_codegen(
                 "failed to launch {}",
                 venv_bin.join("evalplus.codegen").display()
             )
-        })
+        })?;
+
+    // ---- Step 2: Evaluate generated code ----
+    let evalplus_evaluate = venv_bin.join("evalplus.evaluate");
+    let samples_path = root.join("humaneval").join(format!("{model}_openai_temp_0.0.jsonl"));
+    ozone_core::cli::header("Evaluation");
+    ozone_core::cli::field("Samples:", &samples_path.display());
+    if !samples_path.exists() {
+        ozone_core::cli::info("Samples not found — codegen may have failed.");
+        return Ok(std::process::ExitStatus::default());
+    }
+    if limit < 164 {
+        ozone_core::cli::info(&format!(
+            "Scoring requires all 164 problems. Use --limit 164 to get pass@1 score (current: {limit})."
+        ));
+        return Ok(std::process::ExitStatus::default());
+    }
+
+    let status = Command::new(evalplus_evaluate)
+        .arg("--dataset")
+        .arg("humaneval")
+        .arg("--samples")
+        .arg(&samples_path)
+        .arg("--parallel")
+        .arg("4")
+        .env("OPENAI_API_KEY", "none")
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .with_context(|| {
+            format!(
+                "failed to launch {}",
+                venv_bin.join("evalplus.evaluate").display()
+            )
+        })?;
+
+    if status.success() {
+        // Find and show the evaluation results JSON
+        if let Ok(results_dir) = std::fs::read_dir(root.join("humaneval")) {
+            for entry in results_dir.flatten() {
+                let path = entry.path();
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name.starts_with("evalplus_results_") && name.ends_with(".json") {
+                    ozone_core::cli::field("Results:", &path.display());
+                }
+            }
+        }
+    }
+    Ok(status)
 }
 
 fn ensure_executable(path: &Path) -> Result<()> {
