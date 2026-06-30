@@ -234,6 +234,8 @@ enum Commands {
         temperature: f64,
         #[arg(long, help = "Compare all models with prior results for this preset")]
         compare: bool,
+        #[arg(long, help = "HuggingFace tokenizer for loglikelihood tasks (MMLU, HellaSwag). e.g. Qwen/Qwen2.5-7B-Instruct")]
+        tokenizer: Option<String>,
     },
     /// Generate a standalone launch script for a model
     ExportServer {
@@ -779,12 +781,13 @@ async fn main() -> Result<()> {
             base_url,
             temperature,
             compare,
+            tokenizer,
         }) => {
             if compare {
                 eval::print_comparison(preset.cli_name())?;
                 return Ok(());
             }
-            eval::run_eval(&model, preset, limit, &base_url, temperature).await?;
+            eval::run_eval(&model, preset, limit, &base_url, temperature, tokenizer.as_deref()).await?;
             Ok(())
         }
         Some(Commands::ExportServer {

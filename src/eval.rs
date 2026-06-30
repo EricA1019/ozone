@@ -130,7 +130,7 @@ pub const EVAL_TASKS: &[EvalTask] = &[
     EvalTask {
         cli_name: "bbh",
         kind: EvalTaskKind::LmEval {
-            task: "bigbench_hard",
+            task: "leaderboard_bbh",
             output_dir: "lm_eval_bbh_probe",
         },
         description: "Reasoning: multi-step logic across 23 hard tasks",
@@ -150,6 +150,7 @@ pub async fn run_eval_task(
     limit: u32,
     base_url: &str,
     temperature: f64,
+    tokenizer: Option<&str>,
 ) -> Result<()> {
     if limit == 0 {
         bail!("--limit must be greater than 0");
@@ -179,6 +180,7 @@ pub async fn run_eval_task(
                 &artifacts_dir.join(output_dir),
                 base_url,
                 temperature,
+                tokenizer,
             )?;
             if !status.success() {
                 match status.code() {
@@ -416,6 +418,7 @@ pub async fn run_eval(
     limit: u32,
     base_url: &str,
     temperature: f64,
+    tokenizer: Option<&str>,
 ) -> Result<()> {
     if limit == 0 {
         bail!("--limit must be greater than 0");
@@ -433,7 +436,7 @@ pub async fn run_eval(
         })?;
 
     // Delegate to the task registry — single source of truth for dispatch
-    run_eval_task(task, model, limit, base_url, temperature).await?;
+    run_eval_task(task, model, limit, base_url, temperature, tokenizer).await?;
 
     // Build markdown report (uses preset for backward-compatible reporting)
     match crate::eval_report::build_eval_report_for_preset(model, preset) {
@@ -451,6 +454,7 @@ pub async fn run_eval(
     Ok(())
 }
 
+#[allow(clippy::too_many_arguments)]
 fn run_lm_eval(
     venv_bin: &Path,
     model: &str,
@@ -459,17 +463,21 @@ fn run_lm_eval(
     output_path: &Path,
     base_url: &str,
     temperature: f64,
+    tokenizer: Option<&str>,
 ) -> Result<std::process::ExitStatus> {
     let lm_eval = venv_bin.join("lm-eval");
     ensure_executable(&lm_eval)?;
 
     let completions_url = format!("{}/v1/completions", normalize_base_url(base_url));
-    // tokenizer_backend=None is safe for simple completion tasks (GSM8K, Math).
-    // For MMLU/TruthfulQA with complex prompt formatting, consider switching to
-    // tokenizer_backend=huggingface with a local tokenizer if results degrade.
-    let model_args = format!(
-        "model={model},base_url={completions_url},tokenizer_backend=None,temperature={temperature}"
-    );
+    let model_args = if let Some(tok) = tokenizer {
+        format!(
+            "model={model},base_url={completions_url},tokenizer_backend=huggingface,tokenizer={tok},temperature={temperature}"
+        )
+    } else {
+        format!(
+            "model={model},base_url={completions_url},tokenizer_backend=None,temperature={temperature}"
+        )
+    };
 
     ozone_core::cli::header("oz Eval");
     ozone_core::cli::field("Suite:", &format!("lm-eval ({task})"));
@@ -612,7 +620,7 @@ mod tests {
         match &task.kind {
             super::EvalTaskKind::LmEval { task, .. } => {
                 assert_eq!(
-                    *task, "bigbench_hard",
+                    *task, "leaderboard_bbh",
                     "BBH lm-eval task name mismatch between registry and lm-eval"
                 );
             }
