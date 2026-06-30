@@ -303,6 +303,10 @@ enum Commands {
         no_manage_server: bool,
         #[arg(long, help = "Allow eval below 16k min quality context threshold")]
         allow_below_min_context: bool,
+        #[arg(long, default_value_t = 35, help = "GPU layers to offload (for server launch)")]
+        gpu_layers: i32,
+        #[arg(long, help = "CPU threads (auto if omitted)")]
+        threads: Option<u32>,
     },
     /// List saved launch profiles from preferences
     Profiles,
@@ -844,6 +848,8 @@ async fn main() -> Result<()> {
             gate_attempts,
             no_manage_server,
             allow_below_min_context,
+            gpu_layers,
+            threads,
         }) => {
             use crate::runner::{EvalRunConfig, SweepLevel};
             let sweep_level = if quick {
@@ -874,8 +880,9 @@ async fn main() -> Result<()> {
                     sweep_level,
                     gate_attempts: gate_attempts.unwrap_or(0),
                     regular_attempts: attempts.unwrap_or(0),
+                    gpu_layers,
+                    threads,
                     manage_server: false,
-                    ..Default::default()
                 }
             } else {
                 let server_path = processes::resolved_llamacpp_server_path()?;
@@ -895,9 +902,10 @@ async fn main() -> Result<()> {
                     sweep_level,
                     gate_attempts: gate_attempts.unwrap_or(0),
                     regular_attempts: attempts.unwrap_or(0),
+                    gpu_layers,
+                    threads,
                     manage_server: true,
                     server_path: Some(server_path),
-                    ..Default::default()
                 }
             };
             let result = runner::run_eval(&config).await?;
