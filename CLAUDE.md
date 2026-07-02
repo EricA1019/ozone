@@ -7,9 +7,14 @@ last_updated: 2026-06-27
 # Ozone
 
 ## What This Is
-A local-first AI backend management toolkit for llama.cpp and KoboldCpp,
-shipping as three tiers: ozonelite (backend control), ozone (profiling/tuning),
-and ozone+ (conversation UX with sessions and memory).
+Ozone is a terminal-native local model operator focused on llama.cpp-backed
+launching, monitoring, profiling, benchmarking, sweeps, model inventory, and
+capability evaluation.
+
+RC scope is the active `ozone` binary plus the developer-facing `ozone-mcp`
+automation binary. The former ozone+ chat shell, KoboldCpp/SillyTavern handoff,
+roleplay, memories, branches, swipes, and transcript UX are deprecated and
+archived under `docs/archive/ozone-plus/`.
 
 ## Non-Negotiables
 See `.mex/AGENTS.md` — this file delegates to the canonical source.

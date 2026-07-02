@@ -257,7 +257,10 @@ fn scan_result_dir(dir: &std::path::Path, out: &mut Vec<ResultFile>) {
             if path.is_dir() {
                 scan_result_dir(&path, out);
             } else if fname.ends_with(".csv")
-                && (fname.contains("eval") || fname.contains("sweep") || fname.contains("creative") || fname.starts_with("results_"))
+                && (fname.contains("eval")
+                    || fname.contains("sweep")
+                    || fname.contains("creative")
+                    || fname.starts_with("results_"))
             {
                 let kind = if fname.contains("creative")
                     || path.to_string_lossy().contains("creative_writing")
@@ -281,7 +284,9 @@ fn scan_result_dir(dir: &std::path::Path, out: &mut Vec<ResultFile>) {
                     model,
                     summary,
                 });
-            } else if fname.ends_with(".md") && (fname.contains("creative") || fname.starts_with("results_")) {
+            } else if fname.ends_with(".md")
+                && (fname.contains("creative") || fname.starts_with("results_"))
+            {
                 let summary = std::fs::read_to_string(&path)
                     .ok()
                     .and_then(|t| {
@@ -908,9 +913,6 @@ pub(super) fn selected_record(app: &App) -> Option<CatalogRecord> {
             .cloned()
     })
 }
-
-
-
 
 struct TerminalRestoreGuard {
     raw_mode_enabled: bool,

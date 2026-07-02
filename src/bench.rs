@@ -2,6 +2,7 @@ use crate::db::{self, BenchmarkRow};
 use crate::hardware;
 use crate::processes;
 use anyhow::{anyhow, Result};
+use ozone_core::paths;
 use std::time::{Duration, Instant};
 
 /// Which inference backend to run the benchmark against.
@@ -9,9 +10,6 @@ use std::time::{Duration, Instant};
 pub enum BenchBackend {
     LlamaCpp { server_path: std::path::PathBuf },
 }
-
-const BENCH_LLAMACPP_HOST: &str = "127.0.0.1";
-const BENCH_LLAMACPP_PORT: &str = "8989";
 
 impl BenchBackend {
     pub fn display_name(&self) -> &'static str {
@@ -124,9 +122,9 @@ fn build_llamacpp_bench_args(
 ) -> Vec<String> {
     let mut args = vec![
         "--host".into(),
-        BENCH_LLAMACPP_HOST.into(),
+        paths::DEFAULT_LOCALHOST.into(),
         "--port".into(),
-        BENCH_LLAMACPP_PORT.into(),
+        paths::DEFAULT_LLAMACPP_PORT.to_string(),
         "--n-gpu-layers".into(),
         gpu_layers.to_string(),
         "--ctx-size".into(),
@@ -640,9 +638,9 @@ pub async fn run_batch_thread_sweep(
         // Build custom args with --threads-batch
         let mut args = vec![
             "--host".into(),
-            "127.0.0.1".into(),
+            paths::DEFAULT_LOCALHOST.into(),
             "--port".into(),
-            "8989".into(),
+            paths::DEFAULT_LLAMACPP_PORT.to_string(),
             "--n-gpu-layers".into(),
             request.gpu_layers.to_string(),
             "--ctx-size".into(),

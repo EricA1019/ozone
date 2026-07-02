@@ -46,6 +46,7 @@ release-gates: preflight verify-install-parity
 	@echo "✅ Release gates passed — workspace green and installed binaries match release artifacts"
 
 release-smoke:
+	cargo build --release -p ozone -p ozone-mcp-app
 	cargo test -p ozone-mcp release_smoke_gate -- --ignored --nocapture --test-threads=1
 
 prune-artifacts:

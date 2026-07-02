@@ -45,11 +45,88 @@ const DEFAULT_PTY_ROWS: u16 = 40;
 const DEFAULT_PTY_COLUMNS: u16 = 120;
 const DEFAULT_CAPTURE_TAIL_CHARS: usize = 6000;
 const DEFAULT_CAPTURE_FONT_SIZE: u16 = 16;
+const ENV_ENABLE_LEGACY_TOOLS: &str = "OZONE_MCP_ENABLE_LEGACY_TOOLS";
+const LEGACY_TOOL_NAMES: &[&str] = &[
+    "mock_backend_tool",
+    "launcher_smoke",
+    "session_tool",
+    "message_tool",
+    "memory_tool",
+    "search_tool",
+    "branch_tool",
+    "swipe_tool",
+    "export_tool",
+    "import_card",
+];
+const LEGACY_CAPTURE_TARGETS: &[&str] = &[
+    "base_ozone_plus_shell",
+    "ozone_plus_main_menu",
+    "ozone_plus_sessions",
+    "ozone_plus_characters",
+    "ozone_plus_character_create",
+    "ozone_plus_character_import",
+    "ozone_plus_settings",
+    "ozone_plus_conversation",
+    "ozone_plus_help",
+];
+const ACTIVE_MOCK_USER_JOURNEYS: &[&str] = &["launcher_monitor_roundtrip"];
 const LEGACY_MOCK_USER_JOURNEYS: &[&str] = &[
     "launcher_monitor_roundtrip",
     "launcher_to_ozone_plus",
     "ozone_plus_chat_journey",
 ];
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ToolScope {
+    ActiveRc,
+    LegacyArchived,
+}
+
+pub(crate) fn legacy_tools_enabled() -> bool {
+    env_flag_enabled(ENV_ENABLE_LEGACY_TOOLS)
+}
+
+fn env_flag_enabled(name: &str) -> bool {
+    env::var(name)
+        .map(|value| {
+            matches!(
+                value.trim().to_ascii_lowercase().as_str(),
+                "1" | "true" | "yes" | "on"
+            )
+        })
+        .unwrap_or(false)
+}
+
+pub(crate) fn is_legacy_tool_name(tool_name: &str) -> bool {
+    LEGACY_TOOL_NAMES.contains(&tool_name)
+}
+
+pub(crate) fn is_legacy_capture_target(target_name: &str) -> bool {
+    LEGACY_CAPTURE_TARGETS.contains(&target_name)
+}
+
+pub(crate) fn is_legacy_mock_user_journey(journey_name: &str) -> bool {
+    LEGACY_MOCK_USER_JOURNEYS.contains(&journey_name)
+        && !ACTIVE_MOCK_USER_JOURNEYS.contains(&journey_name)
+}
+
+pub(crate) fn scoped_capture_targets(
+    include_legacy: bool,
+) -> Vec<&'static CapturableScreenJourneyDefinition> {
+    capturable_screen_journey_builders()
+        .iter()
+        .filter(|entry| include_legacy || !is_legacy_capture_target(entry.target_screen))
+        .collect()
+}
+
+fn mock_user_journey_names(include_legacy: bool) -> &'static [&'static str] {
+    if include_legacy {
+        LEGACY_MOCK_USER_JOURNEYS
+    } else {
+        ACTIVE_MOCK_USER_JOURNEYS
+    }
+}
+
 pub fn run_stdio_server() -> Result<()> {
     let stdin = io::stdin();
     let stdout = io::stdout();
@@ -1294,6 +1371,8 @@ fn screenshot_file_stem(filename: Option<&str>, target: &str) -> Result<String> 
 
 #[derive(Debug, Serialize)]
 struct ToolDefinition {
+    #[serde(skip)]
+    scope: ToolScope,
     name: &'static str,
     description: &'static str,
     #[serde(rename = "inputSchema")]
@@ -1301,8 +1380,20 @@ struct ToolDefinition {
 }
 
 fn tool_definitions() -> Vec<ToolDefinition> {
+    scoped_tool_definitions(legacy_tools_enabled())
+}
+
+fn scoped_tool_definitions(include_legacy: bool) -> Vec<ToolDefinition> {
+    all_tool_definitions(include_legacy)
+        .into_iter()
+        .filter(|tool| include_legacy || tool.scope == ToolScope::ActiveRc)
+        .collect()
+}
+
+fn all_tool_definitions(include_legacy: bool) -> Vec<ToolDefinition> {
     vec![
         ToolDefinition {
+            scope: ToolScope::ActiveRc,
             name: "workspace_status",
             description: "Inspect Ozone workspace roots, members, and default paths.",
             input_schema: json!({
@@ -1312,6 +1403,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::ActiveRc,
             name: "cargo_tool",
             description: "Run focused cargo build/test/check/clippy commands inside the Ozone workspace.",
             input_schema: json!({
@@ -1328,6 +1420,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::ActiveRc,
             name: "catalog_list",
             description: "List GGUF files and broken symlinks in the active or sandboxed models directory.",
             input_schema: json!({
@@ -1339,6 +1432,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::ActiveRc,
             name: "preferences_get",
             description: "Read the active or sandboxed Ozone preferences.json file.",
             input_schema: json!({
@@ -1350,6 +1444,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::ActiveRc,
             name: "sandbox_tool",
             description: "Create or destroy a temp-XDG sandbox for Ozone smoke tests.",
             input_schema: json!({
@@ -1368,6 +1463,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::LegacyArchived,
             name: "mock_backend_tool",
             description: "Start or stop a mock KoboldCpp-compatible backend inside a sandbox.",
             input_schema: json!({
@@ -1383,6 +1479,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::LegacyArchived,
             name: "session_tool",
             description: "Create, list, inspect metadata, or load transcripts for ozone+ sessions.",
             input_schema: json!({
@@ -1401,6 +1498,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::LegacyArchived,
             name: "message_tool",
             description: "Send a runtime-backed message through ozone-plus.",
             input_schema: json!({
@@ -1418,6 +1516,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::LegacyArchived,
             name: "memory_tool",
             description: "Create note memories, pin message memories, or list pinned memories.",
             input_schema: json!({
@@ -1435,6 +1534,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::LegacyArchived,
             name: "search_tool",
             description: "Run ozone-plus session/global search or trigger index rebuild with structured command results.",
             input_schema: json!({
@@ -1450,6 +1550,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::LegacyArchived,
             name: "branch_tool",
             description: "Create, list, or activate ozone+ branches.",
             input_schema: json!({
@@ -1468,6 +1569,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::LegacyArchived,
             name: "swipe_tool",
             description: "Add, list, or activate ozone+ swipe candidates.",
             input_schema: json!({
@@ -1490,6 +1592,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::LegacyArchived,
             name: "export_tool",
             description: "Export ozone+ sessions or transcripts, optionally writing files.",
             input_schema: json!({
@@ -1507,6 +1610,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::LegacyArchived,
             name: "import_card",
             description: "Import a character card into ozone+ from a file path or JSON string.",
             input_schema: json!({
@@ -1523,6 +1627,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::LegacyArchived,
             name: "launcher_smoke",
             description: "Drive the base ozone launcher in a PTY and report whether it handed off into a launcher-managed ozone+ session.",
             input_schema: json!({
@@ -1537,14 +1642,15 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::ActiveRc,
             name: "screen_nav_targets",
-            description: "List centralized cold-start navigation targets for capturable ozone and ozone+ screens.",
+            description: "List centralized cold-start navigation targets for active capturable Ozone screens.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "target": {
                         "type": "string",
-                        "enum": capturable_screen_journey_builders()
+                        "enum": scoped_capture_targets(include_legacy)
                             .iter()
                             .map(|entry| entry.target_screen)
                             .collect::<Vec<_>>()
@@ -1554,19 +1660,20 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::ActiveRc,
             name: "mock_user_tool",
-            description: "Play through named front-door terminal journeys in real ozone / ozone-plus binaries using PTY input only. Omitting sandboxId auto-prepares the recommended temp-XDG sandbox for the requested target or journey.",
+            description: "Play through active front-door terminal journeys in real Ozone binaries using PTY input only. Omitting sandboxId auto-prepares the recommended temp-XDG sandbox for the requested target or journey.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "sandboxId": { "type": "string" },
                     "journey": {
                         "type": "string",
-                        "enum": LEGACY_MOCK_USER_JOURNEYS
+                        "enum": mock_user_journey_names(include_legacy)
                     },
                     "target": {
                         "type": "string",
-                        "enum": capturable_screen_journey_builders()
+                        "enum": scoped_capture_targets(include_legacy)
                             .iter()
                             .map(|entry| entry.target_screen)
                             .collect::<Vec<_>>()
@@ -1587,15 +1694,16 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::ActiveRc,
             name: "screenshot_tool",
-            description: "Navigate to a centralized capturable screen target and save a PNG plus JSON terminal snapshot. Omitting sandboxId auto-prepares the target's recommended temp-XDG sandbox.",
+            description: "Navigate to an active capturable Ozone screen target and save a PNG plus JSON terminal snapshot. Omitting sandboxId auto-prepares the target's recommended temp-XDG sandbox.",
             input_schema: json!({
                 "type": "object",
                 "properties": {
                     "sandboxId": { "type": "string" },
                     "target": {
                         "type": "string",
-                        "enum": capturable_screen_journey_builders()
+                        "enum": scoped_capture_targets(include_legacy)
                             .iter()
                             .map(|entry| entry.target_screen)
                             .collect::<Vec<_>>()
@@ -1620,6 +1728,7 @@ fn tool_definitions() -> Vec<ToolDefinition> {
             }),
         },
         ToolDefinition {
+            scope: ToolScope::ActiveRc,
             name: "screen_check_tool",
             description: "Run structured grid-based assertions against a screenshot JSON sidecar or matching PNG artifact path.",
             input_schema: json!({

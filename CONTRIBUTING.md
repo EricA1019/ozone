@@ -1,7 +1,7 @@
 # Contributing to Ozone
 
 Ozone is being prepared for an RC as a local model/config capability profiler.
-Keep contributions aligned with that scope.
+Keep contributions aligned with `docs/RC_SCOPE.md`.
 
 ## Current Scope
 

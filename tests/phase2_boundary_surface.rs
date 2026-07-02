@@ -6,14 +6,20 @@ const CORE_LIB_PATH: &str = "crates/ozone-core/src/lib.rs";
 const INSTALL_SCRIPT_PATH: &str = "contrib/sync-local-install.sh";
 
 #[test]
-fn workspace_and_install_surface_no_longer_reference_plus_or_mcp_binaries() {
+fn workspace_and_install_surface_no_longer_references_removed_plus_binary() {
     let cargo_toml = fs::read_to_string(CARGO_TOML_PATH).expect("read Cargo.toml");
     let install_script = fs::read_to_string(INSTALL_SCRIPT_PATH).expect("read install script");
 
     assert!(!cargo_toml.contains("apps/ozone-plus"));
-    assert!(!cargo_toml.contains("apps/ozone-mcp"));
     assert!(!install_script.contains("ozone-plus"));
-    assert!(!install_script.contains("ozone-mcp"));
+    assert!(
+        cargo_toml.contains("apps/ozone-mcp"),
+        "ozone-mcp is an active RC automation binary and should stay in the workspace"
+    );
+    assert!(
+        install_script.contains("ozone-mcp"),
+        "local install sync should keep the ozone-mcp release artifact current"
+    );
 }
 
 #[test]

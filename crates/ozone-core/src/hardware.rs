@@ -421,7 +421,11 @@ mod tests {
     #[test]
     fn hardware_profile_json_roundtrip() {
         let profile = HardwareProfile {
-            gpu: Some(GpuMemory { used_mb: 512, free_mb: 11776, total_mb: 12288 }),
+            gpu: Some(GpuMemory {
+                used_mb: 512,
+                free_mb: 11776,
+                total_mb: 12288,
+            }),
             gpu_name: Some("NVIDIA GeForce RTX 3060".into()),
             ram_total_mb: 32000,
             ram_free_mb: 16000,
@@ -451,7 +455,8 @@ mod tests {
     fn hardware_profile_unknown_fields_ignored() {
         // Forward compatibility: extra fields should not break deserialization.
         let json = r#"{"ramTotalMb":16000,"ramFreeMb":8000,"ramUsedMb":8000,"cpuLogical":8,"cpuPhysical":4,"unknownField":"ignored"}"#;
-        let profile: HardwareProfile = serde_json::from_str(json).expect("deserialize with unknown field");
+        let profile: HardwareProfile =
+            serde_json::from_str(json).expect("deserialize with unknown field");
         assert_eq!(profile.ram_total_mb, 16000);
         assert_eq!(profile.cpu_logical, 8);
     }

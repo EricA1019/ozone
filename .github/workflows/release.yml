@@ -1,4 +1,4 @@
-name: Release (base ozone artifact)
+name: Release (ozone RC artifacts)
 
 on:
   push:
@@ -9,9 +9,9 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: 'Base ozone release tag (e.g. v0.1.0)'
+        description: 'Ozone release tag (e.g. v0.4.8-rc1)'
         required: true
-        default: 'v0.1.0'
+        default: 'v0.4.8-rc1'
 
 env:
   CARGO_TERM_COLOR: always
@@ -59,7 +59,7 @@ jobs:
           fi
 
   build:
-    name: Build base ozone Linux x86_64
+    name: Build ozone Linux x86_64
     if: github.ref_type == 'tag'
     runs-on: ubuntu-latest
     permissions:
@@ -90,19 +90,24 @@ jobs:
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
-      - name: Build base ozone release artifact
-        run: cargo build --release -p ozone --features full
+      - name: Build release artifacts
+        run: |
+          cargo build --release -p ozone --features full
+          cargo build --release -p ozone-mcp-app
 
       - name: Strip binary
-        run: strip target/release/ozone
+        run: |
+          strip target/release/ozone
+          strip target/release/ozone-mcp
 
-      - name: Package base ozone artifact
+      - name: Package ozone artifacts
         id: package
         run: |
           VERSION=${{ steps.version.outputs.tag }}
           ARCHIVE="ozone-${VERSION}-linux-x86_64.tar.gz"
           cp target/release/ozone ozone
-          tar -czf "$ARCHIVE" ozone contrib/launch-koboldcpp.sh README.md LICENSE
+          cp target/release/ozone-mcp ozone-mcp
+          tar -czf "$ARCHIVE" ozone ozone-mcp README.md LICENSE
           echo "archive=$ARCHIVE" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release

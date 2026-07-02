@@ -58,16 +58,13 @@ pub fn install_tier_from_github(tier_binary_name: &str) -> Result<PathBuf, Strin
         .get(&asset_url)
         .send()
         .map_err(|e| format!("Download failed: {e}"))?;
-    let bytes = response
-        .bytes()
-        .map_err(|e| format!("Read failed: {e}"))?;
+    let bytes = response.bytes().map_err(|e| format!("Read failed: {e}"))?;
 
     let dest_path = install_dir.join(tier_binary_name);
     let mut dest_file = std::fs::File::create(&dest_path)
         .map_err(|e| format!("Cannot write to {}: {e}", dest_path.display()))?;
 
-    std::io::copy(&mut bytes.as_ref(), &mut dest_file)
-        .map_err(|e| format!("Write failed: {e}"))?;
+    std::io::copy(&mut bytes.as_ref(), &mut dest_file).map_err(|e| format!("Write failed: {e}"))?;
 
     #[cfg(unix)]
     {

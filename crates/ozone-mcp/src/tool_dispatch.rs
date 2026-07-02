@@ -1,7 +1,7 @@
 use anyhow::Result;
 use serde_json::Value;
 
-use crate::{tools, OzoneMcpServer, ToolReply};
+use crate::{is_legacy_tool_name, legacy_tools_enabled, tools, OzoneMcpServer, ToolReply};
 
 type ToolHandler = fn(&mut OzoneMcpServer, &Value) -> Result<ToolReply>;
 
@@ -94,7 +94,26 @@ pub fn dispatch_tool_call(
     tool_name: &str,
     arguments: &Value,
 ) -> Result<ToolReply> {
+    dispatch_tool_call_with_legacy_mode(server, tool_name, arguments, legacy_tools_enabled())
+}
+
+pub(crate) fn dispatch_tool_call_with_legacy_mode(
+    server: &mut OzoneMcpServer,
+    tool_name: &str,
+    arguments: &Value,
+    include_legacy: bool,
+) -> Result<ToolReply> {
     if let Some(route) = TOOL_ROUTES.iter().find(|route| route.name == tool_name) {
+        if !include_legacy && is_legacy_tool_name(tool_name) {
+            return Ok(ToolReply::error(
+                "Legacy MCP tool is archived".to_owned(),
+                serde_json::json!({
+                    "error": format!("tool `{tool_name}` is archived and disabled by default"),
+                    "enableWith": "OZONE_MCP_ENABLE_LEGACY_TOOLS=1",
+                    "scope": "legacy-archived"
+                }),
+            ));
+        }
         return (route.handler)(server, arguments);
     }
 

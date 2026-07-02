@@ -90,7 +90,11 @@ pub(super) fn apply_eval_run_event(app: &mut super::App, event: EvalRunEvent) {
                 let log_dir = root.join("results").join("logs");
                 let _ = std::fs::create_dir_all(&log_dir);
                 let log_path = log_dir.join("eval-errors.log");
-                if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&log_path) {
+                if let Ok(mut f) = std::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&log_path)
+                {
                     use std::io::Write;
                     let ts = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
                     let _ = writeln!(f, "[{ts}] model={model} {error_msg}");

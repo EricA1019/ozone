@@ -48,6 +48,6 @@ fn launcher_and_monitor_surface_only_report_managed_llamacpp_runtime() {
             "monitor still contains {legacy_marker}"
         );
     }
-    assert!(launcher.contains(":8989"));
-    assert!(monitor.contains(":8989"));
+    assert!(launcher.contains("DEFAULT_LLAMACPP_PORT"));
+    assert!(monitor.contains("DEFAULT_LLAMACPP_PORT"));
 }

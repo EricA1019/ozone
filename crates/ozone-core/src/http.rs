@@ -25,7 +25,10 @@ pub fn default_client() -> reqwest::Result<reqwest::Client> {
 ///
 /// - `connect_secs`: maximum time to wait for a TCP/TLS handshake.
 /// - `timeout_secs`: maximum time for the entire request (including body).
-pub fn client_with_timeouts(connect_secs: u64, timeout_secs: u64) -> reqwest::Result<reqwest::Client> {
+pub fn client_with_timeouts(
+    connect_secs: u64,
+    timeout_secs: u64,
+) -> reqwest::Result<reqwest::Client> {
     reqwest::Client::builder()
         .connect_timeout(Duration::from_secs(connect_secs))
         .timeout(Duration::from_secs(timeout_secs))

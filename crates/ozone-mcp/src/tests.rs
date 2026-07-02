@@ -1,14 +1,16 @@
+use super::tool_dispatch;
 use super::{
     capturable_screen_journey_builders, default_preferences_json, merge_json_objects,
-    mock_user_capture_settings, normalize_preferences_json, screenshot_capture_config,
-    tool_definitions, EnvOverrideGuard, OzoneMcpServer, Sandbox,
+    mock_user_capture_settings, normalize_preferences_json, scoped_capture_targets,
+    scoped_tool_definitions, screenshot_capture_config, EnvOverrideGuard, OzoneMcpServer, Sandbox,
+    LEGACY_TOOL_NAMES,
 };
-use crate::testing::{MockUserAction, MockUserJourneyStep};
-use ozone_core::session::SessionId;
-use serde_json::{json, Value};
+use crate::testing::MockUserAction;
+use serde_json::json;
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command;
 use uuid::Uuid;
 
 fn with_front_door_profile<T>(profile: &str, f: impl FnOnce() -> T) -> T {
@@ -22,7 +24,7 @@ fn with_front_door_profile<T>(profile: &str, f: impl FnOnce() -> T) -> T {
 }
 
 fn assert_release_front_door_binaries_exist(server: &OzoneMcpServer) {
-    for binary in ["ozone", "ozone-plus"] {
+    for binary in ["ozone", "ozone-mcp"] {
         let path = server.repo_root.join("target/release").join(binary);
         assert!(
             path.is_file(),
@@ -33,102 +35,22 @@ fn assert_release_front_door_binaries_exist(server: &OzoneMcpServer) {
     }
 }
 
-fn assert_mock_user_success(data: &Value, context: &str) {
-    let final_tail = data
-        .get("finalTail")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
-    assert_eq!(
-        data.get("runnerOk").and_then(Value::as_bool),
-        Some(true),
-        "{context}: PTY runner failed\n{}",
-        final_tail
-    );
-    assert_eq!(
-        data.get("success").and_then(Value::as_bool),
-        Some(true),
-        "{context}: journey markers were not reached\n{}",
-        final_tail
-    );
-}
-
-fn build_fresh_base_launcher_journey(
-    server: &OzoneMcpServer,
-) -> crate::testing::MockUserJourneySpec {
-    crate::testing::MockUserJourneySpec {
-        name: "release_fresh_base_launcher".to_owned(),
-        cwd: server.repo_root.to_string_lossy().into_owned(),
-        command: crate::testing::append_args(
-            &crate::testing::front_door_binary_command(
-                &server.repo_root,
-                "ozone",
-                &["--mode", "base"],
-            ),
-            &["--no-browser"],
-        ),
-        steps: vec![MockUserJourneyStep::wait_for(
-            "reach launcher",
-            35000,
-            ["Launch", "Open ozone+", "Settings"],
-        )],
-    }
-}
-
-fn run_release_binary(
-    server: &OzoneMcpServer,
-    sandbox_id: &str,
-    binary: &str,
-    args: &[&str],
-) -> super::CommandOutput {
+fn run_release_binary(server: &OzoneMcpServer, binary: &str, args: &[&str]) -> String {
     let program = server.repo_root.join("target/release").join(binary);
-    let program = program.display().to_string();
-    let args = args
-        .iter()
-        .map(|value| (*value).to_owned())
-        .collect::<Vec<_>>();
-    let output = server
-        .run_workspace_command(&program, &args, Some(sandbox_id))
-        .expect("release binary command");
+    let output = Command::new(&program)
+        .args(args)
+        .current_dir(&server.repo_root)
+        .output()
+        .unwrap_or_else(|error| panic!("failed to run {}: {error}", program.display()));
     assert!(
-        output.success,
-        "release command failed: {}\nstdout:\n{}\nstderr:\n{}",
-        output.command, output.stdout, output.stderr
+        output.status.success(),
+        "release command failed: {} {}\nstdout:\n{}\nstderr:\n{}",
+        program.display(),
+        args.join(" "),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
-    output
-}
-
-fn first_session_id(server: &OzoneMcpServer, sandbox_id: &str) -> String {
-    server
-        .with_repo(Some(sandbox_id), |repo| {
-            Ok(repo
-                .list_sessions()?
-                .into_iter()
-                .next()
-                .map(|session| session.session_id.to_string()))
-        })
-        .expect("list sessions")
-        .expect("persisted session")
-}
-
-fn active_transcript_len(server: &OzoneMcpServer, sandbox_id: &str, session_id: &str) -> usize {
-    let session_id = SessionId::parse(session_id).expect("valid session id");
-    server
-        .with_repo(Some(sandbox_id), |repo| {
-            Ok(repo.get_active_branch_transcript(&session_id)?.len())
-        })
-        .expect("active transcript")
-}
-
-fn release_smoke_artifact_dir(name: &str) -> PathBuf {
-    let output_dir = Path::new(env!("CARGO_MANIFEST_DIR"))
-        .parent()
-        .and_then(Path::parent)
-        .expect("repo root")
-        .join("target/test-artifacts/ozone-mcp")
-        .join("release-smoke")
-        .join(format!("{name}-{}", Uuid::new_v4()));
-    fs::create_dir_all(&output_dir).expect("create release-smoke artifact dir");
-    output_dir
+    String::from_utf8_lossy(&output.stdout).into_owned()
 }
 
 #[test]
@@ -217,6 +139,102 @@ fn capturable_screen_library_covers_base_and_ozone_plus_entry_surfaces() {
             "ozone_plus_conversation",
             "ozone_plus_help",
         ]
+    );
+}
+
+#[test]
+fn default_tool_definitions_hide_legacy_archived_tools() {
+    let definitions = scoped_tool_definitions(false);
+    let names: Vec<_> = definitions.iter().map(|tool| tool.name).collect();
+
+    for legacy_tool in LEGACY_TOOL_NAMES {
+        assert!(
+            !names.contains(legacy_tool),
+            "default tools/list should hide legacy tool {legacy_tool}"
+        );
+    }
+    assert!(names.contains(&"workspace_status"));
+    assert!(names.contains(&"mock_user_tool"));
+    assert!(names.contains(&"screenshot_tool"));
+}
+
+#[test]
+fn legacy_tool_definitions_are_available_when_opted_in() {
+    let definitions = scoped_tool_definitions(true);
+    let names: Vec<_> = definitions.iter().map(|tool| tool.name).collect();
+
+    for legacy_tool in LEGACY_TOOL_NAMES {
+        assert!(
+            names.contains(legacy_tool),
+            "legacy opt-in should expose tool {legacy_tool}"
+        );
+    }
+}
+
+#[test]
+fn active_tool_schemas_hide_legacy_screen_targets_by_default() {
+    let definitions = scoped_tool_definitions(false);
+    let screenshot_tool = definitions
+        .iter()
+        .find(|tool| tool.name == "screenshot_tool")
+        .expect("screenshot_tool");
+    let target_enum = screenshot_tool.input_schema["properties"]["target"]["enum"]
+        .as_array()
+        .expect("target enum");
+
+    assert_eq!(target_enum.len(), scoped_capture_targets(false).len());
+    assert!(!target_enum.contains(&json!("base_ozone_plus_shell")));
+    assert!(!target_enum.contains(&json!("ozone_plus_help")));
+}
+
+#[test]
+fn legacy_tool_schemas_restore_archived_screen_targets_when_opted_in() {
+    let definitions = scoped_tool_definitions(true);
+    let screenshot_tool = definitions
+        .iter()
+        .find(|tool| tool.name == "screenshot_tool")
+        .expect("screenshot_tool");
+    let target_enum = screenshot_tool.input_schema["properties"]["target"]["enum"]
+        .as_array()
+        .expect("target enum");
+
+    assert_eq!(target_enum.len(), scoped_capture_targets(true).len());
+    assert!(target_enum.contains(&json!("base_ozone_plus_shell")));
+    assert!(target_enum.contains(&json!("ozone_plus_help")));
+}
+
+#[test]
+fn legacy_tool_dispatch_is_blocked_without_opt_in() {
+    let mut server = OzoneMcpServer::new().expect("server");
+    let reply = tool_dispatch::dispatch_tool_call_with_legacy_mode(
+        &mut server,
+        "session_tool",
+        &json!({ "action": "unsupported" }),
+        false,
+    )
+    .expect("dispatch reply");
+
+    assert!(reply.is_error);
+    assert_eq!(reply.summary, "Legacy MCP tool is archived");
+    assert_eq!(reply.data["scope"], json!("legacy-archived"));
+}
+
+#[test]
+fn legacy_tool_dispatch_reaches_handler_when_opted_in() {
+    let mut server = OzoneMcpServer::new().expect("server");
+    let reply = tool_dispatch::dispatch_tool_call_with_legacy_mode(
+        &mut server,
+        "session_tool",
+        &json!({ "action": "unsupported" }),
+        true,
+    )
+    .expect("dispatch reply");
+
+    assert!(reply.is_error);
+    assert_eq!(reply.summary, "Session action failed");
+    assert_eq!(
+        reply.data["error"],
+        json!("unsupported session action `unsupported`")
     );
 }
 
@@ -313,7 +331,7 @@ fn mock_user_target_lookup_builds_screen_journey() {
 
 #[test]
 fn mock_user_tool_is_listed_with_capture_inputs() {
-    let definition = tool_definitions()
+    let definition = scoped_tool_definitions(false)
         .into_iter()
         .find(|tool| tool.name == "mock_user_tool")
         .expect("mock_user_tool");
@@ -387,7 +405,7 @@ fn mock_user_capture_settings_add_step_artifacts_when_enabled() {
 
 #[test]
 fn screenshot_tool_is_listed_with_required_inputs() {
-    let definition = tool_definitions()
+    let definition = scoped_tool_definitions(false)
         .into_iter()
         .find(|tool| tool.name == "screenshot_tool")
         .expect("screenshot tool");
@@ -400,7 +418,7 @@ fn screenshot_tool_is_listed_with_required_inputs() {
             .as_array()
             .expect("target enum")
             .len(),
-        capturable_screen_journey_builders().len()
+        scoped_capture_targets(false).len()
     );
 }
 
@@ -448,7 +466,7 @@ fn screenshot_tool_reports_clear_error_for_unknown_target() {
 
 #[test]
 fn screen_check_tool_is_listed_with_required_inputs() {
-    let definition = tool_definitions()
+    let definition = scoped_tool_definitions(false)
         .into_iter()
         .find(|tool| tool.name == "screen_check_tool")
         .expect("screen check tool");
@@ -623,365 +641,42 @@ fn screen_check_tool_reports_clear_error_for_missing_sidecar() {
 
 #[test]
 #[ignore = "release smoke"]
-fn release_smoke_gate_fresh_temp_xdg_user_path() {
+fn release_smoke_gate_current_rc_surface() {
     with_front_door_profile("release", || {
-        let mut server = OzoneMcpServer::new().expect("server");
+        let server = OzoneMcpServer::new().expect("server");
         assert_release_front_door_binaries_exist(&server);
 
-        let launcher_sandbox = server
-            .prepare_sandbox_from_setup(None, crate::testing::sandbox_setup_base_launch_path())
-            .expect("launcher sandbox");
-        let launcher_journey = build_fresh_base_launcher_journey(&server);
-        let launcher_capture_args = json!({
-            "filename": "base-launcher-release",
-            "rows": 55,
-            "columns": 140,
-            "fontSize": 18,
-            "tailChars": 2048
-        });
-        let launcher_capture_dir = release_smoke_artifact_dir("base-launcher");
-        let launcher_capture = screenshot_capture_config(
-            &launcher_capture_args,
-            &launcher_capture_dir,
-            "base_launcher",
-        )
-        .expect("launcher capture config");
-        let launcher_run = server
-            .run_mock_user_journey(
-                &launcher_sandbox.sandbox_id,
-                &launcher_journey,
-                Some("base_launcher".to_owned()),
-                &launcher_capture_args,
-                Some(launcher_capture),
-            )
-            .expect("launcher run");
-        assert_mock_user_success(&launcher_run, "fresh temp-XDG base launcher");
-
-        let launcher_sidecar = launcher_run["paths"]["json"].as_str().unwrap_or_else(|| {
-            panic!(
-                "fresh temp-XDG base launcher capture did not produce a sidecar\n{}",
-                serde_json::to_string_pretty(&launcher_run)
-                    .unwrap_or_else(|_| launcher_run.to_string())
-            )
-        });
-        assert!(
-            Path::new(launcher_sidecar).is_file(),
-            "fresh temp-XDG base launcher sidecar missing: {launcher_sidecar}"
-        );
-        let launcher_screen = server
-            .screen_check_tool(&json!({
-                "sidecarPath": launcher_sidecar,
-                "checks": [
-                    { "type": "text_present", "text": "Launch" },
-                    { "type": "text_present", "text": "Open ozone+" },
-                    { "type": "text_present", "text": "Settings" },
-                    { "type": "text_absent", "text": "local-first AI tooling" }
-                ]
-            }))
-            .expect("launcher screen check");
-        assert!(
-            !launcher_screen.is_error,
-            "fresh temp-XDG launcher screen check failed: {}\n{}",
-            launcher_screen.summary,
-            serde_json::to_string_pretty(&launcher_screen.data)
-                .unwrap_or_else(|_| launcher_screen.data.to_string())
-        );
-
-        let mut settings_journey = crate::testing::build_base_settings_screen_journey(
-            &server.repo_root,
-            "release_fresh_base_settings",
-            &json!({}),
-        )
-        .expect("settings journey");
-        if let Some(step) = settings_journey.steps.last_mut() {
-            step.expect_any.clear();
-            step.settle_ms = step.settle_ms.max(1000);
+        let root_help = run_release_binary(&server, "ozone", &["--help"]);
+        for expected in [
+            "local AI stack operator",
+            "bench",
+            "sweep",
+            "eval",
+            "eval-run",
+            "model",
+            "old chat shell is deprecated and archived",
+        ] {
+            assert!(
+                root_help.contains(expected),
+                "release help missing expected text `{expected}`\n{root_help}"
+            );
         }
-        let settings_capture_args = json!({
-            "filename": "base-settings-release",
-            "rows": 55,
-            "columns": 140,
-            "fontSize": 18,
-            "tailChars": 2048
-        });
-        let settings_capture_dir = release_smoke_artifact_dir("base-settings");
-        let settings_capture = screenshot_capture_config(
-            &settings_capture_args,
-            &settings_capture_dir,
-            "base_settings",
-        )
-        .expect("settings capture config");
-        let settings_run = server
-            .run_mock_user_journey(
-                &launcher_sandbox.sandbox_id,
-                &settings_journey,
-                Some("base_settings".to_owned()),
-                &settings_capture_args,
-                Some(settings_capture),
-            )
-            .expect("settings run");
-        assert_mock_user_success(&settings_run, "fresh temp-XDG base settings");
+        for deprecated in ["ozone-plus", "SillyTavern", "KoboldCpp"] {
+            assert!(
+                !root_help.contains(deprecated),
+                "release help should not expose deprecated text `{deprecated}`\n{root_help}"
+            );
+        }
 
-        let settings_sidecar = settings_run["paths"]["json"].as_str().unwrap_or_else(|| {
-            panic!(
-                "fresh temp-XDG base settings capture did not produce a sidecar\n{}",
-                serde_json::to_string_pretty(&settings_run)
-                    .unwrap_or_else(|_| settings_run.to_string())
-            )
-        });
-        assert!(
-            Path::new(settings_sidecar).is_file(),
-            "fresh temp-XDG base settings sidecar missing: {settings_sidecar}"
-        );
-        let settings_screen = server
-            .screen_check_tool(&json!({
-                "sidecarPath": settings_sidecar,
-                "checks": [
-                    { "type": "text_present", "text": "Settings" },
-                    { "type": "text_present", "text": "Active Defaults" },
-                    { "type": "text_present", "text": "Backend" },
-                    { "type": "text_present", "text": "Frontend" }
-                ]
-            }))
-            .expect("settings screen check");
-        assert!(
-            !settings_screen.is_error,
-            "fresh temp-XDG settings screen check failed: {}\n{}",
-            settings_screen.summary,
-            serde_json::to_string_pretty(&settings_screen.data)
-                .unwrap_or_else(|_| settings_screen.data.to_string())
-        );
+        let bench_help = run_release_binary(&server, "ozone", &["bench", "--help"]);
+        assert!(bench_help.contains("Benchmark a model with specific settings"));
+        assert!(bench_help.contains("--context"));
+        assert!(bench_help.contains("--quant-kv"));
 
-        let confirm_launch_journey = crate::testing::build_base_confirm_launch_screen_journey(
-            &server.repo_root,
-            "release_fresh_base_confirm_launch",
-            &json!({}),
-        )
-        .expect("confirm launch journey");
-        let confirm_launch_capture_args = json!({
-            "filename": "base-confirm-launch-release",
-            "rows": 55,
-            "columns": 140,
-            "fontSize": 18,
-            "tailChars": 2048
-        });
-        let confirm_launch_capture_dir = release_smoke_artifact_dir("base-confirm-launch");
-        let confirm_launch_capture = screenshot_capture_config(
-            &confirm_launch_capture_args,
-            &confirm_launch_capture_dir,
-            "base_confirm_launch",
-        )
-        .expect("confirm launch capture config");
-        let confirm_launch_run = server
-            .run_mock_user_journey(
-                &launcher_sandbox.sandbox_id,
-                &confirm_launch_journey,
-                Some("base_confirm_launch".to_owned()),
-                &confirm_launch_capture_args,
-                Some(confirm_launch_capture),
-            )
-            .expect("confirm launch run");
-        assert_mock_user_success(&confirm_launch_run, "fresh temp-XDG base confirm launch");
-
-        let confirm_launch_sidecar =
-            confirm_launch_run["paths"]["json"]
-                .as_str()
-                .unwrap_or_else(|| {
-                    panic!(
-                        "fresh temp-XDG base confirm launch capture did not produce a sidecar\n{}",
-                        serde_json::to_string_pretty(&confirm_launch_run)
-                            .unwrap_or_else(|_| confirm_launch_run.to_string())
-                    )
-                });
-        assert!(
-            Path::new(confirm_launch_sidecar).is_file(),
-            "fresh temp-XDG base confirm launch sidecar missing: {confirm_launch_sidecar}"
-        );
-        let confirm_launch_screen = server
-            .screen_check_tool(&json!({
-                "sidecarPath": confirm_launch_sidecar,
-                "checks": [
-                    { "type": "text_present", "text": "Confirm Launch" },
-                    { "type": "text_present", "text": "Context:" },
-                    { "type": "text_present", "text": "QuantKV:" },
-                    { "type": "text_absent", "text": "Choose Frontend" }
-                ]
-            }))
-            .expect("confirm launch screen check");
-        assert!(
-            !confirm_launch_screen.is_error,
-            "fresh temp-XDG confirm launch screen check failed: {}\n{}",
-            confirm_launch_screen.summary,
-            serde_json::to_string_pretty(&confirm_launch_screen.data)
-                .unwrap_or_else(|_| confirm_launch_screen.data.to_string())
-        );
-
-        let frontend_choice_journey = crate::testing::build_base_frontend_choice_screen_journey(
-            &server.repo_root,
-            "release_fresh_base_frontend_choice",
-            &json!({}),
-        )
-        .expect("frontend choice journey");
-        let frontend_choice_capture_args = json!({
-            "filename": "base-frontend-choice-release",
-            "rows": 55,
-            "columns": 140,
-            "fontSize": 18,
-            "tailChars": 2048
-        });
-        let frontend_choice_capture_dir = release_smoke_artifact_dir("base-frontend-choice");
-        let frontend_choice_capture = screenshot_capture_config(
-            &frontend_choice_capture_args,
-            &frontend_choice_capture_dir,
-            "base_frontend_choice",
-        )
-        .expect("frontend choice capture config");
-        let frontend_choice_run = server
-            .run_mock_user_journey(
-                &launcher_sandbox.sandbox_id,
-                &frontend_choice_journey,
-                Some("base_frontend_choice".to_owned()),
-                &frontend_choice_capture_args,
-                Some(frontend_choice_capture),
-            )
-            .expect("frontend choice run");
-        assert_mock_user_success(&frontend_choice_run, "fresh temp-XDG base frontend choice");
-
-        let frontend_choice_sidecar = frontend_choice_run["paths"]["json"]
-            .as_str()
-            .unwrap_or_else(|| {
-                panic!(
-                    "fresh temp-XDG base frontend choice capture did not produce a sidecar\n{}",
-                    serde_json::to_string_pretty(&frontend_choice_run)
-                        .unwrap_or_else(|_| frontend_choice_run.to_string())
-                )
-            });
-        assert!(
-            Path::new(frontend_choice_sidecar).is_file(),
-            "fresh temp-XDG base frontend choice sidecar missing: {frontend_choice_sidecar}"
-        );
-        let frontend_choice_screen = server
-            .screen_check_tool(&json!({
-                "sidecarPath": frontend_choice_sidecar,
-                "checks": [
-                    { "type": "text_present", "text": "Choose Frontend" },
-                    { "type": "text_present", "text": "SillyTavern" },
-                    { "type": "text_present", "text": "ozone+" },
-                    { "type": "text_absent", "text": "Launching KoboldCpp" }
-                ]
-            }))
-            .expect("frontend choice screen check");
-        assert!(
-            !frontend_choice_screen.is_error,
-            "fresh temp-XDG frontend choice screen check failed: {}\n{}",
-            frontend_choice_screen.summary,
-            serde_json::to_string_pretty(&frontend_choice_screen.data)
-                .unwrap_or_else(|_| frontend_choice_screen.data.to_string())
-        );
-
-        let chat_sandbox = server
-            .prepare_mock_user_sandbox(None, Some("ozone_plus_chat_journey"), None)
-            .expect("chat sandbox");
-        run_release_binary(
-            &server,
-            &chat_sandbox.sandbox_id,
-            "ozone-plus",
-            &["create", "Release Smoke Fresh"],
-        );
-        let session_id = first_session_id(&server, &chat_sandbox.sandbox_id);
-        run_release_binary(
-            &server,
-            &chat_sandbox.sandbox_id,
-            "ozone-plus",
-            &["send", session_id.as_str(), "Check the observatory key"],
-        );
-
-        let transcript_len = active_transcript_len(&server, &chat_sandbox.sandbox_id, &session_id);
-        assert!(
-            transcript_len >= 2,
-            "fresh-user ozone+ smoke should persist a non-empty transcript"
-        );
-    });
-}
-
-#[test]
-#[ignore = "release smoke"]
-fn release_smoke_gate_existing_user_data_path() {
-    with_front_door_profile("release", || {
-        let mut server = OzoneMcpServer::new().expect("server");
-        assert_release_front_door_binaries_exist(&server);
-
-        let first_args = json!({
-            "prompt": "Remember the observatory key"
-        });
-        let prepared = server
-            .prepare_mock_user_sandbox(None, Some("ozone_plus_chat_journey"), None)
-            .expect("prepared sandbox");
-        run_release_binary(
-            &server,
-            &prepared.sandbox_id,
-            "ozone-plus",
-            &["create", "Release Smoke Existing"],
-        );
-        let session_id = first_session_id(&server, &prepared.sandbox_id);
-        run_release_binary(
-            &server,
-            &prepared.sandbox_id,
-            "ozone-plus",
-            &[
-                "send",
-                session_id.as_str(),
-                first_args["prompt"].as_str().expect("first prompt"),
-            ],
-        );
-
-        let existing_session_count = server
-            .with_repo(Some(&prepared.sandbox_id), |repo| {
-                Ok(repo.list_sessions()?.len())
-            })
-            .expect("existing session count");
-        assert!(
-            existing_session_count >= 1,
-            "existing-user smoke needs persisted data before the second pass"
-        );
-        let initial_transcript_len =
-            active_transcript_len(&server, &prepared.sandbox_id, &session_id);
-
-        let second_args = json!({
-            "prompt": "Use the existing data path and answer again"
-        });
-        let list_output =
-            run_release_binary(&server, &prepared.sandbox_id, "ozone-plus", &["list"]);
-        assert!(
-            list_output.stdout.contains(&session_id),
-            "existing-user smoke should list the persisted session"
-        );
-        run_release_binary(
-            &server,
-            &prepared.sandbox_id,
-            "ozone-plus",
-            &[
-                "send",
-                session_id.as_str(),
-                second_args["prompt"].as_str().expect("second prompt"),
-            ],
-        );
-
-        let final_session_count = server
-            .with_repo(Some(&prepared.sandbox_id), |repo| {
-                Ok(repo.list_sessions()?.len())
-            })
-            .expect("final session count");
-        assert!(
-            final_session_count >= existing_session_count,
-            "existing-user smoke should preserve or grow persisted session state"
-        );
-        let final_transcript_len =
-            active_transcript_len(&server, &prepared.sandbox_id, &session_id);
-        assert!(
-            final_transcript_len > initial_transcript_len,
-            "existing-user smoke should append to the persisted transcript"
-        );
+        let eval_help = run_release_binary(&server, "ozone", &["eval-run", "--help"]);
+        assert!(eval_help.contains("Run the native eval pipeline"));
+        assert!(eval_help.contains("--base-url"));
+        assert!(eval_help.contains("--context-length"));
     });
 }
 

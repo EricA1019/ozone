@@ -321,7 +321,10 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
             let bar_len = 12usize;
             let filled = (ratio * bar_len as f64).round() as usize;
             let bar: String = std::iter::repeat_n("\u{2588}", filled)
-                .chain(std::iter::repeat_n("\u{2591}", bar_len.saturating_sub(filled)))
+                .chain(std::iter::repeat_n(
+                    "\u{2591}",
+                    bar_len.saturating_sub(filled),
+                ))
                 .collect();
             let cuda_flag = if hw.cuda_available {
                 let ver = hw.cuda_version.as_deref().unwrap_or("?");
@@ -345,13 +348,19 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
         let bar_len = 12usize;
         let filled = (ram_ratio * bar_len as f64).round() as usize;
         let ram_bar: String = std::iter::repeat_n("\u{2588}", filled)
-            .chain(std::iter::repeat_n("\u{2591}", bar_len.saturating_sub(filled)))
+            .chain(std::iter::repeat_n(
+                "\u{2591}",
+                bar_len.saturating_sub(filled),
+            ))
             .collect();
         let ram_label = Line::from(vec![
             Span::styled("  RAM ", style_bold_cyan()),
             Span::styled(&ram_bar, style_cyan()),
             Span::styled(
-                format!(" {}/{} MB ({:.0}%)", hw.ram_used_mb, hw.ram_total_mb, ram_pct),
+                format!(
+                    " {}/{} MB ({:.0}%)",
+                    hw.ram_used_mb, hw.ram_total_mb, ram_pct
+                ),
                 style_cyan(),
             ),
         ]);
@@ -382,7 +391,10 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
     let lines = vec![Line::from(vec![
         Span::styled(format!("  {llama_icon} llama.cpp  "), llama_style),
         Span::styled(llama_model_label, style_violet()),
-        Span::styled("  :8989", style_gray()),
+        Span::styled(
+            format!("  :{}", ozone_core::paths::DEFAULT_LLAMACPP_PORT),
+            style_gray(),
+        ),
     ])];
     f.render_widget(Paragraph::new(lines), inner);
 }
@@ -404,7 +416,10 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
                 Span::styled("  Model: ", crate::theme::style_gray()),
                 Span::styled(record.model_name.clone(), crate::theme::style_bold_lime()),
                 Span::styled(
-                    format!("  {:.1}GB  ctx:{}", record.model_size_gb, record.recommendation.context_size),
+                    format!(
+                        "  {:.1}GB  ctx:{}",
+                        record.model_size_gb, record.recommendation.context_size
+                    ),
                     crate::theme::style_cyan(),
                 ),
             ])));
@@ -413,38 +428,38 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
             .iter()
             .enumerate()
             .map(|(i, action)| {
-            if i == app.selected_action {
-                let marker = if (app.ticker / 6).is_multiple_of(2) {
-                    HEX_CURSOR
+                if i == app.selected_action {
+                    let marker = if (app.ticker / 6).is_multiple_of(2) {
+                        HEX_CURSOR
+                    } else {
+                        HEX_FILLED
+                    };
+                    ListItem::new(Line::from(vec![
+                        Span::styled(format!("{marker} "), style_lime()),
+                        Span::styled(format!("{}", i + 1), style_gray()),
+                        Span::raw("  "),
+                        Span::styled(
+                            action.label.clone(),
+                            Style::default().fg(LIME).add_modifier(Modifier::BOLD),
+                        ),
+                        Span::styled(format!("  {}", action.description), style_gray()),
+                        Span::styled(format!("  /{}", action.command), style_hint_key()),
+                    ]))
                 } else {
-                    HEX_FILLED
-                };
-                ListItem::new(Line::from(vec![
-                    Span::styled(format!("{marker} "), style_lime()),
-                    Span::styled(format!("{}", i + 1), style_gray()),
-                    Span::raw("  "),
-                    Span::styled(
-                        action.label.clone(),
-                        Style::default().fg(LIME).add_modifier(Modifier::BOLD),
-                    ),
-                    Span::styled(format!("  {}", action.description), style_gray()),
-                    Span::styled(format!("  /{}", action.command), style_hint_key()),
-                ]))
-            } else {
-                ListItem::new(Line::from(vec![
-                    Span::raw("  "),
-                    Span::styled(format!("{}", i + 1), style_gray()),
-                    Span::raw("  "),
-                    Span::styled(action.label.clone(), style_gray()),
-                    Span::styled(
-                        format!("  {}", action.description),
-                        Style::default().fg(GRAY),
-                    ),
-                    Span::styled(format!("  /{}", action.command), style_muted()),
-                ]))
-            }
-        })
-        .collect();
+                    ListItem::new(Line::from(vec![
+                        Span::raw("  "),
+                        Span::styled(format!("{}", i + 1), style_gray()),
+                        Span::raw("  "),
+                        Span::styled(action.label.clone(), style_gray()),
+                        Span::styled(
+                            format!("  {}", action.description),
+                            Style::default().fg(GRAY),
+                        ),
+                        Span::styled(format!("  /{}", action.command), style_muted()),
+                    ]))
+                }
+            })
+            .collect();
         all.extend(action_items);
         all
     };
@@ -656,7 +671,6 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
         );
     }
 }
-
 
 /// Bottom hint bar showing key bindings for the launcher screen.
 fn render_hint_bar(f: &mut Frame, area: Rect) {

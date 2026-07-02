@@ -627,7 +627,7 @@ impl ConversationStore for InMemoryConversationStore {
             .max_by_key(|record| record.branch.created_at))
     }
 
-        #[allow(clippy::expect_used)]
+    #[allow(clippy::expect_used)]
     fn activate_branch(
         &mut self,
         command: ActivateBranchCommand,

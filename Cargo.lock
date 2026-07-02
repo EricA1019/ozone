@@ -1990,6 +1990,14 @@ dependencies = [
 ]
 
 [[package]]
+name = "ozone-mcp-app"
+version = "0.4.8-alpha"
+dependencies = [
+ "anyhow",
+ "ozone-mcp",
+]
+
+[[package]]
 name = "ozone-memory"
 version = "0.4.8-alpha"
 dependencies = [

@@ -8,7 +8,22 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ---
 
-## [0.4.8-alpha] — ozone+ Hardening + MCP Front-Door Automation
+## [Unreleased] — RC Scope Cleanup
+
+### Changed
+- Workspace truth now matches RC scope: `apps/ozone-mcp` is an active workspace
+  member and the archived ozone+ chat TUI crate is explicitly excluded from RC
+  workspace gates.
+- Release smoke now validates current RC artifacts (`ozone` and `ozone-mcp`)
+  plus the active CLI/help surface instead of removed ozone+ chat/session flows.
+- Release packaging builds and ships `ozone` plus `ozone-mcp`; the deprecated
+  KoboldCpp launcher script is no longer part of the RC artifact.
+- README, CONTRIBUTING, CLAUDE, and active `.mex` setup/architecture anchors now
+  describe the same llama.cpp-centered RC product surface.
+
+---
+
+## [0.4.8-alpha] — Archived ozone+ Hardening + MCP Front-Door Automation
 
 ### Fixed
 - ozone+ Display settings now map visual entries to the correct backing preferences
@@ -53,10 +68,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/)
 
 ### Rules
 See `.mex/conventions/versioning.md` for when to bump vs. rely on git hash.
-
----
-
-## [Unreleased]
 
 ---
 

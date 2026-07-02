@@ -46,8 +46,7 @@ pub struct CalibrationResult {
 pub async fn run_calibration(base_url: &str) -> CalibrationResult {
     let overall_start = Instant::now();
 
-    let client = match ozone_core::http::client_with_timeout(60)
-    {
+    let client = match ozone_core::http::client_with_timeout(60) {
         Ok(c) => c,
         Err(e) => {
             return CalibrationResult {

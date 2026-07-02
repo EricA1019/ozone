@@ -213,7 +213,6 @@ fn dispatch_action(app: &mut App, action: BenchLauncherAction) {
         BenchLauncherAction::QuickSweep => {
             #[cfg(feature = "profiling-ui")]
             {
-                use crate::profiling::ProfilingAction;
                 crate::ui::configure_hub_flow::start_quick_sweep(app);
             }
             #[cfg(not(feature = "profiling-ui"))]

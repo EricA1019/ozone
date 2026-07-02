@@ -1,4 +1,3 @@
-
 use super::App;
 use crate::theme::*;
 use chrono::Local;
@@ -53,7 +52,11 @@ fn render_header(f: &mut Frame, area: Rect, app: &App) {
         title.push(Span::styled(model.as_str(), style_violet()));
         title.push(Span::styled(
             if is_running { "  ●" } else { "  ○" },
-            if is_running { style_green() } else { style_gray() },
+            if is_running {
+                style_green()
+            } else {
+                style_gray()
+            },
         ));
         if let Some(tps) = app.tokens_per_sec {
             title.push(Span::styled(format!("  {tps:.1} t/s"), style_lime()));
@@ -95,13 +98,21 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
             };
             let filled = (ratio * bar_len as f64).round() as usize;
             let bar: String = std::iter::repeat_n("\u{2588}", filled)
-                .chain(std::iter::repeat_n("\u{2591}", bar_len.saturating_sub(filled)))
+                .chain(std::iter::repeat_n(
+                    "\u{2591}",
+                    bar_len.saturating_sub(filled),
+                ))
                 .collect();
             let label = Line::from(vec![
                 Span::styled("  GPU ", style_bold_violet()),
                 Span::styled(&bar, Style::default().fg(color)),
                 Span::styled(
-                    format!(" {}/{} MB ({:.0}%)", gpu.used_mb, gpu.total_mb, ratio * 100.0),
+                    format!(
+                        " {}/{} MB ({:.0}%)",
+                        gpu.used_mb,
+                        gpu.total_mb,
+                        ratio * 100.0
+                    ),
                     Style::default().fg(color),
                 ),
             ]);
@@ -110,13 +121,21 @@ fn render_resources(f: &mut Frame, area: Rect, app: &App) {
         let ram_ratio = (hw.ram_used_mb as f64 / hw.ram_total_mb as f64).clamp(0.0, 1.0);
         let ram_filled = (ram_ratio * bar_len as f64).round() as usize;
         let ram_bar: String = std::iter::repeat_n("\u{2588}", ram_filled)
-            .chain(std::iter::repeat_n("\u{2591}", bar_len.saturating_sub(ram_filled)))
+            .chain(std::iter::repeat_n(
+                "\u{2591}",
+                bar_len.saturating_sub(ram_filled),
+            ))
             .collect();
         let ram_label = Line::from(vec![
             Span::styled("  RAM ", style_bold_cyan()),
             Span::styled(&ram_bar, style_cyan()),
             Span::styled(
-                format!(" {}/{} MB ({:.0}%)", hw.ram_used_mb, hw.ram_total_mb, ram_ratio * 100.0),
+                format!(
+                    " {}/{} MB ({:.0}%)",
+                    hw.ram_used_mb,
+                    hw.ram_total_mb,
+                    ram_ratio * 100.0
+                ),
                 style_cyan(),
             ),
         ]);
@@ -206,7 +225,10 @@ fn render_services(f: &mut Frame, area: Rect, app: &App) {
     let lines = vec![Line::from(vec![
         Span::styled(format!("  {llama_icon} llama.cpp  "), llama_style),
         Span::styled(llama_model_str, style_violet()),
-        Span::styled("  :8989", style_gray()),
+        Span::styled(
+            format!("  :{}", ozone_core::paths::DEFAULT_LLAMACPP_PORT),
+            style_gray(),
+        ),
         Span::styled(tps_str, style_green()),
     ])];
     f.render_widget(Paragraph::new(lines), inner);

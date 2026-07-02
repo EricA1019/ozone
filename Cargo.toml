@@ -11,12 +11,18 @@ categories = ["command-line-utilities"]
 
 [workspace]
 members = [
+    "apps/ozone-mcp",
     "crates/ozone-core",
     "crates/ozone-engine",
     "crates/ozone-inference",
     "crates/ozone-mcp",
     "crates/ozone-memory",
     "crates/ozone-persist",
+]
+exclude = [
+    # Archived ozone+ chat shell. Keep it outside RC workspace gates until it is
+    # either reactivated intentionally or removed.
+    "crates/ozone-tui",
 ]
 resolver = "2"
 

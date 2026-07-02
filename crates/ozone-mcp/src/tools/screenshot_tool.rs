@@ -1,3 +1,5 @@
+use crate::is_legacy_capture_target;
+use crate::legacy_tools_enabled;
 use crate::optional_string;
 use crate::required_string;
 use crate::screenshot_capture_config;
@@ -14,6 +16,11 @@ pub fn screenshot_tool(
     args: &serde_json::Value,
 ) -> anyhow::Result<ToolReply> {
     let target = required_string(args, "target")?;
+    if !legacy_tools_enabled() && is_legacy_capture_target(&target) {
+        anyhow::bail!(
+            "legacy screen targets are archived; set OZONE_MCP_ENABLE_LEGACY_TOOLS=1 to opt in"
+        );
+    }
     let output_dir = PathBuf::from(required_string(args, "outputDir")?);
     let prepared_sandbox = server.prepare_target_sandbox(
         optional_string(args, "sandboxId").map(|s| s.to_string()),

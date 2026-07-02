@@ -71,8 +71,10 @@ pub mod paths {
 
     const ENV_MODELS_DIR: &str = "OZONE_MODELS_DIR";
     const ENV_KOBOLDCPP_LAUNCHER: &str = "OZONE_KOBOLDCPP_LAUNCHER";
-    const DEFAULT_KOBOLDCPP_PORT: u16 = 5001;
-    const DEFAULT_LLAMACPP_PORT: u16 = 8989;
+    pub const DEFAULT_LOCALHOST: &str = "127.0.0.1";
+    pub const DEFAULT_KOBOLDCPP_PORT: u16 = 5001;
+    pub const DEFAULT_LLAMACPP_PORT: u16 = 8989;
+    pub const DEFAULT_LLAMACPP_BASE_URL: &str = "http://127.0.0.1:8989";
 
     fn project_dirs() -> Option<ProjectDirs> {
         ProjectDirs::from("", "", "ozone")
@@ -129,22 +131,22 @@ pub mod paths {
 
     /// The default KoboldCpp API base URL.
     pub fn koboldcpp_base_url() -> String {
-        format!("http://127.0.0.1:{DEFAULT_KOBOLDCPP_PORT}")
+        format!("http://{DEFAULT_LOCALHOST}:{DEFAULT_KOBOLDCPP_PORT}")
     }
 
     /// The default KoboldCpp ready-check endpoint.
     pub fn koboldcpp_ready_url() -> String {
-        format!("http://127.0.0.1:{DEFAULT_KOBOLDCPP_PORT}/api/v1/model")
+        format!("http://{DEFAULT_LOCALHOST}:{DEFAULT_KOBOLDCPP_PORT}/api/v1/model")
     }
 
     /// The default KoboldCpp perf endpoint.
     pub fn koboldcpp_perf_url() -> String {
-        format!("http://127.0.0.1:{DEFAULT_KOBOLDCPP_PORT}/api/extra/perf")
+        format!("http://{DEFAULT_LOCALHOST}:{DEFAULT_KOBOLDCPP_PORT}/api/extra/perf")
     }
 
     /// The default KoboldCpp generate endpoint.
     pub fn koboldcpp_generate_url() -> String {
-        format!("http://127.0.0.1:{DEFAULT_KOBOLDCPP_PORT}/api/v1/generate")
+        format!("http://{DEFAULT_LOCALHOST}:{DEFAULT_KOBOLDCPP_PORT}/api/v1/generate")
     }
 
     pub fn preferences_path() -> Option<PathBuf> {
@@ -165,12 +167,12 @@ pub mod paths {
 
     /// The default llama.cpp server API base URL.
     pub fn llamacpp_base_url() -> String {
-        format!("http://127.0.0.1:{DEFAULT_LLAMACPP_PORT}")
+        DEFAULT_LLAMACPP_BASE_URL.to_owned()
     }
 
     /// The default llama.cpp ready-check endpoint.
     pub fn llamacpp_ready_url() -> String {
-        format!("http://127.0.0.1:{DEFAULT_LLAMACPP_PORT}/health")
+        format!("{DEFAULT_LLAMACPP_BASE_URL}/health")
     }
 
     pub fn llamacpp_log_path() -> Option<PathBuf> {
@@ -241,8 +243,10 @@ mod tests {
         );
     }
 
+    #[serial_test::serial(env_vars)]
     #[test]
     fn path_helpers_append_stable_suffixes() {
+        let _guard = crate::test_support::env_lock().lock().unwrap();
         let data_dir = paths::data_dir();
         let session_id = SessionId::parse("123e4567-e89b-12d3-a456-426614174000").unwrap();
 

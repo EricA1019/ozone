@@ -1,27 +1,36 @@
 ---
 name: agents
 description: Always-loaded project anchor. Read this first. Contains project identity, non-negotiables, commands, and pointer to ROUTER.md for full context.
-last_updated: 2025-07-14
+last_updated: 2026-06-28
 ---
 
 # Ozone
 
 ## What This Is
-A local-first AI backend management and conversation toolkit for llama.cpp and KoboldCpp, shipping as three tiers: ozonelite (lean backend control), ozone (profiling and tuning), and ozone+ (full conversation UX with sessions, memory, and roleplay).
+Ozone is a terminal-native local model operator for llama.cpp-backed launching,
+monitoring, profiling, benchmarking, sweeps, GGUF model inventory, and
+capability evaluation.
+
+RC scope is the active `ozone` binary plus the developer-facing `ozone-mcp`
+automation binary. The former ozone+ chat shell, KoboldCpp/SillyTavern handoff,
+roleplay, memories, branches, swipes, and transcript UX are deprecated and
+archived under `docs/archive/ozone-plus/`.
 
 ## Non-Negotiables
 - Never commit secrets or API keys
 - All code changes must pass `cargo clippy --workspace --all-targets -- -D warnings` (zero warnings)
 - No `unwrap()` in runtime code paths — use `?` or log and continue
 - Persistence schema changes require a migration path — never break existing user data
-- Feature gating: lite ⊂ base ⊂ full — higher tiers include all lower-tier features
+- Feature gating must keep the default RC surface coherent: launch, profiling,
+  benchmark, sweep, analyze, eval, and model management
 
 ## Commands
 - Test: `make test` or `cargo test --workspace`
 - Lint: `make lint` or `cargo clippy --workspace --all-targets -- -D warnings`
 - Preflight: `make preflight` (lint + test — run before every commit)
-- Build: `cargo build` (debug) or `cargo build --release`
-- Install: `make install` (both binaries) / `make install-lite` / `make install-base` / `make install-plus`
+- Build: `cargo build --workspace` (debug) or `cargo build --release -p ozone --features full`
+- Install: `make install` / `make update-oz`
+- Release smoke: `make release-smoke`
 - Prune: `make prune-artifacts` (clean up target/ bloat)
 
 ## After Every Task

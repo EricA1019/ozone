@@ -27,5 +27,5 @@ fn native_benchmark_surface_is_managed_llamacpp_only() {
     assert!(!main_rs.contains("BenchBackend::KoboldCpp"));
     assert!(!main_rs.contains("resolved_kobold_launcher_path"));
     assert!(!profiling_rs.contains("BenchBackend::KoboldCpp"));
-    assert!(bench_rs.contains("8989"));
+    assert!(bench_rs.contains("DEFAULT_LLAMACPP_PORT"));
 }

@@ -228,7 +228,11 @@ fn assign_profile_labels(frontier: &[ParetoPoint]) -> Vec<String> {
     let speed_idx = frontier
         .iter()
         .enumerate()
-        .max_by(|(_, a), (_, b)| a.tokens_per_sec.partial_cmp(&b.tokens_per_sec).unwrap_or(std::cmp::Ordering::Equal))
+        .max_by(|(_, a), (_, b)| {
+            a.tokens_per_sec
+                .partial_cmp(&b.tokens_per_sec)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        })
         .map(|(i, _)| i)
         .expect("frontier is non-empty after early return check");
 

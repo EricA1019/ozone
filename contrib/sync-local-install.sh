@@ -6,7 +6,7 @@ usage() {
     cat <<'EOF'
 Usage: ./contrib/sync-local-install.sh [--no-build] [--verify-only]
 
-Build the current release binary and sync it into:
+Build the current release binaries and sync them into:
   - ~/.cargo/bin
   - ~/.local/bin
 
@@ -122,7 +122,9 @@ DEST_DIRS=("$HOME/.cargo/bin" "$HOME/.local/bin")
 INSTALL_STATE_DIR="${XDG_DATA_HOME:-$HOME/.local/share}/ozone"
 INSTALL_SOURCE_ROOT_FILE="$INSTALL_STATE_DIR/install-source-root.txt"
 BINARIES=(
+    "ozone:ozone"
     "ozone:oz"
+    "ozone-mcp:ozone-mcp"
 )
 
 if [[ "$NO_BUILD" -eq 0 ]]; then
@@ -130,6 +132,7 @@ if [[ "$NO_BUILD" -eq 0 ]]; then
     (
         cd "$REPO_ROOT"
         cargo build --release -p ozone --features full
+        cargo build --release -p ozone-mcp-app
     )
 fi
 
@@ -139,12 +142,11 @@ else
     echo "Syncing local installs..."
 fi
 for spec in "${BINARIES[@]}"; do
-    IFS=":" read -r package_name binary_name <<<"$spec"
-    # The Cargo build produces a binary named after the package
-    source_path="$TARGET_DIR/$package_name"
+    IFS=":" read -r source_binary binary_name <<<"$spec"
+    source_path="$TARGET_DIR/$source_binary"
 
     if [[ ! -x "$source_path" ]]; then
-        echo "Missing built binary for $package_name at $source_path" >&2
+        echo "Missing built binary for $source_binary at $source_path" >&2
         exit 1
     fi
 

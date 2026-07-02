@@ -1,5 +1,8 @@
-use crate::optional_string;
 /// MCP tool: mock user tool.
+use crate::is_legacy_capture_target;
+use crate::is_legacy_mock_user_journey;
+use crate::legacy_tools_enabled;
+use crate::optional_string;
 use crate::OzoneMcpServer;
 use crate::ToolReply;
 use anyhow::bail;
@@ -11,6 +14,24 @@ pub fn mock_user_tool(
 ) -> anyhow::Result<ToolReply> {
     let requested_journey = optional_string(args, "journey");
     let requested_target = optional_string(args, "target");
+    if !legacy_tools_enabled() {
+        if requested_journey
+            .as_deref()
+            .is_some_and(is_legacy_mock_user_journey)
+        {
+            bail!(
+                "legacy mock-user journeys are archived; set OZONE_MCP_ENABLE_LEGACY_TOOLS=1 to opt in"
+            );
+        }
+        if requested_target
+            .as_deref()
+            .is_some_and(is_legacy_capture_target)
+        {
+            bail!(
+                "legacy screen targets are archived; set OZONE_MCP_ENABLE_LEGACY_TOOLS=1 to opt in"
+            );
+        }
+    }
     let prepared_sandbox = server.prepare_mock_user_sandbox(
         optional_string(args, "sandboxId"),
         requested_journey.as_deref(),

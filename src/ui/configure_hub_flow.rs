@@ -119,10 +119,7 @@ pub(super) async fn handle_configure_hub_key(app: &mut App, key: KeyEvent) {
 #[cfg(feature = "profiling-ui")]
 pub(super) fn start_quick_sweep(app: &mut App) {
     // Use the same pattern as handle_profile_confirm_key: get model from catalog
-    let Some(record) = app
-        .filtered_catalog_get(app.selected_model)
-        .map(|r| r.clone())
-    else {
+    let Some(record) = app.filtered_catalog_get(app.selected_model) else {
         app.set_error("No model selected. Open the launcher and pick a model first.".into());
         return;
     };
@@ -142,7 +139,9 @@ pub(super) fn start_quick_sweep(app: &mut App) {
     let cancel_clone = cancel.clone();
     app.start_profile_workflow(rx, cancel);
     let _handle = tokio::spawn(async move {
-        crate::profiling::run_workflow(request, tx, cancel_clone).await;
+        if let Err(error) = crate::profiling::run_workflow(request, tx, cancel_clone).await {
+            eprintln!("Quick sweep workflow failed: {error}");
+        }
     });
     app.set_status(format!("Quick sweep started for '{}'...", model_name));
 }

@@ -21,31 +21,33 @@ last_updated: 2026-04-16
 
 - `crates/ozone-mcp` owns the MCP server logic and tool implementations.
 - `apps/ozone-mcp` is the thin stdio entrypoint; keep product logic out of the binary crate.
+- Default MCP discovery is active-RC only. Archived ozone+ tools and screen targets must stay behind `OZONE_MCP_ENABLE_LEGACY_TOOLS=1`.
 - Prefer direct crate APIs for ozone+ persistence-heavy flows (`ozone-persist`, `ozone-memory`, etc.) and only shell out when the real behavior still lives in the end-user CLI/runtime.
 - Sandbox helpers must isolate HOME/XDG paths without breaking cargo-backed subprocesses; preserve `CARGO_HOME` and `RUSTUP_HOME`.
 
 ## Steps
 
 1. Add or update tool schemas in `tool_definitions()` and keep the names/arguments stable and JSON-shaped.
-2. Route new tool calls through the main server dispatch instead of embedding ad hoc RPC handling in multiple places.
-3. Reuse existing repository/config helpers first:
+2. Assign each tool active-RC or legacy-archived scope and verify default `tools/list` hides the legacy set.
+3. Route new tool calls through the main server dispatch instead of embedding ad hoc RPC handling in multiple places.
+4. Reuse existing repository/config helpers first:
    - direct repo access for sessions, metadata, memory, branches, swipes, exports, imports
    - subprocess wrappers only for runtime-backed send/search/index rebuild or launcher PTY flows
-4. For smoke tools, use temp-XDG sandboxes rather than the real user environment, and return structured findings instead of raw terminal dumps alone.
-5. If the task is **front-door user simulation**, add or extend `mock_user_tool` with named journeys instead of inventing another replay surface:
+5. For smoke tools, use temp-XDG sandboxes rather than the real user environment, and return structured findings instead of raw terminal dumps alone.
+6. If the task is **front-door user simulation**, add or extend `mock_user_tool` with named journeys instead of inventing another replay surface:
    - use real `target/debug/ozone` / `target/debug/ozone-plus` binaries when available
    - drive them with PTY keys/text only after setup
    - assert against recent-screen terminal markers, not repo internals
    - let `mock_user_tool` / `screenshot_tool` auto-create the recommended sandbox when the default capturable-screen setup is enough; pass `sandboxId` only when a test needs custom persistent state across calls
-6. If the task is **release-readiness smoke**, keep the same ozone-mcp sandbox/orchestration layer but switch the launched app surface to shipped artifacts:
+7. If the task is **release-readiness smoke**, keep the same ozone-mcp sandbox/orchestration layer but switch the launched app surface to shipped artifacts:
   - use `target/release` binaries by setting `OZONE_MCP_FRONT_DOOR_PROFILE=release` for PTY front-door journeys
   - prefer release CLI commands inside the same temp-XDG sandbox for ozone+ persistence/data-path assertions instead of relying on PTY main-menu navigation alone
   - seed at least one mock model when base Ozone smoke must get past splash; `splash_ready` stays false when hardware is ready but the catalog is empty
-7. Validate both layers:
+8. Validate both layers:
    - cargo compile/tests for the crate
    - at least one real stdio MCP smoke (`initialize`, `tools/list`, one or more `tools/call` flows)
    - when `mock_user_tool` changes, run at least one named journey end-to-end
-8. Update docs and `.mex` state once the tool surface or automation boundary changes materially.
+9. Update docs and `.mex` state once the tool surface or automation boundary changes materially.
 
 ## Gotchas
 
@@ -54,6 +56,7 @@ last_updated: 2026-04-16
 - PTY-driven launcher smoke is noisy and partial by nature; report concrete findings like launcher invocation, created sessions, and captured tail text instead of pretending it is a perfect UI oracle.
 - A sandboxed HOME can break cargo/rustup if you do not preserve the real toolchain env vars.
 - A sandboxed HOME also hides user-site Python modules from the VTE screenshot helper; if `screenshot_tool` reports missing `pyte` or Pillow in temp-XDG runs, export the real site-packages path through `PYTHONPATH` or install those modules system-wide.
+- Legacy ozone+ automation can still be run for migration/debugging, but only with `OZONE_MCP_ENABLE_LEGACY_TOOLS=1`; do not use that opt-in in RC smoke unless the test is explicitly proving archived behavior.
 - The MCP library crate (`crates/ozone-mcp`) is not the executable that PTY flows launch; after changing that crate, rebuild `-p ozone-mcp-app` or the workspace so `target/debug/ozone-mcp` actually refreshes.
 - Release smoke can be green in-crate while `make release-gates` still fails on `verify-install-parity`; if `ozone-mcp` changed, resync the installed binary and rerun the same gate.
 - For front-door journeys, matching against the entire accumulated capture can create false positives; prefer a recent-screen window or step-local view so old launcher text does not satisfy a later ozone+ assertion.
@@ -68,9 +71,9 @@ last_updated: 2026-04-16
 - `cargo test -p ozone-mcp release_smoke_gate -- --ignored --nocapture --test-threads=1`
 - real stdio MCP smoke for:
   - `initialize`
-  - `tools/list`
-  - at least one sandboxed ozone+ flow (`sandbox_tool` + `session_tool` + `message_tool` or `search_tool`)
-  - and, when `mock_user_tool` changes, at least one front-door journey such as `launcher_monitor_roundtrip` or `ozone_plus_chat_journey`
+  - `tools/list` with default active-only discovery
+  - at least one active tool flow such as `workspace_status`, `catalog_list`, or `sandbox_tool`
+  - and, when `mock_user_tool` changes, at least one active front-door journey such as `launcher_monitor_roundtrip`
 
 ## Debug
 

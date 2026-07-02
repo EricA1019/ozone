@@ -16,6 +16,8 @@ chat shell is deprecated and archived under `docs/archive/ozone-plus/`.
 
 ## Current Scope
 
+The authoritative RC scope is tracked in `docs/RC_SCOPE.md`.
+
 Active RC scope:
 
 - launch and monitor a managed llama.cpp server
@@ -42,8 +44,8 @@ cd ozone
 ./contrib/sync-local-install.sh
 ```
 
-The sync helper builds the active release binary and installs it as `oz` in
-`~/.cargo/bin` and `~/.local/bin` when the checksum changed.
+The sync helper builds the active release artifacts and installs `ozone`, `oz`,
+and `ozone-mcp` in `~/.cargo/bin` and `~/.local/bin` when checksums changed.
 
 Build manually:
 
@@ -218,6 +220,9 @@ Each eval appears in the launcher with a category bracket and description:
 `crates/ozone-mcp` contains developer automation for repo-aware workflows and
 smoke testing. It is not part of the end-user launcher flow and still contains
 some archived ozone+ helpers that should not define RC product scope.
+By default MCP `tools/list` exposes only active RC tools. Set
+`OZONE_MCP_ENABLE_LEGACY_TOOLS=1` only when you intentionally need archived
+ozone+ automation during migration or forensic testing.
 
 ## Troubleshooting
 
