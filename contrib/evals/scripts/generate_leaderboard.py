@@ -226,9 +226,9 @@ body.light .model-name { color: #333; }
              'Cascadia Code', 'Consolas', monospace;
              font-variant-numeric: tabular-nums; font-weight: 500; }
 .score-best { font-weight: 700; }
-.score-best .score-val { color: #22c55e !important; text-shadow: 0 0 8px rgba(34,197,94,0.3); }
-.score-best { position: relative; }
-.score-best::after { content: '★'; color: #22c55e; font-size: 9px; position: absolute; top: 1px; right: 3px; opacity: 0.8; }
+.score-best::after { content: '★'; color: #22c55e; font-size: 9px;
+                    position: absolute; top: 1px; right: 3px; opacity: 0.8; }
+.cell-highlight { background: rgba(34,197,94,0.06); box-shadow: inset 0 0 12px rgba(34,197,94,0.08); }
 .score-green { color: #22c55e; }
 .score-yellow { color: #f59e0b; }
 .score-orange { color: #e67e22; }
