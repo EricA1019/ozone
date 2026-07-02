@@ -11,10 +11,8 @@ Usage:
 """
 
 import argparse
-import csv
 import json
 import os
-import re
 import sys
 from collections import defaultdict
 from datetime import datetime, timezone
@@ -80,35 +78,22 @@ QUANT_COLORS = {
 
 # ── Result parsing ────────────────────────────────────────────────────────────
 
+_OZONE_SCORES_DIR = "results/ozone_scores"
+
+
 def find_score_files(root: str) -> list[Path]:
-    """Find all result CSV files under root/results/<output_dir>/<model>/."""
-    results_dir = Path(root) / "results"
-    if not results_dir.exists():
+    """Find all ozone score JSON files under root/results/ozone_scores/."""
+    scores_dir = Path(root) / _OZONE_SCORES_DIR
+    if not scores_dir.exists():
         return []
-    return sorted(results_dir.rglob("results_*.csv"))
+    return sorted(scores_dir.glob("*.json"))
 
 
-def parse_result_csv(path: Path) -> dict:
-    """Parse a single result CSV into {metric_name: float_value}."""
-    scores = {}
-    with open(path, newline="") as f:
-        reader = csv.DictReader(f)
-        for row in reader:
-            for key, val in row.items():
-                try:
-                    scores[key.strip()] = float(val.strip())
-                except (ValueError, AttributeError):
-                    pass
-    return scores
-
-
-def infer_model_name(file_path: Path, root: str) -> str:
-    """Infer model name from path: results/<output_dir>/<model>/..."""
-    # Path structure: results/<dir>/<model>/results_*.csv
-    parts = file_path.relative_to(Path(root) / "results").parts
-    if len(parts) >= 2:
-        return parts[1]  # <model>
-    return file_path.parent.name
+def parse_score_json(path: Path) -> dict:
+    """Parse an ozone score JSON file into {preset.metric: score_percent}."""
+    with open(path) as f:
+        data = json.load(f)
+    return data.get("scores", {})
 
 
 def infer_quant(model_name: str) -> str | None:
@@ -122,29 +107,31 @@ def infer_quant(model_name: str) -> str | None:
 
 
 def collect_data(root: str) -> tuple[dict, dict]:
-    """Return (models, scores) where:
-    - models: {model_name: {quant: str, size: str}}
-    - scores: {model_name: {preset: float}}
+    """Return (models, scores).
+
+    models:  {model_name: {quant: str}}
+    scores:  {model_name: {preset_name: score_pct}}
     """
-    csv_files = find_score_files(root)
+    json_files = find_score_files(root)
     models = {}
     scores = defaultdict(dict)
 
-    for fp in csv_files:
-        model_name = infer_model_name(fp, root)
-        result = parse_result_csv(fp)
-        if model_name not in models:
-            quant = infer_quant(model_name)
-            models[model_name] = {"quant": quant}
+    for fp in json_files:
+        with open(fp) as f:
+            data = json.load(f)
+        model_name = data.get("model", fp.stem)
+        quant = infer_quant(model_name)
+        models[model_name] = {"quant": quant}
 
-        for preset_name, _ in [(p, d) for suite in SCORE_COLUMNS for p, d, _ in [suite]]:
-            task_name = f"lm_eval_{preset_name}" if "lm_eval_" not in preset_name else preset_name
-            for key, val in result.items():
-                # Match metric key patterns: preset.acc, preset.em, etc.
-                if key.startswith(preset_name + ".") or key.startswith(f"results.{preset_name}."):
-                    scores[model_name][preset_name] = val
-                    break
-
+        raw_scores = data.get("scores", {})
+        for key, val in raw_scores.items():
+            # key format: "preset.metric" e.g. "mmlu.acc", "hellaswag.acc_norm"
+            parts = key.split(".", 1)
+            if len(parts) == 2 and isinstance(val, (int, float)):
+                preset_name = parts[0]
+                # Score is already a percentage (0-100) from ozone_eval.py
+                if preset_name not in scores[model_name]:
+                    scores[model_name][preset_name] = val / 100.0
     return models, dict(scores)
 
 
@@ -240,7 +227,8 @@ body.light .model-name { color: #333; }
              font-variant-numeric: tabular-nums; font-weight: 500; }
 .score-best { font-weight: 700; }
 .score-best .score-val { color: #22c55e !important; text-shadow: 0 0 8px rgba(34,197,94,0.3); }
-.score-best::after { content: ' \\u2605'; color: #22c55e; font-size: 10px; vertical-align: super; }
+.score-best { position: relative; }
+.score-best::after { content: '★'; color: #22c55e; font-size: 9px; position: absolute; top: 1px; right: 3px; opacity: 0.8; }
 .score-green { color: #22c55e; }
 .score-yellow { color: #f59e0b; }
 .score-orange { color: #e67e22; }
@@ -351,10 +339,9 @@ def generate_html(models: dict, scores: dict, output_path: str, root: str):
                 bar_pct = min(pct, 100)
                 is_best = (best_scores.get(preset_name) == mname)
                 best_cls = "score-best cell-highlight" if is_best else ""
-                star = " ★" if is_best else ""
                 cells += (f'<td class="score-cell {cls} {best_cls}">'
                           f'<div class="score-bar" style="width:{bar_pct}%"></div>'
-                          f'<span class="score-val">{pct:.0f}{star}</span></td>')
+                          f'<span class="score-val">{pct:.0f}</span></td>')
             else:
                 cells += '<td class="score-none">--</td>'
 

@@ -505,6 +505,14 @@ def main():
     # Print summary to stdout (parseable by Rust)
     print(json.dumps(summary, indent=2))
 
+    # Also save to disk for the HTML leaderboard
+    scores_dir = Path("results/ozone_scores")
+    scores_dir.mkdir(parents=True, exist_ok=True)
+    score_file = scores_dir / f"{model_name}.json"
+    with open(score_file, "w") as f:
+        json.dump(summary, f, indent=2)
+    print(f"\n  Scores saved to {score_file}", file=sys.stderr)
+
 
 if __name__ == "__main__":
     main()
