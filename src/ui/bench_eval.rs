@@ -264,7 +264,12 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
                 crate::theme::style_lime()
             })
             .percent((ratio * 100.0) as u16)
-            .label(format!("{}/{} tasks ({:.0}%)", app.eval_run_tasks_passed, app.eval_run_tasks_run, ratio * 100.0));
+            .label(format!(
+                "{}/{} tasks ({:.0}%)",
+                app.eval_run_tasks_passed,
+                app.eval_run_tasks_run,
+                ratio * 100.0
+            ));
         f.render_widget(gauge, summary_inner[1]);
     }
 

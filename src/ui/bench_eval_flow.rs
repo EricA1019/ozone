@@ -148,9 +148,7 @@ async fn activate_selected(app: &mut App) {
                         return;
                     }
                 };
-                let artifacts_dir = root
-                    .join("results")
-                    .join("creative_writing");
+                let artifacts_dir = root.join("results").join("creative_writing");
                 let base_url = ozone_core::paths::llamacpp_base_url();
                 eprintln!("Creative writing eval starting for {model}…");
                 match crate::creative_writing::run_creative_writing_eval(
@@ -210,7 +208,7 @@ async fn activate_selected(app: &mut App) {
                     &plan,
                     &model_path,
                     &server_path,
-                    8989,
+                    ozone_core::paths::DEFAULT_LLAMACPP_PORT,
                     &output,
                 ) {
                     Ok(path) => eprintln!("Server script written to {}", path.display()),
@@ -312,9 +310,9 @@ pub(crate) async fn start_eval_with_cli_name(app: &mut App, cli_name: &str) {
                 // Use minimal default args for the eval context
                 let args: Vec<String> = vec![
                     "--host".into(),
-                    "127.0.0.1".into(),
+                    ozone_core::paths::DEFAULT_LOCALHOST.into(),
                     "--port".into(),
-                    "8989".into(),
+                    ozone_core::paths::DEFAULT_LLAMACPP_PORT.to_string(),
                     "--ctx-size".into(),
                     "4096".into(),
                     "--no-webui".into(),

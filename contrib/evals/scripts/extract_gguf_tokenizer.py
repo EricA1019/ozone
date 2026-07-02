@@ -1,6 +1,9 @@
 #!/usr/bin/env python3
 """Extract a GGUF model's tokenizer into a HuggingFace-compatible directory.
 
+Uses llama-cpp-python as the primary extraction method (reliable for all GGUF
+models). Falls back to gguf-py for metadata and BPE merge rules.
+
 Usage:
     python extract_gguf_tokenizer.py /path/to/model.gguf [output_dir]
 
@@ -12,213 +15,260 @@ import os
 import sys
 from pathlib import Path
 
-GGUF_PATH = Path(sys.argv[1]) if len(sys.argv) > 1 else None
-OUT_DIR = Path(sys.argv[2]) if len(sys.argv) > 2 else Path("results/tokenizers") / GGUF_PATH.stem if GGUF_PATH else None
 
-if not GGUF_PATH or not GGUF_PATH.exists():
-    print(f"Usage: {sys.argv[0]} /path/to/model.gguf [output_dir]")
-    print(f"Error: {GGUF_PATH} not found")
-    sys.exit(1)
+def get_gguf_merges(gguf_path):
+    """Extract BPE merge rules from GGUF metadata via gguf-py.
 
-print(f"Extracting tokenizer from: {GGUF_PATH}")
-print(f"Output directory: {OUT_DIR}")
+    The GGUF format stores a string array as:
+      [uint64 key_len][uint8 key][uint32 type][uint32 elem_type][uint64 count]
+      followed by [uint64 str_len][uint8 str_bytes] pairs for each element.
+    """
+    try:
+        from gguf import GGUFReader
 
-# ============================================================
-# Load tokenizer data from GGUF using GGUFReader
-# ============================================================
-from gguf import GGUFReader, GGUFValueType
+        reader = GGUFReader(str(gguf_path))
+        merges_f = reader.fields.get('tokenizer.ggml.merges')
+        if merges_f is None:
+            return []
 
-reader = GGUFReader(str(GGUF_PATH))
+        # The first 5 parts are the field header (key, type indicator, count).
+        # After that, merges come as (uint64 length, uint8 data) pairs.
+        parts = merges_f.parts
+        if len(parts) <= 5:
+            return []
 
-# Helper: decode a bytes field (e.g. "gpt2\0" -> "gpt2")
-def decode_bytes_field(memmap):
-    """Decode a numpy memmap of uint8 into a UTF-8 string."""
-    return bytes(memmap).decode('utf-8', errors='replace').rstrip('\x00')
+        merges = []
+        # Skip parts[0..4] (header), then process pairs
+        i = 5
+        while i + 1 < len(parts):
+            # parts[i] should be uint64 (string length)
+            # parts[i+1] should be uint8 (string bytes)
+            if hasattr(parts[i], 'dtype') and parts[i].dtype.name == 'uint64':
+                if hasattr(parts[i+1], 'dtype') and parts[i+1].dtype.name == 'uint8':
+                    text = bytes(parts[i+1]).decode('utf-8', errors='replace').strip()
+                    if text and len(text) > 1:
+                        merges.append(text)
+            i += 2
 
-# Read scalar string fields
-def get_str_field(reader, key):
-    f = reader.fields.get(key)
-    if f is None:
-        return None
-    # String fields have parts: [len, data...]
-    data = None
-    for p in f.parts:
-        if hasattr(p, 'dtype') and p.dtype.name.startswith('uint'):
-            data = bytes(p).decode('utf-8', errors='replace')
-            break
-    return data
+        return merges
+    except Exception:
+        pass
+    return []
 
-# Read tokenizer model type
-tokenizer_model = None
-f = reader.fields.get('tokenizer.ggml.model')
-if f:
-    for p in f.parts:
-        if hasattr(p, 'dtype') and p.dtype.name.startswith('uint'):
-            tokenizer_model = bytes(p).decode('utf-8', errors='replace').rstrip('\x00')
-            break
 
-if not tokenizer_model:
-    print("Error: Could not find tokenizer.ggml.model in GGUF")
-    sys.exit(1)
+def read_gguf_metadata(gguf_path):
+    """Read model type and scores from GGUF metadata."""
+    result = {
+        'tokenizer_model_type': 'Unknown',
+        'merges': [],
+        'scores': [],
+        'architecture': '',
+    }
+    try:
+        from gguf import GGUFReader
 
-print(f"Tokenizer model: {tokenizer_model}")
+        reader = GGUFReader(str(gguf_path))
 
-# Read the concatenated strings blob
-# For KV_TOKENIZER_LIST, the 'data' field is a list of byte offsets
-# and one of the 'parts' contains the concatenated strings as bytes
-tokens_f = reader.fields.get('tokenizer.ggml.tokens')
-if not tokens_f:
-    print("Error: Could not find tokenizer.ggml.tokens")
-    sys.exit(1)
+        # Read architecture (value is in the last uint8 part)
+        f = reader.fields.get('general.architecture')
+        if f:
+            last_uint8 = None
+            for p in reversed(f.parts):
+                if hasattr(p, 'dtype') and p.dtype.name == 'uint8':
+                    last_uint8 = p
+                    break
+            if last_uint8 is not None:
+                result['architecture'] = bytes(last_uint8).decode('utf-8', errors='replace').rstrip('\x00')
 
-# Find the concatenated strings in the parts
-token_bytes = None
-for p in tokens_f.parts:
-    if hasattr(p, 'dtype') and p.dtype.name.startswith('uint') and len(p) > 10000:
-        token_bytes = bytes(p)
-        break
+        # Read tokenizer model type (value is in the last uint8 part)
+        f = reader.fields.get('tokenizer.ggml.model')
+        if f:
+            last_uint8 = None
+            for p in reversed(f.parts):
+                if hasattr(p, 'dtype') and p.dtype.name == 'uint8':
+                    last_uint8 = p
+                    break
+            if last_uint8 is not None:
+                result['tokenizer_model_type'] = bytes(last_uint8).decode('utf-8', errors='replace').rstrip('\x00')
 
-if token_bytes is None:
-    # Try reading from the raw data
-    print("Warning: Could not find concatenated token strings, trying alternate methods")
-    sys.exit(1)
+        # Read scores (for unigram models)
+        f = reader.fields.get('tokenizer.ggml.scores')
+        if f:
+            result['scores'] = list(f.data)
 
-# The data field contains byte offsets (end positions of each token string)
-offsets = list(tokens_f.data)
-num_tokens = len(offsets)
+        # Read merges
+        result['merges'] = get_gguf_merges(gguf_path)
 
-print(f"Number of tokens: {num_tokens}")
+    except Exception as e:
+        print(f"Note: gguf-py metadata read failed ({e})")
 
-# Decode tokens using offsets
-tokens = []
-start = 0
-for end in offsets:
-    token = token_bytes[start:end].decode('utf-8', errors='replace')
-    tokens.append(token)
-    start = end
+    return result
 
-print(f"Decoded {len(tokens)} tokens")
-print(f"First 5: {tokens[:5]}")
-print(f"Last 5:  {tokens[-5:]}")
 
-# Read merges
-merges = []
-merges_f = reader.fields.get('tokenizer.ggml.merges')
-if merges_f:
-    merge_bytes = None
-    for p in merges_f.parts:
-        if hasattr(p, 'dtype') and p.dtype.name.startswith('uint') and len(p) > 100:
-            merge_bytes = bytes(p)
-            break
-    if merge_bytes:
-        merges_text = merge_bytes.decode('utf-8', errors='replace')
-        merges = [m for m in merges_text.split('\n') if m.strip()]
-    print(f"Found {len(merges)} merge rules")
+def main():
+    gguf_path = Path(sys.argv[1]) if len(sys.argv) > 1 else None
+    if not gguf_path or not gguf_path.exists():
+        print(f"Usage: {sys.argv[0]} /path/to/model.gguf [output_dir]")
+        print(f"Error: {gguf_path} not found")
+        sys.exit(1)
 
-# Read special token IDs
-def get_int_field(reader, key):
-    f = reader.fields.get(key)
-    if f is None:
-        return None
-    for p in f.parts:
-        if hasattr(p, 'dtype'):
-            arr = p
-            if len(arr) > 0:
-                return int(arr[0])
-    return None
+    if len(sys.argv) > 2:
+        out_dir = Path(sys.argv[2])
+    else:
+        out_dir = Path("results") / "tokenizers" / gguf_path.stem
 
-bos_id = get_int_field(reader, 'tokenizer.ggml.bos_token_id') or 1
-eos_id = get_int_field(reader, 'tokenizer.ggml.eos_token_id') or 2
-pad_id = get_int_field(reader, 'tokenizer.ggml.padding_token_id') or 0
+    print(f"Extracting tokenizer from: {gguf_path}")
+    print(f"Output directory: {out_dir}")
 
-print(f"Special tokens: BOS={bos_id} ('{tokens[bos_id] if bos_id < len(tokens) else '?'}')")
-print(f"                 EOS={eos_id} ('{tokens[eos_id] if eos_id < len(tokens) else '?'}')")
-print(f"                 PAD={pad_id} ('{tokens[pad_id] if pad_id < len(tokens) else '?'}')")
+    out_dir.mkdir(parents=True, exist_ok=True)
 
-# ============================================================
-# Build HuggingFace tokenizer files
-# ============================================================
-OUT_DIR.mkdir(parents=True, exist_ok=True)
+    # ============================================================
+    # Load tokenizer via llama-cpp-python (reliable for all GGUF models)
+    # ============================================================
+    from llama_cpp import Llama
 
-# 1. vocab.json (token -> id)
-vocab = {t: i for i, t in enumerate(tokens)}
-with open(OUT_DIR / "vocab.json", 'w', encoding='utf-8') as f:
-    json.dump(vocab, f, ensure_ascii=False, indent=2)
+    print("Loading model with llama-cpp-python (n_gpu_layers=0)...")
+    llm = Llama(model_path=str(gguf_path), n_gpu_layers=0, verbose=False)
+    n_vocab = llm._model.n_vocab()
+    print(f"Model vocab size: {n_vocab}")
 
-# 2. merges.txt (BPE merge rules)
-if merges:
-    with open(OUT_DIR / "merges.txt", 'w', encoding='utf-8') as f:
-        f.write('#version: 0.2\n')
-        f.write('\n'.join(merges))
+    tokens = []
+    for i in range(n_vocab):
+        try:
+            t = llm._model.token_get_text(i)
+            tokens.append(t if t is not None else f"<token_{i}>")
+        except Exception:
+            tokens.append(f"<token_{i}>")
 
-# 3. tokenizer_config.json
-tokenizer_config = {
-    "add_prefix_space": False,
-    "bos_token": tokens[bos_id] if bos_id < len(tokens) else "<s>",
-    "eos_token": tokens[eos_id] if eos_id < len(tokens) else "</s>",
-    "pad_token": tokens[pad_id] if pad_id < len(tokens) else "<pad>",
-    "unk_token": tokens[0] if len(tokens) > 0 else "<unk>",
-    "model_max_length": 1000000000000000019884624838656,
-    "tokenizer_class": "GPT2Tokenizer" if tokenizer_model == "gpt2" else "PreTrainedTokenizerFast",
-    "clean_up_tokenization_spaces": False,
-}
-with open(OUT_DIR / "tokenizer_config.json", 'w', encoding='utf-8') as f:
-    json.dump(tokenizer_config, f, ensure_ascii=False, indent=2)
+    print(f"Extracted {len(tokens)} tokens")
+    print(f"First 5: {tokens[:5]}")
+    print(f"Last 5:  {tokens[-5:]}")
 
-# 4. special_tokens_map.json
-special_tokens = {
-    "bos_token": tokens[bos_id] if bos_id < len(tokens) else "<s>",
-    "eos_token": tokens[eos_id] if eos_id < len(tokens) else "</s>",
-    "pad_token": tokens[pad_id] if pad_id < len(tokens) else "<pad>",
-    "unk_token": tokens[0] if len(tokens) > 0 else "<unk>",
-}
-with open(OUT_DIR / "special_tokens_map.json", 'w', encoding='utf-8') as f:
-    json.dump(special_tokens, f, ensure_ascii=False, indent=2)
+    def safe_get(fn, default):
+        try:
+            return fn()
+        except Exception:
+            return default
 
-# 5. tokenizer.json (HuggingFace fast tokenizer format)
-# For GPT-2 BPE, write a minimal tokenizer.json
-if tokenizer_model == "gpt2" and merges:
+    bos_id = safe_get(lambda: llm._model.token_bos(), 1)
+    eos_id = safe_get(lambda: llm._model.token_eos(), 2)
+    pad_id = safe_get(lambda: llm._model.token_pad(), 0)
+
+    # ============================================================
+    # Read metadata and merges via gguf-py
+    # ============================================================
+    meta = read_gguf_metadata(str(gguf_path))
+    print(f"Architecture: {meta['architecture']}")
+    print(f"Tokenizer model type: {meta['tokenizer_model_type']}")
+    print(f"BPE merge rules: {len(meta['merges'])}")
+
+    # Determine tokenizer class for HF config
+    tokenizer_class = 'PreTrainedTokenizerFast'
+    arch = meta['architecture'].lower()
+    if 'llama' in arch or 'mistral' in arch or 'qwen2' in arch:
+        tokenizer_class = 'LlamaTokenizerFast'
+    elif 'gpt' in arch or 'starcoder' in arch:
+        tokenizer_class = 'GPT2Tokenizer'
+
+    has_merges = len(meta['merges']) > 0
+    has_scores = len(meta['scores']) > 0
+
+    # ============================================================
+    # Build tokenizer.json
+    # ============================================================
+    if has_merges:
+        # BPE model
+        model_config = {
+            "type": "BPE",
+            "dropout": None,
+            "unk_token": None,
+            "ignore_merges": False,
+            "vocab": {t: i for i, t in enumerate(tokens)},
+            "merges": meta['merges'],
+        }
+    elif has_scores:
+        # Unigram model (SentencePiece)
+        model_config = {
+            "type": "Unigram",
+            "unk_token": tokens[eos_id] if eos_id < len(tokens) else "<unk>",
+            "vocab": [
+                {"id": i, "piece": t, "score": float(meta['scores'][i]) if i < len(meta['scores']) else 0.0}
+                for i, t in enumerate(tokens)
+            ],
+        }
+    else:
+        # Unknown - try BPE with empty merges (fallback)
+        model_config = {
+            "type": "BPE",
+            "dropout": None,
+            "unk_token": None,
+            "ignore_merges": False,
+            "vocab": {t: i for i, t in enumerate(tokens)},
+            "merges": [],
+        }
+
     tokenizer_json = {
         "version": "1.0",
         "truncation": None,
         "padding": None,
-        "added_tokens": [
-            {"id": bos_id, "content": tokens[bos_id], "single_word": False, "lstrip": False, "rstrip": False, "normalized": False, "special": True},
-            {"id": eos_id, "content": tokens[eos_id], "single_word": False, "lstrip": False, "rstrip": False, "normalized": False, "special": True},
-            {"id": pad_id, "content": tokens[pad_id], "single_word": False, "lstrip": False, "rstrip": False, "normalized": False, "special": True},
-        ],
-        "normalizer": {"type": "Sequence", "normalizers": []},
-        "pre_tokenizer": {
-            "type": "ByteLevel",
-            "add_prefix_space": False,
-            "trim_offsets": True,
-            "use_regex": True,
-        },
-        "post_processor": {
-            "type": "ByteLevel",
-            "add_prefix_space": False,
-            "trim_offsets": True,
-        },
-        "decoder": {
-            "type": "ByteLevel",
-            "add_prefix_space": False,
-            "trim_offsets": True,
-        },
-        "model": {
-            "type": "BPE",
-            "dropout": None,
-            "unk_token": tokens[0] if len(tokens) > 0 else "<unk>",
-            "continuing_subword_prefix": "",
-            "end_of_word_suffix": "",
-            "fuse_unk": False,
-            "byte_fallback": False,
-            "vocab": vocab,
-            "merges": merges,
-        },
+        "added_tokens": [],
+        "normalizer": None,
+        "pre_tokenizer": None,
+        "post_processor": None,
+        "decoder": None,
+        "model": model_config,
     }
-    with open(OUT_DIR / "tokenizer.json", 'w', encoding='utf-8') as f:
-        json.dump(tokenizer_json, f, ensure_ascii=False, indent=2)
 
-print(f"\nTokenizer saved to: {OUT_DIR}")
-print(f"Use with: --tokenizer {OUT_DIR}")
-print("Done!")
+    with open(out_dir / "tokenizer.json", "w", encoding="utf-8") as f:
+        json.dump(tokenizer_json, f, ensure_ascii=False, indent=2)
+    size = os.path.getsize(out_dir / "tokenizer.json")
+    print(f"Wrote tokenizer.json ({size} bytes)")
+
+    # ============================================================
+    # Write tokenizer_config.json
+    # ============================================================
+    config = {
+        "add_prefix_space": False,
+        "added_tokens_decoder": {},
+        "bos_token": tokens[bos_id] if bos_id < len(tokens) else "<s>",
+        "clean_up_tokenization_spaces": True,
+        "eos_token": tokens[eos_id] if eos_id < len(tokens) else "</s>",
+        "model_max_length": 1000000000000000019884624838656,
+        "pad_token": tokens[pad_id] if pad_id < len(tokens) else "<pad>",
+        "sp_model_kwargs": {},
+        "tokenizer_class": tokenizer_class,
+        "unk_token": tokens[eos_id] if eos_id < len(tokens) else "<unk>",
+        "chat_template": None,
+    }
+
+    with open(out_dir / "tokenizer_config.json", "w", encoding="utf-8") as f:
+        json.dump(config, f, ensure_ascii=False, indent=2)
+    print("Wrote tokenizer_config.json")
+
+    # ============================================================
+    # Write special_tokens_map.json
+    # ============================================================
+    special_map = {
+        "bos_token": tokens[bos_id] if bos_id < len(tokens) else "<s>",
+        "eos_token": tokens[eos_id] if eos_id < len(tokens) else "</s>",
+        "pad_token": tokens[pad_id] if pad_id < len(tokens) else "<pad>",
+        "unk_token": tokens[eos_id] if eos_id < len(tokens) else "<unk>",
+    }
+
+    with open(out_dir / "special_tokens_map.json", "w", encoding="utf-8") as f:
+        json.dump(special_map, f, ensure_ascii=False, indent=2)
+    print("Wrote special_tokens_map.json")
+
+    # ============================================================
+    # Write vocab.json (token_id -> token_text)
+    # ============================================================
+    with open(out_dir / "vocab.json", "w", encoding="utf-8") as f:
+        json.dump(dict(enumerate(tokens)), f, ensure_ascii=False, indent=2)
+    print(f"Wrote vocab.json ({len(tokens)} tokens)")
+
+    print(f"\nDone! Tokenizer saved to: {out_dir}")
+    print(f"To use with lm-eval:\n  --tokenizer {out_dir}")
+
+
+if __name__ == "__main__":
+    main()

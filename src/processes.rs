@@ -410,9 +410,16 @@ pub async fn start_llamacpp(server_path: &Path, model_name: &str, args: &[String
 
     // Auto-set library path to the binary's directory for CUDA builds
     if let Some(parent) = server_path.parent() {
-        // Prepend binary dir to LD_LIBRARY_PATH so bundled .so files are found
+        // Prepend binary dir + (if it exists) sibling lib/ dir to LD_LIBRARY_PATH
+        // so bundled .so files are found (some builds put libs in bin/ alongside
+        // the binary, others split them into a lib/ subdirectory).
         let existing = std::env::var("LD_LIBRARY_PATH").unwrap_or_default();
-        let new_path = format!("{}:{}", parent.display(), existing);
+        let lib_dir = parent.join("lib");
+        let new_path = if lib_dir.is_dir() {
+            format!("{}:{}:{}", parent.display(), lib_dir.display(), existing)
+        } else {
+            format!("{}:{}", parent.display(), existing)
+        };
         cmd.env("LD_LIBRARY_PATH", new_path);
     }
 

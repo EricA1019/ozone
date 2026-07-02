@@ -282,7 +282,7 @@ Complete multi-sample task scoring for native and external benchmarks.
 - **Multi-attempt scoring**: 3 attempts per task, majority-rule pass/fail, stability classification (Clean/MildVariance/Unstable)
 - **Gate logic**: 2-of-3 pass rule for lane gates; failed gates skip deeper tasks in that lane
 - **Server lifecycle**: eval-run auto-launches/kills llama.cpp with CUDA, flash attention, LD_LIBRARY_PATH
-- **9 external benchmarks**: GSM8K, MATH, Instruction, TruthfulQA, MMLU, HellaSwag, BBH, HumanEval (with scoring)
+- **9 external benchmarks**: GSM8K, MATH, IFEval (instruction-following), TruthfulQA, MMLU, HellaSwag, BBH, HumanEval (with scoring)
 - **Result persistence**: JSON + CSV to results/native/, latest.{json,csv}
 - **CLI flags**: --quick/--standard/--full, --attempts, --gate-attempts, --gpu-layers, --threads, --server-path, --flash-attn, --tokenizer, --allow-below-min-context
 - **CUDA server discovery**: OZONE_LLAMACPP_CUDA_SERVER env var, torch llama-server-cuda first

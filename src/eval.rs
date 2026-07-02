@@ -77,11 +77,11 @@ pub const EVAL_TASKS: &[EvalTask] = &[
     EvalTask {
         cli_name: "instruction",
         kind: EvalTaskKind::LmEval {
-            task: "leaderboard_instruction_following",
+            task: "leaderboard_ifeval",
             output_dir: "lm_eval_instruction_probe",
         },
-        description: "Instruction following: multi-constraint adherence test",
-        report_label: "Instruction following",
+        description: "IFEval: instruction-following & constraint adherence test",
+        report_label: "IFEval",
     },
     EvalTask {
         cli_name: "math",
@@ -167,25 +167,43 @@ pub async fn run_eval_task(
         );
     }
 
+    // Tasks that require per-token logprobs (llama-cpp-python with logits_all).
+    // The HTTP server cannot provide these, so we use ozone_eval.py which loads
+    // the GGUF directly via llama-cpp-python.
+    const LOGPROB_TASKS: &[&str] = &["mmlu", "hellaswag", "leaderboard_bbh"];
+
     match task.kind {
         EvalTaskKind::LmEval {
             task: lm_task,
             output_dir,
         } => {
-            let status = run_lm_eval(
-                &venv_bin,
-                model,
-                lm_task,
-                limit,
-                &artifacts_dir.join(output_dir),
-                base_url,
-                temperature,
-                tokenizer,
-            )?;
-            if !status.success() {
-                match status.code() {
-                    Some(code) => bail!("Evaluation failed with exit code {code}"),
-                    None => bail!("Evaluation failed (terminated by signal)"),
+            let is_logprob = LOGPROB_TASKS.iter().any(|t| lm_task.contains(t));
+
+            if is_logprob {
+                run_ozone_eval_python(
+                    &venv_bin,
+                    model,
+                    &[lm_task],
+                    limit,
+                    base_url,
+                    temperature,
+                )?;
+            } else {
+                let status = run_lm_eval(
+                    &venv_bin,
+                    model,
+                    lm_task,
+                    limit,
+                    &artifacts_dir.join(output_dir),
+                    base_url,
+                    temperature,
+                    tokenizer,
+                )?;
+                if !status.success() {
+                    match status.code() {
+                        Some(code) => bail!("Evaluation failed with exit code {code}"),
+                        None => bail!("Evaluation failed (terminated by signal)"),
+                    }
                 }
             }
         }
@@ -504,6 +522,67 @@ fn run_lm_eval(
         .stderr(Stdio::inherit())
         .status()
         .with_context(|| format!("failed to launch {}", venv_bin.join("lm-eval").display()))
+}
+
+/// Run eval tasks via ozone_eval.py for loglikelihood tasks that need
+/// direct llama-cpp-python access (logits_all=True for per-token logprobs).
+///
+/// The HTTP server cannot provide prompt-token logprobs, so we load the
+/// GGUF directly in Python for correct loglikelihood scoring.
+fn run_ozone_eval_python(
+    venv_bin: &Path,
+    model_name: &str,
+    tasks: &[&str],
+    limit: u32,
+    base_url: &str,
+    temperature: f64,
+) -> Result<()> {
+    let python = venv_bin.join("python3");
+    let script = resolve_project_root()?
+        .join("contrib/evals/scripts/ozone_eval.py");
+
+    ensure_executable(&python)?;
+
+    // Build the GGUF path from the model name — ozone_eval.py resolves it
+    // by checking ~/models/ and the workspace.
+    // ozone_eval.py resolves GGUF path from model name by checking
+    // ~/models/ first, then treating it as a raw path.
+    let gguf_path = model_name;
+
+    let tasks_arg = tasks.join(",");
+
+    ozone_core::cli::header("oz Eval (correct logprobs)");
+    ozone_core::cli::field("Method:", &"llama-cpp-python + logits_all");
+    ozone_core::cli::field("Model:", &model_name);
+    ozone_core::cli::field("Tasks:", &tasks_arg);
+    ozone_core::cli::field("Limit:", &limit);
+    ozone_core::cli::spacer();
+
+    let status = Command::new(&python)
+        .arg(&script)
+        .arg(&gguf_path)
+        .arg("--presets")
+        .args(tasks)
+        .arg("--limit")
+        .arg(limit.to_string())
+        .arg("--base-url")
+        .arg(base_url)
+        .arg("--temperature")
+        .arg(temperature.to_string())
+        .stdin(Stdio::null())
+        .stdout(Stdio::inherit())
+        .stderr(Stdio::inherit())
+        .status()
+        .with_context(|| format!("failed to launch {}", python.display()))?;
+
+    if !status.success() {
+        match status.code() {
+            Some(code) => bail!("ozone_eval.py failed with exit code {code}"),
+            None => bail!("ozone_eval.py terminated by signal"),
+        }
+    }
+
+    Ok(())
 }
 
 fn run_evalplus_codegen(
