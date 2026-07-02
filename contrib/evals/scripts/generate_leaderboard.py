@@ -229,10 +229,12 @@ body.light .model-name { color: #333; }
 .score-best::after { content: '★'; color: #22c55e; font-size: 9px;
                     position: absolute; top: 1px; right: 3px; opacity: 0.8; }
 .cell-highlight { background: rgba(34,197,94,0.06); box-shadow: inset 0 0 12px rgba(34,197,94,0.08); }
-.score-green { color: #22c55e; }
-.score-cyan { color: #8dd6d1; }
-.score-amber { color: #f59e0b; }
-.score-red { color: #ef4444; }
+.score-xlg { color: #22c55e; }   /* lime — excellent 90-100% */
+.score-lg  { color: #10b981; }  /* emerald — very good 70-89% */
+.score-md  { color: #8dd6d1; }  /* cyan — good 50-69% */
+.score-lo  { color: #f59e0b; }  /* amber — below avg 30-49% */
+.score-vlo { color: #e67e22; }  /* orange — poor 15-29% */
+.score-bad { color: #ef4444; }  /* red — failing 0-14% */
 .score-none { color: #444; font-style: italic; }
 body.light .score-none { color: #bbb; }
 .cell-highlight { background: rgba(34,197,94,0.04); }
@@ -252,13 +254,18 @@ body.light .export-btn:hover { background: #e8e8f5; border-color: #22c55e; }
 
 
 def score_color(val: float) -> str:
-    if val >= 80:
-        return "score-green"
+    """Return CSS class for a score percentage.  6 bands with cool-to-warm scale."""
+    if val >= 90:
+        return "score-xlg"   # lime green — excellent
+    if val >= 70:
+        return "score-lg"    # teal — very good
     if val >= 50:
-        return "score-cyan"
-    if val >= 20:
-        return "score-amber"
-    return "score-red"
+        return "score-md"    # cyan — good
+    if val >= 30:
+        return "score-lo"    # amber — below average
+    if val >= 15:
+        return "score-vlo"   # orange — poor
+    return "score-bad"       # red — failing
 
 
 def quant_bg(quant: str | None) -> str:
@@ -394,10 +401,12 @@ def generate_html(models: dict, scores: dict, output_path: str, root: str):
 </div>
 
 <div class="legend">
-<span class="legend-item"><span class="legend-swatch" style="background:#22c55e"></span> &ge;80%</span>
-<span class="legend-item"><span class="legend-swatch" style="background:#8dd6d1"></span> 50-79%</span>
-<span class="legend-item"><span class="legend-swatch" style="background:#f59e0b"></span> 20-49%</span>
-<span class="legend-item"><span class="legend-swatch" style="background:#ef4444"></span> &lt;20%</span>
+<span class="legend-item"><span class="legend-swatch" style="background:#22c55e"></span> 90&ndash;100%</span>
+<span class="legend-item"><span class="legend-swatch" style="background:#10b981"></span> 70&ndash;89%</span>
+<span class="legend-item"><span class="legend-swatch" style="background:#8dd6d1"></span> 50&ndash;69%</span>
+<span class="legend-item"><span class="legend-swatch" style="background:#f59e0b"></span> 30&ndash;49%</span>
+<span class="legend-item"><span class="legend-swatch" style="background:#e67e22"></span> 15&ndash;29%</span>
+<span class="legend-item"><span class="legend-swatch" style="background:#ef4444"></span> 0&ndash;14%</span>
 <span class="legend-item"><span class="legend-swatch" style="background:#555"></span> not run</span>
 </div>
 
