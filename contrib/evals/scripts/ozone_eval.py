@@ -506,7 +506,8 @@ def main():
     print(json.dumps(summary, indent=2))
 
     # Also save to disk for the HTML leaderboard
-    scores_dir = Path("results/ozone_scores")
+    # Resolve project root: <script_dir>/../../.. = project root
+    scores_dir = Path(__file__).resolve().parent.parent.parent.parent / "results" / "ozone_scores"
     scores_dir.mkdir(parents=True, exist_ok=True)
     score_file = scores_dir / f"{model_name}.json"
     with open(score_file, "w") as f:
