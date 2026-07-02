@@ -250,7 +250,18 @@ body.light .export-btn:hover { background: #e8e8f5; border-color: #22c55e; }
     thead th, tbody td { padding: 4px 6px; font-size: 11px; }
     .hero h1 { font-size: 20px; }
 }
+.tab-bar { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; }
+.tab-btn { padding: 6px 14px; border-radius: 6px; border: 1px solid #1e1e3a;
+           background: #12121e; color: #888; cursor: pointer; font-size: 12px;
+           font-family: 'Fira Code', monospace; transition: all 0.2s; }
+.tab-btn:hover { border-color: #7c3aed; color: #c0c0e0; }
+.tab-btn.active { background: #7c3aed; border-color: #7c3aed; color: #fff;
+                  font-weight: 600; }
+body.light .tab-bar .tab-btn { background: #f0f0f8; border-color: #ddd; color: #888; }
+body.light .tab-bar .tab-btn:hover { border-color: #7c3aed; color: #444; }
+body.light .tab-bar .tab-btn.active { background: #7c3aed; border-color: #7c3aed; color: #fff; }
 """
+
 
 
 def score_color(val: float) -> str:
@@ -290,6 +301,53 @@ def generate_html(models: dict, scores: dict, output_path: str, root: str):
     for suite_name, suite_label, cols in SCORE_COLUMNS:
         for preset_name, short_label in cols:
             all_presets.append(preset_name)
+
+    # Suite tab data
+    suite_offset_js = ""
+    suite_tab_html = '<div id="tabBar" class="tab-bar">'
+    suite_tab_html += '<button class="tab-btn active" data-suite="all" onclick="switchSuite(\'all\')">All</button>'
+    col_index = 2
+    for s_name, s_label, s_cols in SCORE_COLUMNS:
+        start = col_index
+        end = col_index + len(s_cols)
+        suite_offset_js += '    suiteOffsets["' + s_name + '"] = [' + str(start) + ', ' + str(end) + '];\n'
+        suite_tab_html += '<button class="tab-btn" data-suite="' + s_name + '" onclick="switchSuite(\'' + s_name + '\')">' + s_label + '</button>'
+        col_index += len(s_cols)
+    suite_tab_html += '</div>'
+
+    # Build switchSuite JS (NOT inside f-string to avoid Python parsing JS operators)
+    SWITCH_SUITE_JS = (
+        'function switchSuite(suiteName) {\n'
+        '    var buttons = document.querySelectorAll(\'#tabBar .tab-btn\');\n'
+        '    for (var bi = 0; bi < buttons.length; bi++) {\n'
+        '        var b = buttons[bi];\n'
+        '        b.className = b.getAttribute(\'data-suite\') === suiteName ? \'tab-btn active\' : \'tab-btn\';\n'
+        '    }\n'
+        '    var suiteOffsets = {}\n'
+        + suite_offset_js  # inject suite offsets
+        + '    var table = document.getElementById(\'leaderboard\');\n'
+        + '    var rows = table.querySelectorAll(\'thead tr, tbody tr\');\n'
+        + '    var offsets = suiteOffsets[suiteName] || [2, 1000];\n'
+        + '    var startIdx = offsets[0];\n'
+        + '    var endIdx = offsets[1];\n'
+        + '    for (var ri = 0; ri < rows.length; ri++) {\n'
+        + '        var cells = rows[ri].cells;\n'
+        + '        var isSuiteRow = ri === 0;\n'
+        + '        for (var ci = 0; ci < cells.length; ci++) {\n'
+        + '            var cell = cells[ci];\n'
+        + '            if (isSuiteRow && ci > 0) {\n'
+        + '                cell.style.display = suiteName === \'all\' ? \'\' : \'none\';\n'
+        + '            } else if (ci < 2) {\n'
+        + '                cell.style.display = \'\';\n'
+        + '            } else if (ci >= startIdx && ci < endIdx) {\n'
+        + '                cell.style.display = \'\';\n'
+        + '            } else {\n'
+        + '                cell.style.display = \'none\';\n'
+        + '            }\n'
+        + '        }\n'
+        + '    }\n'
+        + '}\n'
+    )
 
     # Build table rows
     model_names = sorted(models.keys(), key=str.lower)
@@ -400,6 +458,8 @@ def generate_html(models: dict, scores: dict, output_path: str, root: str):
 <button class="theme-btn" onclick="toggleTheme()">{chr(0x2600)} Dark</button>
 </div>
 
+<!-- suite tab bar -->
+{suite_tab_html}
 <div class="legend">
 <span class="legend-item"><span class="legend-swatch" style="background:#22c55e"></span> 90&ndash;100%</span>
 <span class="legend-item"><span class="legend-swatch" style="background:#10b981"></span> 70&ndash;89%</span>
@@ -426,6 +486,8 @@ def generate_html(models: dict, scores: dict, output_path: str, root: str):
 <div class="footer">Ozone eval results &mdash; scores are percentages 0-100</div>
 
 <script>
+
+{SWITCH_SUITE_JS}
 let theme = 'dark';
 
 function toggleTheme() {{
