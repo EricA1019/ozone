@@ -91,10 +91,15 @@ def _start_server(gguf_path: str, base_url: str, ctx_size: int = 8192):
 # ── Task definitions ──────────────────────────────────────────────────────────
 
 # Tasks that need loglikelihood scoring (direct model loading)
-LOGPROB_TASKS = {"mmlu", "hellaswag", "bbh", "leaderboard_bbh"}
+# Substring match: any preset whose lm-eval task name contains one of these.
+LOGPROB_TASKS = {
+    "mmlu", "mmlu_pro", "hellaswag", "bbh", "leaderboard_bbh",
+    "arc_challenge", "gpqa", "hendrycks_ethics",
+}
 
 # All supported presets (short name → lm-eval task name)
 PRESETS = {
+    # -- existing --
     "mmlu": "mmlu",
     "hellaswag": "hellaswag",
     "bbh": "bbh",
@@ -102,10 +107,54 @@ PRESETS = {
     "math": "hendrycks_math",
     "instruction": "ifeval",
     "truthfulqa": "truthfulqa_gen",
+    # -- new: general knowledge --
+    "mmlu_pro": "mmlu_pro",
+    "arc_challenge": "arc_challenge",
+    # -- new: philosophy & ethics --
+    "mmlu_philosophy": "mmlu_philosophy",
+    "hendrycks_ethics": "hendrycks_ethics",
+    "bbh_formal_fallacies": "bbh_formal_fallacies",
+    "bbh_causal_judgement": "bbh_causal_judgement",
+    # -- new: coding --
+    "mbpp": "mbpp",
+    # -- new: reading comprehension --
+    "drop": "drop",
+    # -- new: hard (graduate-level, opt-in) --
+    "gpqa": "gpqa_main_zeroshot",
 }
 
 # Reverse mapping so we can accept lm-eval task names directly
 TASK_TO_PRESET = {v: k for k, v in PRESETS.items()}
+
+
+# ── Suite / Sweep definitions ────────────────────────────────────────────────
+
+# A suite is a named group of presets.  A sweep is a named group of suites.
+# The CLI accepts --suite <name> and --sweep <name> as shortcuts for --presets.
+
+SUITES = {
+    "baseline":          ["hellaswag", "arc_challenge",
+                          "bbh_formal_fallacies", "bbh_causal_judgement"],
+    "general":           ["mmlu", "mmlu_pro"],
+    "philosophy-ethics": ["mmlu_philosophy", "hendrycks_ethics",
+                          "bbh_formal_fallacies", "bbh_causal_judgement"],
+    "reasoning":         ["bbh", "drop"],
+    "math":              ["gsm8k", "math"],
+    "coding":            ["mbpp"],
+    "safety":            ["truthfulqa", "instruction"],
+    "hard":              ["gpqa"],
+}
+
+# A sweep is a group of suites run in order.
+SWEEPS = {
+    "baseline": ["baseline"],
+    "quick":    ["general", "philosophy-ethics"],
+    "full":     ["general", "philosophy-ethics", "reasoning",
+                  "math", "coding", "safety"],
+    "code":     ["coding", "math"],
+    "all":      ["general", "philosophy-ethics", "reasoning",
+                  "math", "coding", "safety", "hard"],
+}
 
 
 # ── compute_loglikelihood ─────────────────────────────────────────────────────
@@ -291,6 +340,12 @@ def main():
                         help="Thinking mode for models that support it (on/off)")
     parser.add_argument("--gpu-layers", type=int, default=16,
                         help="GPU layers to offload for logprob tasks (0=CPU only)")
+    parser.add_argument("--suite", type=str, default=None,
+                        choices=list(SUITES.keys()),
+                        help="Run a predefined suite of presets")
+    parser.add_argument("--sweep", type=str, default=None,
+                        choices=list(SWEEPS.keys()),
+                        help="Run a predefined sweep (group of suites)")
     args = parser.parse_args()
 
     # Resolve model path: if it looks like a name, check ~/models/
@@ -305,6 +360,7 @@ def main():
             sys.exit(1)
 
     # Resolve presets: accept both short names & lm-eval task names
+    # --suite / --sweep expand to --presets before this point
     resolved_presets = []
     for p in args.presets:
         if p in PRESETS:
@@ -318,6 +374,27 @@ def main():
     model_name = Path(gguf_path).stem
     results_all = {}
     start_total = time.time()
+
+    # ── Expand --suite / --sweep into presets ──
+    if args.sweep:
+        suite_names = SWEEPS[args.sweep]
+        flat_presets = []
+        for s in suite_names:
+            flat_presets.extend(SUITES[s])
+        args.presets = flat_presets
+    elif args.suite:
+        args.presets = SUITES[args.suite]
+
+    # Re-resolve after potential suite/sweep expansion
+    resolved_presets = []
+    for p in args.presets:
+        if p in PRESETS:
+            resolved_presets.append(p)
+        elif p in TASK_TO_PRESET:
+            resolved_presets.append(TASK_TO_PRESET[p])
+        else:
+            print(f"Unknown preset/task: {p} (from suite/sweep)", file=sys.stderr)
+            sys.exit(1)
 
     # ── Split presets into logprob (direct GPU) and generate (HTTP server) ──
     logprob_presets = [p for p in resolved_presets

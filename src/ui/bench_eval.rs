@@ -20,6 +20,15 @@ pub(super) enum BenchEvalAction {
     EvalHellaSwag,
     EvalTruthfulQA,
     EvalBbh,
+    EvalMmluPro,
+    EvalArcChallenge,
+    EvalMmluPhilosophy,
+    EvalHendrycksEthics,
+    EvalBbhFormalFallacies,
+    EvalBbhCausalJudgement,
+    EvalMbpp,
+    EvalDrop,
+    EvalGpqa,
     EvalCreativeWriting,
     EvalRun,
     ExportServer,
@@ -105,6 +114,15 @@ fn eval_action_for_cli_name(name: &str) -> BenchEvalAction {
         "hellaswag" => BenchEvalAction::EvalHellaSwag,
         "truthfulqa" => BenchEvalAction::EvalTruthfulQA,
         "bbh" => BenchEvalAction::EvalBbh,
+        "mmlu_pro" => BenchEvalAction::EvalMmluPro,
+        "arc_challenge" => BenchEvalAction::EvalArcChallenge,
+        "mmlu_philosophy" => BenchEvalAction::EvalMmluPhilosophy,
+        "hendrycks_ethics" => BenchEvalAction::EvalHendrycksEthics,
+        "bbh_formal_fallacies" => BenchEvalAction::EvalBbhFormalFallacies,
+        "bbh_causal_judgement" => BenchEvalAction::EvalBbhCausalJudgement,
+        "mbpp" => BenchEvalAction::EvalMbpp,
+        "drop" => BenchEvalAction::EvalDrop,
+        "gpqa" => BenchEvalAction::EvalGpqa,
         _ => BenchEvalAction::Back,
     }
 }
@@ -541,6 +559,33 @@ fn render_preview(f: &mut Frame, area: Rect, app: &App) {
         }
         BenchEvalAction::EvalBbh => {
             format!("oz eval {model_hint} --preset bbh --limit 1")
+        }
+        BenchEvalAction::EvalMmluPro => {
+            format!("oz eval {model_hint} --preset mmlu_pro --limit 1")
+        }
+        BenchEvalAction::EvalArcChallenge => {
+            format!("oz eval {model_hint} --preset arc_challenge --limit 1")
+        }
+        BenchEvalAction::EvalMmluPhilosophy => {
+            format!("oz eval {model_hint} --preset mmlu_philosophy --limit 1")
+        }
+        BenchEvalAction::EvalHendrycksEthics => {
+            format!("oz eval {model_hint} --preset hendrycks_ethics --limit 1")
+        }
+        BenchEvalAction::EvalBbhFormalFallacies => {
+            format!("oz eval {model_hint} --preset bbh_formal_fallacies --limit 1")
+        }
+        BenchEvalAction::EvalBbhCausalJudgement => {
+            format!("oz eval {model_hint} --preset bbh_causal_judgement --limit 1")
+        }
+        BenchEvalAction::EvalMbpp => {
+            format!("oz eval {model_hint} --preset mbpp --limit 1")
+        }
+        BenchEvalAction::EvalDrop => {
+            format!("oz eval {model_hint} --preset drop --limit 1")
+        }
+        BenchEvalAction::EvalGpqa => {
+            format!("oz eval {model_hint} --preset gpqa --limit 1")
         }
         BenchEvalAction::EvalRun => {
             format!("oz eval-run {} --context-length 4096", model_hint)

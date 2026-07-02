@@ -13,6 +13,20 @@ pub enum EvalPreset {
     HellaSwag,
     TruthfulQA,
     Bbh,
+    // -- new: general knowledge --
+    MmluPro,
+    ArcChallenge,
+    // -- new: philosophy & ethics --
+    MmluPhilosophy,
+    HendrycksEthics,
+    BbhFormalFallacies,
+    BbhCausalJudgement,
+    // -- new: coding --
+    Mbpp,
+    // -- new: reading comprehension --
+    Drop,
+    // -- new: hard (graduate-level, opt-in) --
+    Gpqa,
 }
 
 impl EvalPreset {
@@ -26,6 +40,15 @@ impl EvalPreset {
             Self::HellaSwag => "hellaswag",
             Self::TruthfulQA => "truthfulqa",
             Self::Bbh => "bbh",
+            Self::MmluPro => "mmlu_pro",
+            Self::ArcChallenge => "arc_challenge",
+            Self::MmluPhilosophy => "mmlu_philosophy",
+            Self::HendrycksEthics => "hendrycks_ethics",
+            Self::BbhFormalFallacies => "bbh_formal_fallacies",
+            Self::BbhCausalJudgement => "bbh_causal_judgement",
+            Self::Mbpp => "mbpp",
+            Self::Drop => "drop",
+            Self::Gpqa => "gpqa",
         }
     }
 
@@ -135,6 +158,92 @@ pub const EVAL_TASKS: &[EvalTask] = &[
         },
         description: "Reasoning: multi-step logic across 23 hard tasks",
         report_label: "BBH",
+    },
+    // ── New: general knowledge ──
+    EvalTask {
+        cli_name: "mmlu_pro",
+        kind: EvalTaskKind::LmEval {
+            task: "mmlu_pro",
+            output_dir: "lm_eval_mmlu_pro_probe",
+        },
+        description: "Knowledge: harder multi-subject QA (extended MMLU)",
+        report_label: "MMLU-Pro",
+    },
+    EvalTask {
+        cli_name: "arc_challenge",
+        kind: EvalTaskKind::LmEval {
+            task: "arc_challenge",
+            output_dir: "lm_eval_arc_challenge_probe",
+        },
+        description: "Science: AI2 Reasoning Challenge (multiple-choice)",
+        report_label: "ARC-Challenge",
+    },
+    // ── New: philosophy & ethics ──
+    EvalTask {
+        cli_name: "mmlu_philosophy",
+        kind: EvalTaskKind::LmEval {
+            task: "mmlu_philosophy",
+            output_dir: "lm_eval_mmlu_philosophy_probe",
+        },
+        description: "Philosophy: MMLU philosophy sub-task",
+        report_label: "MMLU Philosophy",
+    },
+    EvalTask {
+        cli_name: "hendrycks_ethics",
+        kind: EvalTaskKind::LmEval {
+            task: "hendrycks_ethics",
+            output_dir: "lm_eval_hendrycks_ethics_probe",
+        },
+        description: "Ethics: Hendrycks ethics benchmark (commonsense, justice, virtue)",
+        report_label: "Hendrycks Ethics",
+    },
+    EvalTask {
+        cli_name: "bbh_formal_fallacies",
+        kind: EvalTaskKind::LmEval {
+            task: "bbh_formal_fallacies",
+            output_dir: "lm_eval_bbh_formal_fallacies_probe",
+        },
+        description: "Logic: formal fallacy detection (BBH sub-task)",
+        report_label: "BBH Formal Fallacies",
+    },
+    EvalTask {
+        cli_name: "bbh_causal_judgement",
+        kind: EvalTaskKind::LmEval {
+            task: "bbh_causal_judgement",
+            output_dir: "lm_eval_bbh_causal_judgement_probe",
+        },
+        description: "Causality: causal judgement reasoning (BBH sub-task)",
+        report_label: "BBH Causal Judgement",
+    },
+    // ── New: coding ──
+    EvalTask {
+        cli_name: "mbpp",
+        kind: EvalTaskKind::LmEval {
+            task: "mbpp",
+            output_dir: "lm_eval_mbpp_probe",
+        },
+        description: "Code generation: Python function completion (MBPP dataset)",
+        report_label: "MBPP",
+    },
+    // ── New: reading comprehension ──
+    EvalTask {
+        cli_name: "drop",
+        kind: EvalTaskKind::LmEval {
+            task: "drop",
+            output_dir: "lm_eval_drop_probe",
+        },
+        description: "Reading: discrete reasoning over paragraphs (DROP)",
+        report_label: "DROP",
+    },
+    // ── New: hard (opt-in) ──
+    EvalTask {
+        cli_name: "gpqa",
+        kind: EvalTaskKind::LmEval {
+            task: "gpqa_main_zeroshot",
+            output_dir: "lm_eval_gpqa_probe",
+        },
+        description: "Graduate-level physics Q&A (opt-in, very hard)",
+        report_label: "GPQA",
     },
 ];
 
@@ -560,7 +669,7 @@ fn run_ozone_eval_python(
 
     let status = Command::new(&python)
         .arg(&script)
-        .arg(&gguf_path)
+        .arg(gguf_path)
         .arg("--presets")
         .args(tasks)
         .arg("--limit")

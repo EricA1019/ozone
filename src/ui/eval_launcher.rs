@@ -75,6 +75,12 @@ pub(super) fn entries(_app: &App) -> Vec<EvalLauncherEntry> {
             "mmlu" | "bbh" => "[Reasoning] ",
             "truthfulqa" | "hellaswag" => "[Safety] ",
             "instruction" => "[Follow] ",
+            "mmlu_pro" | "arc_challenge" => "[Knowledge] ",
+            "mmlu_philosophy" | "hendrycks_ethics" => "[Ethics] ",
+            "bbh_formal_fallacies" | "bbh_causal_judgement" => "[Logic] ",
+            "mbpp" => "[Coding] ",
+            "drop" => "[Reading] ",
+            "gpqa" => "[Hard] ",
             _ => "",
         };
         entries.push(EvalLauncherEntry {
