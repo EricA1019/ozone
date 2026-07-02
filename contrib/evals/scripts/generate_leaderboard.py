@@ -173,11 +173,26 @@ body.light { background: #f0f0f5; color: #333; }
                             radial-gradient(circle at 70% 50%, rgba(34,197,94,0.03) 0%, transparent 50%); }
 body.light .hero { background: linear-gradient(135deg, #e8e8f5 0%, #f0f0f8 50%, #f8f8fc 100%);
                    border-color: #ddd; }
-.hero h1 { font-size: 22px; font-weight: 300; letter-spacing: 6px;
-           color: #8dd6d1; position: relative; margin-top: 12px; }
-body.light .hero h1 { color: #555; }
-.hero .ascii-logo pre { margin: 0 auto; width: fit-content; padding: 0; line-height: 1.25 !important; background: none !important; border: none !important; }
-body.light .hero .ascii-logo { color: #22c55e; opacity: 0.6; }
+.hero h1 { font-size: 26px; font-weight: 300; letter-spacing: 4px;
+           color: #fff; position: relative; margin-top: 4px; }
+body.light .hero h1 { color: #222; }
+/* ── CSS-outlined OZONE logo ── */
+.terminal-frame { display: inline-block; padding: 12px 32px; margin-bottom: 8px;
+                  border: 2px solid #22c55e; border-radius: 4px;
+                  background: rgba(10,10,18,0.8);
+                  box-shadow: 0 0 20px rgba(34,197,94,0.1), inset 0 0 20px rgba(34,197,94,0.02); }
+body.light .terminal-frame { background: rgba(255,255,255,0.8);
+                             box-shadow: 0 0 20px rgba(34,197,94,0.05); }
+.ozone-logo { font-family: 'JetBrains Mono','Cascadia Code','Consolas',monospace;
+              font-size: 38px; font-weight: 700; color: #0a0a12;
+              -webkit-text-stroke: 2.5px #22c55e; text-stroke: 2.5px #22c55e;
+              paint-order: stroke fill;
+              letter-spacing: 0.15em; line-height: 1.1;
+              text-shadow: 0 0 12px rgba(34,197,94,0.3); }
+body.light .ozone-logo { color: #f0f0f5; -webkit-text-stroke: 2.5px #22c55e; }
+.ozone-tagline { font-family: 'Inter','Segoe UI',system-ui,sans-serif;
+                 font-size: 11px; color: #8dd6d1; letter-spacing: 3px;
+                 text-transform: uppercase; margin-top: 4px; opacity: 0.6; }
 .hero .stats { color: #8dd6d1; font-size: 14px; margin-top: 8px; position: relative; }
 .hero .timestamp { color: #555; font-size: 12px; margin-top: 4px; position: relative; }
 .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
@@ -267,15 +282,9 @@ def quant_bg(quant: str | None) -> str:
     return "#555"
 
 
-def build_ascii_logo() -> str:
-    """Terminal-prompt OZONE splash — clean monospace aesthetic."""
-    return r"""<pre style="font-family:'JetBrains Mono','Cascadia Code','Consolas',monospace;font-size:15px;line-height:1.35;font-weight:300;text-align:center;letter-spacing:0;margin:0;padding:0">
-<span style="color:#555">┌──────────────────────────────────────────────────────┐
-│</span>                                                      <span style="color:#555">│</span>
-<span style="color:#555">│</span>   <span style="color:#22c55e;font-weight:700">O Z O N E</span>                                      <span style="color:#555">│</span>
-<span style="color:#555">│</span>   <span style="color:#8dd6d1;font-weight:400;font-size:11px">local model operator</span>                            <span style="color:#555">│</span>
-<span style="color:#555">│</span>                                                      <span style="color:#555">│</span>
-<span style="color:#555">└──────────────────────────────────────────────────────┘</span></pre>"""
+def build_logo_html() -> str:
+    """CSS-outlined OZONE logo with terminal-window frame."""
+    return '<div class="terminal-frame"><div class="ozone-logo">O&thinsp;Z&thinsp;O&thinsp;N&thinsp;E</div><div class="ozone-tagline">local model operator</div></div>'
 
 
 def generate_html(models: dict, scores: dict, output_path: str, root: str):
@@ -380,7 +389,7 @@ def generate_html(models: dict, scores: dict, output_path: str, root: str):
 </head>
 <body>
 <div class="hero">
-<div class="ascii-logo">{build_ascii_logo()}</div>
+<div class="ascii-logo">{build_logo_html()}</div>
 <h1>Model Leaderboard</h1>
 <div class="stats">{num_models} models &middot; {total_suites} suites &middot; {total_tasks} tasks</div>
 <div class="timestamp">Generated {timestamp}</div>
