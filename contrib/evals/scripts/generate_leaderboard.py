@@ -173,11 +173,11 @@ body.light { background: #f0f0f5; color: #333; }
                             radial-gradient(circle at 70% 50%, rgba(34,197,94,0.03) 0%, transparent 50%); }
 body.light .hero { background: linear-gradient(135deg, #e8e8f5 0%, #f0f0f8 50%, #f8f8fc 100%);
                    border-color: #ddd; }
-.hero h1 { font-size: 26px; font-weight: 300; letter-spacing: 4px;
-           color: #fff; position: relative; margin-top: 4px; }
-body.light .hero h1 { color: #222; }
-.hero .ascii-logo pre { margin: 0; font-size: 13px; line-height: 1.4; }
-body.light .hero .ascii-logo { color: #22c55e; opacity: 0.5; }
+.hero h1 { font-size: 22px; font-weight: 300; letter-spacing: 6px;
+           color: #8dd6d1; position: relative; margin-top: 12px; }
+body.light .hero h1 { color: #555; }
+.hero .ascii-logo pre { margin: 0 auto; width: fit-content; padding: 0; line-height: 1.25 !important; background: none !important; border: none !important; }
+body.light .hero .ascii-logo { color: #22c55e; opacity: 0.6; }
 .hero .stats { color: #8dd6d1; font-size: 14px; margin-top: 8px; position: relative; }
 .hero .timestamp { color: #555; font-size: 12px; margin-top: 4px; position: relative; }
 .controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
@@ -268,14 +268,14 @@ def quant_bg(quant: str | None) -> str:
 
 
 def build_ascii_logo() -> str:
-    """Clean terminal-style OZONE splash using CSS-styled text."""
-    return r"""<pre style="font-family:'JetBrains Mono','Cascadia Code','Consolas',monospace;font-size:13px;line-height:1.3;font-weight:400;color:#22c55e;opacity:0.8;text-align:center;letter-spacing:0.5px">
-  ██████╗  ███████╗ ██████╗ ███╗   ██╗███████╗
- ██╔═══██╗╚══███╔╝██╔═══██╗████╗  ██║██╔════╝
- ██║   ██║  ███╔╝ ██║   ██║██╔██╗ ██║█████╗
- ██║   ██║ ███╔╝  ██║   ██║██║╚██╗██║██╔══╝
- ╚██████╔╝███████╗╚██████╔╝██║ ╚████║███████╗
-  ╚═════╝ ╚══════╝ ╚═════╝ ╚═╝  ╚═══╝╚══════╝</pre>"""
+    """Terminal-prompt OZONE splash — clean monospace aesthetic."""
+    return r"""<pre style="font-family:'JetBrains Mono','Cascadia Code','Consolas',monospace;font-size:15px;line-height:1.35;font-weight:300;text-align:center;letter-spacing:0;margin:0;padding:0">
+<span style="color:#555">┌──────────────────────────────────────────────────────┐
+│</span>                                                      <span style="color:#555">│</span>
+<span style="color:#555">│</span>   <span style="color:#22c55e;font-weight:700">O Z O N E</span>                                      <span style="color:#555">│</span>
+<span style="color:#555">│</span>   <span style="color:#8dd6d1;font-weight:400;font-size:11px">local model operator</span>                            <span style="color:#555">│</span>
+<span style="color:#555">│</span>                                                      <span style="color:#555">│</span>
+<span style="color:#555">└──────────────────────────────────────────────────────┘</span></pre>"""
 
 
 def generate_html(models: dict, scores: dict, output_path: str, root: str):
