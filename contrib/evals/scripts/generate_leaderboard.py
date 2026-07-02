@@ -230,8 +230,8 @@ body.light .model-name { color: #333; }
                     position: absolute; top: 1px; right: 3px; opacity: 0.8; }
 .cell-highlight { background: rgba(34,197,94,0.06); box-shadow: inset 0 0 12px rgba(34,197,94,0.08); }
 .score-green { color: #22c55e; }
-.score-yellow { color: #f59e0b; }
-.score-orange { color: #e67e22; }
+.score-cyan { color: #8dd6d1; }
+.score-amber { color: #f59e0b; }
 .score-red { color: #ef4444; }
 .score-none { color: #444; font-style: italic; }
 body.light .score-none { color: #bbb; }
@@ -255,9 +255,9 @@ def score_color(val: float) -> str:
     if val >= 80:
         return "score-green"
     if val >= 50:
-        return "score-yellow"
+        return "score-cyan"
     if val >= 20:
-        return "score-orange"
+        return "score-amber"
     return "score-red"
 
 
@@ -394,10 +394,10 @@ def generate_html(models: dict, scores: dict, output_path: str, root: str):
 </div>
 
 <div class="legend">
-<span class="legend-item"><span class="legend-swatch" style="background:#2ecc71"></span> &ge;80%</span>
-<span class="legend-item"><span class="legend-swatch" style="background:#f1c40f"></span> 50-79%</span>
-<span class="legend-item"><span class="legend-swatch" style="background:#e67e22"></span> 20-49%</span>
-<span class="legend-item"><span class="legend-swatch" style="background:#e74c3c"></span> &lt;20%</span>
+<span class="legend-item"><span class="legend-swatch" style="background:#22c55e"></span> &ge;80%</span>
+<span class="legend-item"><span class="legend-swatch" style="background:#8dd6d1"></span> 50-79%</span>
+<span class="legend-item"><span class="legend-swatch" style="background:#f59e0b"></span> 20-49%</span>
+<span class="legend-item"><span class="legend-swatch" style="background:#ef4444"></span> &lt;20%</span>
 <span class="legend-item"><span class="legend-swatch" style="background:#555"></span> not run</span>
 </div>
 
