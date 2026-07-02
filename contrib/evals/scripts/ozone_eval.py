@@ -113,8 +113,8 @@ PRESETS = {
     # -- new: philosophy & ethics --
     "mmlu_philosophy": "mmlu_philosophy",
     "hendrycks_ethics": "hendrycks_ethics",
-    "bbh_formal_fallacies": "bbh_formal_fallacies",
-    "bbh_causal_judgement": "bbh_causal_judgement",
+    "bbh_formal_fallacies": "bbh_fewshot_formal_fallacies",
+    "bbh_causal_judgement": "bbh_fewshot_causal_judgement",
     # -- new: coding --
     "mbpp": "mbpp",
     # -- new: reading comprehension --

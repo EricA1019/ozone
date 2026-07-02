@@ -200,7 +200,7 @@ pub const EVAL_TASKS: &[EvalTask] = &[
     EvalTask {
         cli_name: "bbh_formal_fallacies",
         kind: EvalTaskKind::LmEval {
-            task: "bbh_formal_fallacies",
+            task: "bbh_fewshot_formal_fallacies",
             output_dir: "lm_eval_bbh_formal_fallacies_probe",
         },
         description: "Logic: formal fallacy detection (BBH sub-task)",
@@ -209,7 +209,7 @@ pub const EVAL_TASKS: &[EvalTask] = &[
     EvalTask {
         cli_name: "bbh_causal_judgement",
         kind: EvalTaskKind::LmEval {
-            task: "bbh_causal_judgement",
+            task: "bbh_fewshot_causal_judgement",
             output_dir: "lm_eval_bbh_causal_judgement_probe",
         },
         description: "Causality: causal judgement reasoning (BBH sub-task)",
