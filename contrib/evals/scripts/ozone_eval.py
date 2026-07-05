@@ -51,7 +51,8 @@ def _kill_server(base_url: str):
         print("  WARNING: server still alive after kill attempt", file=sys.stderr)
 
 
-def _start_server(gguf_path: str, base_url: str, ctx_size: int = 8192):
+def _start_server(gguf_path: str, base_url: str, ctx_size: int = 8192,
+                   gpu_layers: int = 16):
     """Start llama-server for the given model. Returns True on success."""
     port = _server_port(base_url)
     server_dir = Path(os.environ.get(
@@ -64,7 +65,7 @@ def _start_server(gguf_path: str, base_url: str, ctx_size: int = 8192):
     cmd = [
         str(server_bin),
         "--model", gguf_path,
-        "--n-gpu-layers", "99",
+        "--n-gpu-layers", str(gpu_layers),
         "--flash-attn", "on",
         "--parallel", "1",
         "--ctx-size", str(ctx_size),
@@ -208,7 +209,7 @@ def _register_logprobs_model():
             self.max_length = max_length
             self._model_path = model
             self._gpu_layers = gpu_layers
-            self._reload_interval = kw.get("reload_interval", 1000)
+            self._reload_interval = kw.get("reload_interval", 500)
             self._sample_count = 0
             self._llm = None
             self._ensure_loaded()
@@ -217,7 +218,14 @@ def _register_logprobs_model():
             """Load or reload the model, clearing CUDA memory pool."""
             if self._llm is not None:
                 del self._llm
-                import gc; gc.collect()
+                import gc
+                gc.collect()
+                # Force CUDA context cleanup to prevent fragmentation
+                try:
+                    import ctypes
+                    ctypes.CDLL("libcuda.so.1").cuCtxSynchronize()
+                except Exception:
+                    pass
             from llama_cpp import Llama
             self._llm = Llama(
                 model_path=self._model_path, n_gpu_layers=self._gpu_layers,
@@ -232,7 +240,12 @@ def _register_logprobs_model():
                                   disable=disable_tqdm):
                 if self._sample_count >= self._reload_interval:
                     self._ensure_loaded()
-                results.append(compute_loglikelihood(self._llm, ctx, cont))
+                try:
+                    results.append(compute_loglikelihood(self._llm, ctx, cont))
+                except Exception:
+                    # CUDA error — reload model and retry once
+                    self._ensure_loaded()
+                    results.append(compute_loglikelihood(self._llm, ctx, cont))
                 self._sample_count += 1
             return results
 
@@ -298,24 +311,42 @@ def run_generate_task(model_name: str, task: str, limit: int,
         Path(__file__).resolve().parent.parent / ".venv" / "bin" / "lm-eval"
     )
 
+    # Use a temp output dir so we can parse the JSON results
+    output_dir = str(Path(__file__).resolve().parent.parent.parent.parent / "results" / "eval")
     cmd = [
         lm_eval_bin, "run",
         "--model", "local-completions",
         "--model_args",
         f"model={model_name},base_url={base_url}/v1/completions,"
-        f"tokenizer_backend=None,temperature={temperature}",
+        f"tokenizer_backend=None,temperature={temperature},"
+        f"max_gen_toks=512,num_concurrent=1",
         "--tasks", task,
         "--limit", str(limit),
-        "--output_path", "results/eval",
+        "--output_path", output_dir,
+        "--confirm_run_unsafe_code",
     ]
     env = os.environ.copy()
     env["OPENAI_API_KEY"] = "none"
+    env["HF_ALLOW_CODE_EVAL"] = "1"
     result = subprocess.run(cmd, env=env, capture_output=True, text=True)
     if result.returncode != 0:
         print(f"  Task {task} failed (exit {result.returncode})", file=sys.stderr)
         if result.stderr:
             print(f"  Last error: {result.stderr.strip().split(chr(10))[-1]}", file=sys.stderr)
         return {}
+
+    # Find and parse the results JSON file written by lm-eval
+    model_output_dir = Path(output_dir) / model_name
+    if model_output_dir.exists():
+        json_files = sorted(model_output_dir.glob("results_*.json"))
+        if json_files:
+            with open(json_files[-1]) as f:
+                data = json.load(f)
+            return {"results": data.get("results", {})}
+
+    # Fallback: parse lm-eval stdout table (last resort)
+    print(f"  Warning: no JSON results found, parse skipped", file=sys.stderr)
+    return {}
 
 
 # ── Main entry ────────────────────────────────────────────────────────────────
@@ -451,7 +482,8 @@ def main():
         if not _check_server(args.base_url):
             print("\n  Starting HTTP server for generate tasks...",
                   file=sys.stderr)
-            if not _start_server(gguf_path, args.base_url, args.max_length):
+            if not _start_server(gguf_path, args.base_url, args.max_length,
+                               gpu_layers=args.gpu_layers):
                 print("  ABORT: cannot run generate tasks without server",
                       file=sys.stderr)
         else:
@@ -482,6 +514,15 @@ def main():
             print(f"  FAILED after {elapsed:.0f}s: {e}", file=sys.stderr)
             results_all[preset] = {}
 
+        # Restart server between generate tasks to prevent VRAM accumulation
+        if _check_server(args.base_url):
+            _kill_server(args.base_url)
+            time.sleep(1)
+            if not _start_server(gguf_path, args.base_url, args.max_length,
+                                 gpu_layers=args.gpu_layers):
+                print("  WARNING: server failed to restart after {preset}",
+                      file=sys.stderr)
+
     total_elapsed = time.time() - start_total
 
     # Build summary
@@ -510,9 +551,36 @@ def main():
     scores_dir = Path(__file__).resolve().parent.parent.parent.parent / "results" / "ozone_scores"
     scores_dir.mkdir(parents=True, exist_ok=True)
     score_file = scores_dir / f"{model_name}.json"
+
+    # Merge with existing scores if any (preserves results from previous runs)
+    if score_file.exists():
+        try:
+            with open(score_file) as f:
+                existing = json.load(f)
+            existing_scores = existing.get("scores", {})
+            existing_scores.update(summary["scores"])
+            summary["scores"] = existing_scores
+            summary["elapsed_seconds"] = round(existing.get("elapsed_seconds", 0) + summary["elapsed_seconds"], 1)
+        except Exception:
+            pass  # corrupt file, overwrite
+
     with open(score_file, "w") as f:
         json.dump(summary, f, indent=2)
     print(f"\n  Scores saved to {score_file}", file=sys.stderr)
+
+    # Auto-regenerate leaderboard HTML
+    leaderboard_script = Path(__file__).resolve().parent / "generate_leaderboard.py"
+    if leaderboard_script.exists():
+        import subprocess
+        result = subprocess.run(
+            [sys.executable, str(leaderboard_script)],
+            capture_output=True, text=True,
+            cwd=str(Path(__file__).resolve().parent.parent.parent.parent),
+        )
+        if result.returncode == 0:
+            print("  Leaderboard updated", file=sys.stderr)
+        else:
+            print(f"  Leaderboard update failed: {result.stderr.strip()[-120:]}", file=sys.stderr)
 
 
 if __name__ == "__main__":
