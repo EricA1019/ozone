@@ -732,10 +732,10 @@ fn render_results_list(f: &mut Frame, area: Rect, app: &App) {
                     style_gray()
                 };
                 let kind_color = match file.kind {
-                    crate::ui::ResultFileKind::Sweep => style_cyan(),
-                    crate::ui::ResultFileKind::Eval => style_lime(),
-                    crate::ui::ResultFileKind::CreativeWriting => style_violet(),
-                    crate::ui::ResultFileKind::Report => style_lime(),
+                    crate::ui::results::ResultFileKind::Sweep => style_cyan(),
+                    crate::ui::results::ResultFileKind::Eval => style_lime(),
+                    crate::ui::results::ResultFileKind::CreativeWriting => style_violet(),
+                    crate::ui::results::ResultFileKind::Report => style_lime(),
                 };
                 ListItem::new(Line::from(vec![
                     Span::styled(
