@@ -21,3 +21,4 @@ contrib/evals/.venv/
 results/
 test_lint
 results/native/
+__pycache__/
