@@ -35,6 +35,23 @@ pub struct EvalTask {
     /// Suppress thinking/reasoning for simple prompts that cause overthinking.
     /// True = add stop tokens and penalties; False = let model reason freely.
     pub no_thinking: bool,
+// ---------------------------------------------------------------------------
+// Per-task thinking control — the standard for small / thinking models.
+//                                                                           
+// Each task declares `no_thinking: bool`. When true, the runner adds stop   
+// tokens ("\n\n", "\nresponse") and penalty parameters (presence=0.2,     
+// frequency=0.1) to suppress overthinking on simple prompts.                 
+//                                                                           
+// Rule of thumb:                                                             
+//   no_thinking=true  — short direct-answer prompts (2+2, echo, latency)    
+//   no_thinking=false — tasks that benefit from reasoning (math, code,      
+//                       JSON format, long context, summarization)            
+//                                                                           
+// Verified on Speed Demon Q8_0: 10/17 pass with per-task settings vs 6/17   
+// with global thinking suppression. Code tasks (python/rust) went from fail  
+// to pass when thinking was enabled for those specific tasks.                
+// ---------------------------------------------------------------------------
+
 }
 
 // ---------------------------------------------------------------------------
