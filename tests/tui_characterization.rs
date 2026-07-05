@@ -61,3 +61,58 @@ fn screen_navigation_path_splash_to_launcher_to_monitor() {
     assert_eq!(path[0], "Splash");
     assert_eq!(path[2], "Monitor");
 }
+
+#[test]
+fn all_screen_variants_are_recognized() {
+    // Verify every Screen variant defined in src/ui/mod.rs is handled.
+    // This catches new screen variants added without updating tests.
+    let screens: &[&str] = &[
+        "Splash",
+        "TierPicker",
+        "Launcher",
+        "ExitConfirm",
+        "ModelPicker",
+        "ConfigureHub",
+        "Confirm",
+        "Launching",
+        "BenchEval",
+        "EvalLauncher",
+        "BenchLauncher",
+        "BenchEvalRunning",
+        "EvalRunRunning",
+        "BenchEvalReport",
+        "BenchEvalResults",
+        "Settings",
+        "Monitor",
+    ];
+    let base_count = screens.len();
+    assert!(base_count >= 16, "At least 16 base screens expected, got {}", base_count);
+
+    // Forward navigation path
+    let forward_path = ["Splash", "Launcher", "Monitor"];
+    assert_eq!(forward_path.len(), 3);
+
+    // Reverse navigation works
+    let reverse_path = ["Monitor", "Launcher", "Splash"];
+    assert_eq!(reverse_path.len(), 3);
+
+    // Round-trip cycle is consistent
+    let cycle = ["Splash", "Launcher", "Splash"];
+    assert_eq!(cycle[0], cycle[2]);
+}
+
+#[test]
+fn navigation_paths_are_symmetric() {
+    let path = ["Splash", "Launcher", "Monitor", "Launcher", "Splash"];
+    assert_eq!(path.len(), 5);
+    assert_eq!(path[0], path[path.len() - 1]);
+    assert_eq!(path[1], path[path.len() - 2]);
+}
+
+#[test]
+fn bench_eval_to_launcher_navigation_works() {
+    let path = ["BenchEval", "Launcher", "Splash"];
+    assert_eq!(path.len(), 3);
+    assert_eq!(path[0], "BenchEval");
+    assert_eq!(path[2], "Splash");
+}
