@@ -20,10 +20,9 @@ use anyhow::Result;
 #[cfg(test)]
 use crossterm::event::KeyEvent;
 use crossterm::{
-    cursor::Show,
     event::{self, Event, KeyCode, KeyEventKind},
     execute,
-    terminal::{disable_raw_mode, enable_raw_mode, EnterAlternateScreen, LeaveAlternateScreen},
+    terminal::{enable_raw_mode, EnterAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, widgets::Clear, Terminal};
 use serde::{de, Deserialize, Deserializer, Serialize};
@@ -106,6 +105,9 @@ use self::settings_flow::{open_exit_confirm, open_settings, sync_settings_from_p
 use self::settings_screen_flow::handle_settings_key;
 use self::splash_flow::handle_splash_key;
 use self::tier_picker_flow::{handle_tier_picker_key, TierPickerOutcome};
+
+pub mod terminal;
+use self::terminal::*;
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Screen {
@@ -744,66 +746,6 @@ pub(super) fn selected_record(app: &App) -> Option<CatalogRecord> {
     })
 }
 
-struct TerminalRestoreGuard {
-    raw_mode_enabled: bool,
-    alt_screen_entered: bool,
-}
-
-impl TerminalRestoreGuard {
-    fn new() -> Self {
-        Self {
-            raw_mode_enabled: false,
-            alt_screen_entered: false,
-        }
-    }
-
-    fn mark_raw_mode_enabled(&mut self) {
-        self.raw_mode_enabled = true;
-    }
-
-    fn mark_alt_screen_entered(&mut self) {
-        self.alt_screen_entered = true;
-    }
-
-    fn restore(&mut self) -> io::Result<()> {
-        let raw_mode_enabled = self.raw_mode_enabled;
-        let alt_screen_entered = self.alt_screen_entered;
-        self.raw_mode_enabled = false;
-        self.alt_screen_entered = false;
-
-        let mut first_error = None;
-        if raw_mode_enabled {
-            if let Err(error) = disable_raw_mode() {
-                first_error = Some(error);
-            }
-        }
-        if alt_screen_entered {
-            let mut stdout = io::stdout();
-            if let Err(error) = execute!(stdout, Show, LeaveAlternateScreen) {
-                if first_error.is_none() {
-                    first_error = Some(error);
-                }
-            }
-        }
-        if let Some(error) = first_error {
-            return Err(error);
-        }
-        Ok(())
-    }
-}
-
-impl Drop for TerminalRestoreGuard {
-    fn drop(&mut self) {
-        if self.raw_mode_enabled {
-            let _ = disable_raw_mode();
-        }
-        if self.alt_screen_entered {
-            let mut stdout = io::stdout();
-            let _ = execute!(stdout, Show, LeaveAlternateScreen);
-        }
-    }
-}
-
 pub async fn run_launcher(
     no_browser: bool,
     tier_override: Option<crate::prefs::Tier>,
@@ -1349,14 +1291,14 @@ mod tests {
     fn terminal_restore_guard_tracks_terminal_state() {
         let mut guard = TerminalRestoreGuard::new();
 
-        assert!(!guard.raw_mode_enabled);
-        assert!(!guard.alt_screen_entered);
+        assert!(!guard.is_raw_mode_enabled());
+        assert!(!guard.is_alt_screen_entered());
 
         guard.mark_raw_mode_enabled();
         guard.mark_alt_screen_entered();
 
-        assert!(guard.raw_mode_enabled);
-        assert!(guard.alt_screen_entered);
+        assert!(guard.is_raw_mode_enabled());
+        assert!(guard.is_alt_screen_entered());
     }
 
     #[test]
@@ -1367,8 +1309,8 @@ mod tests {
             .restore()
             .expect("restore without state should succeed");
 
-        assert!(!guard.raw_mode_enabled);
-        assert!(!guard.alt_screen_entered);
+        assert!(!guard.is_raw_mode_enabled());
+        assert!(!guard.is_alt_screen_entered());
     }
 
     #[test]
