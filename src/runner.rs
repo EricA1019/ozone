@@ -564,6 +564,17 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
         println!("  CSV saved: {}", path.display());
     }
 
+    // Unified report (additive — existing paths unchanged)
+    if !result.tasks.is_empty() {
+        let model_name = &config.model_name;
+        if let Ok(unified_dir) = crate::eval_result::write_unified_report_from_runner(
+            model_name,
+            &result.tasks,
+        ) {
+            println!("  Unified report: {}", unified_dir.display());
+        }
+    }
+
     Ok(result)
 }
 

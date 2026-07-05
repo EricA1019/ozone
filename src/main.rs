@@ -14,6 +14,7 @@ mod db;
 mod eval;
 mod eval_report;
 mod eval_types;
+mod eval_result;
 mod export_server;
 mod gate;
 #[cfg(any(feature = "profiling-ui", feature = "sweep"))]

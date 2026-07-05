@@ -1,4 +1,5 @@
 use anyhow::{Context, Result};
+use crate::eval_result::EvalResult;
 use serde_json::Value;
 use std::{
     collections::BTreeMap,
@@ -286,6 +287,81 @@ fn format_fraction(value: f64) -> String {
     format!("{value:.3} ({:.1}%)", value * 100.0)
 }
 
+
+// ---------------------------------------------------------------------------
+// Unified report — produces Markdown, JSON, and CSV from EvalResult slices.
+// This is additive: existing per-eval-type report paths remain unchanged.
+// ---------------------------------------------------------------------------
+
+/// Write a unified report for a set of eval results.
+///
+/// Creates three files under `results/unified/{model_name}/`:
+/// - `report.md` — human-readable summary
+/// - `report.json` — machine-readable data
+/// - `report.csv` — tabular export
+pub fn build_unified_report(results: &[EvalResult], model_name: &str) -> Result<PathBuf> {
+    let root = crate::eval::resolve_project_root()?;
+    let unified_dir = root.join("results").join("unified").join(model_name);
+    fs::create_dir_all(&unified_dir)
+        .with_context(|| format!("create unified report dir: {}", unified_dir.display()))?;
+
+    // Write JSON
+    let json_path = unified_dir.join("report.json");
+    let json = serde_json::to_string_pretty(results)?;
+    fs::write(&json_path, &json)
+        .with_context(|| format!("write unified JSON: {}", json_path.display()))?;
+
+    // Write Markdown summary
+    let md_path = unified_dir.join("report.md");
+    let mut md = String::new();
+    md.push_str(&format!("# Eval Report — {}\n\n", model_name));
+    md.push_str("## Summary\n\n");
+    let total = results.len();
+    let passed = results.iter().filter(|r| r.passed).count();
+    let failed = total - passed;
+    md.push_str(&format!("- **Total tasks**: {}\n", total));
+    md.push_str(&format!("- **Passed**: {}\n", passed));
+    md.push_str(&format!("- **Failed**: {}\n\n", failed));
+
+    if !results.is_empty() {
+        let avg_score: f64 = results.iter().map(|r| r.score).sum::<f64>() / total as f64;
+        md.push_str(&format!("- **Average score**: {:.3}\n\n", avg_score));
+    }
+
+    md.push_str("## Results\n\n");
+    md.push_str("| Task | Suite | Score | Passed | Status | Duration (ms) |\n");
+    md.push_str("|------|-------|-------|--------|--------|---------------|\n");
+    for r in results {
+        let status_str = r.status.as_str();
+        md.push_str(&format!(
+            "| {} | {} | {:.3} | {} | {} | {} |\n",
+            r.task_key, r.suite, r.score, r.passed, status_str, r.duration_ms
+        ));
+    }
+    fs::write(&md_path, &md)
+        .with_context(|| format!("write unified Markdown: {}", md_path.display()))?;
+
+    // Write CSV
+    let csv_path = unified_dir.join("report.csv");
+    let mut wtr = csv::Writer::from_path(&csv_path)
+        .with_context(|| format!("create unified CSV: {}", csv_path.display()))?;
+    wtr.write_record(["task_key", "suite", "score", "passed", "status", "duration_ms"])
+        .with_context(|| "write CSV header")?;
+    for r in results {
+        wtr.write_record([
+            &r.task_key,
+            &r.suite,
+            &format!("{:.3}", r.score),
+            &r.passed.to_string(),
+            r.status.as_str(),
+            &r.duration_ms.to_string(),
+        ])
+        .with_context(|| "write CSV row")?;
+    }
+    wtr.flush()?;
+
+    Ok(unified_dir)
+}
 #[cfg(test)]
 mod tests {
     use super::{render_evalplus_markdown, render_lm_eval_markdown};
