@@ -22,72 +22,26 @@ import time
 import requests
 from pathlib import Path
 
-import numpy as np
+from constants import (
+    DEFAULT_SERVER_PORT,
+    HEALTH_CHECK_TIMEOUT,
+    HEALTH_CHECK_TIMEOUT_GEN,
+    SERVER_READY_RETRIES,
+    SERVER_READY_DELAY,
+    DEFAULT_GPU_LAYERS,
+    DEFAULT_CTX_SIZE,
+    DEFAULT_MAX_GEN_TOKS,
+    DEFAULT_TEMPERATURE,
+    DEFAULT_SEED,
+    MAX_GEN_TOKS_SERVER,
+    DEFAULT_LIMIT,
+    RELOAD_INTERVAL,
+    SCORE_PERCENTILE_FACTOR,
+)
+from presets import PRESETS, SUITES, SWEEPS, LOGPROB_TASKS, TASK_TO_PRESET, resolve_presets, is_logprob_task
+import evalserver as srv
 
-# ── Server lifecycle helpers ──────────────────────────────────────────────────
-
-def _server_port(base_url: str) -> int:
-    from urllib.parse import urlparse
-    return urlparse(base_url).port or 8989
-
-
-def _check_server(base_url: str) -> bool:
-    """Return True if server is running at base_url."""
-    try:
-        resp = requests.get(f"{base_url}/health", timeout=3)
-        return resp.status_code == 200
-    except Exception:
-        return False
-
-
-def _kill_server(base_url: str):
-    """Kill any process listening on the server port."""
-    port = _server_port(base_url)
-    print(f"  Killing any process on port {port}...", file=sys.stderr)
-    subprocess.run(["fuser", "-k", f"{port}/tcp"],
-                   capture_output=True, timeout=5)
-    time.sleep(2)
-    if _check_server(base_url):
-        print("  WARNING: server still alive after kill attempt", file=sys.stderr)
-
-
-def _start_server(gguf_path: str, base_url: str, ctx_size: int = 8192,
-                   gpu_layers: int = 16):
-    """Start llama-server for the given model. Returns True on success."""
-    port = _server_port(base_url)
-    server_dir = Path(os.environ.get(
-        "LLAMA_CPP_DIR",
-        str(Path.home() / "servers/llama.cpp-cuda-latest/install/bin"),
-    ))
-    server_bin = server_dir / "llama-server"
-    lib_dir = server_dir.parent / "build" / "bin"
-
-    cmd = [
-        str(server_bin),
-        "--model", gguf_path,
-        "--n-gpu-layers", str(gpu_layers),
-        "--flash-attn", "on",
-        "--parallel", "1",
-        "--ctx-size", str(ctx_size),
-        "--host", "127.0.0.1",
-        "--port", str(port),
-        "--log-disable",
-    ]
-    env = os.environ.copy()
-    env["LD_LIBRARY_PATH"] = str(lib_dir)
-
-    print(f"  Starting server on port {port}...", file=sys.stderr)
-    subprocess.Popen(cmd, env=env, stdout=subprocess.DEVNULL,
-                     stderr=subprocess.DEVNULL)
-
-    for _ in range(30):
-        time.sleep(1)
-        if _check_server(base_url):
-            print(f"  Server ready on port {port}", file=sys.stderr)
-            return True
-    print(f"  Server failed to start on port {port}", file=sys.stderr)
-    return False
-
+# Server lifecycle moved to evalserver.py
 
 # ── Task definitions ──────────────────────────────────────────────────────────
 
@@ -127,7 +81,6 @@ PRESETS = {
 # Reverse mapping so we can accept lm-eval task names directly
 TASK_TO_PRESET = {v: k for k, v in PRESETS.items()}
 
-
 # ── Suite / Sweep definitions ────────────────────────────────────────────────
 
 # A suite is a named group of presets.  A sweep is a named group of suites.
@@ -157,7 +110,6 @@ SWEEPS = {
                   "math", "coding", "safety", "hard"],
 }
 
-
 # ── compute_loglikelihood ─────────────────────────────────────────────────────
 
 def compute_loglikelihood(llm, context: str, continuation: str):
@@ -186,7 +138,6 @@ def compute_loglikelihood(llm, context: str, continuation: str):
     del scores, logprobs  # prevent VRAM leak over many samples
     return (total, greedy)
 
-
 # ── LogprobsModel (correct loglikelihood via llama-cpp-python) ────────────────
 
 def _register_logprobs_model():
@@ -199,9 +150,10 @@ def _register_logprobs_model():
 
     @register_model("gguf-logits")
     class LogProbsModel(LM):
-        def __init__(self, model=None, temperature=0.0, max_length=8192,
-                     max_gen_toks=2048, batch_size=1, seed=1234,
-                     gpu_layers=16, **kw):
+        def __init__(self, model=None, temperature=DEFAULT_TEMPERATURE,
+                     max_length=DEFAULT_CTX_SIZE,
+                     max_gen_toks=DEFAULT_MAX_GEN_TOKS, batch_size=1,
+                     seed=DEFAULT_SEED, gpu_layers=DEFAULT_GPU_LAYERS, **kw):
             super().__init__()
             self._temp = temperature
             self._seed = seed
@@ -209,7 +161,7 @@ def _register_logprobs_model():
             self.max_length = max_length
             self._model_path = model
             self._gpu_layers = gpu_layers
-            self._reload_interval = kw.get("reload_interval", 500)
+            self._reload_interval = kw.get("reload_interval", RELOAD_INTERVAL)
             self._sample_count = 0
             self._llm = None
             self._ensure_loaded()
@@ -227,8 +179,9 @@ def _register_logprobs_model():
                 except Exception:
                     pass
             from llama_cpp import Llama
+            effective = self._gpu_layers if self._gpu_layers >= 0 else 99
             self._llm = Llama(
-                model_path=self._model_path, n_gpu_layers=self._gpu_layers,
+                model_path=self._model_path, n_gpu_layers=effective,
                 verbose=False, logits_all=True, n_ctx=self.max_length,
             )
             self._sample_count = 0
@@ -269,7 +222,6 @@ def _register_logprobs_model():
                 )
             return res
 
-
 # ── Task runner ───────────────────────────────────────────────────────────────
 
 def run_logprob_task(gguf_path: str, task: str, limit: int,
@@ -289,11 +241,9 @@ def run_logprob_task(gguf_path: str, task: str, limit: int,
     )
     return results
 
-
 def run_generate_task(model_name: str, task: str, limit: int,
                       base_url: str, temperature: float) -> dict:
     """Run a generate_until task using the HTTP server."""
-    import subprocess
     import requests
 
     # Verify server is alive before starting
@@ -319,7 +269,7 @@ def run_generate_task(model_name: str, task: str, limit: int,
         "--model_args",
         f"model={model_name},base_url={base_url}/v1/completions,"
         f"tokenizer_backend=None,temperature={temperature},"
-        f"max_gen_toks=512,num_concurrent=1",
+        f"max_gen_toks={MAX_GEN_TOKS_SERVER},num_concurrent=1",
         "--tasks", task,
         "--limit", str(limit),
         "--output_path", output_dir,
@@ -348,8 +298,120 @@ def run_generate_task(model_name: str, task: str, limit: int,
     print(f"  Warning: no JSON results found, parse skipped", file=sys.stderr)
     return {}
 
-
 # ── Main entry ────────────────────────────────────────────────────────────────
+def _resolve_model_path(model_or_path: str) -> str:
+    """Resolve a GGUF model path from name or full path."""
+    if os.path.exists(model_or_path):
+        return model_or_path
+    home_models = Path.home() / "models" / f"{model_or_path}.gguf"
+    if home_models.exists():
+        return str(home_models)
+    print(f"Error: model not found: {model_or_path} (also tried {home_models})",
+          file=sys.stderr)
+    sys.exit(1)
+
+
+def _run_logprob_presets(
+    presets: list[str],
+    gguf_path: str,
+    limit: int,
+    temperature: float,
+    max_length: int,
+    gpu_layers: int,
+    model_name: str,
+    skip_extract: bool,
+    base_url: str,
+) -> dict:
+    """Run logprob presets, killing the HTTP server first to free VRAM."""
+    import evalserver as srv
+
+    if srv.is_running(base_url):
+        print("\n⚠ Server is running — killing it to free VRAM for logprob eval",
+              file=sys.stderr)
+        srv.kill(base_url)
+
+    results_all = {}
+    for preset in presets:
+        task = PRESETS[preset]
+        print(f"\n{'=' * 60}", file=sys.stderr)
+        print(f"  {preset} (loglikelihood)", file=sys.stderr)
+        print(f"{'=' * 60}", file=sys.stderr)
+        start = time.time()
+        try:
+            tokenizer_dir = Path("results/tokenizers") / model_name
+            if (not skip_extract
+                    and not (tokenizer_dir / "tokenizer.json").exists()):
+                print(f"  Extracting tokenizer...", file=sys.stderr)
+                subprocess.run(
+                    [sys.executable,
+                     str(Path(__file__).parent / "extract_gguf_tokenizer.py"),
+                     gguf_path, str(tokenizer_dir)],
+                    check=True,
+                )
+            results = run_logprob_task(gguf_path, task, limit,
+                                       temperature, max_length, gpu_layers)
+            elapsed = time.time() - start
+            results_all[preset] = results.get("results", {})
+            print(f"  Done ({elapsed:.0f}s)", file=sys.stderr)
+        except Exception as e:
+            elapsed = time.time() - start
+            print(f"  FAILED after {elapsed:.0f}s: {e}", file=sys.stderr)
+            results_all[preset] = {}
+    return results_all
+
+
+def _run_generate_presets(
+    presets: list[str],
+    gguf_path: str,
+    model_name: str,
+    limit: int,
+    temperature: float,
+    max_length: int,
+    gpu_layers: int,
+    base_url: str,
+) -> dict:
+    """Run generate presets, starting/restarting the HTTP server as needed."""
+    import evalserver as srv
+
+    if not srv.is_running(base_url):
+        print("\n  Starting HTTP server for generate tasks...", file=sys.stderr)
+        if not srv.start(gguf_path, base_url, max_length, gpu_layers=gpu_layers):
+            print("  ABORT: cannot run generate tasks without server",
+                  file=sys.stderr)
+            return {}
+    else:
+        print(f"\n  Using existing server at {base_url}", file=sys.stderr)
+
+    results_all = {}
+    for preset in presets:
+        task = PRESETS[preset]
+        print(f"\n{'=' * 60}", file=sys.stderr)
+        print(f"  {preset} (generate)", file=sys.stderr)
+        print(f"{'=' * 60}", file=sys.stderr)
+        start = time.time()
+        try:
+            results = run_generate_task(model_name, task, limit,
+                                        base_url, temperature)
+            elapsed = time.time() - start
+            results_all[preset] = results.get("results", {})
+            print(f"  Done ({elapsed:.0f}s)", file=sys.stderr)
+        except Exception as e:
+            elapsed = time.time() - start
+            print(f"  FAILED after {elapsed:.0f}s: {e}", file=sys.stderr)
+            results_all[preset] = {}
+
+        # Restart server between generate tasks to clear VRAM
+        if srv.is_running(base_url):
+            srv.kill(base_url)
+            time.sleep(1)
+            if not srv.start(gguf_path, base_url, max_length,
+                             gpu_layers=gpu_layers):
+                print(f"  WARNING: server failed to restart after {preset}",
+                      file=sys.stderr)
+    return results_all
+
+
+
 
 def main():
     parser = argparse.ArgumentParser(description="Ozone eval runner")
@@ -358,19 +420,19 @@ def main():
                         default=["mmlu", "hellaswag", "bbh",
                                  "gsm8k", "math", "instruction", "truthfulqa"],
                         help="Presets or lm-eval task names (default: all)")
-    parser.add_argument("--limit", type=int, default=50,
+    parser.add_argument("--limit", type=int, default=DEFAULT_LIMIT,
                         help="Samples per task")
     parser.add_argument("--base-url", default="http://127.0.0.1:8989",
                         help="HTTP server for generate tasks")
     parser.add_argument("--temperature", type=float, default=0.0)
-    parser.add_argument("--max-length", type=int, default=8192)
+    parser.add_argument("--max-length", type=int, default=DEFAULT_CTX_SIZE)
     parser.add_argument("--skip-extract-tokenizer", action="store_true",
                         help="Skip auto tokenizer extraction")
     parser.add_argument("--thinking", type=str, default=None,
                         choices=["on", "off"],
                         help="Thinking mode for models that support it (on/off)")
-    parser.add_argument("--gpu-layers", type=int, default=16,
-                        help="GPU layers to offload for logprob tasks (0=CPU only)")
+    parser.add_argument("--gpu-layers", type=int, default=DEFAULT_GPU_LAYERS,
+                        help="GPU layers (-1=all, 0=CPU only, default=%d)" % DEFAULT_GPU_LAYERS)
     parser.add_argument("--suite", type=str, default=None,
                         choices=list(SUITES.keys()),
                         help="Run a predefined suite of presets")
@@ -379,16 +441,7 @@ def main():
                         help="Run a predefined sweep (group of suites)")
     args = parser.parse_args()
 
-    # Resolve model path: if it looks like a name, check ~/models/
-    gguf_path = args.model_or_path
-    if not os.path.exists(gguf_path):
-        home_models = Path.home() / "models" / f"{gguf_path}.gguf"
-        if home_models.exists():
-            gguf_path = str(home_models)
-        else:
-            print(f"Error: model not found: {gguf_path} (also tried {home_models})",
-                  file=sys.stderr)
-            sys.exit(1)
+    gguf_path = _resolve_model_path(args.model_or_path)
 
     # Resolve presets: accept both short names & lm-eval task names
     # --suite / --sweep expand to --presets before this point
@@ -416,16 +469,7 @@ def main():
     elif args.suite:
         args.presets = SUITES[args.suite]
 
-    # Re-resolve after potential suite/sweep expansion
-    resolved_presets = []
-    for p in args.presets:
-        if p in PRESETS:
-            resolved_presets.append(p)
-        elif p in TASK_TO_PRESET:
-            resolved_presets.append(TASK_TO_PRESET[p])
-        else:
-            print(f"Unknown preset/task: {p} (from suite/sweep)", file=sys.stderr)
-            sys.exit(1)
+    resolved_presets = resolve_presets(args.presets)
 
     # ── Split presets into logprob (direct GPU) and generate (HTTP server) ──
     logprob_presets = [p for p in resolved_presets
@@ -435,10 +479,10 @@ def main():
 
     # ── Logprob tasks: MUST NOT have server running (VRAM contention) ──
     if logprob_presets:
-        if _check_server(args.base_url):
+        if srv.is_running(args.base_url):
             print("\n⚠ Server is running — killing it to free VRAM for logprob eval",
                   file=sys.stderr)
-            _kill_server(args.base_url)
+            srv.kill(args.base_url)
 
     for preset in logprob_presets:
         task = PRESETS[preset]
@@ -479,11 +523,11 @@ def main():
 
     # ── Generate tasks: MUST have server running ──
     if gen_presets:
-        if not _check_server(args.base_url):
+        if not srv.is_running(args.base_url):
             print("\n  Starting HTTP server for generate tasks...",
                   file=sys.stderr)
-            if not _start_server(gguf_path, args.base_url, args.max_length,
-                               gpu_layers=args.gpu_layers):
+            if not srv.start(gguf_path, args.base_url, args.max_length,
+                             gpu_layers=args.gpu_layers):
                 print("  ABORT: cannot run generate tasks without server",
                       file=sys.stderr)
         else:
@@ -515,73 +559,35 @@ def main():
             results_all[preset] = {}
 
         # Restart server between generate tasks to prevent VRAM accumulation
-        if _check_server(args.base_url):
-            _kill_server(args.base_url)
+        if srv.is_running(args.base_url):
+            srv.kill(args.base_url)
             time.sleep(1)
-            if not _start_server(gguf_path, args.base_url, args.max_length,
-                                 gpu_layers=args.gpu_layers):
-                print("  WARNING: server failed to restart after {preset}",
+            if not srv.start(gguf_path, args.base_url, args.max_length,
+                               gpu_layers=args.gpu_layers):
+                print(f"  WARNING: server failed to restart after {preset}",
                       file=sys.stderr)
 
     total_elapsed = time.time() - start_total
 
-    # Build summary
-    summary = {
-        "model": model_name,
-        "gguf_path": gguf_path,
-        "limit": args.limit,
-        "thinking": args.thinking or "N/A",
-        "elapsed_seconds": round(total_elapsed, 1),
-        "scores": {},
-    }
+    # ── Build summary and save ──
+    import scores as sc
 
-    for preset, r in results_all.items():
-        task = PRESETS[preset]
-        for tname, metrics in r.items():
-            for mname, val in metrics.items():
-                if isinstance(val, (int, float)) and 0 <= val <= 1:
-                    key = f"{preset}.{mname}"
-                    summary["scores"][key] = round(val * 100, 1)
+    flat_scores = sc.extract_scores(results_all, PRESETS)
+    scores_dir = Path(__file__).resolve().parent.parent.parent.parent / "results" / "ozone_scores"
+    score_file = sc.ScoreFile(model_name, scores_dir)
+    gguf_path_str = str(gguf_path) if not isinstance(gguf_path, str) else gguf_path
+    summary = score_file.save(
+        flat_scores,
+        elapsed=total_elapsed,
+        metadata={
+            "gguf_path": gguf_path_str,
+            "limit": args.limit,
+            "thinking": args.thinking or "N/A",
+        },
+    )
 
     # Print summary to stdout (parseable by Rust)
     print(json.dumps(summary, indent=2))
-
-    # Also save to disk for the HTML leaderboard
-    # Resolve project root: <script_dir>/../../.. = project root
-    scores_dir = Path(__file__).resolve().parent.parent.parent.parent / "results" / "ozone_scores"
-    scores_dir.mkdir(parents=True, exist_ok=True)
-    score_file = scores_dir / f"{model_name}.json"
-
-    # Merge with existing scores if any (preserves results from previous runs)
-    if score_file.exists():
-        try:
-            with open(score_file) as f:
-                existing = json.load(f)
-            existing_scores = existing.get("scores", {})
-            existing_scores.update(summary["scores"])
-            summary["scores"] = existing_scores
-            summary["elapsed_seconds"] = round(existing.get("elapsed_seconds", 0) + summary["elapsed_seconds"], 1)
-        except Exception:
-            pass  # corrupt file, overwrite
-
-    with open(score_file, "w") as f:
-        json.dump(summary, f, indent=2)
-    print(f"\n  Scores saved to {score_file}", file=sys.stderr)
-
-    # Auto-regenerate leaderboard HTML
-    leaderboard_script = Path(__file__).resolve().parent / "generate_leaderboard.py"
-    if leaderboard_script.exists():
-        import subprocess
-        result = subprocess.run(
-            [sys.executable, str(leaderboard_script)],
-            capture_output=True, text=True,
-            cwd=str(Path(__file__).resolve().parent.parent.parent.parent),
-        )
-        if result.returncode == 0:
-            print("  Leaderboard updated", file=sys.stderr)
-        else:
-            print(f"  Leaderboard update failed: {result.stderr.strip()[-120:]}", file=sys.stderr)
-
 
 if __name__ == "__main__":
     main()

@@ -137,130 +137,14 @@ def collect_data(root: str) -> tuple[dict, dict]:
 
 # ── HTML generation ───────────────────────────────────────────────────────────
 
-CSS = """/* Ozone Leaderboard — TUI-branded theme */
-* { box-sizing: border-box; margin: 0; padding: 0; }
-body { font-family: 'Inter', 'Segoe UI', system-ui, -apple-system, sans-serif;
-       background: #0a0a12; color: #e0e0e0; padding: 24px; }
-/* ── Ozone brand palette ────────────────────────────────────────
-   lime/green:  #22c55e   (primary accent)
-   violet:      #7c3aed   (secondary accent)
-   cyan/teal:   #8dd6d1   (muted text, secondary)
-   amber:       #f59e0b   (warnings, medium scores)
-   red:         #ef4444   (errors, low scores)
-   dark bg:     #0a0a12   (near black)
-   panel bg:    #12121e   (card/tile background)                */
-body.light { background: #f0f0f5; color: #333; }
-.hero { text-align: center; padding: 40px 16px 28px;
-        background: linear-gradient(135deg, #0f0f1e 0%, #12122a 50%, #0a0a12 100%);
-        border-radius: 12px; margin-bottom: 20px; position: relative;
-        border: 1px solid #1a1a30; overflow: hidden; }
-.hero::before { content: ''; position: absolute; top: -50%; left: -50%;
-                width: 200%; height: 200%;
-                background: radial-gradient(circle at 30% 50%, rgba(124,58,237,0.04) 0%, transparent 50%),
-                            radial-gradient(circle at 70% 50%, rgba(34,197,94,0.03) 0%, transparent 50%); }
-body.light .hero { background: linear-gradient(135deg, #e8e8f5 0%, #f0f0f8 50%, #f8f8fc 100%);
-                   border-color: #ddd; }
-.hero h1 { font-size: 26px; font-weight: 300; letter-spacing: 4px;
-           color: #fff; position: relative; margin-top: 4px; }
-body.light .hero h1 { color: #222; }
-/* ── CSS-outlined OZONE logo ── */
-.terminal-frame { display: inline-block; padding: 12px 32px; margin-bottom: 8px;
-                  border: 2px solid #22c55e; border-radius: 4px;
-                  background: rgba(10,10,18,0.8);
-                  box-shadow: 0 0 20px rgba(34,197,94,0.1), inset 0 0 20px rgba(34,197,94,0.02); }
-body.light .terminal-frame { background: rgba(255,255,255,0.8);
-                             box-shadow: 0 0 20px rgba(34,197,94,0.05); }
-.ozone-logo { font-family: 'JetBrains Mono','Cascadia Code','Consolas',monospace;
-              font-size: 38px; font-weight: 700; color: #0a0a12;
-              -webkit-text-stroke: 2.5px #22c55e; text-stroke: 2.5px #22c55e;
-              paint-order: stroke fill;
-              letter-spacing: 0.15em; line-height: 1.1;
-              text-shadow: 0 0 12px rgba(34,197,94,0.3); }
-body.light .ozone-logo { color: #f0f0f5; -webkit-text-stroke: 2.5px #22c55e; }
-.ozone-tagline { font-family: 'Inter','Segoe UI',system-ui,sans-serif;
-                 font-size: 11px; color: #8dd6d1; letter-spacing: 3px;
-                 text-transform: uppercase; margin-top: 4px; opacity: 0.6; }
-.hero .stats { color: #8dd6d1; font-size: 14px; margin-top: 8px; position: relative; }
-.hero .timestamp { color: #555; font-size: 12px; margin-top: 4px; position: relative; }
-.controls { display: flex; gap: 12px; align-items: center; flex-wrap: wrap;
-            margin-bottom: 16px; }
-.controls input, .controls select, .controls button {
-    padding: 6px 12px; border-radius: 6px; border: 1px solid #1e1e3a;
-    background: #12121e; color: #e0e0e0; font-size: 13px; outline: none; }
-.controls input:focus, .controls select:focus, .controls button:focus {
-    border-color: #22c55e; box-shadow: 0 0 0 1px rgba(34,197,94,0.2); }
-body.light .controls input, body.light .controls select,
-body.light .controls button { background: #fff; color: #333; border-color: #ccc; }
-.controls input { flex: 1; min-width: 180px; }
-.controls label { font-size: 13px; color: #888; display: flex; align-items: center; gap: 4px; }
-.theme-btn { cursor: pointer; padding: 6px 14px !important; }
-.theme-btn:hover { border-color: #7c3aed !important; }
-.legend { display: flex; gap: 16px; margin-bottom: 12px; font-size: 12px; color: #8dd6d1; }
-.legend-item { display: flex; align-items: center; gap: 4px; }
-.legend-swatch { width: 20px; height: 12px; border-radius: 2px; display: inline-block; }
-.table-wrap { overflow-x: auto; border-radius: 8px; border: 1px solid #1e1e30; }
-body.light .table-wrap { border-color: #ddd; }
-table { width: 100%; border-collapse: collapse; font-size: 13px; }
-thead { position: sticky; top: 0; z-index: 10; }
-thead th { background: #12121e; padding: 8px 10px; text-align: center;
-           font-weight: 600; text-transform: uppercase; letter-spacing: 0.5px;
-           border-bottom: 2px solid #1e1e30; white-space: nowrap; color: #c0c0e0; }
-body.light thead th { background: #e8e8f5; border-bottom-color: #ccc; color: #444; }
-thead th.suite-header { background: #0e0e18; font-size: 11px; color: #7c3aed; letter-spacing: 1px; }
-body.light thead th.suite-header { background: #ddddee; color: #7c3aed; }
-tbody tr { border-bottom: 1px solid #141422; transition: background 0.15s; }
-body.light tbody tr { border-bottom-color: #e8e8ee; }
-tbody tr:hover { background: #14142a; }
-body.light tbody tr:hover { background: #e8e8f5; }
-tbody td { padding: 8px 10px; text-align: center; white-space: nowrap; }
-tbody td.left { text-align: left; }
-.model-name { font-weight: 600; color: #e0e0f0; }
-body.light .model-name { color: #333; }
-.quant-badge { display: inline-block; padding: 2px 8px; border-radius: 10px;
-               font-size: 10px; font-weight: 600; color: #fff;
-               border: 1px solid rgba(255,255,255,0.08); }
-.score-cell { position: relative; }
-.score-bar { position: absolute; left: 0; top: 0; height: 100%;
-             opacity: 0.08; border-radius: 0; }
-.score-val { position: relative; z-index: 1; font-family: 'JetBrains Mono',
-             'Cascadia Code', 'Consolas', monospace;
-             font-variant-numeric: tabular-nums; font-weight: 500; }
-.score-best { font-weight: 700; }
-.score-best::after { content: '★'; color: #22c55e; font-size: 9px;
-                    position: absolute; top: 1px; right: 3px; opacity: 0.8; }
-.cell-highlight { background: rgba(34,197,94,0.06); box-shadow: inset 0 0 12px rgba(34,197,94,0.08); }
-.score-xlg { color: #22c55e; }   /* lime — excellent 90-100% */
-.score-lg  { color: #10b981; }  /* emerald — very good 70-89% */
-.score-md  { color: #8dd6d1; }  /* cyan — good 50-69% */
-.score-lo  { color: #f59e0b; }  /* amber — below avg 30-49% */
-.score-vlo { color: #e67e22; }  /* orange — poor 15-29% */
-.score-bad { color: #ef4444; }  /* red — failing 0-14% */
-.score-none { color: #444; font-style: italic; }
-body.light .score-none { color: #bbb; }
-.cell-highlight { background: rgba(34,197,94,0.04); }
-td.meta { font-size: 12px; color: #8dd6d1; }
-.export-bar { margin-top: 16px; display: flex; gap: 8px; justify-content: center; }
-.export-btn { padding: 6px 16px; border-radius: 6px; border: 1px solid #1e1e3a;
-              background: #12121e; color: #e0e0e0; cursor: pointer; font-size: 13px; }
-body.light .export-btn { background: #fff; border-color: #ccc; color: #333; }
-.export-btn:hover { background: #1a1a30; border-color: #22c55e; }
-body.light .export-btn:hover { background: #e8e8f5; border-color: #22c55e; }
-.footer { text-align: center; margin-top: 20px; font-size: 12px; color: #555; }
-@media (max-width: 768px) {
-    thead th, tbody td { padding: 4px 6px; font-size: 11px; }
-    .hero h1 { font-size: 20px; }
-}
-.tab-bar { display: flex; gap: 4px; margin-bottom: 12px; flex-wrap: wrap; }
-.tab-btn { padding: 6px 14px; border-radius: 6px; border: 1px solid #1e1e3a;
-           background: #12121e; color: #888; cursor: pointer; font-size: 12px;
-           font-family: 'Fira Code', monospace; transition: all 0.2s; }
-.tab-btn:hover { border-color: #7c3aed; color: #c0c0e0; }
-.tab-btn.active { background: #7c3aed; border-color: #7c3aed; color: #fff;
-                  font-weight: 600; }
-body.light .tab-bar .tab-btn { background: #f0f0f8; border-color: #ddd; color: #888; }
-body.light .tab-bar .tab-btn:hover { border-color: #7c3aed; color: #444; }
-body.light .tab-bar .tab-btn.active { background: #7c3aed; border-color: #7c3aed; color: #fff; }
-"""
+
+def _load_css() -> str:
+    """Load CSS from sibling leaderboard.css file."""
+    css_path = Path(__file__).resolve().parent / "leaderboard.css"
+    return css_path.read_text()
+
+CSS = _load_css()
+
 
 
 
