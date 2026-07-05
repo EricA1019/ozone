@@ -13,16 +13,19 @@ categories = ["command-line-utilities"]
 members = [
     "apps/ozone-mcp",
     "crates/ozone-core",
-    "crates/ozone-engine",
-    "crates/ozone-inference",
     "crates/ozone-mcp",
+    # ozone-persist and ozone-memory are still workspace members because
+    # crates/ozone-mcp uses ozone-persist types for legacy MCP tools.
+    # They will be excluded once the legacy tools are retired.
     "crates/ozone-memory",
     "crates/ozone-persist",
 ]
 exclude = [
-    # Archived ozone+ chat shell. Keep it outside RC workspace gates until it is
-    # either reactivated intentionally or removed.
+    # Archived ozone+ crates. Keep outside RC workspace gates until
+    # intentionally reactivated or removed.
     "crates/ozone-tui",
+    "crates/ozone-engine",
+    "crates/ozone-inference",
 ]
 resolver = "2"
 
@@ -49,6 +52,8 @@ sysinfo = "0.33"
 rusqlite = { version = "0.31", features = ["bundled"], optional = true }
 tokio = { version = "1", features = ["full"] }
 tokio-util = { version = "0.7", features = ["rt"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 toml = "0.8"
 ratatui-braille-bar = "0.2.2"
 

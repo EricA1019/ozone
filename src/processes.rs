@@ -347,6 +347,7 @@ pub fn resolved_llamacpp_server_path() -> Result<PathBuf> {
     crate::llama::discover_llama_server_binary()
 }
 
+#[tracing::instrument(skip(server_path, args))]
 pub async fn start_llamacpp(server_path: &Path, model_name: &str, args: &[String]) -> Result<()> {
     if !server_path.exists() {
         return Err(anyhow!(

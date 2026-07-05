@@ -26,21 +26,6 @@ use crate::suites::{EvalTask, CANARY_SUITE, CODE_MICRO, FORMAT_MICRO, HEALTH_SUI
 use crate::timeout::{compute_timeout, TimeoutEstimate, HARD_CAP_SECS};
 use crate::warmup::{reset_backend_session, run_warmup};
 
-fn expected_answer(task: &EvalTask) -> &'static str {
-    match task.key {
-        "health_001_short_answer" => "4",
-        "health_007_basic_math" => "105",
-        "health_008_instruction_conflict" => "hello",
-        "health_009_context_echo" => "42",
-        "canary_003_math_basic" => "60",
-        "canary_005_long_context_basic" => "Paris",
-        "math_001_arithmetic" => "96",
-        "math_002_percent" => "50",
-        "math_003_two_step_word" => "37",
-        _ => "",
-    }
-}
-
 /// Sweep depth for eval runs — controls which suites are executed and
 /// default attempt counts.
 ///
@@ -260,6 +245,7 @@ fn build_eval_server_args(config: &EvalRunConfig) -> Vec<String> {
 /// Each task is run N times (configurable per sweep level) with varied seeds.
 /// Gate tasks use a 2-of-3 pass rule; failed gates skip deeper tasks in
 /// that lane while other lanes continue.
+#[tracing::instrument(skip(config))]
 pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
     let overall_start = std::time::Instant::now();
     let gate_attempts = config.effective_gate_attempts();
@@ -485,7 +471,7 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
                 total_latency_ms += latency_ms;
 
                 // Score this attempt
-                let scored = scorers::score(task.scorer, &response, expected_answer(task));
+                let scored = scorers::score(task.scorer, &response, task.expected_answer.unwrap_or(""));
                 attempt_results.push(scored);
 
                 // Store artifact (last attempt only to save space)
@@ -893,7 +879,7 @@ pub async fn run_eval_with_events(
                 let latency_ms = start.elapsed().as_millis() as u64;
                 total_latency_ms += latency_ms;
 
-                let scored = scorers::score(task.scorer, &response, expected_answer(task));
+                let scored = scorers::score(task.scorer, &response, task.expected_answer.unwrap_or(""));
                 attempt_results.push(scored);
             }
 

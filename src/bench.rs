@@ -139,6 +139,7 @@ fn build_llamacpp_bench_args(
 }
 
 /// Run a single benchmark: clear → launch → generate → measure → kill → store.
+#[tracing::instrument(skip(request))]
 pub async fn run_benchmark(request: BenchmarkRunRequest<'_>) -> Result<BenchResult> {
     run_benchmark_with_progress(
         request.model_name,

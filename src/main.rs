@@ -46,6 +46,37 @@ use anyhow::Result;
 use clap::{Parser, Subcommand, ValueEnum};
 use std::path::PathBuf;
 
+// ---------------------------------------------------------------------------
+// Named constants — single source of truth for CLI defaults.
+// ---------------------------------------------------------------------------
+
+/// Default llama.cpp server URL (mirrors `ozone_core::paths::DEFAULT_LLAMACPP_BASE_URL`).
+const DEFAULT_LLAMACPP_URL: &str = ozone_core::paths::DEFAULT_LLAMACPP_BASE_URL;
+/// Default server port as string (for clap `default_value`).
+const DEFAULT_LLAMACPP_PORT_STR: &str = "8989";
+/// Default context size as string (for clap `default_value`).
+const DEFAULT_CONTEXT_SIZE_STR: &str = "4096";
+/// Default GPU layers sentinel: -1 means "all layers".
+const GPU_LAYERS_AUTO_STR: &str = "-1";
+/// Default KV cache quantization: 1=f16, 2=q8_0, 3=q4_0.
+const DEFAULT_KV_QUANT_STR: &str = "1";
+/// Default benchmark preset.
+const DEFAULT_BENCH_PRESET: &str = "gsm8k";
+/// Default sample count as string.
+const DEFAULT_SAMPLES_STR: &str = "1";
+/// Default temperature for generation (0.0 = deterministic).
+const DEFAULT_TEMPERATURE_STR: &str = "0.0";
+/// Default backend identifier.
+const DEFAULT_BACKEND_STR: &str = "llama.cpp";
+/// Default creative writing prompt bank path.
+const DEFAULT_CREATIVE_PROMPTS_PATH: &str = "contrib/evals/prompts/creative_writing.toml";
+
+// Non-string constants (for `default_value_t` and struct defaults).
+/// Default context length in tokens (32k).
+const DEFAULT_CONTEXT_SIZE: u32 = 32768;
+/// Default GPU layers for server launch.
+const DEFAULT_GPU_LAYERS: i32 = 35;
+
 /// Product tier for mode selection
 #[derive(Debug, Clone, Copy, ValueEnum)]
 pub enum TierArg {
@@ -116,28 +147,28 @@ enum Commands {
         model: String,
         #[arg(
             long,
-            default_value = "-1",
+            default_value = GPU_LAYERS_AUTO_STR,
             allow_hyphen_values = true,
             help = "GPU layers (-1 = all)"
         )]
         gpu_layers: i32,
-        #[arg(long, default_value = "4096", help = "Context size")]
+        #[arg(long, default_value = DEFAULT_CONTEXT_SIZE_STR, help = "Context size")]
         context: u32,
         #[arg(
             long,
-            default_value = "1",
+            default_value = DEFAULT_KV_QUANT_STR,
             help = "K-cache quantization: 1=f16, 2=q8_0, 3=q4_0"
         )]
         quant_k: u8,
         #[arg(
             long,
-            default_value = "1",
+            default_value = DEFAULT_KV_QUANT_STR,
             help = "V-cache quantization: 1=f16, 2=q8_0, 3=q4_0 (defaults to quant-k)"
         )]
         quant_v: Option<u8>,
         #[arg(
             long,
-            default_value = "1",
+            default_value = DEFAULT_KV_QUANT_STR,
             help = "Shorthand to set both K and V cache quantization at once"
         )]
         quant_kv: Option<u8>,
@@ -176,7 +207,7 @@ enum Commands {
         context_sweep: bool,
         #[arg(
             long,
-            default_value = "1",
+            default_value = DEFAULT_KV_QUANT_STR,
             help = "KV cache quantization: 1=f16, 2=q8_0, 3=q4_0 (sets both K and V)"
         )]
         quant_kv: u8,
@@ -193,16 +224,16 @@ enum Commands {
         model: String,
         #[arg(
             long,
-            default_value = "-1",
+            default_value = GPU_LAYERS_AUTO_STR,
             allow_hyphen_values = true,
             help = "GPU layers (-1 = all)"
         )]
         gpu_layers: i32,
-        #[arg(long, default_value = "4096", help = "Context size")]
+        #[arg(long, default_value = DEFAULT_CONTEXT_SIZE_STR, help = "Context size")]
         context: u32,
-        #[arg(long, default_value = "1", help = "K-cache quantization")]
+        #[arg(long, default_value = DEFAULT_KV_QUANT_STR, help = "K-cache quantization")]
         quant_k: u8,
-        #[arg(long, default_value = "1", help = "V-cache quantization")]
+        #[arg(long, default_value = DEFAULT_KV_QUANT_STR, help = "V-cache quantization")]
         quant_v: u8,
         #[arg(long, help = "Sweep batch threads instead of main threads")]
         batch: bool,
@@ -214,21 +245,21 @@ enum Commands {
         #[arg(
             long,
             value_enum,
-            default_value = "gsm8k",
+            default_value = DEFAULT_BENCH_PRESET,
             help = "Evaluation preset to run"
         )]
         preset: eval::EvalPreset,
-        #[arg(long, default_value = "1", help = "Number of samples/examples to run")]
+        #[arg(long, default_value = DEFAULT_SAMPLES_STR, help = "Number of samples/examples to run")]
         limit: u32,
         #[arg(
             long,
-            default_value = "http://127.0.0.1:8989",
+            default_value = DEFAULT_LLAMACPP_URL,
             help = "Base URL for OpenAI-compatible local API"
         )]
         base_url: String,
         #[arg(
             long,
-            default_value = "0.0",
+            default_value = DEFAULT_TEMPERATURE_STR,
             help = "Temperature for generation (0.0 = deterministic)"
         )]
         temperature: f64,
@@ -243,7 +274,7 @@ enum Commands {
         model: String,
         #[arg(long, help = "Output path (default: ~/models/serve-<model>.sh)")]
         output: Option<String>,
-        #[arg(long, default_value = "8989", help = "Port for the server")]
+        #[arg(long, default_value = DEFAULT_LLAMACPP_PORT_STR, help = "Port for the server")]
         port: u16,
     },
     /// List available evaluation presets
@@ -254,13 +285,13 @@ enum Commands {
         model: String,
         #[arg(
             long,
-            default_value = "http://127.0.0.1:8989",
+            default_value = DEFAULT_LLAMACPP_URL,
             help = "Base URL for OpenAI-compatible local API"
         )]
         base_url: String,
         #[arg(
             long,
-            default_value = "contrib/evals/prompts/creative_writing.toml",
+            default_value = DEFAULT_CREATIVE_PROMPTS_PATH,
             help = "Path to prompt bank TOML"
         )]
         prompts: Option<String>,
@@ -275,15 +306,15 @@ enum Commands {
     EvalRun {
         /// Model file path (for hashing)
         model_path: String,
-        #[arg(long, default_value = "llama.cpp", help = "Backend type")]
+        #[arg(long, default_value = DEFAULT_BACKEND_STR, help = "Backend type")]
         backend: String,
         #[arg(
             long,
-            default_value = "http://127.0.0.1:8989",
+            default_value = DEFAULT_LLAMACPP_URL,
             help = "Base URL for OpenAI-compatible local API"
         )]
         base_url: String,
-        #[arg(long, default_value_t = 32768, help = "Configured context length (default 32k)")]
+        #[arg(long, default_value_t = DEFAULT_CONTEXT_SIZE, help = "Configured context length (default 32k)")]
         context_length: u32,
         #[arg(long, help = "Skip warm-up phase")]
         skip_warmup: bool,
@@ -303,7 +334,7 @@ enum Commands {
         no_manage_server: bool,
         #[arg(long, help = "Allow eval below 16k min quality context threshold")]
         allow_below_min_context: bool,
-        #[arg(long, default_value_t = 35, help = "GPU layers to offload (for server launch)")]
+        #[arg(long, default_value_t = DEFAULT_GPU_LAYERS, help = "GPU layers to offload (for server launch)")]
         gpu_layers: i32,
         #[arg(long, help = "CPU threads (auto if omitted)")]
         threads: Option<u32>,
@@ -318,6 +349,7 @@ enum Commands {
 
 #[tokio::main]
 async fn main() -> Result<()> {
+    tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).init();
     if ozone_core::install::maybe_prompt_for_local_install_update("oz")? {
         ozone_core::install::relaunch_current_process()?;
     }
