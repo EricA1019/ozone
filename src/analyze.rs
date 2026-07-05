@@ -14,10 +14,10 @@ pub fn show_benchmarks(model: Option<&str>) -> Result<usize> {
         Some(name) => {
             let rows = db::get_benchmarks(&conn, name)?;
             if rows.is_empty() {
-                println!();
-                println!("  No benchmarks found for '{name}'.");
-                println!("  Run `ozone bench {name}` or `ozone sweep` first.");
-                println!();
+                // empty line
+                tracing::warn!("  No benchmarks found for '{name}'.");
+                tracing::info!("  Run `ozone bench {name}` or `ozone sweep` first.");
+                // empty line
                 return Ok(0);
             }
             let count = rows.len();
@@ -27,10 +27,10 @@ pub fn show_benchmarks(model: Option<&str>) -> Result<usize> {
         None => {
             let rows = db::get_all_benchmarks(&conn)?;
             if rows.is_empty() {
-                println!();
-                println!("  No benchmarks found.");
-                println!("  Run `ozone bench <model>` or `ozone sweep` first.");
-                println!();
+                // empty line
+                tracing::warn!("  No benchmarks found.");
+                tracing::info!("  Run `ozone bench <model>` or `ozone sweep` first.");
+                // empty line
                 return Ok(0);
             }
             let count = rows.len();
@@ -39,11 +39,11 @@ pub fn show_benchmarks(model: Option<&str>) -> Result<usize> {
             for r in &rows {
                 by_model.entry(r.model_name.clone()).or_default().push(r);
             }
-            println!();
-            println!("  ⬡ Benchmark Summary — All Models");
-            println!("  ─────────────────────────────────────────────────────────────────────");
-            println!("  Model{0:1$}│ Benchmarks │ Best tok/s", "", 40);
-            println!("  ─────────────────────────────────────────────────────────────────────");
+            // empty line
+            tracing::info!("  ⬡ Benchmark Summary — All Models");
+            tracing::info!("  ─────────────────────────────────────────────────────────────────────");
+            tracing::info!("  Model{0:1$}│ Benchmarks │ Best tok/s", "", 40);
+            tracing::info!("  ─────────────────────────────────────────────────────────────────────");
             for (name, benches) in &by_model {
                 let count = benches.len();
                 let best = benches
@@ -58,36 +58,36 @@ pub fn show_benchmarks(model: Option<&str>) -> Result<usize> {
                 };
                 let pad = 46_usize.saturating_sub(display_name.len());
                 if best > 0.0 {
-                    println!(
+                    tracing::info!(
                         "  {display_name}{0:1$}│ {count:>10} │ {best:>10.2}",
                         "", pad
                     );
                 } else {
-                    println!("  {display_name}{0:1$}│ {count:>10} │        n/a", "", pad);
+                    tracing::info!("  {display_name}{0:1$}│ {count:>10} │        n/a", "", pad);
                 }
             }
-            println!("  ─────────────────────────────────────────────────────────────────────");
-            println!(
+            tracing::info!("  ─────────────────────────────────────────────────────────────────────");
+            tracing::info!(
                 "  {} models, {} benchmarks total",
                 by_model.len(),
                 rows.len()
             );
-            println!();
+            // empty line
             Ok(count)
         }
     }
 }
 
 fn print_benchmark_table(model_name: &str, rows: &[BenchmarkRow]) {
-    println!();
-    println!("  ⬡ Benchmark History — {model_name}");
-    println!("  ─────────────────────────────────────────────────────────────────────");
-    println!("  #  │ Layers │ Context │ QKV │ Tokens/s │ TTFT    │ VRAM    │ Status");
-    println!("  ─────────────────────────────────────────────────────────────────────");
+    // empty line
+    tracing::info!("  ⬡ Benchmark History — {model_name}");
+    tracing::info!("  ─────────────────────────────────────────────────────────────────────");
+    tracing::info!("  #  │ Layers │ Context │ QKV │ Tokens/s │ TTFT    │ VRAM    │ Status");
+    tracing::info!("  ─────────────────────────────────────────────────────────────────────");
     for (i, r) in rows.iter().enumerate() {
         let ttft = format!("{} ms", r.time_to_first_token_ms);
         let vram = format!("{} MB", r.vram_peak_mb);
-        println!(
+        tracing::info!(
             "  {:<2} │ {:<6} │ {:<7} │ {:<3} │ {:<3} │ {:<8.2} │ {:<7} │ {:<7} │ {}",
             i + 1,
             r.gpu_layers,
@@ -100,9 +100,9 @@ fn print_benchmark_table(model_name: &str, rows: &[BenchmarkRow]) {
             r.status,
         );
     }
-    println!("  ─────────────────────────────────────────────────────────────────────");
-    println!("  {} benchmarks total", rows.len());
-    println!();
+    tracing::info!("  ─────────────────────────────────────────────────────────────────────");
+    tracing::info!("  {} benchmarks total", rows.len());
+    // empty line
 }
 
 /// A point on the Pareto frontier.
@@ -174,25 +174,25 @@ pub fn show_pareto(model_name: &str) -> Result<()> {
     let ok_count = rows.iter().filter(|r| r.status == "ok").count();
 
     if ok_count < 2 {
-        println!("  Need at least 2 successful benchmarks to compute Pareto frontier.");
-        println!("  Run `ozone bench` or `ozone sweep` with different configurations.");
-        println!();
+        tracing::info!("  Need at least 2 successful benchmarks to compute Pareto frontier.");
+        tracing::info!("  Run `ozone bench` or `ozone sweep` with different configurations.");
+        // empty line
         return Ok(());
     }
 
     let frontier = compute_pareto(&rows);
     if frontier.is_empty() {
-        println!("  No Pareto frontier could be computed.");
+        tracing::info!("  No Pareto frontier could be computed.");
         return Ok(());
     }
 
     // Determine profile labels
     let labels = assign_profile_labels(&frontier);
 
-    println!("  ⬡ Pareto Frontier — {model_name}");
-    println!("  ─────────────────────────────────────────────────────────");
-    println!("  Context  │ Layers │ QKV │ Tokens/s │ VRAM    │ Profile");
-    println!("  ─────────────────────────────────────────────────────────");
+    tracing::info!("  ⬡ Pareto Frontier — {model_name}");
+    tracing::info!("  ─────────────────────────────────────────────────────────");
+    tracing::info!("  Context  │ Layers │ QKV │ Tokens/s │ VRAM    │ Profile");
+    tracing::info!("  ─────────────────────────────────────────────────────────");
     for (i, p) in frontier.iter().enumerate() {
         let vram = format!("{} MB", p.vram_peak_mb);
         let label = &labels[i];
@@ -201,13 +201,13 @@ pub fn show_pareto(model_name: &str) -> Result<()> {
         } else {
             format!("★ {label}")
         };
-        println!(
+        tracing::info!(
             "  {:<8} │ {:<6} │ {:<3} │ {:<3} │ {:<8.2} │ {:<7} │ {}",
             p.context_size, p.gpu_layers, p.quant_k, p.quant_v, p.tokens_per_sec, vram, profile_str,
         );
     }
-    println!("  ─────────────────────────────────────────────────────────");
-    println!();
+    tracing::info!("  ─────────────────────────────────────────────────────────");
+    // empty line
 
     Ok(())
 }
@@ -299,9 +299,9 @@ fn generate_profiles_impl(model_name: &str, noisy: bool) -> Result<usize> {
     }
 
     if noisy {
-        println!();
-        println!("  ⬡ Generated {generated} profile(s) for {model_name}");
-        println!();
+        // empty line
+        tracing::info!("  ⬡ Generated {generated} profile(s) for {model_name}");
+        // empty line
     }
 
     Ok(generated)
@@ -325,12 +325,12 @@ pub fn show_profiles(model: Option<&str>) -> Result<()> {
         Some(name) => {
             let profiles = db::get_profiles(&conn, name)?;
             if profiles.is_empty() {
-                println!();
-                println!("  No profiles for '{name}'.");
-                println!(
+                // empty line
+                tracing::info!("  No profiles for '{name}'.");
+                tracing::info!(
                     "  Run `ozone analyze --generate {name}` to auto-generate from benchmarks."
                 );
-                println!();
+                // empty line
                 return Ok(());
             }
             print_profiles_table(name, &profiles);
@@ -343,9 +343,9 @@ pub fn show_profiles(model: Option<&str>) -> Result<()> {
             model_names.dedup();
 
             if model_names.is_empty() {
-                println!();
-                println!("  No benchmarks found. Run `ozone bench` or `ozone sweep` first.");
-                println!();
+                // empty line
+                tracing::warn!("  No benchmarks found. Run `ozone bench` or `ozone sweep` first.");
+                // empty line
                 return Ok(());
             }
 
@@ -358,12 +358,12 @@ pub fn show_profiles(model: Option<&str>) -> Result<()> {
                 }
             }
             if !any {
-                println!();
-                println!("  No profiles generated yet.");
-                println!(
+                // empty line
+                tracing::info!("  No profiles generated yet.");
+                tracing::info!(
                     "  Run `ozone analyze --generate <model>` to auto-generate from benchmarks."
                 );
-                println!();
+                // empty line
             }
         }
     }
@@ -371,14 +371,14 @@ pub fn show_profiles(model: Option<&str>) -> Result<()> {
 }
 
 fn print_profiles_table(model_name: &str, profiles: &[ProfileRow]) {
-    println!();
-    println!("  ⬡ Profiles — {model_name}");
-    println!("  ─────────────────────────────────────────────────────────────────");
-    println!("  Name     │ Layers │ Context │ QKV │ Tokens/s │ VRAM    │ Source");
-    println!("  ─────────────────────────────────────────────────────────────────");
+    // empty line
+    tracing::info!("  ⬡ Profiles — {model_name}");
+    tracing::info!("  ─────────────────────────────────────────────────────────────────");
+    tracing::info!("  Name     │ Layers │ Context │ QKV │ Tokens/s │ VRAM    │ Source");
+    tracing::info!("  ─────────────────────────────────────────────────────────────────");
     for p in profiles {
         let vram = format!("{} MB", p.vram_mb);
-        println!(
+        tracing::info!(
             "  {:<2} │ {:<6} │ {:<7} │ {:<3} │ {:<3} │ {:<8.2} │ {:<7} │ {}",
             p.profile_name,
             p.gpu_layers,
@@ -390,8 +390,8 @@ fn print_profiles_table(model_name: &str, profiles: &[ProfileRow]) {
             p.source,
         );
     }
-    println!("  ─────────────────────────────────────────────────────────────────");
-    println!();
+    tracing::info!("  ─────────────────────────────────────────────────────────────────");
+    // empty line
 }
 
 // ── Profile export ──────────────────────────────────────────────────────────
@@ -509,19 +509,19 @@ fn export_presets_conf_impl(conf_path: &Path, model: Option<&str>, noisy: bool) 
     std::fs::rename(&tmp, conf_path)?;
 
     if noisy {
-        println!();
-        println!(
+        // empty line
+        tracing::info!(
             "  ⬡ Exported {} model profile(s) → {}",
             best_per_model.len(),
             conf_path.display()
         );
         for (name, p) in &best_per_model {
-            println!(
+            tracing::info!(
                 "    {name}: {} profile (layers={}, ctx={}, K=q{} V=q{})",
                 p.profile_name, p.gpu_layers, p.context_size, p.quant_k, p.quant_v,
             );
         }
-        println!();
+        // empty line
     }
 
     Ok(best_per_model.len())

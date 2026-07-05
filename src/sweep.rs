@@ -166,7 +166,7 @@ fn prune_dominated(frontier: &mut Vec<ParetoPoint>, candidate: &ParetoPoint) {
 
 pub async fn run_sweep(config: SweepConfig) -> Result<SweepResult> {
     run_sweep_with_progress(config, |progress| {
-        println!("  {}", progress.message);
+        tracing::info!("  {}", progress.message);
     })
     .await
 }
@@ -625,7 +625,7 @@ fn store_quietly(
         bench,
     ) {
         Ok(_) => {}
-        Err(e) => eprintln!("  Warning: failed to store result: {e}"),
+        Err(e) => tracing::warn!("  Warning: failed to store result: {e}"),
     }
 }
 
@@ -660,7 +660,7 @@ pub async fn run_context_sweep(request: ContextSweepRequest<'_>) -> Result<(Path
         quick,
     } = request;
     let max_context = crate::gguf::read_context_length(model_path).unwrap_or_else(|| {
-        eprintln!("  ⚠ Could not read context length from GGUF metadata; defaulting to 131072");
+        tracing::warn!("  ⚠ Could not read context length from GGUF metadata; defaulting to 131072");
         131072
     });
 
@@ -703,7 +703,7 @@ pub async fn run_context_sweep(request: ContextSweepRequest<'_>) -> Result<(Path
     let speed_threshold = 10.0f64;
 
     for &ctx in &steps {
-        eprintln!("  Testing context={ctx}...");
+        tracing::info!("  Testing context={ctx}...");
         let backend = crate::bench::BenchBackend::LlamaCpp {
             server_path: server_path.to_path_buf(),
         };
@@ -736,11 +736,11 @@ pub async fn run_context_sweep(request: ContextSweepRequest<'_>) -> Result<(Path
                     &r.status,
                 ])?;
                 if r.status == "oom" {
-                    eprintln!("  OOM at context={ctx}, stopping sweep.");
+                    tracing::warn!("  OOM at context={ctx}, stopping sweep.");
                     break;
                 }
                 if r.status == "garbage" {
-                    eprintln!("  Garbage output at context={ctx} — noting but continuing sweep (may be prompt-specific).");
+                    tracing::warn!("  Garbage output at context={ctx} — noting but continuing sweep (may be prompt-specific).");
                     // Don't stop — garbage detection can have false positives
                 }
             }
@@ -754,15 +754,15 @@ pub async fn run_context_sweep(request: ContextSweepRequest<'_>) -> Result<(Path
                     "0",
                     "launch_failed",
                 ])?;
-                eprintln!("  Failed at context={ctx}: {e}");
+                tracing::error!("  Failed at context={ctx}: {e}");
                 break;
             }
         }
     }
 
     writer.flush()?;
-    eprintln!("  Sweet spot: context={sweet_spot} ({best_tok_s:.1} tok/s)");
-    eprintln!("  CSV: {}", csv_path.display());
+    tracing::info!("  Sweet spot: context={sweet_spot} ({best_tok_s:.1} tok/s)");
+    tracing::info!("  CSV: {}", csv_path.display());
 
     Ok((csv_path, sweet_spot))
 }

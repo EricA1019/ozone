@@ -306,21 +306,21 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
     if !config.skip_warmup {
         let warmup = run_warmup(&config.base_url, 30).await;
         result.warmup_passed = warmup.success;
-        println!(
+        tracing::warn!(
             "Sweep level: {} ({} tasks, gate×{} / regular×{})",
             config.sweep_level.label(),
             config.sweep_level.task_count(),
             gate_attempts,
             regular_attempts,
         );
-        println!(
+        tracing::info!(
             "Warm-up: {} ({} ms, {} chars)",
             if warmup.success { "ok" } else { "failed" },
             warmup.latency_ms,
             warmup.output.len()
         );
         if let Some(error) = warmup.error.as_deref() {
-            println!("Warm-up detail: {error}");
+            tracing::debug!("Warm-up detail: {error}");
         }
         if warmup.success {
             let _ = reset_backend_session(&config.base_url).await;
@@ -330,7 +330,7 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
     // ---- Step 4: Calibration ----
     let cal = run_calibration(&config.base_url).await;
     result.calibration = Some(cal.clone());
-    println!(
+    tracing::info!(
         "Speed: {:.1} tok/s (calibration {} ms)",
         cal.decode_tok_per_sec, cal.total_duration_ms
     );
@@ -338,7 +338,7 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
     // ---- Step 5: Health gate ----
     let health = check_health_gate(&cal);
     result.health_gate = Some(health.clone());
-    println!(
+    tracing::info!(
         "Gate {} score {:.2}: {}",
         health.gate_name, health.score, health.reason
     );
@@ -391,7 +391,7 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
                 if let Some(lane) = task.lane {
                     if let Some(gate) = lane_gates.get(lane) {
                         if !gate.passed {
-                            println!("  [SKIP] {} — gate '{}' failed: {}", task.key, lane, gate.reason);
+                            tracing::warn!("  [SKIP] {} — gate '{}' failed: {}", task.key, lane, gate.reason);
                             result.tasks_skipped_gate += 1;
                             continue;
                         }
@@ -403,7 +403,7 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
             if let Err(error) =
                 check_task_allowed(config.context_length, task.min_context, &config.policy)
             {
-                println!("  Skip {} — policy: {error}", task.key);
+                tracing::warn!("  Skip {} — policy: {error}", task.key);
                 continue;
             }
             let expected_budget = task
@@ -417,7 +417,7 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
                 config.policy.safety_margin_tokens,
             );
             if !fit.fits {
-                println!(
+                tracing::info!(
                     "  Skip {} — context: {}",
                     task.key,
                     fit.reason.as_deref().unwrap_or("exceeds available context")
@@ -513,7 +513,7 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
             } else {
                 String::new()
             };
-            println!(
+            tracing::info!(
                 "  {mark} {} ({:.1}s) avg={:.2}{attempts_str} status={} failure={} stability={} lane={}",
                 task.key,
                 total_latency_ms as f64 / 1000.0,
@@ -543,7 +543,7 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
 
     result.total_duration_ms = overall_start.elapsed().as_millis() as u64;
     result.status = "completed".into();
-    println!(
+    tracing::info!(
         "Eval run complete ({sweep}): {passed}/{total} passed ({skipped} skipped by gate)",
         sweep = config.sweep_level.label(),
         passed = result.tasks_passed,
@@ -558,10 +558,10 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
 
     // ---- Save results ----
     if let Some(path) = save_eval_results(config, &result) {
-        println!("  Results saved: {}", path.display());
+        tracing::info!("  Results saved: {}", path.display());
     }
     if let Some(path) = save_eval_csv(config, &result) {
-        println!("  CSV saved: {}", path.display());
+        tracing::info!("  CSV saved: {}", path.display());
     }
 
     // Unified report (additive — existing paths unchanged)
@@ -571,7 +571,7 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
             model_name,
             &result.tasks,
         ) {
-            println!("  Unified report: {}", unified_dir.display());
+            tracing::info!("  Unified report: {}", unified_dir.display());
         }
     }
 

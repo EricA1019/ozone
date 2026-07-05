@@ -483,7 +483,7 @@ pub fn print_comparison(task_name: &str) -> Result<()> {
     let dir = root.join("results").join(output_dir);
 
     if !dir.exists() {
-        println!("No results yet. Run `oz eval <model> --preset {task_name}` first.");
+        tracing::info!("No results yet. Run `oz eval <model> --preset {task_name}` first.");
         return Ok(());
     }
 
@@ -515,7 +515,7 @@ pub fn print_comparison(task_name: &str) -> Result<()> {
     }
 
     if all_rows.is_empty() {
-        println!("No CSV results found in {}.", dir.display());
+        tracing::info!("No CSV results found in {}.", dir.display());
         return Ok(());
     }
 
@@ -569,13 +569,13 @@ pub async fn run_eval(
     match crate::eval_report::build_eval_report_for_preset(model, preset) {
         Ok(report) => {
             if let Err(error) = crate::eval_report::write_eval_report(&report) {
-                eprintln!("Markdown report could not be written: {error}");
+                tracing::error!("Markdown report could not be written: {error}");
             } else {
                 ozone_core::cli::field("Markdown report:", &report.markdown_path.display());
             }
         }
         Err(error) => {
-            eprintln!("Markdown report could not be generated: {error}");
+            tracing::error!("Markdown report could not be generated: {error}");
         }
     }
     Ok(())

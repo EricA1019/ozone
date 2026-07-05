@@ -151,7 +151,7 @@ pub async fn run_benchmark(request: BenchmarkRunRequest<'_>) -> Result<BenchResu
         request.quant_v,
         request.threads,
         request.mode,
-        |progress| eprintln!("  ⬡ {}", progress.message),
+        |progress| tracing::info!("  ⬡ {}", progress.message),
     )
     .await
 }
@@ -511,30 +511,30 @@ pub fn print_result(
     quant_v: u8,
     result: &BenchResult,
 ) {
-    println!();
-    println!("  ⬡ Benchmark Results");
-    println!("  ─────────────────────────────────────────────────");
-    println!("  Model:       {model_name}");
-    println!("  GPU Layers:  {gpu_layers}");
-    println!("  Context:     {context_size}");
-    println!("  Quant K:     {quant_k}");
-    println!("  Quant V:     {quant_v}");
-    println!("  Status:      {}", result.status);
-    println!("  ─────────────────────────────────────────────────");
+    // empty line
+    tracing::info!("  ⬡ Benchmark Results");
+    tracing::info!("  ─────────────────────────────────────────────────");
+    tracing::info!("  Model:       {model_name}");
+    tracing::info!("  GPU Layers:  {gpu_layers}");
+    tracing::info!("  Context:     {context_size}");
+    tracing::info!("  Quant K:     {quant_k}");
+    tracing::info!("  Quant V:     {quant_v}");
+    tracing::info!("  Status:      {}", result.status);
+    tracing::info!("  ─────────────────────────────────────────────────");
     if result.status == "ok" {
-        println!("  Tokens/sec:  {:.2}", result.tokens_per_sec);
-        println!("  TTFT:        {} ms", result.time_to_first_token_ms);
-        println!("  VRAM Peak:   {} MB", result.vram_peak_mb);
-        println!("  RAM Peak:    {} MB", result.ram_peak_mb);
-        println!("  Tokens:      {}", result.total_tokens);
-        println!("  Total time:  {} ms", result.total_time_ms);
+        tracing::info!("  Tokens/sec:  {:.2}", result.tokens_per_sec);
+        tracing::info!("  TTFT:        {} ms", result.time_to_first_token_ms);
+        tracing::info!("  VRAM Peak:   {} MB", result.vram_peak_mb);
+        tracing::info!("  RAM Peak:    {} MB", result.ram_peak_mb);
+        tracing::info!("  Tokens:      {}", result.total_tokens);
+        tracing::info!("  Total time:  {} ms", result.total_time_ms);
     } else {
-        println!("  Benchmark failed: {}", result.status);
+        tracing::info!("  Benchmark failed: {}", result.status);
         if let Some(ref detail) = result.error_detail {
-            println!("  Detail: {detail}");
+            tracing::info!("  Detail: {detail}");
         }
     }
-    println!();
+    // empty line
 }
 
 /// Detect garbage output from a struggling model.
@@ -601,7 +601,7 @@ pub async fn run_thread_sweep(
             quant_v,
             Some(threads),
             BenchMode::Sweep,
-            |progress| eprintln!("  ⬡ [threads={threads}] {}", progress.message),
+            |progress| tracing::info!("  ⬡ [threads={threads}] {}", progress.message),
         )
         .await?;
         result.threads = Some(threads);
@@ -667,7 +667,7 @@ pub async fn run_batch_thread_sweep(
         )
         .await?;
 
-        eprintln!("  ⬡ [batch={batch}] Running generation…");
+        tracing::info!("  ⬡ [batch={batch}] Running generation…");
         let gen = run_llamacpp_generation(true).await;
 
         processes::clear_gpu_backends().await?;
@@ -705,7 +705,7 @@ pub async fn run_batch_thread_sweep(
                 results.push(result);
             }
             Err(e) => {
-                eprintln!("  ⬡ [batch={batch}] Failed: {e}");
+                tracing::info!("  ⬡ [batch={batch}] Failed: {e}");
             }
         }
     }
@@ -715,23 +715,23 @@ pub async fn run_batch_thread_sweep(
 
 /// Print a thread sweep summary table.
 pub fn print_thread_sweep_summary(thread_results: &[BenchResult]) {
-    println!();
-    println!("  ⬡ Thread Sweep Results");
-    println!("  ─────────────────────────────────────────────────");
-    println!(
+    // empty line
+    tracing::info!("  ⬡ Thread Sweep Results");
+    tracing::info!("  ─────────────────────────────────────────────────");
+    tracing::info!(
         "  {:<10} {:<12} {:<10} {:<10}",
         "Threads", "Tok/s", "TTFT ms", "Status"
     );
-    println!("  ─────────────────────────────────────────────────");
+    tracing::info!("  ─────────────────────────────────────────────────");
     let thread_counts = [1, 2, 4, 6, 8, 12];
     for (i, result) in thread_results.iter().enumerate() {
         let t = thread_counts.get(i).unwrap_or(&0);
-        println!(
+        tracing::info!(
             "  {:<10} {:<12.2} {:<10} {:<10}",
             t, result.tokens_per_sec, result.time_to_first_token_ms, result.status,
         );
     }
-    println!();
+    // empty line
 }
 
 fn backend_server_path(backend: &BenchBackend) -> Result<&std::path::Path> {

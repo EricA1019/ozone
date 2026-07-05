@@ -166,7 +166,7 @@ pub async fn run_creative_writing_eval(
 
     for prompt in prompts {
         for &temp in temperatures {
-            eprintln!("  Generating: prompt='{}', T={}...", prompt.id, temp);
+            tracing::info!("  Generating: prompt='{}', T={}...", prompt.id, temp);
             let text = generate_one(&client, prompt, temp, base_url)
                 .await
                 .unwrap_or_else(|e| format!("[ERROR: {e}]"));

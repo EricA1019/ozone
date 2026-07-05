@@ -335,9 +335,9 @@ async fn cmd_list(json: bool) -> Result<()> {
 
     if entries.is_empty() {
         if json {
-            println!("[]");
+            tracing::debug!("[]");
         } else {
-            println!("No .gguf models found in {}", dir.display());
+            tracing::info!("No .gguf models found in {}", dir.display());
         }
         return Ok(());
     }
@@ -363,14 +363,14 @@ async fn cmd_list(json: bool) -> Result<()> {
                 })
             })
             .collect();
-        println!("{}", serde_json::to_string_pretty(&rows)?);
+        tracing::info!("{}", serde_json::to_string_pretty(&rows)?);
         return Ok(());
     }
 
     let max_name = entries.iter().map(|e| e.name.len()).max().unwrap_or(20);
     let col_name = max_name.max(4);
 
-    println!("Models in {}", dir.display());
+    tracing::info!("Models in {}", dir.display());
     println!(
         "  {:<col_name$}  {:>8}  {:<8}  TYPE",
         "NAME", "SIZE", "QUANT"
