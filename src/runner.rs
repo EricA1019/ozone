@@ -133,6 +133,9 @@ pub struct EvalRunConfig {
     pub threads: Option<u32>,
     /// Enable flash attention (None = auto/default).
     pub flash_attn: Option<bool>,
+    /// Suppress thinking/reasoning output for models that over-think simple prompts.
+    /// When true, adds stop tokens and penalty parameters to the completions request.
+    pub no_thinking: bool,
 }
 
 impl EvalRunConfig {
@@ -174,6 +177,7 @@ impl Default for EvalRunConfig {
             gpu_layers: 35,
             threads: None,
             flash_attn: None,
+            no_thinking: false,
         }
     }
 }
@@ -449,12 +453,20 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
 
             for attempt_idx in 0..attempts {
                 let seed: i64 = 42 + attempt_idx as i64;
-                let body = serde_json::json!({
+                let mut body = serde_json::json!({
                     "prompt": task.prompt,
                     "max_tokens": task.max_output_tokens,
                     "temperature": 0.0,
                     "seed": seed,
                 });
+                if config.no_thinking || task.no_thinking {
+                    body["stop"] = serde_json::json!(["
+
+", "
+response"]);
+                    body["presence_penalty"] = serde_json::json!(0.2);
+                    body["frequency_penalty"] = serde_json::json!(0.1);
+                }
 
                 let start = std::time::Instant::now();
                 let response = match client.post(&url).json(&body).send().await {
@@ -869,12 +881,20 @@ pub async fn run_eval_with_events(
 
             for attempt_idx in 0..attempts {
                 let seed: i64 = 42 + attempt_idx as i64;
-                let body = serde_json::json!({
+                let mut body = serde_json::json!({
                     "prompt": task.prompt,
                     "max_tokens": task.max_output_tokens,
                     "temperature": 0.0,
                     "seed": seed,
                 });
+                if config.no_thinking || task.no_thinking {
+                    body["stop"] = serde_json::json!(["
+
+", "
+response"]);
+                    body["presence_penalty"] = serde_json::json!(0.2);
+                    body["frequency_penalty"] = serde_json::json!(0.1);
+                }
 
                 let start = std::time::Instant::now();
                 let response = match client.post(&url).json(&body).send().await {

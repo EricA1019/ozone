@@ -343,6 +343,8 @@ enum Commands {
         server_path: Option<String>,
         #[arg(long, help = "Enable flash attention (default on, set --flash-attn off to disable)")]
         flash_attn: Option<bool>,
+        #[arg(long, help = "Suppress thinking/reasoning output (adds stop tokens + penalties)")]
+        no_thinking: bool,
     },
     /// List saved launch profiles from preferences
     Profiles,
@@ -889,6 +891,7 @@ async fn main() -> Result<()> {
             threads,
             server_path: cli_server_path,
             flash_attn,
+            no_thinking,
         }) => {
             use crate::runner::{EvalRunConfig, SweepLevel};
             let sweep_level = if quick {
@@ -924,6 +927,7 @@ async fn main() -> Result<()> {
                     manage_server: false,
                     server_path: None,
                     flash_attn,
+                    no_thinking,
                 }
             } else {
                 let resolved_server_path = if let Some(ref p) = cli_server_path {
@@ -952,6 +956,7 @@ async fn main() -> Result<()> {
                     manage_server: true,
                     server_path: Some(resolved_server_path),
                     flash_attn,
+                    no_thinking,
                 }
             };
             let result = runner::run_eval(&config).await?;

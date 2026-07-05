@@ -293,6 +293,7 @@ mod tests {
             max_output_tokens: 8,
             scorer: "exact",
             expected_answer: Some("4"),
+            no_thinking: false,
         };
         let scored = &ScoredResult {
             score: 1.0,
@@ -321,6 +322,7 @@ mod tests {
             max_output_tokens: 8,
             scorer: "exact",
             expected_answer: Some("4"),
+            no_thinking: false,
         };
         let scored = &ScoredResult {
             score: 0.0,

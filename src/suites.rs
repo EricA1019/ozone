@@ -32,6 +32,9 @@ pub struct EvalTask {
     pub scorer: &'static str,
     /// Expected exact answer for "exact" scorer tasks (None for non-exact tasks).
     pub expected_answer: Option<&'static str>,
+    /// Suppress thinking/reasoning for simple prompts that cause overthinking.
+    /// True = add stop tokens and penalties; False = let model reason freely.
+    pub no_thinking: bool,
 }
 
 // ---------------------------------------------------------------------------
@@ -51,6 +54,7 @@ pub const HEALTH_SUITE: &[EvalTask] = &[
         max_output_tokens: 8,
         scorer: "exact",
         expected_answer: Some("4"),
+        no_thinking: true,
     },
     EvalTask {
         key: "health_002_stop_token",
@@ -64,6 +68,7 @@ pub const HEALTH_SUITE: &[EvalTask] = &[
         max_output_tokens: 32,
         scorer: "repetition",
         expected_answer: None,
+        no_thinking: true,
     },
     EvalTask {
         key: "health_003_json_only",
@@ -77,6 +82,7 @@ pub const HEALTH_SUITE: &[EvalTask] = &[
         max_output_tokens: 32,
         scorer: "json",
         expected_answer: None,
+        no_thinking: false,
     },
     EvalTask {
         key: "health_004_code_block",
@@ -90,6 +96,7 @@ pub const HEALTH_SUITE: &[EvalTask] = &[
         max_output_tokens: 64,
         scorer: "code_python",
         expected_answer: None,
+        no_thinking: false,
     },
     EvalTask {
         key: "health_005_repetition_probe",
@@ -103,6 +110,7 @@ pub const HEALTH_SUITE: &[EvalTask] = &[
         max_output_tokens: 32,
         scorer: "repetition",
         expected_answer: None,
+        no_thinking: false,
     },
     EvalTask {
         key: "health_006_long_repetition_probe",
@@ -116,6 +124,7 @@ pub const HEALTH_SUITE: &[EvalTask] = &[
         max_output_tokens: 128,
         scorer: "repetition",
         expected_answer: None,
+        no_thinking: true,
     },
     EvalTask {
         key: "health_007_basic_math",
@@ -129,6 +138,7 @@ pub const HEALTH_SUITE: &[EvalTask] = &[
         max_output_tokens: 8,
         scorer: "exact",
         expected_answer: Some("105"),
+        no_thinking: false,
     },
     EvalTask {
         key: "health_008_instruction_conflict",
@@ -142,6 +152,7 @@ pub const HEALTH_SUITE: &[EvalTask] = &[
         max_output_tokens: 16,
         scorer: "exact",
         expected_answer: Some("hello"),
+        no_thinking: false,
     },
     EvalTask {
         key: "health_009_context_echo",
@@ -155,6 +166,7 @@ pub const HEALTH_SUITE: &[EvalTask] = &[
         max_output_tokens: 16,
         scorer: "exact",
         expected_answer: Some("42"),
+        no_thinking: false,
     },
     EvalTask {
         key: "health_010_latency_probe",
@@ -168,6 +180,7 @@ pub const HEALTH_SUITE: &[EvalTask] = &[
         max_output_tokens: 4,
         scorer: "latency",
         expected_answer: None,
+        no_thinking: true,
     },
 ];
 
@@ -188,6 +201,7 @@ pub const CODE_MICRO: &[EvalTask] = &[
         max_output_tokens: 128,
         scorer: "code_python",
         expected_answer: None,
+        no_thinking: false,
     },
     EvalTask {
         key: "code_python_002_string_parse",
@@ -201,6 +215,7 @@ pub const CODE_MICRO: &[EvalTask] = &[
         max_output_tokens: 128,
         scorer: "code_python",
         expected_answer: None,
+        no_thinking: false,
     },
     EvalTask {
         key: "code_rust_001_vec_sum",
@@ -214,6 +229,7 @@ pub const CODE_MICRO: &[EvalTask] = &[
         max_output_tokens: 128,
         scorer: "code_rust",
         expected_answer: None,
+        no_thinking: false,
     },
     EvalTask {
         key: "code_rust_002_hashmap_count",
@@ -227,6 +243,7 @@ pub const CODE_MICRO: &[EvalTask] = &[
         max_output_tokens: 192,
         scorer: "code_rust",
         expected_answer: None,
+        no_thinking: false,
     },
 ];
 
@@ -247,6 +264,7 @@ pub const FORMAT_MICRO: &[EvalTask] = &[
         max_output_tokens: 64,
         scorer: "json",
         expected_answer: None,
+        no_thinking: false,
     },
     EvalTask {
         key: "format_002_nested_schema",
@@ -260,6 +278,7 @@ pub const FORMAT_MICRO: &[EvalTask] = &[
         max_output_tokens: 128,
         scorer: "json",
         expected_answer: None,
+        no_thinking: false,
     },
 ];
 
@@ -280,6 +299,7 @@ pub const MATH_MICRO: &[EvalTask] = &[
         max_output_tokens: 8,
         scorer: "exact",
         expected_answer: Some("96"),
+        no_thinking: false,
     },
     EvalTask {
         key: "math_002_percent",
@@ -293,6 +313,7 @@ pub const MATH_MICRO: &[EvalTask] = &[
         max_output_tokens: 8,
         scorer: "exact",
         expected_answer: Some("50"),
+        no_thinking: false,
     },
     EvalTask {
         key: "math_003_two_step_word",
@@ -306,6 +327,7 @@ pub const MATH_MICRO: &[EvalTask] = &[
         max_output_tokens: 8,
         scorer: "exact",
         expected_answer: Some("37"),
+        no_thinking: false,
     },
 ];
 
@@ -326,6 +348,7 @@ pub const CANARY_SUITE: &[EvalTask] = &[
         max_output_tokens: 128,
         scorer: "code_python",
         expected_answer: None,
+        no_thinking: false,
     },
     EvalTask {
         key: "canary_002_rust_basic",
@@ -339,6 +362,7 @@ pub const CANARY_SUITE: &[EvalTask] = &[
         max_output_tokens: 128,
         scorer: "code_rust",
         expected_answer: None,
+        no_thinking: false,
     },
     EvalTask {
         key: "canary_003_math_basic",
@@ -352,6 +376,7 @@ pub const CANARY_SUITE: &[EvalTask] = &[
         max_output_tokens: 8,
         scorer: "exact",
         expected_answer: Some("60"),
+        no_thinking: true,
     },
     EvalTask {
         key: "canary_004_json_tool_basic",
@@ -365,6 +390,7 @@ pub const CANARY_SUITE: &[EvalTask] = &[
         max_output_tokens: 64,
         scorer: "json",
         expected_answer: None,
+        no_thinking: false,
     },
     EvalTask {
         key: "canary_005_long_context_basic",
@@ -378,6 +404,7 @@ pub const CANARY_SUITE: &[EvalTask] = &[
         max_output_tokens: 16,
         scorer: "exact",
         expected_answer: Some("Paris"),
+        no_thinking: false,
     },
     EvalTask {
         key: "canary_006_summarization_basic",
@@ -391,6 +418,7 @@ pub const CANARY_SUITE: &[EvalTask] = &[
         max_output_tokens: 64,
         scorer: "format",
         expected_answer: None,
+        no_thinking: false,
     },
     EvalTask {
         key: "canary_007_code_reading_basic",
@@ -404,6 +432,7 @@ pub const CANARY_SUITE: &[EvalTask] = &[
         max_output_tokens: 64,
         scorer: "format",
         expected_answer: None,
+        no_thinking: false,
     },
 ];
 
