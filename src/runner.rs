@@ -133,6 +133,10 @@ pub struct EvalRunConfig {
     pub threads: Option<u32>,
     /// Enable flash attention (None = auto/default).
     pub flash_attn: Option<bool>,
+    /// K-cache quantization: 1=f16, 2=q8_0, 3=q4_0.
+    pub cache_type_k: u8,
+    /// V-cache quantization: 1=f16, 2=q8_0, 3=q4_0.
+    pub cache_type_v: u8,
     /// Suppress thinking/reasoning output for models that over-think simple prompts.
     /// When true, adds stop tokens and penalty parameters to the completions request.
     pub no_thinking: bool,
@@ -176,6 +180,8 @@ impl Default for EvalRunConfig {
             server_path: None,
             gpu_layers: 35,
             threads: None,
+            cache_type_k: 1,
+            cache_type_v: 1,
             flash_attn: None,
             no_thinking: false,
         }
@@ -239,8 +245,8 @@ fn build_eval_server_args(config: &EvalRunConfig) -> Vec<String> {
     };
     args.push("--flash-attn".into());
     args.push(fa.into());
-    // Use Q8 KV cache by default (safer for GPU memory, matches bench pattern)
-    args.extend(processes::kv_cache_args(8, 8));
+    // Apply KV cache quantization from config
+    args.extend(processes::kv_cache_args(config.cache_type_k, config.cache_type_v));
     args
 }
 

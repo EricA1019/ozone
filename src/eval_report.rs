@@ -40,7 +40,12 @@ pub(crate) fn build_eval_report_for_preset(
 
     match task.kind {
         crate::eval::EvalTaskKind::LmEval { .. } => {
-            build_lm_eval_report(&title, &artifacts_dir.join(output_dir).join(model))
+            let model_name = std::path::Path::new(model)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .unwrap_or("unknown");
+            let model_dir = crate::eval::find_model_output_dir(&artifacts_dir.join(output_dir), model, model_name);
+            build_lm_eval_report(&title, &model_dir)
         }
         crate::eval::EvalTaskKind::EvalPlus { .. } => build_evalplus_report(
             &title,

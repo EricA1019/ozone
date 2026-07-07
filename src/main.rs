@@ -343,6 +343,21 @@ enum Commands {
         server_path: Option<String>,
         #[arg(long, help = "Enable flash attention (default on, set --flash-attn off to disable)")]
         flash_attn: Option<bool>,
+        #[arg(
+            long,
+            help = "K-cache quantization: 1=f16, 2=q8_0, 3=q4_0 (default: f16)"
+        )]
+        cache_type_k: Option<u8>,
+        #[arg(
+            long,
+            help = "V-cache quantization: 1=f16, 2=q8_0, 3=q4_0 (defaults to cache-type-k if omitted)"
+        )]
+        cache_type_v: Option<u8>,
+        #[arg(
+            long,
+            help = "Shorthand to set both K and V cache quantization at once"
+        )]
+        cache_type_kv: Option<u8>,
         #[arg(long, help = "Suppress thinking/reasoning output (adds stop tokens + penalties)")]
         no_thinking: bool,
     },
@@ -890,6 +905,9 @@ async fn main() -> Result<()> {
             gpu_layers,
             threads,
             server_path: cli_server_path,
+            cache_type_k,
+            cache_type_v,
+            cache_type_kv,
             flash_attn,
             no_thinking,
         }) => {
@@ -901,6 +919,22 @@ async fn main() -> Result<()> {
             } else {
                 SweepLevel::Full // default (also when --full is set)
             };
+            // Resolve cache type with env var fallback
+            let resolve_cache_type = |cli_val: Option<u8>, env_var: &str, default: u8| -> u8 {
+                cli_val.unwrap_or_else(|| {
+                    std::env::var(env_var)
+                        .ok()
+                        .and_then(|v| v.parse::<u8>().ok())
+                        .unwrap_or(default)
+                })
+            };
+            let effective_cache_k = resolve_cache_type(cache_type_k, "OZONE_QUANT_K", 1);
+            let effective_cache_v = resolve_cache_type(
+                cache_type_v.or(cache_type_kv),
+                "OZONE_QUANT_V",
+                effective_cache_k,
+            );
+
             let mut policy = crate::policy::ContextPolicy::default();
             if allow_below_min_context {
                 policy.allow_below_min_context = true;
@@ -926,6 +960,8 @@ async fn main() -> Result<()> {
                     threads,
                     manage_server: false,
                     server_path: None,
+                    cache_type_k: effective_cache_k,
+                    cache_type_v: effective_cache_v,
                     flash_attn,
                     no_thinking,
                 }
@@ -955,6 +991,8 @@ async fn main() -> Result<()> {
                     threads,
                     manage_server: true,
                     server_path: Some(resolved_server_path),
+                    cache_type_k: effective_cache_k,
+                    cache_type_v: effective_cache_v,
                     flash_attn,
                     no_thinking,
                 }

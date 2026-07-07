@@ -368,10 +368,18 @@ pub async fn run_eval_task(
 
 /// Extract metric values from lm-eval JSON output and write as CSV row.
 fn write_eval_csv(task: &EvalTask, model: &str, artifacts_dir: &Path) -> Result<PathBuf> {
+    // model is a full GGUF path; use just the filename for CSV records
+    let model_name = Path::new(model)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("unknown");
     let output_dir = match task.kind {
-        EvalTaskKind::LmEval { output_dir, .. } => artifacts_dir.join(output_dir).join(model),
+        EvalTaskKind::LmEval { output_dir, .. } => {
+            let base = artifacts_dir.join(output_dir);
+            find_model_output_dir(&base, model, model_name)
+        },
         EvalTaskKind::EvalPlus { output_dir } => artifacts_dir.join(output_dir).join("humaneval"),
-        EvalTaskKind::CreativeWriting => artifacts_dir.join("creative_writing").join(model),
+        EvalTaskKind::CreativeWriting => artifacts_dir.join("creative_writing").join(model_name),
     };
 
     // Find the latest results JSON file
@@ -399,7 +407,7 @@ fn write_eval_csv(task: &EvalTask, model: &str, artifacts_dir: &Path) -> Result<
                 }
                 let (val, stderr) = extract_metric_value(value);
                 writer.write_record([
-                    model,
+                    model_name,
                     task_key,
                     metric,
                     &val.to_string(),
@@ -445,6 +453,34 @@ fn disambiguate_csv_path(base: &Path) -> Result<PathBuf> {
 
 /// Find the latest JSON results file in a model output directory.
 /// Reuses the existing `latest_json_file` pattern from eval_report.rs.
+/// Find the model-specific output directory under `base`.
+/// lm-eval creates a subdirectory using the model name (full path with `/` → `__`),
+/// or a short name depending on how the model was passed.  Pick the one that
+/// actually exists; if multiple match, prefer the one whose name contains the
+/// full path (the `__`-separated form) as it's the most recent convention.
+pub(crate) fn find_model_output_dir(base: &Path, model: &str, model_name: &str) -> PathBuf {
+    // Direct possible paths
+    let candidates = [
+        // Full path with '/' → '__' (current lm-eval convention)
+        base.join(model.trim_start_matches('/').replace('/', "__")),
+        // Full path with '.' → '_' (some lm-eval versions)
+        base.join(model.trim_start_matches('/').replace('/', "__").replace('.', "_")),
+        // Just the filename stem (previous code convention)
+        base.join(model_name),
+        // Filename stem + .gguf extension (some lm-eval versions)
+        base.join(Path::new(model).file_name().and_then(|s| s.to_str()).unwrap_or(model_name)),
+    ];
+
+    // Return the first one that exists, falling back to the file-stem path
+    for c in &candidates {
+        if c.is_dir() {
+            return c.to_path_buf();
+        }
+    }
+    // None match yet — maybe the output hasn't been written. Use the full-path form.
+    candidates[0].clone()
+}
+
 fn latest_csv_source_file(dir: &Path) -> Result<PathBuf> {
     // lm-eval writes results_*.json; pick the latest by name
     let mut entries = Vec::new();
