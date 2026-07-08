@@ -1,7 +1,6 @@
 #[cfg(feature = "profiling-ui")]
 use std::collections::BTreeMap;
 use std::{
-    io,
     path::PathBuf,
     time::{Duration, Instant},
 };
@@ -20,12 +19,6 @@ use crate::profiling::{
 use anyhow::Result;
 #[cfg(test)]
 use crossterm::event::KeyEvent;
-use crossterm::{
-    event::{self, Event, KeyCode, KeyEventKind},
-    execute,
-    terminal::{enable_raw_mode, EnterAlternateScreen},
-};
-use ratatui::{backend::CrosstermBackend, widgets::Clear, Terminal};
 use serde::{de, Deserialize, Deserializer, Serialize};
 #[cfg(feature = "profiling-ui")]
 use tokio::sync::mpsc::UnboundedReceiver;
@@ -672,121 +665,15 @@ impl App {
     }
 }
 
-fn next_screen_after_splash(app: &App) -> Screen {
-    if app.prefs.preferred_tier.is_none() {
-        Screen::TierPicker
-    } else {
-        Screen::Launcher
-    }
-}
-
-fn queue_launch(app: &mut App) {
-    app.pending_launch_choice = Some(0);
-}
-
-enum LauncherActionOutcome {
-    Continue,
-    Exit,
-}
-
-pub(super) fn selected_record(app: &App) -> Option<CatalogRecord> {
-    app.current_plan.as_ref().and_then(|plan| {
-        app.catalog
-            .iter()
-            .find(|record| record.model_name == plan.model_name)
-            .cloned()
-    })
-}
+mod plan_builder;
+use plan_builder::{next_screen_after_splash, queue_launch, LauncherActionOutcome, selected_record};
 
 
-pub async fn run_monitor() -> Result<()> {
-    let (prefs, startup_error) = match crate::prefs::load_prefs().await {
-        Ok(prefs) => (prefs, None),
-        Err(error) => (
-            Preferences::default(),
-            Some(format!("Failed to load preferences: {error}")),
-        ),
-    };
-    let mut app = App::new(prefs);
-    if let Some(error) = startup_error {
-        app.set_error(error);
-    }
-    app.screen = Screen::Monitor;
-    app.hardware = Some(
-        tokio::task::spawn_blocking(crate::hardware::load_hardware)
-            .await
-            .unwrap_or_default(),
-    );
-    app.services = crate::processes::get_service_status().await;
-
-    enable_raw_mode()?;
-    let mut terminal_restore = TerminalRestoreGuard::new();
-    terminal_restore.mark_raw_mode_enabled();
-    let mut stdout = io::stdout();
-    execute!(stdout, EnterAlternateScreen)?;
-    terminal_restore.mark_alt_screen_entered();
-    let backend = CrosstermBackend::new(stdout);
-    let mut terminal = Terminal::new(backend)?;
-    terminal.hide_cursor()?;
-
-    let mut last_tick = Instant::now();
-    let mut last_refresh = Instant::now();
-    let mut last_fast_refresh = Instant::now();
-
-    loop {
-        terminal.draw(|f| {
-            f.render_widget(Clear, f.area());
-            monitor::render(f, &app);
-        })?;
-
-        if event::poll(Duration::from_millis(50))? {
-            if let Event::Key(key) = event::read()? {
-                if key.kind != KeyEventKind::Press {
-                    continue;
-                }
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => break,
-                    KeyCode::Char('s') => {
-                        let _ = crate::processes::clear_gpu_backends().await;
-                        app.services = crate::processes::get_service_status().await;
-                        terminal.draw(|f| monitor::render(f, &app))?;
-                        break;
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        if last_tick.elapsed() >= Duration::from_millis(100) {
-            last_tick = Instant::now();
-            app.tick();
-        }
-
-        // Fast path (500ms): service status, GPU/RAM stats
-        if last_fast_refresh.elapsed() >= Duration::from_millis(500) {
-            last_fast_refresh = Instant::now();
-            app.services = crate::processes::get_service_status().await;
-            app.tokens_per_sec = None;
-            if let Some(ref mut hw) = app.hardware {
-                *hw = tokio::task::spawn_blocking(crate::hardware::load_hardware_live)
-                    .await
-                    .unwrap_or_default();
-            }
-        }
-
-        // Slow path (2s): disk usage
-        if last_refresh.elapsed() >= Duration::from_secs(2) {
-            last_refresh = Instant::now();
-            app.update_disk();
-        }
-    }
-
-    terminal_restore.restore()?;
-    Ok(())
-}
+pub use monitor_flow::run_monitor;
 
 #[cfg(test)]
 mod tests {
+    use crossterm::event::KeyCode;
     use super::*;
 
     #[test]
