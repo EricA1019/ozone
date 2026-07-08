@@ -10,7 +10,7 @@ use std::{
 use crate::eval::EvalPreset;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(crate) struct EvalMarkdownReport {
+pub struct EvalMarkdownReport {
     pub title: String,
     pub markdown: String,
     pub source_path: PathBuf,

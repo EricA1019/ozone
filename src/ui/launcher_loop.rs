@@ -179,12 +179,12 @@ pub async fn run_launcher(
         }
 
         loop {
-            let event = match app.bench_eval_event_rx.as_mut() {
+            let event = match app.bench_eval.event_rx.as_mut() {
                 Some(rx) => match rx.try_recv() {
                     Ok(event) => Some(event),
                     Err(tokio::sync::mpsc::error::TryRecvError::Empty) => None,
                     Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                        app.bench_eval_event_rx = None;
+                        app.bench_eval.event_rx = None;
                         None
                     }
                 },
@@ -198,12 +198,12 @@ pub async fn run_launcher(
 
         // Eval run event processing
         loop {
-            let event = match app.eval_run_event_rx.as_mut() {
+            let event = match app.bench_eval.eval_run_event_rx.as_mut() {
                 Some(rx) => match rx.try_recv() {
                     Ok(event) => Some(event),
                     Err(tokio::sync::mpsc::error::TryRecvError::Empty) => None,
                     Err(tokio::sync::mpsc::error::TryRecvError::Disconnected) => {
-                        app.eval_run_event_rx = None;
+                        app.bench_eval.eval_run_event_rx = None;
                         None
                     }
                 },

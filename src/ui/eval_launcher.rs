@@ -173,7 +173,7 @@ pub(super) fn render(f: &mut Frame, app: &App) {
         .iter()
         .enumerate()
         .map(|(idx, entry)| {
-            let is_sel = idx == app.eval_launcher_selected;
+            let is_sel = idx == app.bench_eval.eval_launcher_selected;
             let marker = if is_sel { "▶ " } else { "  " };
             let marker_span =
                 Span::styled(marker, if is_sel { style_lime() } else { style_muted() });
@@ -202,7 +202,7 @@ pub(super) fn render(f: &mut Frame, app: &App) {
     f.render_stateful_widget(
         list,
         chunks[1],
-        &mut ratatui::widgets::ListState::default().with_selected(Some(app.eval_launcher_selected)),
+        &mut ratatui::widgets::ListState::default().with_selected(Some(app.bench_eval.eval_launcher_selected)),
     );
 
     let hints = Paragraph::new(Line::from(vec![
@@ -232,24 +232,24 @@ pub(super) async fn handle_key(
             if eval_entries.is_empty() {
                 return EvalLauncherOutcome::Continue;
             }
-            app.eval_launcher_selected = if app.eval_launcher_selected == 0 {
+            app.bench_eval.eval_launcher_selected = if app.bench_eval.eval_launcher_selected == 0 {
                 eval_entries.len() - 1
             } else {
-                app.eval_launcher_selected - 1
+                app.bench_eval.eval_launcher_selected - 1
             };
         }
         crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
             if eval_entries.is_empty() {
                 return EvalLauncherOutcome::Continue;
             }
-            app.eval_launcher_selected = if app.eval_launcher_selected + 1 >= eval_entries.len() {
+            app.bench_eval.eval_launcher_selected = if app.bench_eval.eval_launcher_selected + 1 >= eval_entries.len() {
                 0
             } else {
-                app.eval_launcher_selected + 1
+                app.bench_eval.eval_launcher_selected + 1
             };
         }
         crossterm::event::KeyCode::Enter => {
-            let idx = app.eval_launcher_selected;
+            let idx = app.bench_eval.eval_launcher_selected;
             if let Some(entry) = eval_entries.get(idx) {
                 dispatch_action(app, entry.action).await;
             }
@@ -361,7 +361,7 @@ fn start_eval_sweep(app: &mut App, level: crate::runner::SweepLevel) {
         app.set_error("No model selected. Open Model Picker or launch a model first.".into());
         return;
     };
-    if app.eval_run_event_rx.is_some() {
+    if app.bench_eval.eval_run_event_rx.is_some() {
         app.set_error("An eval run is already in progress.".into());
         return;
     }
@@ -385,13 +385,13 @@ fn start_eval_sweep(app: &mut App, level: crate::runner::SweepLevel) {
         sweep_level: level,
         ..Default::default()
     };
-    app.eval_run_event_rx = Some(rx);
-    app.eval_run_stage = format!("{} starting...", level.label());
-    app.eval_run_running = true;
-    app.eval_run_tasks_run = 0;
-    app.eval_run_tasks_passed = 0;
-    app.eval_run_model = Some(model_name);
-    app.eval_run_progress.clear();
+    app.bench_eval.eval_run_event_rx = Some(rx);
+    app.bench_eval.eval_run_stage = format!("{} starting...", level.label());
+    app.bench_eval.eval_run_running = true;
+    app.bench_eval.eval_run_tasks_run = 0;
+    app.bench_eval.eval_run_tasks_passed = 0;
+    app.bench_eval.eval_run_model = Some(model_name);
+    app.bench_eval.eval_run_progress.clear();
     app.screen = Screen::EvalRunRunning;
     app.set_status(format!("{} started...", level.label()));
     super::eval_run_workflow::spawn_eval_run(config, tx);

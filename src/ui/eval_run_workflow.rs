@@ -8,7 +8,7 @@ use tokio::sync::mpsc::UnboundedSender;
 
 /// Events emitted by the eval runner pipeline for TUI progress display.
 #[derive(Debug, Clone)]
-pub(crate) enum EvalRunEvent {
+pub enum EvalRunEvent {
     /// Pipeline stage change.
     Stage { name: String, detail: String },
     /// A single task completed.
@@ -35,8 +35,8 @@ pub(crate) enum EvalRunEvent {
 pub(super) fn apply_eval_run_event(app: &mut super::App, event: EvalRunEvent) {
     match event {
         EvalRunEvent::Stage { name, detail } => {
-            app.eval_run_stage = name;
-            app.eval_run_progress.push(format!("  {}", detail));
+            app.bench_eval.eval_run_stage = name;
+            app.bench_eval.eval_run_progress.push(format!("  {}", detail));
         }
         EvalRunEvent::TaskResult {
             task_key,
@@ -50,14 +50,14 @@ pub(super) fn apply_eval_run_event(app: &mut super::App, event: EvalRunEvent) {
                 "  {mark} {task_key} ({:.1}s) score={score:.2} {detail}",
                 latency_ms as f64 / 1000.0
             );
-            app.eval_run_progress.push(line);
-            app.eval_run_tasks_run += 1;
+            app.bench_eval.eval_run_progress.push(line);
+            app.bench_eval.eval_run_tasks_run += 1;
             if passed {
-                app.eval_run_tasks_passed += 1;
+                app.bench_eval.eval_run_tasks_passed += 1;
             }
         }
         EvalRunEvent::TaskSkipped { task_key, reason } => {
-            app.eval_run_progress
+            app.bench_eval.eval_run_progress
                 .push(format!("  [SKIP] {task_key} {reason}"));
         }
         EvalRunEvent::Completed {
@@ -65,9 +65,9 @@ pub(super) fn apply_eval_run_event(app: &mut super::App, event: EvalRunEvent) {
             tasks_passed,
             duration_ms,
         } => {
-            app.eval_run_event_rx = None;
-            app.eval_run_running = false;
-            app.eval_run_progress.push(format!(
+            app.bench_eval.eval_run_event_rx = None;
+            app.bench_eval.eval_run_running = false;
+            app.bench_eval.eval_run_progress.push(format!(
                 "  Done: {tasks_passed}/{tasks_run} passed in {:.1}s",
                 duration_ms as f64 / 1000.0
             ));
@@ -79,13 +79,13 @@ pub(super) fn apply_eval_run_event(app: &mut super::App, event: EvalRunEvent) {
             }
         }
         EvalRunEvent::Failed { message } => {
-            app.eval_run_event_rx = None;
-            app.eval_run_running = false;
+            app.bench_eval.eval_run_event_rx = None;
+            app.bench_eval.eval_run_running = false;
             let error_msg = format!("Eval run failed: {message}");
             app.set_error(error_msg.clone());
-            app.eval_run_progress.push(format!("  ERROR: {message}"));
+            app.bench_eval.eval_run_progress.push(format!("  ERROR: {message}"));
             // Log to file
-            let model = app.eval_run_model.as_deref().unwrap_or("unknown");
+            let model = app.bench_eval.eval_run_model.as_deref().unwrap_or("unknown");
             if let Ok(root) = crate::eval::resolve_project_root() {
                 let log_dir = root.join("results").join("logs");
                 let _ = std::fs::create_dir_all(&log_dir);

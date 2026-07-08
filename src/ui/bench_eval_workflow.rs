@@ -9,7 +9,7 @@ use tokio::{
 use crate::eval::EvalPreset;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-pub(super) enum BenchEvalWorkflowEvent {
+pub enum BenchEvalWorkflowEvent {
     Status {
         title: String,
         detail: String,
@@ -30,7 +30,7 @@ pub(super) enum BenchEvalWorkflowEvent {
 pub(super) fn apply_bench_eval_event(app: &mut super::App, event: BenchEvalWorkflowEvent) {
     match event {
         BenchEvalWorkflowEvent::Status { title, detail } => {
-            app.bench_eval_progress_title = title;
+            app.bench_eval.progress_title = title;
             app.push_bench_eval_progress(detail);
         }
         BenchEvalWorkflowEvent::Output { is_stderr, line } => {
@@ -38,10 +38,10 @@ pub(super) fn apply_bench_eval_event(app: &mut super::App, event: BenchEvalWorkf
             app.push_bench_eval_progress(format!("[{prefix}] {line}"));
         }
         BenchEvalWorkflowEvent::Completed { exit_code, report } => {
-            app.bench_eval_event_rx = None;
-            app.bench_eval_running_model = None;
-            app.bench_eval_running_preset = None;
-            app.bench_eval_running_command = None;
+            app.bench_eval.event_rx = None;
+            app.bench_eval.running_model = None;
+            app.bench_eval.running_preset = None;
+            app.bench_eval.running_command = None;
             match exit_code {
                 Some(0) | None => {
                     app.set_status("Evaluation completed successfully.".into());
@@ -63,10 +63,10 @@ pub(super) fn apply_bench_eval_event(app: &mut super::App, event: BenchEvalWorkf
             }
         }
         BenchEvalWorkflowEvent::Failed { message } => {
-            app.bench_eval_event_rx = None;
-            app.bench_eval_running_model = None;
-            app.bench_eval_running_preset = None;
-            app.bench_eval_running_command = None;
+            app.bench_eval.event_rx = None;
+            app.bench_eval.running_model = None;
+            app.bench_eval.running_preset = None;
+            app.bench_eval.running_command = None;
             app.set_error(message);
             if matches!(app.screen, super::Screen::BenchEvalRunning) {
                 app.screen = super::Screen::BenchEval;

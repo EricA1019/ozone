@@ -107,7 +107,7 @@ pub(super) fn render(f: &mut Frame, app: &App) {
         .iter()
         .enumerate()
         .map(|(idx, entry)| {
-            let is_sel = idx == app.bench_launcher_selected;
+            let is_sel = idx == app.bench_eval.bench_launcher_selected;
             let marker = if is_sel { "▶ " } else { "  " };
             let marker_span =
                 Span::styled(marker, if is_sel { style_lime() } else { style_muted() });
@@ -137,7 +137,7 @@ pub(super) fn render(f: &mut Frame, app: &App) {
         list,
         chunks[1],
         &mut ratatui::widgets::ListState::default()
-            .with_selected(Some(app.bench_launcher_selected)),
+            .with_selected(Some(app.bench_eval.bench_launcher_selected)),
     );
 
     let hints = Paragraph::new(Line::from(vec![
@@ -167,25 +167,25 @@ pub(super) async fn handle_key(
             if bench_entries.is_empty() {
                 return BenchLauncherOutcome::Continue;
             }
-            app.bench_launcher_selected = if app.bench_launcher_selected == 0 {
+            app.bench_eval.bench_launcher_selected = if app.bench_eval.bench_launcher_selected == 0 {
                 bench_entries.len() - 1
             } else {
-                app.bench_launcher_selected - 1
+                app.bench_eval.bench_launcher_selected - 1
             };
         }
         crossterm::event::KeyCode::Down | crossterm::event::KeyCode::Char('j') => {
             if bench_entries.is_empty() {
                 return BenchLauncherOutcome::Continue;
             }
-            app.bench_launcher_selected = if app.bench_launcher_selected + 1 >= bench_entries.len()
+            app.bench_eval.bench_launcher_selected = if app.bench_eval.bench_launcher_selected + 1 >= bench_entries.len()
             {
                 0
             } else {
-                app.bench_launcher_selected + 1
+                app.bench_eval.bench_launcher_selected + 1
             };
         }
         crossterm::event::KeyCode::Enter => {
-            let idx = app.bench_launcher_selected;
+            let idx = app.bench_eval.bench_launcher_selected;
             if let Some(entry) = bench_entries.get(idx) {
                 dispatch_action(app, entry.action);
             }

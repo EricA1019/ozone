@@ -200,16 +200,16 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
     let summary_lines: Vec<Line> = if is_eval_run {
         let mut lines = vec![Line::from(vec![
             Span::styled("  Stage: ", style_gray()),
-            Span::styled(&app.eval_run_stage, style_cyan()),
+            Span::styled(&app.bench_eval.eval_run_stage, style_cyan()),
         ])];
-        if let Some(ref model) = app.eval_run_model {
+        if let Some(ref model) = app.bench_eval.eval_run_model {
             lines.push(Line::from(vec![
                 Span::styled("  Model: ", style_gray()),
                 Span::styled(model.as_str(), style_cyan()),
             ]));
         }
-        let passed = app.eval_run_tasks_passed;
-        let total = app.eval_run_tasks_run;
+        let passed = app.bench_eval.eval_run_tasks_passed;
+        let total = app.bench_eval.eval_run_tasks_run;
         if total > 0 {
             let pct = if total > 0 {
                 (passed as f64 / total as f64 * 100.0) as u32
@@ -225,27 +225,27 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
     } else {
         let mut lines = vec![Line::from(vec![
             Span::styled("  Stage: ", style_gray()),
-            Span::styled(&app.bench_eval_progress_title, style_cyan()),
+            Span::styled(&app.bench_eval.progress_title, style_cyan()),
         ])];
-        if let Some(model) = &app.bench_eval_running_model {
+        if let Some(model) = &app.bench_eval.running_model {
             lines.push(Line::from(vec![
                 Span::styled("  Model: ", style_gray()),
                 Span::styled(model, style_cyan()),
             ]));
         }
-        if let Some(preset) = &app.bench_eval_running_preset {
+        if let Some(preset) = &app.bench_eval.running_preset {
             lines.push(Line::from(vec![
                 Span::styled("  Preset: ", style_gray()),
                 Span::styled(preset, style_cyan()),
             ]));
         }
-        if let Some(limit) = app.bench_eval_running_limit {
+        if let Some(limit) = app.bench_eval.running_limit {
             lines.push(Line::from(vec![
                 Span::styled("  Samples: ", style_gray()),
                 Span::styled(limit.to_string(), style_cyan()),
             ]));
         }
-        if let Some(command) = &app.bench_eval_running_command {
+        if let Some(command) = &app.bench_eval.running_command {
             lines.push(Line::from(vec![
                 Span::styled("  Command: ", style_gray()),
                 Span::styled(command, style_muted()),
@@ -272,8 +272,8 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
     f.render_widget(summary, chunks[1]);
 
     // Progress gauge (only when there are tasks)
-    if app.eval_run_tasks_run > 0 && is_eval_run {
-        let ratio = app.eval_run_tasks_passed as f64 / app.eval_run_tasks_run as f64;
+    if app.bench_eval.eval_run_tasks_run > 0 && is_eval_run {
+        let ratio = app.bench_eval.eval_run_tasks_passed as f64 / app.bench_eval.eval_run_tasks_run as f64;
         let gauge = ratatui::widgets::Gauge::default()
             .block(Block::default().borders(Borders::NONE))
             .gauge_style(if (ratio - 1.0).abs() < f64::EPSILON {
@@ -284,17 +284,17 @@ pub(super) fn render_running(f: &mut Frame, app: &App) {
             .percent((ratio * 100.0) as u16)
             .label(format!(
                 "{}/{} tasks ({:.0}%)",
-                app.eval_run_tasks_passed,
-                app.eval_run_tasks_run,
+                app.bench_eval.eval_run_tasks_passed,
+                app.bench_eval.eval_run_tasks_run,
                 ratio * 100.0
             ));
         f.render_widget(gauge, summary_inner[1]);
     }
 
     let progress_lines: &Vec<String> = if is_eval_run {
-        &app.eval_run_progress
+        &app.bench_eval.eval_run_progress
     } else {
-        &app.bench_eval_progress
+        &app.bench_eval.progress
     };
     let lines: Vec<Line> = if progress_lines.is_empty() {
         vec![Line::from(Span::styled(
@@ -398,15 +398,15 @@ pub(super) fn render_report(f: &mut Frame, app: &App) {
 
     let mut summary_lines = vec![Line::from(vec![
         Span::styled("  Report: ", style_gray()),
-        Span::styled(&app.bench_eval_report_title, style_cyan()),
+        Span::styled(&app.bench_eval.report_title, style_cyan()),
     ])];
-    if let Some(source) = &app.bench_eval_report_source {
+    if let Some(source) = &app.bench_eval.report_source {
         summary_lines.push(Line::from(vec![
             Span::styled("  Source: ", style_gray()),
             Span::styled(source.display().to_string(), style_muted()),
         ]));
     }
-    if let Some(markdown_path) = &app.bench_eval_report_markdown_path {
+    if let Some(markdown_path) = &app.bench_eval.report_markdown_path {
         summary_lines.push(Line::from(vec![
             Span::styled("  Markdown: ", style_gray()),
             Span::styled(markdown_path.display().to_string(), style_muted()),
@@ -421,15 +421,15 @@ pub(super) fn render_report(f: &mut Frame, app: &App) {
     );
     f.render_widget(summary, chunks[1]);
 
-    let report_text = if app.bench_eval_report_markdown.is_empty() {
+    let report_text = if app.bench_eval.report_markdown.is_empty() {
         "No markdown report is available yet.".to_string()
     } else {
-        app.bench_eval_report_markdown.clone()
+        app.bench_eval.report_markdown.clone()
     };
     let report_line_count = report_text.lines().count().max(1);
     let visible_height = chunks[2].height.saturating_sub(2) as usize;
     let max_scroll = report_line_count.saturating_sub(visible_height) as u16;
-    let scroll = app.bench_eval_report_scroll.min(max_scroll);
+    let scroll = app.bench_eval.report_scroll.min(max_scroll);
 
     let report_block = Block::default()
         .title(Span::styled("  Markdown ", style_bold_cyan()))
@@ -481,7 +481,7 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .map(|(index, entry)| {
-            let selected = index == app.bench_eval_selected;
+            let selected = index == app.bench_eval.selected;
             let marker = if selected {
                 if (app.ticker / 6).is_multiple_of(2) {
                     HEX_CURSOR
@@ -525,7 +525,7 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
 
 fn render_preview(f: &mut Frame, area: Rect, app: &App) {
     let selected = entries()
-        .get(app.bench_eval_selected)
+        .get(app.bench_eval.selected)
         .copied()
         .unwrap_or(entries()[0]);
 
@@ -597,7 +597,7 @@ fn render_preview(f: &mut Frame, area: Rect, app: &App) {
             format!("oz export-server {model_hint}")
         }
         BenchEvalAction::ViewResults => {
-            let count = app.bench_eval_results_files.len();
+            let count = app.bench_eval.results_files.len();
             if count > 0 {
                 format!("Browse {count} result files from past runs")
             } else {
@@ -605,7 +605,7 @@ fn render_preview(f: &mut Frame, area: Rect, app: &App) {
             }
         }
         BenchEvalAction::ViewReport => {
-            if let Some(path) = &app.bench_eval_report_markdown_path {
+            if let Some(path) = &app.bench_eval.report_markdown_path {
                 format!("Open markdown report at {}", path.display())
             } else {
                 "No markdown report has been generated yet.".to_string()
@@ -614,7 +614,7 @@ fn render_preview(f: &mut Frame, area: Rect, app: &App) {
         BenchEvalAction::Back => "Return to launcher menu.".to_string(),
     };
 
-    let status_line = if app.bench_eval_event_rx.is_some() {
+    let status_line = if app.bench_eval.event_rx.is_some() {
         "Evaluation running in the background…".to_string()
     } else if app.screen == Screen::BenchEval {
         app.status_msg
@@ -665,7 +665,7 @@ fn render_hints(f: &mut Frame, area: Rect) {
 pub(super) fn render_results(f: &mut Frame, app: &App) {
     let area = f.area();
 
-    if app.bench_eval_results_viewing {
+    if app.bench_eval.results_viewing {
         render_results_content(f, area, app);
     } else {
         render_results_list(f, area, app);
@@ -704,7 +704,7 @@ fn render_results_list(f: &mut Frame, area: Rect, app: &App) {
     let inner = block.inner(chunks[1]);
     f.render_widget(block, chunks[1]);
 
-    if app.bench_eval_results_files.is_empty() {
+    if app.bench_eval.results_files.is_empty() {
         let empty = Paragraph::new(Line::from(Span::styled(
             "  No result files found. Run an eval, sweep, or creative-write first.",
             style_gray(),
@@ -712,11 +712,11 @@ fn render_results_list(f: &mut Frame, area: Rect, app: &App) {
         f.render_widget(empty, inner);
     } else {
         let items: Vec<ListItem> = app
-            .bench_eval_results_files
+            .bench_eval.results_files
             .iter()
             .enumerate()
             .map(|(i, file)| {
-                let selected = i == app.bench_eval_results_selected;
+                let selected = i == app.bench_eval.results_selected;
                 let marker = if selected {
                     if (app.ticker / 6).is_multiple_of(2) {
                         HEX_CURSOR
@@ -759,8 +759,8 @@ fn render_results_list(f: &mut Frame, area: Rect, app: &App) {
 
     // Preview of selected file
     let preview_text = if let Some(file) = app
-        .bench_eval_results_files
-        .get(app.bench_eval_results_selected)
+        .bench_eval.results_files
+        .get(app.bench_eval.results_selected)
     {
         format!(
             "  {}  |  {}  |  {}",
@@ -810,8 +810,8 @@ fn render_results_content(f: &mut Frame, area: Rect, app: &App) {
 
     // Header
     let header_title = if let Some(file) = app
-        .bench_eval_results_files
-        .get(app.bench_eval_results_selected)
+        .bench_eval.results_files
+        .get(app.bench_eval.results_selected)
     {
         format!(
             "  {}  |  {}",
@@ -841,8 +841,8 @@ fn render_results_content(f: &mut Frame, area: Rect, app: &App) {
     let sub = Paragraph::new(Line::from(vec![
         Span::styled("  Path: ", style_gray()),
         Span::styled(
-            app.bench_eval_results_files
-                .get(app.bench_eval_results_selected)
+            app.bench_eval.results_files
+                .get(app.bench_eval.results_selected)
                 .map(|f| f.path.display().to_string())
                 .unwrap_or_default(),
             style_muted(),
@@ -851,11 +851,11 @@ fn render_results_content(f: &mut Frame, area: Rect, app: &App) {
     f.render_widget(sub, chunks[1]);
 
     // Content
-    let content = &app.bench_eval_results_content;
+    let content = &app.bench_eval.results_content;
     let line_count = content.lines().count().max(1);
     let visible = chunks[2].height.saturating_sub(2) as usize;
     let max_scroll = line_count.saturating_sub(visible) as u16;
-    let scroll = app.bench_eval_results_scroll.min(max_scroll);
+    let scroll = app.bench_eval.results_scroll.min(max_scroll);
 
     let content_block = Block::default()
         .title(Span::styled("  Contents ", style_bold_cyan()))

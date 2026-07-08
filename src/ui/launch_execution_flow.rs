@@ -74,17 +74,17 @@ pub(super) async fn run_launcher_action(
             }
         }
         super::LauncherActionId::BenchLauncher => {
-            app.bench_launcher_selected = 0;
+            app.bench_eval.bench_launcher_selected = 0;
             app.screen = super::Screen::BenchLauncher;
         }
         super::LauncherActionId::EvalLauncher => {
-            app.eval_launcher_selected = 0;
+            app.bench_eval.eval_launcher_selected = 0;
             app.screen = super::Screen::EvalLauncher;
         }
         super::LauncherActionId::Results => {
             app.discover_result_files();
-            app.bench_eval_results_selected = 0;
-            app.bench_eval_results_viewing = false;
+            app.bench_eval.results_selected = 0;
+            app.bench_eval.results_viewing = false;
             app.screen = super::Screen::BenchEvalResults;
         }
         #[cfg(feature = "profiling-ui")]

@@ -36,7 +36,7 @@ use tui_textarea::TextArea;
 mod backend_args;
 mod bench_eval;
 mod bench_eval_flow;
-mod bench_eval_workflow;
+pub mod bench_eval_workflow;
 mod bench_launcher;
 mod catalog_flow;
 mod command_overlay_flow;
@@ -202,6 +202,37 @@ pub struct ProfilingState {
     pub cancel: Option<CancellationToken>,
 }
 
+#[derive(Debug, Default)]
+pub struct BenchEvalState {
+    pub selected: usize,
+    pub eval_launcher_selected: usize,
+    pub bench_launcher_selected: usize,
+    pub progress_title: String,
+    pub progress: Vec<String>,
+    pub event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<BenchEvalWorkflowEvent>>,
+    pub eval_run_event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<EvalRunEvent>>,
+    pub eval_run_stage: String,
+    pub eval_run_progress: Vec<String>,
+    pub eval_run_running: bool,
+    pub eval_run_tasks_run: usize,
+    pub eval_run_tasks_passed: usize,
+    pub eval_run_model: Option<String>,
+    pub running_model: Option<String>,
+    pub running_preset: Option<String>,
+    pub running_limit: Option<u32>,
+    pub running_command: Option<String>,
+    pub report_title: String,
+    pub report_markdown: String,
+    pub report_source: Option<PathBuf>,
+    pub report_markdown_path: Option<PathBuf>,
+    pub report_scroll: u16,
+    pub results_files: Vec<ResultFile>,
+    pub results_selected: usize,
+    pub results_content: String,
+    pub results_scroll: u16,
+    pub results_viewing: bool,
+}
+
 pub struct App {
     pub screen: Screen,
     pub hardware: Option<HardwareProfile>,
@@ -240,33 +271,7 @@ pub struct App {
     pub settings_backend_index: usize,
     pub settings_input_buffer: String,
     pub settings_editing: bool,
-    bench_eval_selected: usize,
-    eval_launcher_selected: usize,
-    bench_launcher_selected: usize,
-    bench_eval_progress_title: String,
-    bench_eval_progress: Vec<String>,
-    bench_eval_event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<BenchEvalWorkflowEvent>>,
-    eval_run_event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<EvalRunEvent>>,
-    eval_run_stage: String,
-    eval_run_progress: Vec<String>,
-    eval_run_running: bool,
-    eval_run_tasks_run: usize,
-    eval_run_tasks_passed: usize,
-    eval_run_model: Option<String>,
-    bench_eval_running_model: Option<String>,
-    bench_eval_running_preset: Option<String>,
-    bench_eval_running_limit: Option<u32>,
-    bench_eval_running_command: Option<String>,
-    bench_eval_report_title: String,
-    bench_eval_report_markdown: String,
-    bench_eval_report_source: Option<PathBuf>,
-    bench_eval_report_markdown_path: Option<PathBuf>,
-    bench_eval_report_scroll: u16,
-    bench_eval_results_files: Vec<ResultFile>,
-    bench_eval_results_selected: usize,
-    bench_eval_results_content: String,
-    bench_eval_results_scroll: u16,
-    bench_eval_results_viewing: bool,
+    pub bench_eval: BenchEvalState,
     pub command_overlay_open: bool,
     pub command_overlay: TextArea<'static>,
     pub command_overlay_selected: usize,
@@ -319,33 +324,10 @@ impl App {
             settings_backend_index: 0,
             settings_input_buffer: String::new(),
             settings_editing: false,
-            bench_eval_selected: 0,
-            eval_launcher_selected: 0,
-            bench_launcher_selected: 0,
-            bench_eval_progress_title: "Ready".into(),
-            bench_eval_progress: Vec::new(),
-            bench_eval_event_rx: None,
-            eval_run_event_rx: None,
-            eval_run_stage: String::new(),
-            eval_run_progress: Vec::new(),
-            eval_run_running: false,
-            eval_run_tasks_run: 0,
-            eval_run_tasks_passed: 0,
-            eval_run_model: None,
-            bench_eval_running_model: None,
-            bench_eval_running_preset: None,
-            bench_eval_running_limit: None,
-            bench_eval_running_command: None,
-            bench_eval_report_title: String::new(),
-            bench_eval_report_markdown: String::new(),
-            bench_eval_report_source: None,
-            bench_eval_report_markdown_path: None,
-            bench_eval_report_scroll: 0,
-            bench_eval_results_files: Vec::new(),
-            bench_eval_results_selected: 0,
-            bench_eval_results_content: String::new(),
-            bench_eval_results_scroll: 0,
-            bench_eval_results_viewing: false,
+                        bench_eval: BenchEvalState {
+                progress_title: "Ready".into(),
+                ..Default::default()
+            },
             command_overlay_open: false,
             command_overlay: new_command_overlay(),
             command_overlay_selected: 0,
@@ -393,33 +375,10 @@ impl App {
             settings_backend_index: 0,
             settings_input_buffer: String::new(),
             settings_editing: false,
-            bench_eval_selected: 0,
-            eval_launcher_selected: 0,
-            bench_launcher_selected: 0,
-            bench_eval_progress_title: "Ready".into(),
-            bench_eval_progress: Vec::new(),
-            bench_eval_event_rx: None,
-            eval_run_event_rx: None,
-            eval_run_stage: String::new(),
-            eval_run_progress: Vec::new(),
-            eval_run_running: false,
-            eval_run_tasks_run: 0,
-            eval_run_tasks_passed: 0,
-            eval_run_model: None,
-            bench_eval_running_model: None,
-            bench_eval_running_preset: None,
-            bench_eval_running_limit: None,
-            bench_eval_running_command: None,
-            bench_eval_report_title: String::new(),
-            bench_eval_report_markdown: String::new(),
-            bench_eval_report_source: None,
-            bench_eval_report_markdown_path: None,
-            bench_eval_report_scroll: 0,
-            bench_eval_results_files: Vec::new(),
-            bench_eval_results_selected: 0,
-            bench_eval_results_content: String::new(),
-            bench_eval_results_scroll: 0,
-            bench_eval_results_viewing: false,
+                        bench_eval: BenchEvalState {
+                progress_title: "Ready".into(),
+                ..Default::default()
+            },
             command_overlay_open: false,
             command_overlay: new_command_overlay(),
             command_overlay_selected: 0,
@@ -592,24 +551,24 @@ impl App {
         limit: u32,
         command_preview: String,
     ) {
-        self.bench_eval_event_rx = Some(rx);
-        self.bench_eval_running_model = Some(model);
-        self.bench_eval_running_preset = Some(preset.cli_name().to_string());
-        self.bench_eval_running_limit = Some(limit);
-        self.bench_eval_running_command = Some(command_preview);
-        self.bench_eval_progress_title = "Launching eval".into();
-        self.bench_eval_progress.clear();
-        self.bench_eval_progress
+        self.bench_eval.event_rx = Some(rx);
+        self.bench_eval.running_model = Some(model);
+        self.bench_eval.running_preset = Some(preset.cli_name().to_string());
+        self.bench_eval.running_limit = Some(limit);
+        self.bench_eval.running_command = Some(command_preview);
+        self.bench_eval.progress_title = "Launching eval".into();
+        self.bench_eval.progress.clear();
+        self.bench_eval.progress
             .push("Preparing evaluation subprocess...".into());
         self.screen = Screen::BenchEvalRunning;
     }
 
     fn store_bench_eval_report(&mut self, report: crate::eval_report::EvalMarkdownReport) {
-        self.bench_eval_report_title = report.title;
-        self.bench_eval_report_markdown = report.markdown;
-        self.bench_eval_report_source = Some(report.source_path);
-        self.bench_eval_report_markdown_path = Some(report.markdown_path);
-        self.bench_eval_report_scroll = 0;
+        self.bench_eval.report_title = report.title;
+        self.bench_eval.report_markdown = report.markdown;
+        self.bench_eval.report_source = Some(report.source_path);
+        self.bench_eval.report_markdown_path = Some(report.markdown_path);
+        self.bench_eval.report_scroll = 0;
     }
 
     fn open_bench_eval_report(&mut self, report: crate::eval_report::EvalMarkdownReport) {
@@ -618,7 +577,7 @@ impl App {
     }
 
     pub(super) fn discover_result_files(&mut self) {
-        self.bench_eval_results_files.clear();
+        self.bench_eval.results_files.clear();
         let data_dir = ozone_core::paths::data_dir();
 
         // Scan data dir for sweep CSVs
@@ -636,7 +595,7 @@ impl App {
                             .unwrap_or(rest)
                             .to_string();
                         let summary = first_csv_summary(&path).unwrap_or_default();
-                        self.bench_eval_results_files.push(ResultFile {
+                        self.bench_eval.results_files.push(ResultFile {
                             path,
                             kind: ResultFileKind::Sweep,
                             model,
@@ -651,27 +610,27 @@ impl App {
         if let Ok(root) = crate::eval::resolve_project_root() {
             let artifacts = root.join("results");
             if artifacts.exists() {
-                scan_result_dir(&artifacts, &mut self.bench_eval_results_files);
+                scan_result_dir(&artifacts, &mut self.bench_eval.results_files);
             }
         }
     }
 
     fn load_result_file_content(&mut self, index: usize) {
-        if let Some(file) = self.bench_eval_results_files.get(index) {
-            self.bench_eval_results_viewing = true;
-            self.bench_eval_results_scroll = 0;
+        if let Some(file) = self.bench_eval.results_files.get(index) {
+            self.bench_eval.results_viewing = true;
+            self.bench_eval.results_scroll = 0;
             let content = match std::fs::read_to_string(&file.path) {
                 Ok(text) => format_result_text(&file.path, &text, &file.kind),
                 Err(e) => format!("Could not read {}: {e}", file.path.display()),
             };
-            self.bench_eval_results_content = content;
+            self.bench_eval.results_content = content;
         }
     }
 
     fn push_bench_eval_progress(&mut self, line: String) {
-        self.bench_eval_progress.push(line);
-        if self.bench_eval_progress.len() > 24 {
-            self.bench_eval_progress.remove(0);
+        self.bench_eval.progress.push(line);
+        if self.bench_eval.progress.len() > 24 {
+            self.bench_eval.progress.remove(0);
         }
     }
 

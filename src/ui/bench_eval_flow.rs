@@ -23,20 +23,20 @@ pub(super) async fn handle_bench_eval_key(app: &mut App, key: KeyEvent) -> Bench
             app.screen = Screen::Launcher;
         }
         KeyCode::Up => {
-            if app.bench_eval_selected > 0 {
-                app.bench_eval_selected -= 1;
+            if app.bench_eval.selected > 0 {
+                app.bench_eval.selected -= 1;
             }
         }
         KeyCode::Down => {
             let max_index = entries().len().saturating_sub(1);
-            if app.bench_eval_selected < max_index {
-                app.bench_eval_selected += 1;
+            if app.bench_eval.selected < max_index {
+                app.bench_eval.selected += 1;
             }
         }
         KeyCode::Char(ch) if ch.is_ascii_digit() => {
             if let Some(index) = ch.to_digit(10).map(|value| value as usize) {
                 if index > 0 && index <= entries().len() {
-                    app.bench_eval_selected = index - 1;
+                    app.bench_eval.selected = index - 1;
                     activate_selected(app).await;
                 }
             }
@@ -60,7 +60,7 @@ pub(super) async fn handle_bench_eval_key(app: &mut App, key: KeyEvent) -> Bench
 
 async fn activate_selected(app: &mut App) {
     let selected = entries()
-        .get(app.bench_eval_selected)
+        .get(app.bench_eval.selected)
         .copied()
         .unwrap_or(entries()[0]);
 
@@ -107,7 +107,7 @@ async fn activate_selected(app: &mut App) {
                 app.set_error("No model selected. Select or launch a model first.".into());
                 return;
             };
-            if app.eval_run_event_rx.is_some() {
+            if app.bench_eval.eval_run_event_rx.is_some() {
                 app.set_error("An eval run is already in progress.".into());
                 return;
             }
@@ -124,13 +124,13 @@ async fn activate_selected(app: &mut App) {
                 skip_health_gate: false,
                 ..Default::default()
             };
-            app.eval_run_event_rx = Some(rx);
-            app.eval_run_stage = "Starting...".into();
-            app.eval_run_running = true;
-            app.eval_run_tasks_run = 0;
-            app.eval_run_tasks_passed = 0;
-            app.eval_run_model = Some(model_name);
-            app.eval_run_progress.clear();
+            app.bench_eval.eval_run_event_rx = Some(rx);
+            app.bench_eval.eval_run_stage = "Starting...".into();
+            app.bench_eval.eval_run_running = true;
+            app.bench_eval.eval_run_tasks_run = 0;
+            app.bench_eval.eval_run_tasks_passed = 0;
+            app.bench_eval.eval_run_model = Some(model_name);
+            app.bench_eval.eval_run_progress.clear();
             app.screen = Screen::EvalRunRunning;
             app.set_status("Eval run started...".into());
             super::eval_run_workflow::spawn_eval_run(config, tx);
@@ -227,9 +227,9 @@ async fn activate_selected(app: &mut App) {
         }
         BenchEvalAction::ViewResults => {
             app.discover_result_files();
-            app.bench_eval_results_viewing = false;
-            app.bench_eval_results_selected = 0;
-            if app.bench_eval_results_files.is_empty() {
+            app.bench_eval.results_viewing = false;
+            app.bench_eval.results_selected = 0;
+            if app.bench_eval.results_files.is_empty() {
                 app.set_error(
                     "No result files found. Run an eval, sweep, or creative-write first.".into(),
                 );
@@ -238,7 +238,7 @@ async fn activate_selected(app: &mut App) {
             }
         }
         BenchEvalAction::ViewReport => {
-            if app.bench_eval_report_markdown.is_empty() {
+            if app.bench_eval.report_markdown.is_empty() {
                 app.set_error("Run an eval first so there is a markdown report to view.".into());
             } else {
                 app.screen = Screen::BenchEvalReport;
@@ -270,7 +270,7 @@ pub(crate) async fn start_eval_with_cli_name(app: &mut App, cli_name: &str) {
         return;
     };
 
-    if app.bench_eval_event_rx.is_some() {
+    if app.bench_eval.event_rx.is_some() {
         app.set_error("An evaluation is already running.".into());
         return;
     }
@@ -375,7 +375,7 @@ pub(super) fn handle_bench_eval_running_key(
 ) -> BenchEvalRunningOutcome {
     match key.code {
         KeyCode::Esc | KeyCode::Char('q') => {
-            if app.bench_eval_event_rx.is_some() {
+            if app.bench_eval.event_rx.is_some() {
                 app.set_status("Evaluation continues in the background.".into());
             }
             app.screen = Screen::BenchEval;
@@ -391,51 +391,51 @@ pub(super) fn handle_bench_eval_report_key(app: &mut App, key: KeyEvent) {
             app.screen = Screen::BenchEval;
         }
         KeyCode::Up | KeyCode::Char('k') => {
-            app.bench_eval_report_scroll = app.bench_eval_report_scroll.saturating_sub(1);
+            app.bench_eval.report_scroll = app.bench_eval.report_scroll.saturating_sub(1);
         }
         KeyCode::Down | KeyCode::Char('j') => {
-            app.bench_eval_report_scroll = app.bench_eval_report_scroll.saturating_add(1);
+            app.bench_eval.report_scroll = app.bench_eval.report_scroll.saturating_add(1);
         }
         KeyCode::PageUp => {
-            app.bench_eval_report_scroll = app.bench_eval_report_scroll.saturating_sub(8);
+            app.bench_eval.report_scroll = app.bench_eval.report_scroll.saturating_sub(8);
         }
         KeyCode::PageDown => {
-            app.bench_eval_report_scroll = app.bench_eval_report_scroll.saturating_add(8);
+            app.bench_eval.report_scroll = app.bench_eval.report_scroll.saturating_add(8);
         }
         KeyCode::Home => {
-            app.bench_eval_report_scroll = 0;
+            app.bench_eval.report_scroll = 0;
         }
         KeyCode::End => {
-            app.bench_eval_report_scroll = u16::MAX;
+            app.bench_eval.report_scroll = u16::MAX;
         }
         _ => {}
     }
 }
 
 pub(super) fn handle_bench_eval_results_key(app: &mut App, key: KeyEvent) {
-    if app.bench_eval_results_viewing {
+    if app.bench_eval.results_viewing {
         // Viewing file contents
         match key.code {
             KeyCode::Esc | KeyCode::Char('q') => {
-                app.bench_eval_results_viewing = false;
+                app.bench_eval.results_viewing = false;
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                app.bench_eval_results_scroll = app.bench_eval_results_scroll.saturating_sub(1);
+                app.bench_eval.results_scroll = app.bench_eval.results_scroll.saturating_sub(1);
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                app.bench_eval_results_scroll = app.bench_eval_results_scroll.saturating_add(1);
+                app.bench_eval.results_scroll = app.bench_eval.results_scroll.saturating_add(1);
             }
             KeyCode::PageUp => {
-                app.bench_eval_results_scroll = app.bench_eval_results_scroll.saturating_sub(12);
+                app.bench_eval.results_scroll = app.bench_eval.results_scroll.saturating_sub(12);
             }
             KeyCode::PageDown => {
-                app.bench_eval_results_scroll = app.bench_eval_results_scroll.saturating_add(12);
+                app.bench_eval.results_scroll = app.bench_eval.results_scroll.saturating_add(12);
             }
             KeyCode::Home => {
-                app.bench_eval_results_scroll = 0;
+                app.bench_eval.results_scroll = 0;
             }
             KeyCode::End => {
-                app.bench_eval_results_scroll = u16::MAX;
+                app.bench_eval.results_scroll = u16::MAX;
             }
             _ => {}
         }
@@ -446,22 +446,22 @@ pub(super) fn handle_bench_eval_results_key(app: &mut App, key: KeyEvent) {
                 app.screen = Screen::BenchEval;
             }
             KeyCode::Up | KeyCode::Char('k') => {
-                if app.bench_eval_results_selected > 0 {
-                    app.bench_eval_results_selected -= 1;
+                if app.bench_eval.results_selected > 0 {
+                    app.bench_eval.results_selected -= 1;
                 }
             }
             KeyCode::Down | KeyCode::Char('j') => {
-                let max = app.bench_eval_results_files.len().saturating_sub(1);
-                if app.bench_eval_results_selected < max {
-                    app.bench_eval_results_selected += 1;
+                let max = app.bench_eval.results_files.len().saturating_sub(1);
+                if app.bench_eval.results_selected < max {
+                    app.bench_eval.results_selected += 1;
                 }
             }
             KeyCode::Enter => {
-                app.load_result_file_content(app.bench_eval_results_selected);
+                app.load_result_file_content(app.bench_eval.results_selected);
             }
             KeyCode::Char('r') => {
                 app.discover_result_files();
-                app.bench_eval_results_selected = 0;
+                app.bench_eval.results_selected = 0;
             }
             _ => {}
         }
