@@ -34,8 +34,11 @@ use tokio_util::sync::CancellationToken;
 use tui_textarea::TextArea;
 
 mod backend_args;
+#[cfg(feature = "eval")]
 mod bench_eval;
+#[cfg(feature = "eval")]
 mod bench_eval_flow;
+#[cfg(feature = "eval")]
 pub mod bench_eval_workflow;
 mod bench_launcher;
 mod catalog_flow;
@@ -44,7 +47,9 @@ mod configure_hub_flow;
 mod configure_plan_flow;
 mod configure_profile_flow;
 mod confirm_flow;
+#[cfg(feature = "eval")]
 mod eval_launcher;
+#[cfg(feature = "eval")]
 pub mod eval_run_workflow;
 mod exit_confirm_flow;
 mod launch_execution_flow;
@@ -73,8 +78,11 @@ mod tier_picker_flow;
 pub mod results;
 use self::results::*;
 
+#[cfg(feature = "eval")]
 use self::bench_eval_flow::{handle_bench_eval_key, BenchEvalOutcome};
+#[cfg(feature = "eval")]
 use self::bench_eval_workflow::{apply_bench_eval_event, BenchEvalWorkflowEvent};
+#[cfg(feature = "eval")]
 use self::bench_launcher::{handle_key as handle_bench_launcher_key, BenchLauncherOutcome};
 use self::catalog_flow::apply_catalog_report;
 #[cfg(test)]
@@ -90,7 +98,9 @@ use self::configure_plan_flow::{adjust_configure_plan, reset_configure_plan};
 #[cfg(test)]
 use self::configure_profile_flow::build_effective_plan;
 use self::confirm_flow::handle_confirm_key;
+#[cfg(feature = "eval")]
 use self::eval_launcher::{handle_key as handle_eval_launcher_key, EvalLauncherOutcome};
+#[cfg(feature = "eval")]
 use self::eval_run_workflow::{apply_eval_run_event, EvalRunEvent};
 use self::exit_confirm_flow::{handle_exit_confirm_key, ExitConfirmOutcome};
 use self::launch_execution_flow::{
