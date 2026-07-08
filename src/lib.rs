@@ -691,39 +691,10 @@ pub async fn run() -> Result<()> {
             Ok(())
         }
         #[cfg(feature = "analyze")]
-        Some(Commands::Analyze {
-            model,
-            all,
-            generate,
-            profiles,
-            export,
-        }) => {
-            if export {
-                let conf_path = ozone_core::paths::runtime_profiles_path();
-                analyze::export_presets_conf(&conf_path, model.as_deref())?;
-            } else if profiles {
-                analyze::show_profiles(model.as_deref())?;
-            } else if generate {
-                match &model {
-                    Some(m) => {
-                        analyze::generate_profiles(m)?;
-                        analyze::show_profiles(Some(m))?;
-                    }
-                    None => {
-                        ozone_core::cli::error("--generate requires a model name.");
-                        std::process::exit(1);
-                    }
-                }
-            } else if let Some(ref m) = model {
-                let count = analyze::show_benchmarks(Some(m))?;
-                if count > 0 {
-                    analyze::show_pareto(m)?;
-                }
-            } else {
-                let _ = all;
-                analyze::show_benchmarks(None)?;
-            }
-            Ok(())
+        Some(Commands::Analyze { model, all, generate, profiles, export }) => commands::cmd_analyze(model, all, generate, profiles, export).await,
+        #[cfg(not(feature = "analyze"))]
+        Some(Commands::Analyze { .. }) => {
+            anyhow::bail!("analyze command requires the 'analyze' feature.")
         }
         #[cfg(feature = "eval")]
         Some(Commands::Eval { model, preset, limit, base_url, temperature, compare, tokenizer }) => commands::cmd_eval(model, preset, limit, base_url, temperature, compare, tokenizer).await,

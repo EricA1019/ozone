@@ -16,7 +16,7 @@ edges:
     condition: when starting a task — check the pattern index for a matching pattern file
   - target: docs/bug-reports/BUGLOG.md
     condition: when finding a bug, logging a defect, or checking known issues before starting work
-last_updated: 2026-06-08
+last_updated: 2026-07-08
 ---
 
 # Session Bootstrap

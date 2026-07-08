@@ -214,3 +214,39 @@ pub async fn cmd_eval(
     }
     crate::eval::run_eval(&model, preset, limit, &base_url, temperature, tokenizer.as_deref()).await
 }
+
+#[cfg(feature = "analyze")]
+pub async fn cmd_analyze(
+    model: Option<String>,
+    all: bool,
+    generate: bool,
+    profiles: bool,
+    export: bool,
+) -> Result<()> {
+    if export {
+        let conf_path = ozone_core::paths::runtime_profiles_path();
+        crate::analyze::export_presets_conf(&conf_path, model.as_deref())?;
+    } else if profiles {
+        crate::analyze::show_profiles(model.as_deref())?;
+    } else if generate {
+        match &model {
+            Some(m) => {
+                crate::analyze::generate_profiles(m)?;
+                crate::analyze::show_profiles(Some(m))?;
+            }
+            None => {
+                ozone_core::cli::error("--generate requires a model name.");
+                std::process::exit(1);
+            }
+        }
+    } else if let Some(ref m) = model {
+        let count = crate::analyze::show_benchmarks(Some(m))?;
+        if count > 0 {
+            crate::analyze::show_pareto(m)?;
+        }
+    } else {
+        let _ = all;
+        crate::analyze::show_benchmarks(None)?;
+    }
+    Ok(())
+}
