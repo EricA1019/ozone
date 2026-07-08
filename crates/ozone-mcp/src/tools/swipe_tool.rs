@@ -11,6 +11,7 @@ use crate::OzoneMcpServer;
 use crate::ToolReply;
 use anyhow::anyhow;
 use ozone_core::engine::{ActivateSwipeCommand, SwipeCandidate, SwipeCandidateState, SwipeGroup};
+#[cfg(feature = "legacy-tools")]
 use ozone_persist::{CreateMessageRequest, PersistError};
 use serde_json::json;
 use uuid::Uuid;

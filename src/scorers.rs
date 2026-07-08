@@ -55,12 +55,14 @@ pub struct MultiScoredResult {
     /// Number of passed attempts.
     pub pass_count: u32,
     /// Number of failed attempts.
+    #[allow(dead_code)]
     pub fail_count: u32,
     /// Total number of attempts.
     pub total_attempts: u32,
     /// Raw scores from each attempt.
     pub scores: Vec<f64>,
     /// Individual attempt results.
+    #[allow(dead_code)]
     pub attempts: Vec<ScoredResult>,
     /// Overall pass/fail using majority rule.
     pub passed: bool,

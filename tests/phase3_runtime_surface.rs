@@ -1,6 +1,6 @@
 use std::fs;
 
-const MAIN_RS_PATH: &str = "src/main.rs";
+const LIB_RS_PATH: &str = "src/lib.rs";
 const LAUNCH_EXECUTION_FLOW_PATH: &str = "src/ui/launch_execution_flow.rs";
 const LAUNCHER_RS_PATH: &str = "src/ui/launcher.rs";
 const MONITOR_RS_PATH: &str = "src/ui/monitor.rs";
@@ -8,9 +8,9 @@ const SETTINGS_SCREEN_FLOW_PATH: &str = "src/ui/settings_screen_flow.rs";
 
 #[test]
 fn cli_surface_exposes_purge_last_model_command() {
-    let main_rs = fs::read_to_string(MAIN_RS_PATH).expect("read main.rs");
+    let lib_rs = fs::read_to_string(LIB_RS_PATH).expect("read lib.rs");
 
-    assert!(main_rs.contains("PurgeLastModel"));
+    assert!(lib_rs.contains("PurgeLastModel"));
 }
 
 #[test]

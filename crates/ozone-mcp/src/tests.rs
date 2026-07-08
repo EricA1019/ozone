@@ -1,3 +1,4 @@
+#[cfg(feature = "legacy-tools")]
 use super::tool_dispatch;
 use super::{
     capturable_screen_journey_builders, default_preferences_json, merge_json_objects,
@@ -203,6 +204,7 @@ fn legacy_tool_schemas_restore_archived_screen_targets_when_opted_in() {
     assert!(target_enum.contains(&json!("ozone_plus_help")));
 }
 
+#[cfg(feature = "legacy-tools")]
 #[test]
 fn legacy_tool_dispatch_is_blocked_without_opt_in() {
     let mut server = OzoneMcpServer::new().expect("server");
@@ -219,6 +221,7 @@ fn legacy_tool_dispatch_is_blocked_without_opt_in() {
     assert_eq!(reply.data["scope"], json!("legacy-archived"));
 }
 
+#[cfg(feature = "legacy-tools")]
 #[test]
 fn legacy_tool_dispatch_reaches_handler_when_opted_in() {
     let mut server = OzoneMcpServer::new().expect("server");

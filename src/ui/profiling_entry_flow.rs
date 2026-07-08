@@ -80,7 +80,7 @@ pub(super) fn handle_profile_confirm_key(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             if let (Some(record), Some(action)) = (
                 app.filtered_catalog_get(app.selected_model),
-                app.profiling_pending_action.clone(),
+                app.profiling_pending_action,
             ) {
                 let launch_plan_override = matches!(action, ProfilingAction::BenchmarkSavedProfile)
                     .then(|| app.current_plan.clone())

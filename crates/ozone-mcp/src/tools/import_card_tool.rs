@@ -6,6 +6,7 @@ use crate::ToolReply;
 use anyhow::anyhow;
 use anyhow::bail;
 use anyhow::Context;
+#[cfg(feature = "legacy-tools")]
 use ozone_persist::{CharacterCard, ImportCharacterCardRequest};
 use serde_json::json;
 use std::fs;

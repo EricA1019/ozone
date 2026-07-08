@@ -31,10 +31,12 @@ const TOOL_ROUTES: &[ToolRoute] = &[
         name: "sandbox_tool",
         handler: tools::sandbox_tool,
     },
+    #[cfg(feature = "legacy-tools")]
     ToolRoute {
         name: "mock_backend_tool",
         handler: tools::mock_backend_tool,
     },
+    #[cfg(feature = "legacy-tools")]
     ToolRoute {
         name: "session_tool",
         handler: tools::session_tool,
@@ -43,6 +45,7 @@ const TOOL_ROUTES: &[ToolRoute] = &[
         name: "message_tool",
         handler: tools::message_tool,
     },
+    #[cfg(feature = "legacy-tools")]
     ToolRoute {
         name: "memory_tool",
         handler: tools::memory_tool,
@@ -51,22 +54,27 @@ const TOOL_ROUTES: &[ToolRoute] = &[
         name: "search_tool",
         handler: tools::search_tool,
     },
+    #[cfg(feature = "legacy-tools")]
     ToolRoute {
         name: "branch_tool",
         handler: tools::branch_tool,
     },
+    #[cfg(feature = "legacy-tools")]
     ToolRoute {
         name: "swipe_tool",
         handler: tools::swipe_tool,
     },
+    #[cfg(feature = "legacy-tools")]
     ToolRoute {
         name: "export_tool",
         handler: tools::export_tool,
     },
+    #[cfg(feature = "legacy-tools")]
     ToolRoute {
         name: "import_card",
         handler: tools::import_card_tool,
     },
+    #[cfg(feature = "legacy-tools")]
     ToolRoute {
         name: "launcher_smoke",
         handler: tools::launcher_smoke_tool,

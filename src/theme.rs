@@ -5,7 +5,7 @@
 //! Use `set_preset()` at startup or at runtime to switch themes instantly.
 
 // Infrastructure for later phases — not dead.
-#![allow(dead_code)]
+
 
 use std::sync::atomic::{AtomicU8, Ordering};
 
@@ -29,6 +29,7 @@ pub enum ThemePreset {
 
 impl ThemePreset {
     /// Parse the kebab-case string stored in prefs (e.g. `"dark-mint"`).
+    #[allow(dead_code)]
     pub fn from_pref_str(s: &str) -> Self {
         match s {
             "dark-mint" => Self::DarkMint,
@@ -47,6 +48,7 @@ static ACTIVE_PRESET: AtomicU8 = AtomicU8::new(0);
 
 /// Set the active preset. Can be called multiple times to change the
 /// theme at runtime — each call takes effect immediately.
+#[allow(dead_code)]
 pub fn set_preset(preset: ThemePreset) {
     let disc = match preset {
         ThemePreset::DarkMint => 0,

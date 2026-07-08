@@ -18,24 +18,6 @@ chat shell is deprecated and archived under `docs/archive/ozone-plus/`.
 
 The authoritative RC scope is tracked in `docs/RC_SCOPE.md`.
 
-Active RC scope:
-
-- launch and monitor a managed llama.cpp server
-- inventory, import, link, and inspect local GGUF models
-- profile model/hardware fit and produce launch profiles
-- benchmark and sweep runtime settings
-- run native capability evaluations with warm-up, calibration, health gates,
-  canary tasks, lane-specific suites, artifacts, and CSV/report output
-- show clear TUI status for what passed, failed, skipped, and why
-
-Out of scope for RC:
-
-- chat, roleplay, character cards, memories, branches, swipes, or transcripts
-- ozone+ as a shipping end-user binary
-- cloud-only benchmark flows
-- full SWE-bench or Terminal-Bench by default
-- one global score as the main result
-
 ## Install
 
 ```bash

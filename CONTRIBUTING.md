@@ -5,24 +5,8 @@ Keep contributions aligned with `docs/RC_SCOPE.md`.
 
 ## Current Scope
 
-In scope:
-
-- llama.cpp-backed local model launch and monitoring
-- GGUF model inventory and import/link workflows
-- hardware-aware profiling, benchmark, sweep, and analysis flows
-- native Ozone capability evaluation: health, canary, code, math, JSON/tool, long-context, and reporting
-- CSV, JSONL, SQLite, artifact, and report export improvements
-- TUI views that explain what passed, failed, skipped, and why
-- developer automation that supports the active launcher/eval/profiling workflows
-
-Out of scope for RC:
-
-- chat, roleplay, character-card, memory, branch, swipe, or transcript UX
-- ozone+ as a shipping end-user binary
-- GUI or web frontend
-- cloud-only benchmarks
-- full SWE-bench or Terminal-Bench by default
-- new inference backends without a clear adapter boundary and tests
+The authoritative RC scope is tracked in `docs/RC_SCOPE.md`. Keep all
+contributions aligned with that document.
 
 The old chat work is archived under `docs/archive/ozone-plus/`. Do not add new
 features to that path unless the change is an archival correction.

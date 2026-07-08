@@ -3,10 +3,12 @@ use crate::optional_u64;
 use crate::parse_message_id;
 use crate::parse_session_id;
 use crate::pinned_memory_record_json;
+#[cfg(feature = "legacy-tools")]
 use crate::pinned_memory_view_json;
 use crate::required_string;
 use crate::OzoneMcpServer;
 use crate::ToolReply;
+#[cfg(feature = "legacy-tools")]
 use ozone_persist::{AuthorId, CreateNoteMemoryRequest, PinMessageMemoryRequest, Provenance};
 use serde_json::json;
 

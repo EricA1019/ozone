@@ -14,10 +14,10 @@ use ozone_core::{
     engine::{BranchId, ConversationMessage, MessageId, SwipeCandidate, SwipeGroup, SwipeGroupId},
     session::SessionId,
 };
+#[cfg(feature = "legacy-tools")]
 use ozone_persist::{BranchRecord, PersistError, PinnedMemoryView, SqliteRepository};
 use serde::Serialize;
 use serde_json::{json, Map, Value};
-use uuid::Uuid;
 
 mod jsonrpc;
 mod sandbox;
@@ -33,7 +33,7 @@ use testing::{
     sandbox_setup_base_launch_path, sandbox_setup_base_launcher,
     sandbox_setup_base_ozone_plus_shell, sandbox_setup_base_profile_review,
     sandbox_setup_base_profile_run, sandbox_setup_base_splash, sandbox_setup_base_tier_picker,
-    sandbox_setup_ozone_plus_entry, CapturableScreenJourneyDefinition, LauncherSmokeRunnerSpec,
+    sandbox_setup_ozone_plus_entry, CapturableScreenJourneyDefinition,
     MockUserCaptureSettings, MockUserJourneySpec, MockUserRunnerSpec, PreparedSandbox,
     PtyVteCaptureArtifacts, PtyVteCaptureConfig,
 };
@@ -368,18 +368,19 @@ impl OzoneMcpServer {
             .and_then(Value::as_bool)
             .unwrap_or(false);
         if auto_started_mock_backend {
-            let model_name = setup
+            let _model_name = setup
                 .get("models")
                 .and_then(Value::as_array)
                 .and_then(|models| models.first())
                 .and_then(Value::as_str)
                 .unwrap_or("mock-model.gguf");
+            #[cfg(feature = "legacy-tools")]
             tools::mock_backend_tool(
                 self,
                 &json!({
                     "action": "start",
                     "sandboxId": sandbox_id,
-                    "modelName": model_name,
+                    "modelName": _model_name,
                 }),
             )?;
         }
@@ -634,6 +635,7 @@ impl OzoneMcpServer {
         command.output().with_context(|| error_context.to_owned())
     }
 
+    #[cfg(feature = "legacy-tools")]
     pub fn with_repo<T>(
         &self,
         sandbox_id: Option<&str>,
@@ -1194,6 +1196,7 @@ const PYTHON_PTY_VTE_HELPER_TRAILER: &str = r###"if __name__ == "__main__":
 "###;
 
 impl PtyVteCaptureConfig {
+    #[cfg_attr(not(feature = "legacy-tools"), allow(dead_code))]
     fn defaults() -> Self {
         Self {
             rows: DEFAULT_PTY_ROWS,
@@ -1205,6 +1208,7 @@ impl PtyVteCaptureConfig {
         }
     }
 
+    #[cfg_attr(not(feature = "legacy-tools"), allow(dead_code))]
     fn sandbox_artifacts(sandbox: &Sandbox, stem: &str) -> Self {
         let captures_dir = sandbox.root.join("captures");
         let artifacts = PtyVteCaptureArtifacts::for_stem(&captures_dir, stem);
@@ -2142,6 +2146,7 @@ pub fn sanitize_prefix(value: &str) -> String {
         .collect()
 }
 
+#[cfg(feature = "legacy-tools")]
 pub fn probe_session_lock(repo: &SqliteRepository, session_id: &SessionId) -> Result<Value> {
     let instance_id = format!("ozone-mcp-{}", Uuid::new_v4().simple());
     match repo.acquire_session_lock(session_id, &instance_id) {
@@ -2167,6 +2172,7 @@ pub fn probe_session_lock(repo: &SqliteRepository, session_id: &SessionId) -> Re
     }
 }
 
+#[cfg(feature = "legacy-tools")]
 pub fn session_summary_json(session: &ozone_persist::SessionSummary) -> Value {
     json!({
         "sessionId": session.session_id,
@@ -2181,6 +2187,7 @@ pub fn session_summary_json(session: &ozone_persist::SessionSummary) -> Value {
     })
 }
 
+#[cfg(feature = "legacy-tools")]
 pub fn branch_record_json(record: &BranchRecord) -> Value {
     json!({
         "branchId": record.branch.branch_id,
@@ -2208,6 +2215,7 @@ pub fn message_json(message: &ConversationMessage) -> Value {
     })
 }
 
+#[cfg(feature = "legacy-tools")]
 pub fn pinned_memory_record_json(record: &ozone_persist::PinnedMemoryRecord) -> Value {
     json!({
         "artifactId": record.artifact_id,
@@ -2222,6 +2230,7 @@ pub fn pinned_memory_record_json(record: &ozone_persist::PinnedMemoryRecord) -> 
     })
 }
 
+#[cfg(feature = "legacy-tools")]
 pub fn pinned_memory_view_json(view: &PinnedMemoryView) -> Value {
     json!({
         "record": pinned_memory_record_json(&view.record),
@@ -2251,6 +2260,7 @@ pub fn swipe_candidate_json(candidate: &SwipeCandidate) -> Value {
     })
 }
 
+#[cfg(feature = "legacy-tools")]
 pub fn render_transcript_text(export: &ozone_persist::TranscriptExport) -> String {
     let mut lines = vec![
         "ozone+ transcript export".to_owned(),

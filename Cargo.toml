@@ -14,11 +14,6 @@ members = [
     "apps/ozone-mcp",
     "crates/ozone-core",
     "crates/ozone-mcp",
-    # ozone-persist and ozone-memory are still workspace members because
-    # crates/ozone-mcp uses ozone-persist types for legacy MCP tools.
-    # They will be excluded once the legacy tools are retired.
-    "crates/ozone-memory",
-    "crates/ozone-persist",
 ]
 exclude = [
     # Archived ozone+ crates. Keep outside RC workspace gates until
@@ -26,12 +21,21 @@ exclude = [
     "crates/ozone-tui",
     "crates/ozone-engine",
     "crates/ozone-inference",
+    # ozone-persist and ozone-memory are still needed by ozone-mcp's
+    # legacy MCP tools (behind the "legacy-tools" feature flag).
+    # Excluded from workspace builds but resolvable by path dependency.
+    "crates/ozone-memory",
+    "crates/ozone-persist",
 ]
 resolver = "2"
 
 [[bin]]
 name = "ozone"
 path = "src/main.rs"
+
+[lib]
+name = "ozone"
+path = "src/lib.rs"
 
 [dependencies]
 sha2 = "0.10"
@@ -62,13 +66,14 @@ ratatui-braille-bar = "0.2.2"
 [features]
 # Default builds include the RC user surface: launch, profiling, benchmarks,
 # sweeps, analysis, and model management.
-default = ["bench","sweep","analyze","profiling-ui","model-mgmt"]
-full = ["bench", "sweep", "analyze", "profiling-ui", "model-mgmt"]
+default = ["bench","sweep","analyze","profiling-ui","model-mgmt","eval"]
+full = ["bench", "sweep", "analyze", "profiling-ui", "model-mgmt", "eval"]
 database = ["dep:rusqlite"]
 bench = ["database"]
 sweep = ["bench"]
 analyze = ["database"]
 profiling-ui = ["bench", "sweep", "analyze"]
+eval = ["database"]
 model-mgmt = []
 
 [profile.release]

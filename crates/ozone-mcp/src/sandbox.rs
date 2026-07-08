@@ -211,6 +211,7 @@ impl OzoneMcpServer {
         ))
     }
 
+    #[cfg_attr(not(feature = "legacy-tools"), allow(dead_code))]
     pub fn start_mock_backend(&mut self, args: &Value) -> Result<ToolReply> {
         let sandbox_id = required_string(args, "sandboxId")?;
         let port = optional_u64(args, "port").unwrap_or(5001) as u16;
@@ -321,6 +322,7 @@ HTTPServer(("127.0.0.1", PORT), Handler).serve_forever()
         ))
     }
 
+    #[cfg_attr(not(feature = "legacy-tools"), allow(dead_code))]
     pub fn stop_mock_backend(&mut self, args: &Value) -> Result<ToolReply> {
         let sandbox_id = required_string(args, "sandboxId")?;
         let sandbox = self

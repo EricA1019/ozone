@@ -19,6 +19,10 @@ use crate::{
     sweep,
 };
 
+// Re-export profiling action types so existing `crate::profiling::*` imports
+// continue to work after they were moved to profiling_actions.rs.
+pub use crate::profiling_actions::{FailureClass, ProfilingAction, WarningSeverity};
+
 #[derive(Debug, Clone, PartialEq, Default)]
 pub enum ProfilingBackend {
     #[default]
@@ -41,92 +45,9 @@ impl ProfilingBackend {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum ProfilingAction {
-    QuickSweep,
-    FullSweep,
-    SingleBenchmark,
-    BenchmarkSavedProfile,
-    GenerateProfiles,
-    ExportPresets,
-    LaunchRecommended,
-    ReviewIssue,
-    /// Capture and save system hardware profile to disk for offline reuse.
-    ImportSpecs,
-    /// Sweep thread counts to find optimal CPU parallelism for this model.
-    ThreadSweep,
-}
 
-impl ProfilingAction {
-    pub fn label(&self) -> &'static str {
-        match self {
-            ProfilingAction::QuickSweep => "Run quick sweep",
-            ProfilingAction::FullSweep => "Run full sweep",
-            ProfilingAction::SingleBenchmark => "Run single benchmark",
-            ProfilingAction::BenchmarkSavedProfile => "Benchmark saved profile",
-            ProfilingAction::GenerateProfiles => "Generate profiles",
-            ProfilingAction::ExportPresets => "Export presets",
-            ProfilingAction::ImportSpecs => "Import system specs",
-            ProfilingAction::ThreadSweep => "Sweep thread counts",
-            ProfilingAction::LaunchRecommended => "Launch recommended profile",
-            ProfilingAction::ReviewIssue => "Review issue report",
-        }
-    }
 
-    pub fn description(&self) -> &'static str {
-        match self {
-            ProfilingAction::QuickSweep => "Binary-search a safe speed/context pair quickly.",
-            ProfilingAction::FullSweep => {
-                "Explore a wider context/quant range for deeper coverage."
-            }
-            ProfilingAction::SingleBenchmark => "Validate one recommended configuration first.",
-            ProfilingAction::BenchmarkSavedProfile => {
-                "Benchmark the selected saved launch profile and keep its metrics attached."
-            }
-            ProfilingAction::GenerateProfiles => {
-                "Create speed/context profiles from benchmark history."
-            }
-            ProfilingAction::ExportPresets => {
-                "Write the best saved profile export for runtime reuse."
-            }
-            ProfilingAction::LaunchRecommended => {
-                "Use the best available profile and launch the backend."
-            }
-            ProfilingAction::ImportSpecs => "Capture and save system hardware specs to disk.",
-            ProfilingAction::ThreadSweep => {
-                "Test thread counts 1-12 to find the sweet spot for this model."
-            }
-            ProfilingAction::ReviewIssue => "Show the blocking issue and recommended fixes.",
-        }
-    }
 
-    pub fn clears_backends(&self) -> bool {
-        matches!(
-            self,
-            ProfilingAction::QuickSweep
-                | ProfilingAction::FullSweep
-                | ProfilingAction::SingleBenchmark
-                | ProfilingAction::BenchmarkSavedProfile
-        )
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum WarningSeverity {
-    Info,
-    Warning,
-    Critical,
-}
-
-impl WarningSeverity {
-    pub fn label(&self) -> &'static str {
-        match self {
-            WarningSeverity::Info => "info",
-            WarningSeverity::Warning => "warning",
-            WarningSeverity::Critical => "critical",
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct ProfilingWarning {
@@ -134,30 +55,7 @@ pub struct ProfilingWarning {
     pub message: String,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub enum FailureClass {
-    InvalidModelPath,
-    LauncherMissing,
-    LauncherBrokenInstall,
-    BackendTimeout,
-    OomOrOvercommit,
-    GenerationHttpError,
-    Unknown,
-}
 
-impl FailureClass {
-    pub fn title(&self) -> &'static str {
-        match self {
-            FailureClass::InvalidModelPath => "Model path is invalid",
-            FailureClass::LauncherMissing => "Configured launcher is missing",
-            FailureClass::LauncherBrokenInstall => "llama.cpp server install is broken",
-            FailureClass::BackendTimeout => "llama.cpp server never became ready",
-            FailureClass::OomOrOvercommit => "Model likely exceeded memory limits",
-            FailureClass::GenerationHttpError => "Generation request failed",
-            FailureClass::Unknown => "Profiling failed unexpectedly",
-        }
-    }
-}
 
 #[derive(Debug, Clone)]
 pub struct RecommendedProfile {
@@ -232,7 +130,7 @@ impl ProfilingSuccessReport {
 
 impl ProfilingFailureReport {
     pub fn available_actions(&self) -> Vec<ProfilingAction> {
-        self.retry_action.clone().into_iter().collect()
+        self.retry_action.into_iter().collect()
     }
 }
 
@@ -599,7 +497,7 @@ pub fn build_advisory(
         ProfilingAction::SingleBenchmark
     };
 
-    let mut available_actions = vec![recommended_action.clone()];
+    let mut available_actions = vec![recommended_action];
     for action in [
         ProfilingAction::QuickSweep,
         ProfilingAction::FullSweep,
@@ -959,7 +857,7 @@ pub async fn run_workflow(
     tx: UnboundedSender<WorkflowEvent>,
     cancel: CancellationToken,
 ) -> Result<()> {
-    let action = request.action.clone();
+    let action = request.action;
     if action == ProfilingAction::ReviewIssue {
         let report = build_failure_report(
             &request.record,
@@ -1119,7 +1017,7 @@ pub async fn run_workflow(
             });
             match export_llamacpp_profiles(&profiles) {
                 Ok(out) => {
-                    let action = request.action.clone();
+                    let action = request.action;
                     let mut report = match build_success_report(
                         &request.record,
                         request.action,
@@ -1164,7 +1062,7 @@ pub async fn run_workflow(
                 Some(&request.record.model_name),
             ) {
                 Ok(_count) => {
-                    let action = request.action.clone();
+                    let action = request.action;
                     let mut report = match build_success_report(
                         &request.record,
                         request.action,
@@ -1400,7 +1298,7 @@ pub async fn run_workflow(
                         });
                     }
 
-                    let action = request.action.clone();
+                    let action = request.action;
                     let auto_saved = auto_profile.clone();
                     let report = match build_success_report(
                         &request.record,
@@ -1519,7 +1417,7 @@ pub async fn run_workflow(
                         &result,
                     );
                     if result.status == "ok" {
-                        let action = request.action.clone();
+                        let action = request.action;
                         let report = match build_success_report(
                             &request.record,
                             request.action,
@@ -1570,7 +1468,7 @@ pub async fn run_workflow(
             });
             match analyze::generate_profiles_quiet(&request.record.model_name) {
                 Ok(_) => {
-                    let action = request.action.clone();
+                    let action = request.action;
                     let report = match build_success_report(
                         &request.record,
                         request.action,

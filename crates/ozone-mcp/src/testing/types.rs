@@ -257,6 +257,7 @@ pub enum MockUserAction {
 }
 
 #[derive(Debug, Serialize)]
+#[cfg_attr(not(feature = "legacy-tools"), allow(dead_code))]
 pub struct LauncherSmokeRunnerSpec {
     #[serde(rename = "repoRoot")]
     pub repo_root: String,

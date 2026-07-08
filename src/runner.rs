@@ -665,7 +665,7 @@ fn save_eval_csv(config: &EvalRunConfig, result: &EvalRunResult) -> Option<std::
 ///
 /// Same as `run_eval` but sends progress events through an unbounded channel
 /// for real-time TUI display. The sender is consumed by the function.
-pub async fn run_eval_with_events(
+pub(crate) async fn run_eval_with_events(
     config: &EvalRunConfig,
     tx: tokio::sync::mpsc::UnboundedSender<crate::ui::eval_run_workflow::EvalRunEvent>,
 ) -> Result<EvalRunResult> {

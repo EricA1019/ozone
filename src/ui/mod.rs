@@ -106,39 +106,11 @@ use self::settings_screen_flow::handle_settings_key;
 use self::splash_flow::handle_splash_key;
 use self::tier_picker_flow::{handle_tier_picker_key, TierPickerOutcome};
 
+pub mod screen;
+pub use self::screen::Screen;
+
 pub mod terminal;
 use self::terminal::*;
-
-#[derive(Debug, Clone, PartialEq)]
-pub enum Screen {
-    Splash,
-    TierPicker,
-    Launcher,
-    ExitConfirm,
-    ModelPicker,
-    ConfigureHub,
-    Confirm,
-    Launching,
-    #[cfg(feature = "profiling-ui")]
-    ProfileAdvisory,
-    #[cfg(feature = "profiling-ui")]
-    ProfileConfirm,
-    #[cfg(feature = "profiling-ui")]
-    ProfileRunning,
-    #[cfg(feature = "profiling-ui")]
-    ProfileSuccess,
-    #[cfg(feature = "profiling-ui")]
-    ProfileFailure,
-    BenchEval,
-    EvalLauncher,
-    BenchLauncher,
-    BenchEvalRunning,
-    EvalRunRunning,
-    BenchEvalReport,
-    BenchEvalResults,
-    Settings,
-    Monitor,
-}
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum ModelPickerMode {
