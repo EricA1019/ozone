@@ -36,14 +36,15 @@ use self::types::*;
 use self::jsonrpc::{
     error_response, read_message, success_response, write_message, JsonRpcRequest,
 };
+use self::testing::screen::{screenshot_capture_config, mock_user_capture_settings};
 
 use testing::{
     sandbox_setup_base_launch_path, sandbox_setup_base_launcher,
     sandbox_setup_base_ozone_plus_shell, sandbox_setup_base_profile_review,
     sandbox_setup_base_profile_run, sandbox_setup_base_splash, sandbox_setup_base_tier_picker,
     sandbox_setup_ozone_plus_entry, CapturableScreenJourneyDefinition,
-    MockUserCaptureSettings, MockUserJourneySpec, MockUserRunnerSpec, PreparedSandbox,
-    PtyVteCaptureArtifacts, PtyVteCaptureConfig,
+    MockUserJourneySpec, MockUserRunnerSpec, PreparedSandbox,
+    PtyVteCaptureConfig,
 };
 
 const JSONRPC_VERSION: &str = "2.0";
@@ -1202,185 +1203,6 @@ const PYTHON_PTY_VTE_HELPER_TRAILER: &str = r###"if __name__ == "__main__":
         )
         raise SystemExit(1)
 "###;
-
-impl PtyVteCaptureConfig {
-    #[cfg_attr(not(feature = "legacy-tools"), allow(dead_code))]
-    fn defaults() -> Self {
-        Self {
-            rows: DEFAULT_PTY_ROWS,
-            columns: DEFAULT_PTY_COLUMNS,
-            tail_chars: DEFAULT_CAPTURE_TAIL_CHARS,
-            font_size: DEFAULT_CAPTURE_FONT_SIZE,
-            png_path: None,
-            json_path: None,
-        }
-    }
-
-    #[cfg_attr(not(feature = "legacy-tools"), allow(dead_code))]
-    fn sandbox_artifacts(sandbox: &Sandbox, stem: &str) -> Self {
-        let captures_dir = sandbox.root.join("captures");
-        let artifacts = PtyVteCaptureArtifacts::for_stem(&captures_dir, stem);
-        Self::defaults().with_artifacts(&artifacts)
-    }
-
-    fn with_artifacts(mut self, artifacts: &PtyVteCaptureArtifacts) -> Self {
-        self.png_path = Some(artifacts.png_path.clone());
-        self.json_path = Some(artifacts.json_path.clone());
-        self
-    }
-}
-
-impl PtyVteCaptureArtifacts {
-    fn for_stem(output_dir: &Path, stem: &str) -> Self {
-        let sanitized_stem = sanitize_prefix(stem);
-        let png_path = output_dir.join(format!("{sanitized_stem}.png"));
-        let json_path = output_dir.join(format!("{sanitized_stem}.json"));
-        Self {
-            png_path: png_path.display().to_string(),
-            json_path: json_path.display().to_string(),
-        }
-    }
-}
-
-pub fn screenshot_capture_config(
-    args: &Value,
-    output_dir: &Path,
-    target: &str,
-) -> Result<PtyVteCaptureConfig> {
-    let stem = screenshot_file_stem(optional_string(args, "filename").as_deref(), target)?;
-    let dimensions = optional_object(args, "dimensions");
-    let rows = dimensions
-        .and_then(|value| value.get("rows"))
-        .and_then(Value::as_u64)
-        .or_else(|| optional_u64(args, "rows"))
-        .unwrap_or(DEFAULT_PTY_ROWS as u64);
-    let columns = dimensions
-        .and_then(|value| value.get("columns"))
-        .and_then(Value::as_u64)
-        .or_else(|| optional_u64(args, "columns"))
-        .unwrap_or(DEFAULT_PTY_COLUMNS as u64);
-    let tail_chars = optional_u64(args, "tailChars").unwrap_or(DEFAULT_CAPTURE_TAIL_CHARS as u64);
-    let font_size = optional_u64(args, "fontSize").unwrap_or(DEFAULT_CAPTURE_FONT_SIZE as u64);
-
-    Ok(PtyVteCaptureConfig {
-        rows: checked_u16(rows, "rows")?,
-        columns: checked_u16(columns, "columns")?,
-        tail_chars: checked_usize(tail_chars, "tailChars")?,
-        font_size: checked_u16(font_size, "fontSize")?,
-        png_path: Some(output_dir.join(format!("{stem}.png")).display().to_string()),
-        json_path: Some(
-            output_dir
-                .join(format!("{stem}.json"))
-                .display()
-                .to_string(),
-        ),
-    })
-}
-
-fn mock_user_capture_settings(
-    args: &Value,
-    sandbox: &Sandbox,
-    journey: &MockUserJourneySpec,
-    capture_override: Option<PtyVteCaptureConfig>,
-) -> Result<MockUserCaptureSettings> {
-    let capture_screenshots = optional_bool(args, "captureScreenshots").unwrap_or(false);
-    let mut capture = capture_override.unwrap_or(mock_user_capture_config(args)?);
-    let output_dir = if capture_screenshots {
-        Some(
-            resolve_mock_user_output_dir(
-                sandbox,
-                &journey.name,
-                optional_string(args, "outputDir").as_deref(),
-            )
-            .display()
-            .to_string(),
-        )
-    } else {
-        None
-    };
-    let step_captures = output_dir
-        .as_deref()
-        .map(|dir| {
-            journey
-                .steps
-                .iter()
-                .enumerate()
-                .map(|(index, step)| {
-                    PtyVteCaptureArtifacts::for_stem(
-                        Path::new(dir),
-                        &format!("step-{:02}-{}", index + 1, step.name),
-                    )
-                })
-                .collect()
-        })
-        .unwrap_or_default();
-    if let Some(dir) = output_dir.as_deref() {
-        capture =
-            capture.with_artifacts(&PtyVteCaptureArtifacts::for_stem(Path::new(dir), "final"));
-    }
-    Ok(MockUserCaptureSettings {
-        capture,
-        capture_screenshots,
-        output_dir,
-        step_captures,
-    })
-}
-
-fn mock_user_capture_config(args: &Value) -> Result<PtyVteCaptureConfig> {
-    let dimensions = optional_object(args, "dimensions");
-    let rows = dimensions
-        .and_then(|value| value.get("rows"))
-        .and_then(Value::as_u64)
-        .or_else(|| optional_u64(args, "rows"))
-        .unwrap_or(DEFAULT_PTY_ROWS as u64);
-    let columns = dimensions
-        .and_then(|value| value.get("columns"))
-        .and_then(Value::as_u64)
-        .or_else(|| optional_u64(args, "columns"))
-        .unwrap_or(DEFAULT_PTY_COLUMNS as u64);
-    let tail_chars = optional_u64(args, "tailChars").unwrap_or(DEFAULT_CAPTURE_TAIL_CHARS as u64);
-    let font_size = optional_u64(args, "fontSize").unwrap_or(DEFAULT_CAPTURE_FONT_SIZE as u64);
-
-    Ok(PtyVteCaptureConfig {
-        rows: checked_u16(rows, "rows")?,
-        columns: checked_u16(columns, "columns")?,
-        tail_chars: checked_usize(tail_chars, "tailChars")?,
-        font_size: checked_u16(font_size, "fontSize")?,
-        png_path: None,
-        json_path: None,
-    })
-}
-
-fn resolve_mock_user_output_dir(
-    sandbox: &Sandbox,
-    journey_name: &str,
-    output_dir: Option<&str>,
-) -> PathBuf {
-    match output_dir.map(PathBuf::from) {
-        Some(path) if path.is_absolute() => path,
-        Some(path) => sandbox.root.join(path),
-        None => sandbox
-            .root
-            .join("captures")
-            .join(format!("mock-user-{}", sanitize_prefix(journey_name))),
-    }
-}
-
-fn screenshot_file_stem(filename: Option<&str>, target: &str) -> Result<String> {
-    let raw = filename.unwrap_or(target);
-    let candidate = Path::new(raw);
-    if candidate.components().count() != 1 {
-        bail!("`filename` must be a plain file name without directory segments");
-    }
-    let stem = candidate
-        .file_stem()
-        .and_then(|value| value.to_str())
-        .map(str::trim)
-        .filter(|value| !value.is_empty())
-        .ok_or_else(|| anyhow!("`filename` must contain a valid file name"))?;
-    Ok(sanitize_prefix(stem))
-}
-
 
 
 #[cfg(test)]

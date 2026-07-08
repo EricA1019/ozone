@@ -52,10 +52,16 @@ pub(crate) fn host_toolchain_dir(name: &str) -> Option<String> {
     env::var_os("HOME").map(|home| PathBuf::from(home).join(name).display().to_string())
 }
 
+/// `checked_u16` also exists in `testing::screen` — this copy is unused
+/// in default builds but kept for feature-gated callers.
+#[cfg_attr(not(feature = "legacy-tools"), allow(dead_code))]
 pub(crate) fn checked_u16(value: u64, key: &str) -> Result<u16> {
     u16::try_from(value).map_err(|_| anyhow!("field `{key}` must be <= {}", u16::MAX))
 }
 
+/// `checked_usize` also exists in `testing::screen` — this copy is unused
+/// in default builds but kept for feature-gated callers.
+#[cfg_attr(not(feature = "legacy-tools"), allow(dead_code))]
 pub(crate) fn checked_usize(value: u64, key: &str) -> Result<usize> {
     usize::try_from(value).map_err(|_| anyhow!("field `{key}` is too large"))
 }
