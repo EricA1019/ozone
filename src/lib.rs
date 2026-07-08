@@ -266,6 +266,7 @@ pub enum Commands {
         batch: bool,
     },
     /// Run evaluation probes against a running local server
+    #[cfg(feature = "eval")]
     Eval {
         /// Model filename reported by the local API
         model: String,
@@ -305,8 +306,10 @@ pub enum Commands {
         port: u16,
     },
     /// List available evaluation presets
+    #[cfg(feature = "eval")]
     EvalList,
     /// Run creative writing evaluation probe (multi-temperature diversity scoring)
+    #[cfg(feature = "eval")]
     CreativeWrite {
         /// Model filename
         model: String,
@@ -330,6 +333,7 @@ pub enum Commands {
         command: model::ModelCommand,
     },
     /// Run the native eval pipeline (warmup, calibration, gates, suites)
+    #[cfg(feature = "eval")]
     EvalRun {
         /// Model file path (for hashing)
         model_path: String,
@@ -419,6 +423,7 @@ pub async fn run() -> Result<()> {
         Some(Commands::ImportSpecs) => commands::cmd_import_specs().await,
         Some(Commands::Monitor) => ui::run_monitor().await,
         Some(Commands::List { json }) => commands::cmd_list(json).await,
+        #[cfg(feature = "bench")]
         Some(Commands::Bench {
             model,
             gpu_layers,
@@ -692,16 +697,8 @@ pub async fn run() -> Result<()> {
         }
         #[cfg(feature = "analyze")]
         Some(Commands::Analyze { model, all, generate, profiles, export }) => commands::cmd_analyze(model, all, generate, profiles, export).await,
-        #[cfg(not(feature = "analyze"))]
-        Some(Commands::Analyze { .. }) => {
-            anyhow::bail!("analyze command requires the 'analyze' feature.")
-        }
         #[cfg(feature = "eval")]
         Some(Commands::Eval { model, preset, limit, base_url, temperature, compare, tokenizer }) => commands::cmd_eval(model, preset, limit, base_url, temperature, compare, tokenizer).await,
-        #[cfg(not(feature = "eval"))]
-        Some(Commands::Eval { .. }) => {
-            anyhow::bail!("eval command requires the 'eval' feature. Build with --features full or --features eval.")
-        }
         Some(Commands::ExportServer { model, output, port }) => commands::cmd_export_server(model, output, port).await,
         #[cfg(feature = "eval")]
         Some(Commands::EvalRun {
@@ -824,14 +821,8 @@ pub async fn run() -> Result<()> {
             );
             Ok(())
         }
-        #[cfg(not(feature = "eval"))]
-        Some(Commands::EvalRun { .. }) => {
-            anyhow::bail!("eval-run requires the 'eval' feature. Build with --features full or --features eval.")
-        }
         #[cfg(feature = "eval")]
         Some(Commands::EvalList) => commands::cmd_eval_list().await,
-        #[cfg(not(feature = "eval"))]
-        Some(Commands::EvalList) => anyhow::bail!("eval-list requires the 'eval' feature."),
         #[cfg(feature = "eval")]
         Some(Commands::CreativeWrite {
             model,
@@ -862,10 +853,6 @@ pub async fn run() -> Result<()> {
             ozone_core::cli::field("CSV:", &csv_path.display());
             ozone_core::cli::field("Report:", &report_path.display());
             Ok(())
-        }
-        #[cfg(not(feature = "eval"))]
-        Some(Commands::CreativeWrite { .. }) => {
-            anyhow::bail!("creative-write requires the 'eval' feature. Build with --features full or --features eval.")
         }
         #[cfg(feature = "model-mgmt")]
         Some(Commands::Model { command }) => match model::run(command).await {

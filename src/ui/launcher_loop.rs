@@ -12,6 +12,7 @@ use crossterm::{
     terminal::{enable_raw_mode, EnterAlternateScreen},
 };
 use ratatui::{backend::CrosstermBackend, widgets::Clear, Terminal};
+#[cfg(any(feature = "profiling-ui", feature = "eval"))]
 use tokio::sync::mpsc::error::TryRecvError;
 
 use crate::hardware::HardwareProfile;
@@ -178,6 +179,7 @@ pub async fn run_launcher(
             apply_workflow_event(&mut app, event);
         }
 
+        #[cfg(feature = "eval")]
         loop {
             let event = match app.bench_eval.event_rx.as_mut() {
                 Some(rx) => match rx.try_recv() {
@@ -196,6 +198,7 @@ pub async fn run_launcher(
             apply_bench_eval_event(&mut app, event);
         }
 
+        #[cfg(feature = "eval")]
         // Eval run event processing
         loop {
             let event = match app.bench_eval.eval_run_event_rx.as_mut() {
@@ -248,15 +251,24 @@ pub async fn run_launcher(
                 Screen::ProfileSuccess => launcher::render_profile_success(f, &app),
                 #[cfg(feature = "profiling-ui")]
                 Screen::ProfileFailure => launcher::render_profile_failure(f, &app),
+                #[cfg(feature = "eval")]
                 Screen::BenchEval => bench_eval::render(f, &app),
+                #[cfg(feature = "eval")]
                 Screen::EvalLauncher => eval_launcher::render(f, &app),
+                #[cfg(feature = "eval")]
                 Screen::BenchLauncher => bench_launcher::render(f, &app),
+                #[cfg(feature = "eval")]
                 Screen::BenchEvalRunning => bench_eval::render_running(f, &app),
+                #[cfg(feature = "eval")]
                 Screen::EvalRunRunning => bench_eval::render_running(f, &app),
+                #[cfg(feature = "eval")]
                 Screen::BenchEvalReport => bench_eval::render_report(f, &app),
+                #[cfg(feature = "eval")]
                 Screen::BenchEvalResults => bench_eval::render_results(f, &app),
                 Screen::Settings => launcher::render_settings(f, &app),
                 Screen::Monitor => monitor::render(f, &app),
+                #[cfg(not(feature = "eval"))]
+                _ => {}
             }
             if app.command_overlay_open {
                 launcher::render_command_overlay(f, &app);
@@ -337,26 +349,32 @@ pub async fn run_launcher(
                             continue;
                         }
                     }
+                    #[cfg(feature = "eval")]
                     Screen::EvalLauncher => {
                         if let EvalLauncherOutcome::ExitLauncher =
                             handle_eval_launcher_key(&mut app, key).await
                         {}
                     }
+                    #[cfg(feature = "eval")]
                     Screen::BenchLauncher => {
                         if let BenchLauncherOutcome::ExitLauncher =
                             handle_bench_launcher_key(&mut app, key).await
                         {}
                     }
+                    #[cfg(feature = "eval")]
                     Screen::BenchEval => match handle_bench_eval_key(&mut app, key).await {
                         BenchEvalOutcome::Continue => {}
                         BenchEvalOutcome::ExitLauncher => break Ok(()),
                     },
+                    #[cfg(feature = "eval")]
                     Screen::BenchEvalRunning => {
                         self::bench_eval_flow::handle_bench_eval_running_key(&mut app, key);
                     }
+                    #[cfg(feature = "eval")]
                     Screen::BenchEvalReport => {
                         self::bench_eval_flow::handle_bench_eval_report_key(&mut app, key);
                     }
+                    #[cfg(feature = "eval")]
                     Screen::BenchEvalResults => {
                         self::bench_eval_flow::handle_bench_eval_results_key(&mut app, key);
                     }
@@ -401,14 +419,21 @@ pub async fn run_launcher(
             let need_catalog_refresh = matches!(
                 app.screen,
                 Screen::Launcher
-                    | Screen::BenchEval
-                    | Screen::BenchEvalRunning
                     | Screen::ModelPicker
                     | Screen::ConfigureHub
                     | Screen::Confirm
                     | Screen::Settings
                     | Screen::ExitConfirm
             ) || {
+                #[cfg(feature = "eval")]
+                {
+                    matches!(app.screen, Screen::BenchEval | Screen::BenchEvalRunning)
+                }
+                #[cfg(not(feature = "eval"))]
+                {
+                    false
+                }
+            } || {
                 #[cfg(feature = "profiling-ui")]
                 {
                     matches!(

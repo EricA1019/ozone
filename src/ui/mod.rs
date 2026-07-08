@@ -219,7 +219,9 @@ pub struct BenchEvalState {
     pub bench_launcher_selected: usize,
     pub progress_title: String,
     pub progress: Vec<String>,
+    #[cfg(feature = "eval")]
     pub event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<BenchEvalWorkflowEvent>>,
+    #[cfg(feature = "eval")]
     pub eval_run_event_rx: Option<tokio::sync::mpsc::UnboundedReceiver<EvalRunEvent>>,
     pub eval_run_stage: String,
     pub eval_run_progress: Vec<String>,
@@ -553,6 +555,7 @@ impl App {
         }
     }
 
+    #[cfg(feature = "eval")]
     fn start_bench_eval_workflow(
         &mut self,
         rx: tokio::sync::mpsc::UnboundedReceiver<BenchEvalWorkflowEvent>,
@@ -573,6 +576,7 @@ impl App {
         self.screen = Screen::BenchEvalRunning;
     }
 
+    #[cfg(feature = "eval")]
     fn store_bench_eval_report(&mut self, report: crate::eval_report::EvalMarkdownReport) {
         self.bench_eval.report_title = report.title;
         self.bench_eval.report_markdown = report.markdown;
@@ -581,6 +585,7 @@ impl App {
         self.bench_eval.report_scroll = 0;
     }
 
+    #[cfg(feature = "eval")]
     fn open_bench_eval_report(&mut self, report: crate::eval_report::EvalMarkdownReport) {
         self.store_bench_eval_report(report);
         self.screen = Screen::BenchEvalReport;
@@ -616,6 +621,7 @@ impl App {
             }
         }
 
+        #[cfg(feature = "eval")]
         // Scan results for eval CSVs and markdown reports
         if let Ok(root) = crate::eval::resolve_project_root() {
             let artifacts = root.join("results");
