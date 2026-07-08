@@ -93,3 +93,107 @@ pub async fn cmd_eval_list() -> Result<()> {
     }
     Ok(())
 }
+
+pub async fn cmd_list(json: bool) -> Result<()> {
+    let model_dir = ozone_core::paths::models_dir();
+    let preset_file = ozone_core::paths::catalog_preset_path();
+    let bench_file = model_dir.join("bench-results.txt");
+    let report = crate::catalog::load_catalog_report(&model_dir, &preset_file, &bench_file).await?;
+    for issue in &report.issues {
+        eprintln!("catalog {}: {}", issue.level.label(), issue.message);
+    }
+    let records = report.records;
+    if json {
+        let rows: Vec<_> = records
+            .iter()
+            .map(|r| {
+                serde_json::json!({
+                    "model": r.model_name,
+                    "size_gb": r.model_size_gb,
+                    "source": r.recommendation.source.label(),
+                })
+            })
+            .collect();
+        println!("{}", serde_json::to_string_pretty(&rows)?);
+    } else {
+        #[cfg(feature = "model-mgmt")]
+        {
+            eprintln!("  hint: `oz list` is deprecated — use `oz model list` instead.");
+            eprintln!();
+        }
+        #[cfg(not(feature = "model-mgmt"))]
+        {
+            eprintln!("  note: this build exposes the lightweight `oz list` catalog only.");
+            eprintln!("        for `oz model ...`, install via `./contrib/sync-local-install.sh`");
+            eprintln!("        or build `cargo build --release -p ozone --features full`.");
+            eprintln!();
+        }
+        println!("  {:<6}  {:>8}  MODEL", "SOURCE", "SIZE");
+        if records.is_empty() {
+            println!();
+            println!("  no models found in {}", model_dir.display());
+            println!();
+            #[cfg(feature = "model-mgmt")]
+            {
+                println!("  next: add one with `oz model add --hf <repo> [filename.gguf]`");
+                println!("        or symlink an existing `.gguf` into `~/models/`.");
+            }
+            #[cfg(not(feature = "model-mgmt"))]
+            {
+                println!("  next: place a `.gguf` file or symlink in {},", model_dir.display());
+                println!("        then rerun `oz list` or use the installed full base build.");
+            }
+        } else {
+            for r in &records {
+                let size = if r.model_size_gb <= 0.0 {
+                    "⚠ broken".to_string()
+                } else {
+                    format!("{:.1} GB", r.model_size_gb)
+                };
+                println!(
+                    "  [{:5}]  {:>8}  {}",
+                    r.recommendation.source.label(),
+                    size,
+                    r.model_name
+                );
+            }
+        }
+    }
+    Ok(())
+}
+
+pub async fn cmd_export_server(
+    model: String,
+    output: Option<String>,
+    port: u16,
+) -> Result<()> {
+    let model_dir = ozone_core::paths::models_dir();
+    let model_path = model_dir.join(&model);
+    if !model_path.exists() {
+        anyhow::bail!("Model not found: {}", model_path.display());
+    }
+
+    let server_path = crate::processes::resolved_llamacpp_server_path()?;
+
+    let plan = {
+        let report = crate::catalog::load_catalog_report(
+            &model_dir,
+            &ozone_core::paths::catalog_preset_path(),
+            &model_dir.join("bench-results.txt"),
+        )
+        .await?;
+        let record = report
+            .records
+            .iter()
+            .find(|r| r.model_name == model)
+            .ok_or_else(|| anyhow::anyhow!("Model '{}' not found in catalog", model))?;
+        crate::launch_config::plan_launch(record, &Default::default())
+    };
+
+    let output_path = output.as_deref().map(std::path::PathBuf::from).unwrap_or_default();
+    let written = crate::export_server::generate_serve_script(
+        &plan, &model_path, &server_path, port, &output_path,
+    )?;
+    ozone_core::cli::success(&format!("Server script written to {}", written.display()));
+    Ok(())
+}

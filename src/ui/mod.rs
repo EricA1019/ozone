@@ -49,6 +49,10 @@ pub mod eval_run_workflow;
 mod exit_confirm_flow;
 mod launch_execution_flow;
 pub mod launcher;
+mod launcher_screens;
+mod launcher_settings;
+#[cfg(feature = "profiling-ui")]
+mod launcher_profile_views;
 mod launcher_screen_flow;
 mod model_picker_flow;
 pub mod monitor;
