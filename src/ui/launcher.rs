@@ -10,7 +10,7 @@ use ratatui::{
 };
 
 use super::{App, LauncherAction, LauncherActionId, ModelPickerMode};
-use crate::planner::{self, ConfigureWarningSeverity};
+use crate::launch_config::{self, ConfigureWarningSeverity};
 #[cfg(feature = "profiling-ui")]
 use crate::profiling::{ProfilingAction, WarningSeverity};
 use crate::theme::*;
@@ -586,13 +586,13 @@ pub fn render_model_picker(f: &mut Frame, app: &App) {
             let path_ok = rec.model_path.exists();
 
             let plan_vram = hw.map(|_| {
-                crate::planner::estimate_vram_mb(
+                crate::launch_config::estimate_vram_mb(
                     rec.recommendation.context_size,
                     rec.recommendation.gpu_layers,
                     rec.model_size_gb,
                     rec.recommendation.quant_k,
                     rec.recommendation.quant_v,
-                    crate::planner::estimate_total_layers(rec.model_size_gb),
+                    crate::launch_config::estimate_total_layers(rec.model_size_gb),
                 )
             });
 
@@ -919,7 +919,7 @@ pub fn render_configure_hub(f: &mut Frame, app: &App) {
                 },
             ),
             Span::styled("  ", style_gray()),
-            Span::styled(format!("{}", effective.threads.unwrap_or(8)), style_amber()),
+            Span::styled(format!("{}", effective.threads.unwrap_or(crate::launch_config::DEFAULT_THREADS)), style_amber()),
         ]),
         Line::from(vec![
             Span::styled(
@@ -936,7 +936,7 @@ pub fn render_configure_hub(f: &mut Frame, app: &App) {
             ),
             Span::styled("  ", style_gray()),
             Span::styled(
-                format!("{}", effective.blas_threads.unwrap_or(8)),
+                format!("{}", effective.blas_threads.unwrap_or(crate::launch_config::DEFAULT_THREADS)),
                 style_amber(),
             ),
         ]),
@@ -1048,7 +1048,7 @@ pub fn render_configure_hub(f: &mut Frame, app: &App) {
     let warnings = app
         .hardware
         .as_ref()
-        .map(|hw| planner::build_configure_warnings(effective, hw))
+        .map(|hw| launch_config::build_configure_warnings(effective, hw))
         .unwrap_or_default();
     let warning_lines = if warnings.is_empty() {
         vec![Line::from(Span::styled(
@@ -1081,7 +1081,7 @@ pub fn render_configure_hub(f: &mut Frame, app: &App) {
     f.render_widget(Paragraph::new(warning_lines).block(warning_block), outer[5]);
 }
 
-fn render_plan_summary(f: &mut Frame, area: Rect, title: &str, plan: &planner::LaunchPlan) {
+fn render_plan_summary(f: &mut Frame, area: Rect, title: &str, plan: &launch_config::LaunchPlan) {
     let lines = vec![
         Line::from(vec![
             Span::styled("  Context: ", style_gray()),
@@ -1246,7 +1246,7 @@ fn render_saved_profile_report_panel(f: &mut Frame, area: Rect, app: &App) {
 }
 
 fn context_step_label(current: u32) -> String {
-    planner::CONFIGURE_CONTEXT_STEPS
+    launch_config::CONFIGURE_CONTEXT_STEPS
         .iter()
         .map(|step| {
             if *step == current {

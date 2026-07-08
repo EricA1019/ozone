@@ -146,20 +146,20 @@ async fn activate_selected(app: &mut App) {
                 let root = match crate::eval::resolve_project_root() {
                     Ok(r) => r,
                     Err(e) => {
-                        eprintln!("creative writing: failed to resolve project root: {e}");
+                        tracing::error!("creative writing: failed to resolve project root: {e}");
                         return;
                     }
                 };
                 let prompts = match crate::creative_writing::load_prompt_bank(&root) {
                     Ok(p) => p,
                     Err(e) => {
-                        eprintln!("creative writing: failed to load prompt bank: {e}");
+                        tracing::error!("creative writing: failed to load prompt bank: {e}");
                         return;
                     }
                 };
                 let artifacts_dir = root.join("results").join("creative_writing");
                 let base_url = ozone_core::paths::llamacpp_base_url();
-                eprintln!("Creative writing eval starting for {model}…");
+                tracing::info!("Creative writing eval starting for {model}");
                 match crate::creative_writing::run_creative_writing_eval(
                     &model,
                     &prompts,
@@ -169,10 +169,10 @@ async fn activate_selected(app: &mut App) {
                 .await
                 {
                     Ok(csv_path) => {
-                        eprintln!("Creative writing eval complete: {}", csv_path.display());
+                        tracing::info!("Creative writing eval complete: {}", csv_path.display());
                     }
                     Err(e) => {
-                        eprintln!("Creative writing eval failed: {e}");
+                        tracing::error!("Creative writing eval failed: {e}");
                     }
                 }
             });
@@ -190,7 +190,7 @@ async fn activate_selected(app: &mut App) {
                 let server_path = match crate::processes::resolved_llamacpp_server_path() {
                     Ok(p) => p,
                     Err(e) => {
-                        eprintln!("export server: failed to resolve server path: {e}");
+                        tracing::error!("export server: failed to resolve server path: {e}");
                         return;
                     }
                 };
@@ -203,15 +203,15 @@ async fn activate_selected(app: &mut App) {
                 {
                     Ok(r) => r,
                     Err(e) => {
-                        eprintln!("export server: failed to load catalog: {e}");
+                        tracing::error!("export server: failed to load catalog: {e}");
                         return;
                     }
                 };
                 let Some(record) = report.records.iter().find(|r| r.model_name == model) else {
-                    eprintln!("export server: model '{model}' not found in catalog");
+                    tracing::error!("export server: model '{}' not found in catalog", model);
                     return;
                 };
-                let plan = crate::planner::plan_launch(record, &Default::default());
+                let plan = crate::launch_config::plan_launch(record, &Default::default());
                 let output = model_dir.join(format!("serve-{model}.sh"));
                 match crate::export_server::generate_serve_script(
                     &plan,
@@ -220,8 +220,8 @@ async fn activate_selected(app: &mut App) {
                     ozone_core::paths::DEFAULT_LLAMACPP_PORT,
                     &output,
                 ) {
-                    Ok(path) => eprintln!("Server script written to {}", path.display()),
-                    Err(e) => eprintln!("export server: failed to generate script: {e}"),
+                    Ok(path) => tracing::info!("Server script written to {}", path.display()),
+                    Err(e) => tracing::error!("export server: failed to generate script: {e}"),
                 }
             });
         }

@@ -116,7 +116,7 @@ pub(super) async fn run_launcher_action(
 
 async fn apply_successful_launch(
     app: &mut App,
-    plan: &crate::planner::LaunchPlan,
+    plan: &crate::launch_config::LaunchPlan,
     _choice_idx: usize,
 ) -> bool {
     let mut updated_prefs = app.prefs.clone();

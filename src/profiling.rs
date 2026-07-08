@@ -9,15 +9,18 @@ use tokio::sync::mpsc::UnboundedSender;
 use tokio_util::sync::CancellationToken;
 
 use crate::{
-    analyze, bench,
     catalog::CatalogRecord,
-    db::{self, BenchmarkRow, ProfileRow},
     hardware::{self, HardwareProfile},
-    planner::{self, LaunchPlan, RecommendationMode},
+    launch_config::{self, LaunchPlan, RecommendationMode},
     prefs::SavedLaunchProfile,
     processes::{self, ServiceStatus},
-    sweep,
 };
+#[cfg(any(feature = "analyze", feature = "bench", feature = "profiling-ui"))]
+use crate::{analyze, bench};
+#[cfg(any(feature = "analyze", feature = "bench", feature = "eval", feature = "profiling-ui"))]
+use crate::db::{self, BenchmarkRow, ProfileRow};
+#[cfg(any(feature = "sweep", feature = "profiling-ui"))]
+use crate::sweep;
 
 // Re-export profiling action types so existing `crate::profiling::*` imports
 // continue to work after they were moved to profiling_actions.rs.
@@ -191,10 +194,15 @@ fn send_failed(tx: &UnboundedSender<WorkflowEvent>, report: ProfilingFailureRepo
     let _ = tx.send(WorkflowEvent::Failed(Box::new(report)));
 }
 
+/// Resolve the path to the llama-server binary.
+///
+/// Falls back to `"llama-server"` (hoping it is on $PATH) when the
+/// configured path cannot be resolved.
 pub fn launcher_path() -> PathBuf {
     processes::resolved_llamacpp_server_path().unwrap_or_else(|_| PathBuf::from("llama-server"))
 }
 
+/// Resolve the directory path for exported launch profiles.
 pub fn presets_path() -> PathBuf {
     ozone_core::paths::runtime_profiles_path()
 }
@@ -219,7 +227,7 @@ fn export_llamacpp_profiles(profiles: &[ProfileRow]) -> anyhow::Result<PathBuf> 
 
     let threads: usize = std::thread::available_parallelism()
         .map(|n| (n.get() / 2).max(1))
-        .unwrap_or(8);
+        .unwrap_or(crate::launch_config::DEFAULT_THREADS as usize);
 
     // --- Shell script ---
     let sh_path = dir.join("llamacpp-profiles.sh");
@@ -369,6 +377,7 @@ fn build_saved_profile_report(
     })
 }
 
+/// Collect saved profile reports for all models that have benchmarks and profiles.
 pub fn saved_profile_reports(
     model_name: &str,
     profiles: &[SavedLaunchProfile],
@@ -417,19 +426,24 @@ fn pick_recommended_profile(profiles: &[ProfileRow]) -> Option<RecommendedProfil
     })
 }
 
+/// Given a catalog record and hardware, recommend the best launch plan.
+///
+/// Uses benchmark-backed recommendations when available, falls back to
+/// heuristic estimates. Wraps `planner::plan_launch` with profiling-specific
+/// adjustments.
 pub fn preferred_launch_plan(
     record: &CatalogRecord,
     hardware: &HardwareProfile,
 ) -> Result<LaunchPlan> {
-    let fallback_layers = planner::estimate_total_layers(record.model_size_gb);
+    let fallback_layers = launch_config::estimate_total_layers(record.model_size_gb);
     let topology = crate::gguf::inspect_model_topology(&record.model_path, fallback_layers);
     let history = load_history(&record.model_name).unwrap_or_default();
     if let Some(profile) = pick_recommended_profile(&history.profiles) {
         let total_layers = topology.total_layers;
         let gpu_layers = profile.gpu_layers;
-        let mode = planner::classify_mode(gpu_layers, total_layers);
-        let cpu_layers = planner::estimate_cpu_resident_layers(gpu_layers, total_layers);
-        let (threads, blas_threads) = planner::recommend_threads(hardware, &mode);
+        let mode = launch_config::classify_mode(gpu_layers, total_layers);
+        let cpu_layers = launch_config::estimate_cpu_resident_layers(gpu_layers, total_layers);
+        let (threads, blas_threads) = launch_config::recommend_threads(hardware, &mode);
         return Ok(LaunchPlan {
             model_name: record.model_name.clone(),
             context_size: profile.context_size,
@@ -448,7 +462,7 @@ pub fn preferred_launch_plan(
             ),
             estimated: false,
             estimated_vram_mb: profile.vram_mb,
-            estimated_ram_mb: planner::estimate_ram_mb(
+            estimated_ram_mb: launch_config::estimate_ram_mb(
                 profile.context_size,
                 gpu_layers,
                 record.model_size_gb,
@@ -461,9 +475,13 @@ pub fn preferred_launch_plan(
             layer_source_note: topology.note,
         });
     }
-    Ok(planner::plan_profiling_launch(record, hardware))
+    Ok(launch_config::plan_profiling_launch(record, hardware))
 }
 
+/// Build a profiling advisory for a model given its catalog record and hardware.
+///
+/// The advisory contains warnings, estimated VRAM, recommended actions, and
+/// the computed launch plan. Used by the profiling UI to guide the user.
 pub fn build_advisory(
     record: &CatalogRecord,
     hardware: Option<&HardwareProfile>,
@@ -931,7 +949,7 @@ pub async fn run_workflow(
         let plan = request
             .launch_plan_override
             .clone()
-            .unwrap_or_else(|| planner::plan_profiling_launch(&request.record, &request.hardware));
+            .unwrap_or_else(|| launch_config::plan_profiling_launch(&request.record, &request.hardware));
 
         let _ = tx.send(WorkflowEvent::Status {
             title: "Thread Sweep".into(),
@@ -1150,7 +1168,7 @@ pub async fn run_workflow(
                 )
             })?;
             let thread_backend = backend.clone();
-            let seed_plan = planner::plan_profiling_launch(&request.record, &request.hardware);
+            let seed_plan = launch_config::plan_profiling_launch(&request.record, &request.hardware);
             let config = sweep::SweepConfig {
                 model_name: request.record.model_name.clone(),
                 model_path: request.record.model_path.clone(),
@@ -1358,7 +1376,7 @@ pub async fn run_workflow(
                 )
             })?;
             let plan = request.launch_plan_override.clone().unwrap_or_else(|| {
-                planner::plan_profiling_launch(&request.record, &request.hardware)
+                launch_config::plan_profiling_launch(&request.record, &request.hardware)
             });
             let benchmark_label = match request.action {
                 ProfilingAction::BenchmarkSavedProfile => request
@@ -1539,8 +1557,6 @@ mod tests {
                 quant_k: 1,
                 quant_v: 1,
                 vram_mb: 7200,
-                timestamp_ms: 0,
-                model_size_gb: 7.0,
             }),
             benchmark_count: 0,
             source_priority: 2,

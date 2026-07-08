@@ -295,14 +295,14 @@ async fn dispatch_action(app: &mut App, action: EvalLauncherAction) {
                 let root = match crate::eval::resolve_project_root() {
                     Ok(r) => r,
                     Err(e) => {
-                        eprintln!("creative writing: {e}");
+                        tracing::error!("creative writing: {e}");
                         return;
                     }
                 };
                 let prompts = match crate::creative_writing::load_prompt_bank(&root) {
                     Ok(p) => p,
                     Err(e) => {
-                        eprintln!("creative writing: {e}");
+                        tracing::error!("creative writing: {e}");
                         return;
                     }
                 };

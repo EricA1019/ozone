@@ -1,6 +1,6 @@
 //! Shared planner data types for the ozone product family.
 //!
-//! The computation logic lives in `src/planner.rs` (the root `ozone` binary).
+//! The computation logic lives in `src/launch_config.rs` (the root `ozone` binary).
 //! These types live here so that `ozone-tui` and other crates can reference
 //! them without pulling in the full planning dependencies.
 

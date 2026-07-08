@@ -8,9 +8,10 @@ use std::{
 
 use crate::catalog::CatalogRecord;
 use crate::hardware::HardwareProfile;
-use crate::planner::LaunchPlan;
+use crate::launch_config::LaunchPlan;
 use crate::prefs::{Preferences, SavedLaunchProfile};
-use crate::processes::{DiskSnapshot, ServiceStatus};
+use crate::disk::DiskSnapshot;
+use crate::processes::ServiceStatus;
 #[cfg(feature = "profiling-ui")]
 use crate::profiling::{
     ProfilingAction, ProfilingAdvisory, ProfilingFailureReport, ProfilingSuccessReport,
@@ -274,7 +275,7 @@ pub struct App {
 
 impl App {
     pub fn new(prefs: Preferences) -> Self {
-        let disk_name = crate::processes::get_root_disk_name();
+        let disk_name = crate::disk::get_root_disk_name();
         // In lite mode (no profiling-ui feature), return without profiling fields.
         #[cfg(not(feature = "profiling-ui"))]
         return App {
@@ -472,10 +473,10 @@ impl App {
 
     pub fn update_disk(&mut self) {
         if let Some(ref name) = self.disk_name.clone() {
-            if let Some(curr) = crate::processes::read_disk_stats(name) {
+            if let Some(curr) = crate::disk::read_disk_stats(name) {
                 let elapsed = self.disk_prev_time.elapsed().as_secs_f64();
                 if let Some(ref prev) = self.disk_prev {
-                    let (r, w) = crate::processes::compute_disk_delta(prev, &curr, elapsed);
+                    let (r, w) = crate::disk::compute_disk_delta(prev, &curr, elapsed);
                     self.disk_read_mbs = r;
                     self.disk_write_mbs = w;
                     self.disk_read_history.push((r * 10.0) as u64);
@@ -1299,7 +1300,7 @@ mod tests {
             n_parallel: 1,
             threads: None,
             blas_threads: None,
-            mode: crate::planner::RecommendationMode::MixedMemory,
+            mode: crate::launch_config::RecommendationMode::MixedMemory,
             rationale: "test".into(),
             estimated: false,
             estimated_vram_mb: 0,
@@ -1431,7 +1432,7 @@ mod tests {
         });
 
         let record = test_record("alpha.gguf");
-        let recommended = crate::planner::plan_launch(&record, app.hardware.as_ref().unwrap());
+        let recommended = crate::launch_config::plan_launch(&record, app.hardware.as_ref().unwrap());
         let effective = build_effective_plan(&app, &record, &recommended).expect("effective plan");
 
         assert_eq!(effective.context_size, 16384);
@@ -1482,7 +1483,7 @@ mod tests {
             n_parallel: 1,
             threads: None,
             blas_threads: None,
-            mode: crate::planner::RecommendationMode::MixedMemory,
+            mode: crate::launch_config::RecommendationMode::MixedMemory,
             rationale: "test".into(),
             estimated: false,
             estimated_vram_mb: 0,
@@ -1505,7 +1506,7 @@ mod tests {
         let adjusted = app.current_plan.expect("plan should exist");
         assert_eq!(
             adjusted.context_size,
-            crate::planner::step_context_size(TEST_CONTEXT_BASE, 1)
+            crate::launch_config::step_context_size(TEST_CONTEXT_BASE, 1)
         );
         assert_eq!(adjusted.gpu_layers, TEST_RECOMMENDED_GPU_LAYERS);
     }
@@ -1551,7 +1552,7 @@ mod tests {
             n_parallel: 1,
             threads: None,
             blas_threads: None,
-            mode: crate::planner::RecommendationMode::MixedMemory,
+            mode: crate::launch_config::RecommendationMode::MixedMemory,
             rationale: "test".into(),
             estimated: false,
             estimated_vram_mb: 0,
@@ -2064,7 +2065,7 @@ mod tests {
             n_parallel: 1,
             threads: None,
             blas_threads: None,
-            mode: crate::planner::RecommendationMode::VramFirst,
+            mode: crate::launch_config::RecommendationMode::VramFirst,
             rationale: "test".into(),
             estimated: false,
             estimated_vram_mb: 0,

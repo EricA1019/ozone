@@ -48,28 +48,20 @@ pub struct BenchmarkRun {
     pub quant_k: u8,
     pub quant_v: u8,
     pub vram_mb: u32,
-    /// Loaded from DB; reserved for model info display.
-    // Reserved for future model-info display surface.
-    #[allow(dead_code)]
-    pub timestamp_ms: i64,
-    /// Loaded from DB; reserved for model info display.
-    // Reserved for future model-info display surface.
-    #[allow(dead_code)]
-    pub model_size_gb: f64,
 }
 
 #[derive(Debug, Clone)]
 pub struct CatalogRecord {
     pub model_name: String,
-    /// Populated during catalog scan; reserved for model management surfaces.
-    // Reserved for future model management surface.
+    /// Populated during catalog scan; used in launcher (profiling-ui feature).
+    /// `#[allow(dead_code)]` because this field is dead in lite builds without profiling-ui.
     #[allow(dead_code)]
     pub model_path: PathBuf,
     pub model_size_gb: f64,
     pub recommendation: Recommendation,
     pub benchmark: Option<BenchmarkRun>,
-    /// Populated during catalog scan; reserved for model management surfaces.
-    // Reserved for future model management surface.
+    /// Populated during catalog scan; used in launcher (profiling-ui feature).
+    /// `#[allow(dead_code)]` because this field is dead in lite builds without profiling-ui.
     #[allow(dead_code)]
     pub benchmark_count: usize,
     pub source_priority: u8,
@@ -222,11 +214,6 @@ pub fn parse_benchmark_text(text: &str) -> Vec<(String, BenchmarkRun)> {
                 .map(|l| l[key.len()..].trim().to_string())
         }
 
-        let size_gb: f64 = field(section, "Size:")
-            .as_deref()
-            .and_then(|s| s.split_whitespace().next())
-            .and_then(|s| s.parse().ok())
-            .unwrap_or(0.0);
         let gpu_layers: i32 = field(section, "GPU Layers:")
             .as_deref()
             .and_then(|s| s.parse().ok())
@@ -265,8 +252,6 @@ pub fn parse_benchmark_text(text: &str) -> Vec<(String, BenchmarkRun)> {
                     quant_k,
                     quant_v,
                     vram_mb,
-                    timestamp_ms: 0,
-                    model_size_gb: size_gb,
                 },
             ));
         }

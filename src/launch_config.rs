@@ -11,6 +11,9 @@ const VRAM_HEADROOM_RATIO: f64 = 0.9;
 pub const CONFIGURE_CONTEXT_STEPS: [u32; 8] =
     [4096, 8192, 16384, 24576, 32768, 49152, 65536, 262144];
 
+/// Default CPU thread count when none is specified by the user or profile.
+pub const DEFAULT_THREADS: u32 = 8;
+
 pub use ozone_core::planner::{LaunchPlan, RecommendationMode};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,6 +29,10 @@ pub struct ConfigureWarning {
     pub message: String,
 }
 
+/// Estimate the total number of transformer layers from model file size.
+///
+/// Uses a heuristic of ~0.6 GB per layer, which is typical for 7B–70B
+/// parameter models at Q4_K_M quantization.
 pub fn estimate_total_layers(size_gb: f64) -> u32 {
     let s = size_gb.max(0.1);
     if s <= 8.0 {
@@ -61,6 +68,9 @@ fn gpu_layer_fraction(gpu_layers: i32, total_layers: u32) -> f64 {
     (gpu_layers as f64 / total_layers as f64).clamp(0.0, 1.0)
 }
 
+/// Calculate how many layers remain CPU-resident after GPU offloading.
+///
+/// A negative `gpu_layers` value means "all layers on GPU".
 pub fn estimate_cpu_resident_layers(gpu_layers: i32, total_layers: u32) -> u32 {
     let gpu_layers = if gpu_layers < 0 {
         total_layers
@@ -70,6 +80,10 @@ pub fn estimate_cpu_resident_layers(gpu_layers: i32, total_layers: u32) -> u32 {
     total_layers.saturating_sub(gpu_layers)
 }
 
+/// Estimate VRAM usage for a given model config.
+///
+/// Accounts for model weights (at the given quantization), KV cache at the
+/// given context length, and a system overhead margin.
 pub fn estimate_vram_mb(
     context_size: u32,
     gpu_layers: i32,
@@ -673,7 +687,7 @@ mod tests {
             .unwrap_or_default()
             .as_nanos();
         std::env::temp_dir().join(format!(
-            "ozone-planner-test-{}-{nanos}.gguf",
+            "ozone-launch-config-test-{}-{nanos}.gguf",
             std::process::id()
         ))
     }

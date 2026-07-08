@@ -125,23 +125,26 @@ pub(super) fn start_quick_sweep(app: &mut App) {
     };
 
     let model_name = record.model_name.clone();
-    let request = crate::profiling::WorkflowRequest {
-        record,
-        hardware: app.hardware.clone().unwrap_or_default(),
-        action: crate::profiling::ProfilingAction::QuickSweep,
-        profiling_backend: crate::profiling::ProfilingBackend::LlamaCpp,
-        launch_plan_override: app.current_plan.clone(),
-        launch_profile_name: None,
-    };
+    #[cfg(feature = "profiling-ui")]
+    {
+        let request = crate::profiling::WorkflowRequest {
+            record,
+            hardware: app.hardware.clone().unwrap_or_default(),
+            action: crate::profiling::ProfilingAction::QuickSweep,
+            profiling_backend: crate::profiling::ProfilingBackend::LlamaCpp,
+            launch_plan_override: app.current_plan.clone(),
+            launch_profile_name: None,
+        };
 
-    let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
-    let cancel = tokio_util::sync::CancellationToken::new();
-    let cancel_clone = cancel.clone();
-    app.start_profile_workflow(rx, cancel);
-    let _handle = tokio::spawn(async move {
-        if let Err(error) = crate::profiling::run_workflow(request, tx, cancel_clone).await {
-            eprintln!("Quick sweep workflow failed: {error}");
-        }
-    });
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        let cancel = tokio_util::sync::CancellationToken::new();
+        let cancel_clone = cancel.clone();
+        app.start_profile_workflow(rx, cancel);
+        let _handle = tokio::spawn(async move {
+            if let Err(error) = crate::profiling::run_workflow(request, tx, cancel_clone).await {
+                tracing::error!("Quick sweep workflow failed: {error}");
+            }
+        });
+    }
     app.set_status(format!("Quick sweep started for '{}'...", model_name));
 }

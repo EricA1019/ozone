@@ -16,8 +16,10 @@ pub mod bench;
 #[cfg(feature = "eval")]
 pub mod calibration;
 pub mod catalog;
+pub mod commands;
 #[cfg(feature = "eval")]
 pub mod creative_writing;
+pub mod disk;
 #[cfg(any(feature = "eval", feature = "bench", feature = "analyze", feature = "profiling-ui"))]
 pub mod db;
 #[cfg(feature = "eval")]
@@ -39,7 +41,7 @@ pub mod hash;
 pub mod llama;
 #[cfg(feature = "model-mgmt")]
 pub mod model;
-pub mod planner;
+pub mod launch_config;
 #[cfg(feature = "eval")]
 pub mod policy;
 #[cfg(feature = "eval")]
@@ -47,7 +49,9 @@ pub mod preflight;
 pub mod prefs;
 pub mod processes;
 #[cfg(feature = "profiling-ui")]
+#[cfg(any(feature = "profiling-ui", feature = "bench", feature = "sweep", feature = "analyze"))]
 pub mod profiling_actions;
+#[cfg(any(feature = "profiling-ui", feature = "bench", feature = "sweep", feature = "analyze"))]
 pub mod profiling;
 #[cfg(feature = "eval")]
 pub mod runner;
@@ -150,7 +154,7 @@ struct Cli {
 }
 
 #[derive(Subcommand)]
-enum Commands {
+pub enum Commands {
     /// List available models
     List {
         #[arg(long, help = "Output as JSON")]
@@ -389,6 +393,7 @@ enum Commands {
 }
 
 #[tokio::main]
+#[tracing::instrument(skip_all)]
 pub async fn run() -> Result<()> {
     tracing_subscriber::fmt().with_env_filter(tracing_subscriber::EnvFilter::from_default_env()).init();
     if ozone_core::install::maybe_prompt_for_local_install_update("oz")? {
@@ -410,68 +415,9 @@ pub async fn run() -> Result<()> {
 
     match cli.command {
         None => ui::run_launcher(cli.no_browser, tier_override, cli.pick).await,
-        Some(Commands::Clear) => {
-            let killed = processes::clear_gpu_backends().await?;
-            if killed.is_empty() {
-                ozone_core::cli::info("No GPU backends running.");
-            } else {
-                for k in &killed {
-                    ozone_core::cli::success(&format!("Stopped: {k}"));
-                }
-            }
-            Ok(())
-        }
-        Some(Commands::PurgeLastModel) => {
-            let killed = processes::purge_last_model().await?;
-            if killed.is_empty() {
-                ozone_core::cli::info("No managed llama.cpp model was running.");
-            } else {
-                for pid in killed {
-                    ozone_core::cli::success(&format!("Stopped managed llama.cpp pid {pid}"));
-                }
-            }
-            Ok(())
-        }
-        Some(Commands::ImportSpecs) => {
-            ozone_core::cli::header("Import System Specs");
-            ozone_core::cli::info("Capturing GPU, CPU, RAM, and CUDA info…");
-            let profile = hardware::import_system_specs();
-            if let Some(ref name) = profile.gpu_name {
-                ozone_core::cli::field("GPU:", name);
-            }
-            if let Some(ref gpu) = profile.gpu {
-                ozone_core::cli::field("VRAM:", &format!("{} MB", gpu.total_mb));
-            }
-            ozone_core::cli::field(
-                "CUDA:",
-                &if profile.cuda_available {
-                    format!("✓ v{}", profile.cuda_version.as_deref().unwrap_or("?"))
-                } else {
-                    "✗".to_string()
-                },
-            );
-            if let Some(ref cap) = profile.compute_capability {
-                ozone_core::cli::field("Compute Cap:", cap);
-            }
-            ozone_core::cli::field(
-                "Flash Attn:",
-                &if profile.flash_attn_supported {
-                    "✓".to_string()
-                } else {
-                    "✗".to_string()
-                },
-            );
-            ozone_core::cli::field(
-                "CPU:",
-                &format!(
-                    "{} logical / {} physical",
-                    profile.cpu_logical, profile.cpu_physical
-                ),
-            );
-            ozone_core::cli::field("RAM:", &format!("{} MB total", profile.ram_total_mb));
-            ozone_core::cli::success("Saved to system-profile.json");
-            Ok(())
-        }
+        Some(Commands::Clear) => commands::cmd_clear().await,
+        Some(Commands::PurgeLastModel) => commands::cmd_purge_last_model().await,
+        Some(Commands::ImportSpecs) => commands::cmd_import_specs().await,
         Some(Commands::Monitor) => ui::run_monitor().await,
         Some(Commands::List { json }) => {
             let model_dir = ozone_core::paths::models_dir();
@@ -731,7 +677,7 @@ pub async fn run() -> Result<()> {
                 model_size_gb,
                 total_layers: gguf::inspect_model_topology(
                     &model_path,
-                    planner::estimate_total_layers(model_size_gb),
+                    crate::launch_config::estimate_total_layers(model_size_gb),
                 )
                 .total_layers,
                 context_sizes,
@@ -855,6 +801,7 @@ pub async fn run() -> Result<()> {
             }
             Ok(())
         }
+        #[cfg(feature = "eval")]
         Some(Commands::Eval {
             model,
             preset,
@@ -870,6 +817,10 @@ pub async fn run() -> Result<()> {
             }
             eval::run_eval(&model, preset, limit, &base_url, temperature, tokenizer.as_deref()).await?;
             Ok(())
+        }
+        #[cfg(not(feature = "eval"))]
+        Some(Commands::Eval { .. }) => {
+            anyhow::bail!("eval command requires the 'eval' feature. Build with --features full or --features eval.")
         }
         Some(Commands::ExportServer {
             model,
@@ -897,7 +848,7 @@ pub async fn run() -> Result<()> {
                     .iter()
                     .find(|r| r.model_name == model)
                     .ok_or_else(|| anyhow::anyhow!("Model '{}' not found in catalog", model))?;
-                crate::planner::plan_launch(record, &Default::default())
+                crate::launch_config::plan_launch(record, &Default::default())
             };
 
             let output_path = output.as_deref().map(PathBuf::from).unwrap_or_default();
@@ -911,6 +862,7 @@ pub async fn run() -> Result<()> {
             ozone_core::cli::success(&format!("Server script written to {}", written.display()));
             Ok(())
         }
+        #[cfg(feature = "eval")]
         Some(Commands::EvalRun {
             model_path,
             backend,
@@ -1031,21 +983,15 @@ pub async fn run() -> Result<()> {
             );
             Ok(())
         }
-        Some(Commands::EvalList) => {
-            println!("{:<20} {:<50} KIND", "NAME", "DESCRIPTION");
-            for task in eval::EVAL_TASKS {
-                let kind_label = match task.kind {
-                    eval::EvalTaskKind::LmEval { .. } => "lm-eval",
-                    eval::EvalTaskKind::EvalPlus { .. } => "evalplus",
-                    eval::EvalTaskKind::CreativeWriting => "creative-writing",
-                };
-                println!(
-                    "{:<20} {:<50} {}",
-                    task.cli_name, task.description, kind_label
-                );
-            }
-            Ok(())
+        #[cfg(not(feature = "eval"))]
+        Some(Commands::EvalRun { .. }) => {
+            anyhow::bail!("eval-run requires the 'eval' feature. Build with --features full or --features eval.")
         }
+        #[cfg(feature = "eval")]
+        Some(Commands::EvalList) => commands::cmd_eval_list().await,
+        #[cfg(not(feature = "eval"))]
+        Some(Commands::EvalList) => anyhow::bail!("eval-list requires the 'eval' feature."),
+        #[cfg(feature = "eval")]
         Some(Commands::CreativeWrite {
             model,
             base_url,
@@ -1076,6 +1022,10 @@ pub async fn run() -> Result<()> {
             ozone_core::cli::field("Report:", &report_path.display());
             Ok(())
         }
+        #[cfg(not(feature = "eval"))]
+        Some(Commands::CreativeWrite { .. }) => {
+            anyhow::bail!("creative-write requires the 'eval' feature. Build with --features full or --features eval.")
+        }
         #[cfg(feature = "model-mgmt")]
         Some(Commands::Model { command }) => match model::run(command).await {
             Ok(()) => Ok(()),
@@ -1084,37 +1034,7 @@ pub async fn run() -> Result<()> {
                 std::process::exit(1);
             }
         },
-        Some(Commands::Profiles) => {
-            let prefs = crate::prefs::load_prefs().await?;
-            let profs = &prefs.saved_launch_profiles;
-            if profs.is_empty() {
-                ozone_core::cli::info("No saved launch profiles found.");
-            } else {
-                println!("Saved launch profiles:");
-                for (model, profiles) in profs {
-                    for p in profiles {
-                        let default_marker = prefs
-                            .default_saved_launch_profile_name_for(model)
-                            .filter(|d| d == &p.profile_name)
-                            .map(|_| " [default]")
-                            .unwrap_or("");
-                        println!(
-                            "  {:<20}  {:>7} ctx  {:>3} gpu  K=q{} V=q{}  threads={}{}",
-                            p.profile_name,
-                            p.context_size,
-                            p.gpu_layers,
-                            p.quant_k,
-                            p.quant_v,
-                            p.threads
-                                .map(|t| t.to_string())
-                                .unwrap_or_else(|| "auto".into()),
-                            default_marker,
-                        );
-                    }
-                }
-            }
-            Ok(())
-        }
+        Some(Commands::Profiles) => commands::cmd_profiles().await,
     }
 }
 
@@ -1144,5 +1064,57 @@ mod tests {
         // Binary name detection is case-sensitive. "OZ" is not "oz".
         assert_eq!(detect_tier_from_binary_name("OZ"), None);
         assert_eq!(detect_tier_from_binary_name("Oz"), None);
+    }
+
+    // -- Pre-snapshot CLI command parsing tests --
+    // These verify Cli::parse_from produces the correct command variants.
+    // They serve as regression tests for CLI dispatch extraction.
+
+    #[test]
+    fn cli_parse_list_command() {
+        let cli = Cli::parse_from(["oz", "list"]).command;
+        assert!(matches!(cli, Some(Commands::List { .. })));
+    }
+
+    #[test]
+    fn cli_parse_list_json_flag() {
+        let cli = Cli::parse_from(["oz", "list", "--json"]).command;
+        match cli {
+            Some(Commands::List { json }) => assert!(json),
+            _ => panic!("expected List command"),
+        }
+    }
+
+    #[test]
+    fn cli_parse_clear_command() {
+        let cli = Cli::parse_from(["oz", "clear"]).command;
+        assert!(matches!(cli, Some(Commands::Clear)));
+    }
+
+    #[test]
+    fn cli_parse_monitor_command() {
+        let cli = Cli::parse_from(["oz", "monitor"]).command;
+        assert!(matches!(cli, Some(Commands::Monitor)));
+    }
+
+    #[test]
+    fn cli_parse_eval_command() {
+        let cli = Cli::parse_from(["oz", "eval", "model.gguf"]).command;
+        match cli {
+            Some(Commands::Eval { model, .. }) => assert_eq!(model, "model.gguf"),
+            _ => panic!("expected Eval command"),
+        }
+    }
+
+    #[test]
+    fn cli_parse_profiles_command() {
+        let cli = Cli::parse_from(["oz", "profiles"]).command;
+        assert!(matches!(cli, Some(Commands::Profiles)));
+    }
+
+    #[test]
+    fn cli_parse_no_command_selects_launcher() {
+        let cli = Cli::parse_from(["oz"]).command;
+        assert!(cli.is_none(), "no command should leave cli.command as None (launcher mode)");
     }
 }

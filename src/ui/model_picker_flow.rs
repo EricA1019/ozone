@@ -51,7 +51,7 @@ pub(super) fn handle_model_picker_key(app: &mut App, key: KeyEvent) {
                     }
                     ModelPickerMode::Launch | ModelPickerMode::Configure => {
                         if let Some(hw) = &app.hardware {
-                            let recommended = crate::planner::plan_launch(&record, hw);
+                            let recommended = crate::launch_config::plan_launch(&record, hw);
                             app.current_plan = build_effective_plan(app, &record, &recommended)
                                 .or_else(|| Some(recommended.clone()));
                             app.configure_recommended_plan = Some(recommended);

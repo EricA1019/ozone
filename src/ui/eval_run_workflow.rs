@@ -116,7 +116,7 @@ pub(super) fn spawn_eval_run(config: EvalRunConfig, tx: UnboundedSender<EvalRunE
         });
 
         if let Err(e) = runner::run_eval_with_events(&config, tx).await {
-            eprintln!("eval_run_workflow: runner failed: {e}");
+            tracing::error!("eval_run_workflow: runner failed: {e}");
         }
     });
 }

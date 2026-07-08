@@ -575,6 +575,7 @@ pub fn print_comparison(task_name: &str) -> Result<()> {
     Ok(())
 }
 
+#[tracing::instrument(skip_all)]
 pub async fn run_eval(
     model: &str,
     preset: EvalPreset,

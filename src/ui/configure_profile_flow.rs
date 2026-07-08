@@ -1,5 +1,5 @@
 use crate::catalog::CatalogRecord;
-use crate::planner::LaunchPlan;
+use crate::launch_config::LaunchPlan;
 use crate::prefs::{ModelLaunchOverride, SavedLaunchProfile};
 
 use super::{selected_record, App};
@@ -18,11 +18,11 @@ pub(super) fn build_effective_plan(
                 .prefs
                 .saved_launch_profile(&record.model_name, profile_name)
             {
-                return crate::planner::apply_saved_profile(
+                return crate::launch_config::apply_saved_profile(
                     recommended,
                     record,
                     hw,
-                    crate::planner::SavedProfileSelection {
+                    crate::launch_config::SavedProfileSelection {
                         context_size: saved_profile.context_size,
                         gpu_layers: saved_profile.gpu_layers,
                         quant_k: saved_profile.quant_k,
@@ -36,7 +36,7 @@ pub(super) fn build_effective_plan(
             .prefs
             .launch_override_for(&record.model_name)
             .unwrap_or_default();
-        crate::planner::apply_launch_override(recommended, record, hw, &override_state)
+        crate::launch_config::apply_launch_override(recommended, record, hw, &override_state)
     })
 }
 
@@ -149,11 +149,11 @@ pub(super) fn apply_selected_saved_profile(app: &mut App) -> Option<String> {
     let recommended = app.configure_recommended_plan.clone()?;
     let hw = app.hardware.as_ref()?;
     let profile = selected_saved_profile(app)?;
-    app.current_plan = Some(crate::planner::apply_saved_profile(
+    app.current_plan = Some(crate::launch_config::apply_saved_profile(
         &recommended,
         &record,
         hw,
-        crate::planner::SavedProfileSelection {
+        crate::launch_config::SavedProfileSelection {
             context_size: profile.context_size,
             gpu_layers: profile.gpu_layers,
             quant_k: profile.quant_k,

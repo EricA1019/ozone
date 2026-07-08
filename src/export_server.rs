@@ -3,7 +3,7 @@
 use anyhow::Result;
 use std::path::{Path, PathBuf};
 
-use crate::planner::LaunchPlan;
+use crate::launch_config::LaunchPlan;
 use crate::processes::kv_cache_args;
 
 /// Format a LaunchPlan into a ready-to-run shell script.
@@ -103,7 +103,7 @@ wait $SERVER_PID
         port = port,
         gpu = plan.gpu_layers,
         context = plan.context_size,
-        threads = plan.threads.unwrap_or(8),
+        threads = plan.threads.unwrap_or(crate::launch_config::DEFAULT_THREADS),
         cache_flags = cache_flags,
         server_path = server_path.display(),
     );
@@ -125,8 +125,8 @@ wait $SERVER_PID
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::planner::LaunchPlan;
-    use crate::planner::RecommendationMode;
+    use crate::launch_config::LaunchPlan;
+    use crate::launch_config::RecommendationMode;
     use std::io::Read;
 
     fn test_plan(threads: Option<u32>) -> LaunchPlan {

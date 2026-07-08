@@ -48,20 +48,19 @@ impl Stability {
 /// - pass_count >= ceil(attempts/2) → passed
 /// - If not all attempts agree → unstable
 #[derive(Debug, Clone)]
-#[allow(dead_code)]
 pub struct MultiScoredResult {
     /// Average of all attempt scores.
     pub avg_score: f64,
     /// Number of passed attempts.
     pub pass_count: u32,
-    /// Number of failed attempts.
+    /// Number of failed attempts. Populated but not yet consumed — reserved for score display improvements.
     #[allow(dead_code)]
     pub fail_count: u32,
     /// Total number of attempts.
     pub total_attempts: u32,
     /// Raw scores from each attempt.
     pub scores: Vec<f64>,
-    /// Individual attempt results.
+    /// Individual attempt results. Populated but not yet consumed — reserved for per-attempt debug views.
     #[allow(dead_code)]
     pub attempts: Vec<ScoredResult>,
     /// Overall pass/fail using majority rule.

@@ -26,13 +26,12 @@ use crate::suites::{EvalTask, CANARY_SUITE, CODE_MICRO, FORMAT_MICRO, HEALTH_SUI
 use crate::timeout::{compute_timeout, TimeoutEstimate, HARD_CAP_SECS};
 use crate::warmup::{reset_backend_session, run_warmup};
 
-/// Sweep depth for eval runs — controls which suites are executed and
-/// default attempt counts.
+/// Sweep depth for eval runs.
 ///
-/// Quick: health + canary (~17 tasks). 1 attempt each. Fast sanity check.
-/// Standard: health + canary + code_micro (~21 tasks). 3 attempts for gate
-///           tasks, 1 for others.
-/// Full: all 5 suites (~36 tasks). 3 attempts for all tasks.
+/// Controls which suites are executed and default attempt counts:
+/// - **Quick:** health + canary (~17 tasks), 1 attempt each. Fast sanity check.
+/// - **Standard:** health + canary + code_micro (~21 tasks), 3 attempts for gate tasks, 1 for others.
+/// - **Full:** all 5 suites (~36 tasks), 3 attempts for all tasks.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SweepLevel {
     Quick,
@@ -95,7 +94,10 @@ impl SweepLevel {
     }
 }
 
-/// Configuration for an eval run.
+/// Configuration for a single eval run.
+///
+/// Wires together model path, server connection, sweep level, and gating options.
+/// Constructed from CLI arguments in `dispatch_eval_run` and passed to `run_eval`.
 #[derive(Debug, Clone)]
 pub struct EvalRunConfig {
     /// Model name.
@@ -234,7 +236,7 @@ fn build_eval_server_args(config: &EvalRunConfig) -> Vec<String> {
         "--ctx-size".into(),
         config.context_length.to_string(),
         "--threads".into(),
-        config.threads.unwrap_or(8).to_string(),
+        config.threads.unwrap_or(crate::launch_config::DEFAULT_THREADS).to_string(),
         "--parallel".into(),
         "1".into(),
     ];
@@ -256,6 +258,15 @@ fn build_eval_server_args(config: &EvalRunConfig) -> Vec<String> {
 /// Gate tasks use a 2-of-3 pass rule; failed gates skip deeper tasks in
 /// that lane while other lanes continue.
 #[tracing::instrument(skip(config))]
+#[tracing::instrument(skip_all)]
+/// Run the full eval pipeline: warmup, calibration, gating, suites, and scoring.
+///
+/// When `manage_server` is set on the config, handles the full server lifecycle:
+/// clear any running model, launch the requested model, run evals, then kill.
+///
+/// # Errors
+/// Returns an error if server launch fails, calibration fails health gates,
+/// or any suite execution encounters an unrecoverable error.
 pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
     let overall_start = std::time::Instant::now();
     let gate_attempts = config.effective_gate_attempts();

@@ -32,14 +32,14 @@ pub(super) fn adjust_configure_plan(app: &mut App, direction: i32) {
                 .map(|plan| plan.context_size)
                 .unwrap_or(recommended.context_size);
             override_state.context_size =
-                Some(crate::planner::step_context_size(current, direction));
+                Some(crate::launch_config::step_context_size(current, direction));
         }
         CONFIGURE_FIELD_THREADS => {
             let current = app
                 .current_plan
                 .as_ref()
                 .and_then(|p| p.threads)
-                .unwrap_or(8);
+                .unwrap_or(crate::launch_config::DEFAULT_THREADS);
             let next = (current as i32 + direction).clamp(1, 32) as u32;
             if next != current {
                 override_state.threads = Some(next);
@@ -50,7 +50,7 @@ pub(super) fn adjust_configure_plan(app: &mut App, direction: i32) {
                 .current_plan
                 .as_ref()
                 .and_then(|p| p.blas_threads)
-                .unwrap_or(8);
+                .unwrap_or(crate::launch_config::DEFAULT_THREADS);
             let next = (current as i32 + direction).clamp(1, 32) as u32;
             if next != current {
                 override_state.blas_threads = Some(next);
@@ -95,7 +95,7 @@ pub(super) fn adjust_configure_plan(app: &mut App, direction: i32) {
         }
     }
 
-    app.current_plan = Some(crate::planner::apply_launch_override(
+    app.current_plan = Some(crate::launch_config::apply_launch_override(
         &recommended,
         &record,
         hw,
@@ -109,7 +109,7 @@ pub(super) fn reset_configure_plan(app: &mut App) {
         app.configure_recommended_plan.clone(),
         app.hardware.as_ref(),
     ) {
-        app.current_plan = Some(crate::planner::apply_launch_override(
+        app.current_plan = Some(crate::launch_config::apply_launch_override(
             &recommended,
             &record,
             hw,

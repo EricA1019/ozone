@@ -10,9 +10,23 @@ env:
   CARGO_TERM_COLOR: always
 
 jobs:
-  check:
-    name: Workspace Check & Clippy
+  clippy:
+    name: Clippy (${{ matrix.label }})
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: default
+            args: --workspace --all-targets --release
+          - label: lite
+            args: --no-default-features
+          - label: full
+            args: --workspace --all-targets --release --features full
+          - label: mcp
+            args: -p ozone-mcp-app --all-targets
+          - label: no-ui
+            args: --workspace --all-targets --release --no-default-features --features bench,sweep,analyze,eval,model-mgmt
 
     steps:
       - uses: actions/checkout@v4
@@ -29,20 +43,59 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-
+          key: ${{ runner.os }}-cargo-${{ matrix.label }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-${{ matrix.label }}-
+            ${{ runner.os }}-cargo-
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
-      - name: cargo check (workspace)
-        run: cargo check --workspace --all-targets --release
-
-      - name: cargo clippy (workspace)
-        run: cargo clippy --workspace --all-targets --release -- -D warnings
+      - name: cargo clippy
+        run: cargo clippy ${{ matrix.args }} -- -D warnings
 
   test:
-    name: Workspace Test
+    name: Test (${{ matrix.label }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: default
+            args: --workspace
+          - label: lite
+            args: --no-default-features
+          - label: full
+            args: --workspace --features full
+          - label: mcp
+            args: -p ozone-mcp-app
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/.cargo/registry
+            ~/.cargo/git
+            target
+          key: ${{ runner.os }}-cargo-test-${{ matrix.label }}-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-test-${{ matrix.label }}-
+            ${{ runner.os }}-cargo-test-
+
+      - name: Install system dependencies
+        run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
+
+      - name: cargo test
+        run: cargo test ${{ matrix.args }}
+
+  docs:
+    name: Documentation
     runs-on: ubuntu-latest
 
     steps:
@@ -58,11 +111,13 @@ jobs:
             ~/.cargo/registry
             ~/.cargo/git
             target
-          key: ${{ runner.os }}-cargo-test-${{ hashFiles('**/Cargo.lock') }}
-          restore-keys: ${{ runner.os }}-cargo-test-
+          key: ${{ runner.os }}-cargo-docs-${{ hashFiles('**/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-cargo-docs-
+            ${{ runner.os }}-cargo-
 
       - name: Install system dependencies
         run: sudo apt-get update && sudo apt-get install -y pkg-config libssl-dev
 
-      - name: cargo test (workspace)
-        run: cargo test --workspace
+      - name: cargo doc (warnings as errors)
+        run: RUSTDOCFLAGS="-D warnings" cargo doc --no-deps --document-private-items

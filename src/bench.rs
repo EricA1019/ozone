@@ -130,7 +130,7 @@ fn build_llamacpp_bench_args(
         "--ctx-size".into(),
         context_size.to_string(),
         "--threads".into(),
-        threads.unwrap_or(8).to_string(),
+        threads.unwrap_or(crate::launch_config::DEFAULT_THREADS).to_string(),
         "--parallel".into(),
         "1".into(),
     ];
@@ -139,6 +139,9 @@ fn build_llamacpp_bench_args(
 }
 
 /// Run a single benchmark: clear → launch → generate → measure → kill → store.
+/// Run a single benchmark: clear GPU backends, launch server, generate tokens, measure, kill.
+///
+/// Uses `Precise` mode by default (warm-up + dual measured runs + settle).
 #[tracing::instrument(skip(request))]
 pub async fn run_benchmark(request: BenchmarkRunRequest<'_>) -> Result<BenchResult> {
     run_benchmark_with_progress(
@@ -156,7 +159,9 @@ pub async fn run_benchmark(request: BenchmarkRunRequest<'_>) -> Result<BenchResu
     .await
 }
 
+// Refactor target: replace individual params with a single config struct (see refactor-plan.md Phase 0.5).
 #[allow(clippy::too_many_arguments)]
+#[tracing::instrument(skip_all)]
 pub async fn run_benchmark_with_progress<F>(
     _model_name: &str,
     model_path: &std::path::Path,
@@ -459,6 +464,7 @@ pub fn store_result(request: BenchmarkStoreRequest<'_>, result: &BenchResult) ->
     store_result_with_profile(request, result)
 }
 
+/// Store a benchmark result and create a named launch profile from it.
 pub fn store_result_with_profile(
     request: BenchmarkStoreRequest<'_>,
     result: &BenchResult,

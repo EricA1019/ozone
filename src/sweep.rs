@@ -3,7 +3,7 @@ use std::path::{Path, PathBuf};
 use anyhow::Result;
 
 use crate::bench;
-use crate::planner;
+use crate::launch_config;
 
 /// Generate context steps for a sweep, from 2K up to the model's native max.
 /// Fine-grained at low contexts, geometric stepping at high contexts.
@@ -164,6 +164,10 @@ fn prune_dominated(frontier: &mut Vec<ParetoPoint>, candidate: &ParetoPoint) {
     });
 }
 
+/// Run a full parameter sweep across context sizes and KV cache quant levels.
+///
+/// Tests each combination, records tokens/sec and VRAM usage, and returns
+/// a Pareto frontier of optimal configs. Results are saved to CSV.
 pub async fn run_sweep(config: SweepConfig) -> Result<SweepResult> {
     run_sweep_with_progress(config, |progress| {
         tracing::info!("  {}", progress.message);
@@ -171,6 +175,11 @@ pub async fn run_sweep(config: SweepConfig) -> Result<SweepResult> {
     .await
 }
 
+/// Run a parameter sweep with progress callbacks for UI updates.
+///
+/// Same as `run_sweep` but invokes `on_progress` after each config is tested
+/// so the caller can render progress bars or status messages.
+#[tracing::instrument(skip_all)]
 pub async fn run_sweep_with_progress<F>(
     config: SweepConfig,
     mut on_progress: F,
@@ -241,7 +250,7 @@ where
             step += 1;
 
             // Binary search for max layers that fit VRAM budget
-            let max_layers = planner::fit_gpu_layers_to_budget(
+            let max_layers = launch_config::fit_gpu_layers_to_budget(
                 ctx,
                 config.model_size_gb,
                 qk,

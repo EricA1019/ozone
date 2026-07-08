@@ -1,4 +1,4 @@
-use crate::planner::LaunchPlan;
+use crate::launch_config::LaunchPlan;
 use crate::processes::kv_cache_args;
 
 #[cfg(test)]
@@ -78,7 +78,7 @@ pub(super) fn build_llama_args(plan: &LaunchPlan) -> Vec<String> {
 #[cfg(test)]
 mod tests {
     use super::{build_kc_args, build_llama_args};
-    use crate::planner::{LaunchPlan, RecommendationMode};
+    use crate::launch_config::{LaunchPlan, RecommendationMode};
 
     fn sample_plan() -> LaunchPlan {
         LaunchPlan {
