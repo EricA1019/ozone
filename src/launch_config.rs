@@ -8,6 +8,88 @@ const SIZE_HEURISTIC_LABEL: &str = "Size heuristic";
 
 const MIB_PER_GIB: f64 = 1024.0;
 const VRAM_HEADROOM_RATIO: f64 = 0.9;
+
+// ── VRAM estimation constants ──────────────────────────────────────────
+// These are empirically calibrated against llama.cpp server startup
+// measurements on NVIDIA RTX 3060 (12GB) and RTX 4090 (24GB) across
+// model sizes from 1B to 13B parameters. They are approximations —
+// actual VRAM usage varies with backend version, quantization, and
+// GPU driver. Formula: overhead + model_weights + kv_cache.
+
+/// Minimum model size (GB) to avoid divide-by-zero in estimation.
+const MIN_MODEL_SIZE_GB: f64 = 0.1;
+/// Minimum context size used for VRAM/RAM estimation to avoid
+/// zero-context edge cases with very small models.
+const MIN_CONTEXT_FOR_ESTIMATE: u32 = 1024;
+/// Reference context size used as the denominator when scaling
+/// context-dependent terms (e.g., KV cache). All context multipliers
+/// are relative to 4096 tokens.
+const CTX_ESTIMATE_REFERENCE: f64 = 4096.0;
+
+/// Threshold model sizes (GB) for heuristic total-layer estimates.
+/// Below SMALL_MODEL_LIMIT_GB, models typically have ≤ SMALL_MODEL_LAYERS.
+const SMALL_MODEL_LIMIT_GB: f64 = 8.0;
+const SMALL_MODEL_LAYERS: u32 = 32;
+/// Between small and medium, models typically have ≤ MEDIUM_MODEL_LAYERS.
+const MEDIUM_MODEL_LIMIT_GB: f64 = 12.5;
+const MEDIUM_MODEL_LAYERS: u32 = 40;
+/// Up to large threshold, models typically have ≤ LARGE_MODEL_LAYERS.
+const LARGE_MODEL_LIMIT_GB: f64 = 20.0;
+const LARGE_MODEL_LAYERS: u32 = 48;
+/// Beyond large, fallback to a conservative estimate.
+const FALLBACK_MODEL_LAYERS: u32 = 64;
+
+/// Quantization memory reduction factor per level above q1.
+/// q1 = full precision (1.0×), q2 = 0.74×, q3 = 0.59×, etc.
+const QUANT_MEMORY_REDUCTION: f64 = 0.35;
+
+/// Base VRAM overhead (MiB) independent of model size or context.
+const VRAM_OVERHEAD_BASE_MIB: f64 = 320.0;
+/// Additional VRAM overhead per GiB of model size.
+const VRAM_OVERHEAD_PER_GIB: f64 = 12.0;
+/// Additional VRAM overhead per context multiplier (ctx / 4096).
+const VRAM_OVERHEAD_PER_CTX: f64 = 40.0;
+
+/// Base KV cache allocation (MiB) per 4096 tokens of context.
+const VRAM_KV_PER_4K_BASE_MIB: f64 = 20.0;
+/// Floor KV cache allocation (MiB) regardless of model size.
+const VRAM_KV_PER_4K_FLOOR_MIB: f64 = 96.0;
+/// KV cache scaling: minimum fraction when GPU layers = 0.
+const KV_SCALE_MIN_GPU_FRAC: f64 = 0.25;
+/// KV cache scaling: maximum fraction when GPU layers = total.
+const KV_SCALE_MAX_GPU_FRAC: f64 = 0.75;
+
+// ── RAM estimation constants ───────────────────────────────────────────
+// These model CPU-side memory usage when layers are offloaded to GPU.
+// Derived from the same calibration data as the VRAM constants.
+
+/// Base RAM overhead (MiB) independent of model size or context.
+const RAM_OVERHEAD_BASE_MIB: f64 = 384.0;
+/// Additional RAM overhead per GiB of model size.
+const RAM_OVERHEAD_PER_GIB: f64 = 14.0;
+/// Additional RAM overhead per context multiplier (ctx / 4096).
+const RAM_OVERHEAD_PER_CTX: f64 = 48.0;
+
+/// Minimum CPU fraction for RAM base weight scaling.
+const RAM_BASE_MIN_CPU_FRAC: f64 = 0.18;
+/// CPU fraction scaling factor added to base RAM weight.
+const RAM_BASE_CPU_SCALE: f64 = 1.02;
+/// Base RAM KV allocation (MiB) per 4096 tokens of context.
+const RAM_KV_PER_4K_BASE_MIB: f64 = 24.0;
+/// Floor RAM KV allocation (MiB) regardless of model size.
+const RAM_KV_PER_4K_FLOOR_MIB: f64 = 128.0;
+/// RAM KV cache scaling: minimum fraction when CPU fraction = 0.
+const RAM_KV_MIN_CPU_FRAC: f64 = 0.45;
+/// RAM KV cache scaling: maximum fraction when CPU fraction = 1.
+const RAM_KV_MAX_CPU_FRAC: f64 = 0.55;
+/// Stepped context sizes for the configure hub UI.
+///
+/// Chosen to match common llama.cpp power-of-two boundaries (4K → 256K)
+/// with a non-linear step at the high end. 128K (131072) is skipped in
+/// favor of 256K (262144) because most GGUF models in the RC target range
+/// (1B–13B) support either 32K or context lengths well above 128K.
+/// The 24K and 49K steps provide intermediate headroom for mixed-recall
+/// workloads without overshooting VRAM budgets.
 pub const CONFIGURE_CONTEXT_STEPS: [u32; 8] =
     [4096, 8192, 16384, 24576, 32768, 49152, 65536, 262144];
 
@@ -35,20 +117,20 @@ pub struct ConfigureWarning {
 /// parameter models at Q4_K_M quantization.
 pub fn estimate_total_layers(size_gb: f64) -> u32 {
     let s = size_gb.max(0.1);
-    if s <= 8.0 {
-        32
-    } else if s <= 12.5 {
-        40
-    } else if s <= 20.0 {
-        48
+    if s <= SMALL_MODEL_LIMIT_GB {
+        SMALL_MODEL_LAYERS
+    } else if s <= MEDIUM_MODEL_LIMIT_GB {
+        MEDIUM_MODEL_LAYERS
+    } else if s <= LARGE_MODEL_LIMIT_GB {
+        LARGE_MODEL_LAYERS
     } else {
-        64
+        FALLBACK_MODEL_LAYERS
     }
 }
 
 fn quant_kv_memory_factor(quant_kv: u8) -> f64 {
     let level = quant_kv.max(1) as f64;
-    1.0 / (1.0 + (level - 1.0) * 0.35)
+    1.0 / (1.0 + (level - 1.0) * QUANT_MEMORY_REDUCTION)
 }
 
 /// Average memory factor for asymmetric K/V quantization.
@@ -92,23 +174,23 @@ pub fn estimate_vram_mb(
     quant_v: u8,
     total_layers: u32,
 ) -> u32 {
-    let safe_size = size_gb.max(0.1);
-    let safe_ctx = context_size.max(1024) as f64;
+    let safe_size = size_gb.max(MIN_MODEL_SIZE_GB);
+    let safe_ctx = context_size.max(MIN_CONTEXT_FOR_ESTIMATE) as f64;
     let clamp_layers = if gpu_layers < 0 {
         total_layers as i32
     } else {
         gpu_layers.min(total_layers as i32)
     };
     let layer_frac = gpu_layer_fraction(clamp_layers, total_layers);
-    let ctx_mult = safe_ctx / 4096.0;
-    let overhead_mb = 320.0 + safe_size * 12.0 + ctx_mult * 40.0;
+    let ctx_mult = safe_ctx / CTX_ESTIMATE_REFERENCE;
+    let overhead_mb = VRAM_OVERHEAD_BASE_MIB + safe_size * VRAM_OVERHEAD_PER_GIB + ctx_mult * VRAM_OVERHEAD_PER_CTX;
     if layer_frac <= 0.0 {
         return overhead_mb.round() as u32;
     }
     let quant_factor = asymmetric_kv_factor(quant_k, quant_v);
     let model_weights_mb = safe_size * MIB_PER_GIB * layer_frac;
-    let kv_per_4k_mb = (safe_size * 20.0).max(96.0);
-    let kv_cache_mb = kv_per_4k_mb * ctx_mult * quant_factor * (0.25 + layer_frac * 0.75);
+    let kv_per_4k_mb = (safe_size * VRAM_KV_PER_4K_BASE_MIB).max(VRAM_KV_PER_4K_FLOOR_MIB);
+    let kv_cache_mb = kv_per_4k_mb * ctx_mult * quant_factor * (KV_SCALE_MIN_GPU_FRAC + layer_frac * KV_SCALE_MAX_GPU_FRAC);
     (model_weights_mb + kv_cache_mb + overhead_mb).round() as u32
 }
 
@@ -120,10 +202,10 @@ pub fn estimate_ram_mb(
     quant_v: u8,
     total_layers: u32,
 ) -> u32 {
-    let safe_size = size_gb.max(0.1);
-    let safe_ctx = context_size.max(1024) as f64;
+    let safe_size = size_gb.max(MIN_MODEL_SIZE_GB);
+    let safe_ctx = context_size.max(MIN_CONTEXT_FOR_ESTIMATE) as f64;
     let quant_factor = asymmetric_kv_factor(quant_k, quant_v);
-    let ctx_mult = safe_ctx / 4096.0;
+    let ctx_mult = safe_ctx / CTX_ESTIMATE_REFERENCE;
     let clamp_layers = if gpu_layers < 0 {
         total_layers as i32
     } else {
@@ -131,10 +213,10 @@ pub fn estimate_ram_mb(
     };
     let gpu_fraction = gpu_layer_fraction(clamp_layers, total_layers);
     let cpu_fraction = 1.0 - gpu_fraction;
-    let base_mb = safe_size * MIB_PER_GIB * (0.18 + cpu_fraction * 1.02);
+    let base_mb = safe_size * MIB_PER_GIB * (RAM_BASE_MIN_CPU_FRAC + cpu_fraction * RAM_BASE_CPU_SCALE);
     let kv_mb =
-        (safe_size * 24.0).max(128.0) * ctx_mult * quant_factor * (0.45 + cpu_fraction * 0.55);
-    let overhead_mb = 384.0 + safe_size * 14.0 + ctx_mult * 48.0;
+        (safe_size * RAM_KV_PER_4K_BASE_MIB).max(RAM_KV_PER_4K_FLOOR_MIB) * ctx_mult * quant_factor * (RAM_KV_MIN_CPU_FRAC + cpu_fraction * RAM_KV_MAX_CPU_FRAC);
+    let overhead_mb = RAM_OVERHEAD_BASE_MIB + safe_size * RAM_OVERHEAD_PER_GIB + ctx_mult * RAM_OVERHEAD_PER_CTX;
     (base_mb + kv_mb + overhead_mb).round() as u32
 }
 

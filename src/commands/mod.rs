@@ -197,3 +197,20 @@ pub async fn cmd_export_server(
     ozone_core::cli::success(&format!("Server script written to {}", written.display()));
     Ok(())
 }
+
+#[cfg(feature = "eval")]
+pub async fn cmd_eval(
+    model: String,
+    preset: crate::eval::EvalPreset,
+    limit: u32,
+    base_url: String,
+    temperature: f64,
+    compare: bool,
+    tokenizer: Option<String>,
+) -> Result<()> {
+    if compare {
+        crate::eval::print_comparison(preset.cli_name())?;
+        return Ok(());
+    }
+    crate::eval::run_eval(&model, preset, limit, &base_url, temperature, tokenizer.as_deref()).await
+}

@@ -726,22 +726,7 @@ pub async fn run() -> Result<()> {
             Ok(())
         }
         #[cfg(feature = "eval")]
-        Some(Commands::Eval {
-            model,
-            preset,
-            limit,
-            base_url,
-            temperature,
-            compare,
-            tokenizer,
-        }) => {
-            if compare {
-                eval::print_comparison(preset.cli_name())?;
-                return Ok(());
-            }
-            eval::run_eval(&model, preset, limit, &base_url, temperature, tokenizer.as_deref()).await?;
-            Ok(())
-        }
+        Some(Commands::Eval { model, preset, limit, base_url, temperature, compare, tokenizer }) => commands::cmd_eval(model, preset, limit, base_url, temperature, compare, tokenizer).await,
         #[cfg(not(feature = "eval"))]
         Some(Commands::Eval { .. }) => {
             anyhow::bail!("eval command requires the 'eval' feature. Build with --features full or --features eval.")
