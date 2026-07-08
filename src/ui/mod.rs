@@ -186,6 +186,22 @@ impl<'de> Deserialize<'de> for BackendMode {
     }
 }
 
+#[cfg(feature = "profiling-ui")]
+#[derive(Debug, Default)]
+pub struct ProfilingState {
+    pub advisory: Option<ProfilingAdvisory>,
+    pub pending_action: Option<ProfilingAction>,
+    pub progress_title: String,
+    pub progress_current: u32,
+    pub progress_total: u32,
+    pub progress: Vec<String>,
+    pub choice_index: usize,
+    pub success: Option<ProfilingSuccessReport>,
+    pub failure: Option<ProfilingFailureReport>,
+    pub event_rx: Option<UnboundedReceiver<WorkflowEvent>>,
+    pub cancel: Option<CancellationToken>,
+}
+
 pub struct App {
     pub screen: Screen,
     pub hardware: Option<HardwareProfile>,
@@ -255,27 +271,7 @@ pub struct App {
     pub command_overlay: TextArea<'static>,
     pub command_overlay_selected: usize,
     #[cfg(feature = "profiling-ui")]
-    pub profiling_advisory: Option<ProfilingAdvisory>,
-    #[cfg(feature = "profiling-ui")]
-    pub profiling_pending_action: Option<ProfilingAction>,
-    #[cfg(feature = "profiling-ui")]
-    pub profiling_progress_title: String,
-    #[cfg(feature = "profiling-ui")]
-    pub profiling_progress_current: u32,
-    #[cfg(feature = "profiling-ui")]
-    pub profiling_progress_total: u32,
-    #[cfg(feature = "profiling-ui")]
-    pub profiling_progress: Vec<String>,
-    #[cfg(feature = "profiling-ui")]
-    pub profiling_choice_index: usize,
-    #[cfg(feature = "profiling-ui")]
-    pub profiling_success: Option<ProfilingSuccessReport>,
-    #[cfg(feature = "profiling-ui")]
-    pub profiling_failure: Option<ProfilingFailureReport>,
-    #[cfg(feature = "profiling-ui")]
-    pub profiling_event_rx: Option<UnboundedReceiver<WorkflowEvent>>,
-    #[cfg(feature = "profiling-ui")]
-    pub profiling_cancel: Option<CancellationToken>,
+    pub profiling: ProfilingState,
     pub tier_picker: tier_picker::TierPickerState,
 }
 
@@ -427,17 +423,19 @@ impl App {
             command_overlay_open: false,
             command_overlay: new_command_overlay(),
             command_overlay_selected: 0,
-            profiling_advisory: None,
-            profiling_pending_action: None,
-            profiling_progress_title: "Preparing".into(),
-            profiling_progress_current: 0,
-            profiling_progress_total: 0,
-            profiling_progress: Vec::new(),
-            profiling_choice_index: 0,
-            profiling_success: None,
-            profiling_failure: None,
-            profiling_event_rx: None,
-            profiling_cancel: None,
+            profiling: ProfilingState {
+                advisory: None,
+                pending_action: None,
+                progress_title: "Preparing".into(),
+                progress_current: 0,
+                progress_total: 0,
+                progress: Vec::new(),
+                choice_index: 0,
+                success: None,
+                failure: None,
+                event_rx: None,
+                cancel: None,
+            },
             tier_picker: tier_picker::TierPickerState::default(),
         }
     }
@@ -502,17 +500,17 @@ impl App {
 
     #[cfg(feature = "profiling-ui")]
     pub fn reset_profile_flow(&mut self) {
-        self.profiling_advisory = None;
-        self.profiling_pending_action = None;
-        self.profiling_progress_title = "Preparing".into();
-        self.profiling_progress_current = 0;
-        self.profiling_progress_total = 0;
-        self.profiling_progress.clear();
-        self.profiling_choice_index = 0;
-        self.profiling_success = None;
-        self.profiling_failure = None;
-        self.profiling_event_rx = None;
-        self.profiling_cancel = None;
+        self.profiling.advisory = None;
+        self.profiling.pending_action = None;
+        self.profiling.progress_title = "Preparing".into();
+        self.profiling.progress_current = 0;
+        self.profiling.progress_total = 0;
+        self.profiling.progress.clear();
+        self.profiling.choice_index = 0;
+        self.profiling.success = None;
+        self.profiling.failure = None;
+        self.profiling.event_rx = None;
+        self.profiling.cancel = None;
     }
 
     #[cfg(feature = "profiling-ui")]
@@ -521,14 +519,14 @@ impl App {
         rx: UnboundedReceiver<WorkflowEvent>,
         cancel: CancellationToken,
     ) {
-        self.profiling_event_rx = Some(rx);
-        self.profiling_cancel = Some(cancel);
-        self.profiling_progress_title = "Preparing".into();
-        self.profiling_progress_current = 0;
-        self.profiling_progress_total = 0;
-        self.profiling_progress.clear();
+        self.profiling.event_rx = Some(rx);
+        self.profiling.cancel = Some(cancel);
+        self.profiling.progress_title = "Preparing".into();
+        self.profiling.progress_current = 0;
+        self.profiling.progress_total = 0;
+        self.profiling.progress.clear();
         self.push_profile_progress("Preparing workflow...".into());
-        self.profiling_choice_index = 0;
+        self.profiling.choice_index = 0;
         self.screen = Screen::ProfileRunning;
     }
 
@@ -540,15 +538,15 @@ impl App {
 
     #[cfg(feature = "profiling-ui")]
     pub fn open_profile_advisory(&mut self, advisory: ProfilingAdvisory) {
-        self.profiling_advisory = Some(advisory);
-        self.profiling_choice_index = 0;
+        self.profiling.advisory = Some(advisory);
+        self.profiling.choice_index = 0;
         self.screen = Screen::ProfileAdvisory;
     }
 
     #[cfg(feature = "profiling-ui")]
     pub fn open_profile_failure(&mut self, report: ProfilingFailureReport) {
-        self.profiling_failure = Some(report);
-        self.profiling_choice_index = 0;
+        self.profiling.failure = Some(report);
+        self.profiling.choice_index = 0;
         self.screen = Screen::ProfileFailure;
     }
 
@@ -561,8 +559,8 @@ impl App {
 
     #[cfg(feature = "profiling-ui")]
     pub fn clear_profile_success_and_open_configure_hub(&mut self) {
-        self.profiling_pending_action = None;
-        self.profiling_success = None;
+        self.profiling.pending_action = None;
+        self.profiling.success = None;
         // Refresh profiles to pick up any auto-saved ones from the profiling run
         if let Some(plan) = self.current_plan.as_ref() {
             let model_name = plan.model_name.clone();
@@ -573,16 +571,16 @@ impl App {
 
     #[cfg(feature = "profiling-ui")]
     pub fn clear_profile_failure_and_open_configure_hub(&mut self) {
-        self.profiling_pending_action = None;
-        self.profiling_failure = None;
+        self.profiling.pending_action = None;
+        self.profiling.failure = None;
         self.screen = Screen::ConfigureHub;
     }
 
     #[cfg(feature = "profiling-ui")]
     pub fn push_profile_progress(&mut self, line: String) {
-        self.profiling_progress.push(line);
-        if self.profiling_progress.len() > 20 {
-            self.profiling_progress.remove(0);
+        self.profiling.progress.push(line);
+        if self.profiling.progress.len() > 20 {
+            self.profiling.progress.remove(0);
         }
     }
 
@@ -890,7 +888,7 @@ mod tests {
         let mut app = App::new(Preferences::default());
         assert_eq!(back_from_confirm(&app), Screen::ModelPicker);
 
-        app.profiling_advisory = Some(ProfilingAdvisory {
+        app.profiling.advisory = Some(ProfilingAdvisory {
             model_name: "test.gguf".into(),
             source_label: "heuristic".into(),
             benchmark_count: 0,
@@ -907,7 +905,7 @@ mod tests {
         });
         assert_eq!(back_from_confirm(&app), Screen::ProfileAdvisory);
 
-        app.profiling_success = Some(ProfilingSuccessReport {
+        app.profiling.success = Some(ProfilingSuccessReport {
             model_name: "test.gguf".into(),
             action: ProfilingAction::QuickSweep,
             summary: "done".into(),
@@ -1479,14 +1477,14 @@ mod tests {
         let mut app = App::new(Preferences::default());
         app.screen = Screen::ProfileRunning;
         let cancel = CancellationToken::new();
-        app.profiling_cancel = Some(cancel.clone());
+        app.profiling.cancel = Some(cancel.clone());
 
         let key = KeyEvent::new(KeyCode::Char('q'), crossterm::event::KeyModifiers::NONE);
         handle_profile_running_key(&mut app, key);
 
         assert!(cancel.is_cancelled());
         assert!(app
-            .profiling_progress
+            .profiling.progress
             .iter()
             .any(|line| line.contains("Cancelling")));
     }
@@ -1506,8 +1504,8 @@ mod tests {
             TEST_CONTEXT_BASE,
             TEST_RECOMMENDED_GPU_LAYERS,
         ));
-        app.profiling_pending_action = Some(ProfilingAction::BenchmarkSavedProfile);
-        app.profiling_success = Some(ProfilingSuccessReport {
+        app.profiling.pending_action = Some(ProfilingAction::BenchmarkSavedProfile);
+        app.profiling.success = Some(ProfilingSuccessReport {
             model_name: TEST_MODEL_NAME.into(),
             action: ProfilingAction::BenchmarkSavedProfile,
             summary: "saved".into(),
@@ -1527,8 +1525,8 @@ mod tests {
 
         assert!(matches!(outcome, ProfilingResultOutcome::RestartLoop));
         assert_eq!(app.screen, Screen::ConfigureHub);
-        assert!(app.profiling_pending_action.is_none());
-        assert!(app.profiling_success.is_none());
+        assert!(app.profiling.pending_action.is_none());
+        assert!(app.profiling.success.is_none());
     }
 
     #[test]
@@ -1554,16 +1552,16 @@ mod tests {
         app.start_profile_workflow(rx, cancel.clone());
 
         assert_eq!(app.screen, Screen::ProfileRunning);
-        assert_eq!(app.profiling_progress_title, "Preparing");
-        assert_eq!(app.profiling_progress_current, 0);
-        assert_eq!(app.profiling_progress_total, 0);
-        assert_eq!(app.profiling_choice_index, 0);
+        assert_eq!(app.profiling.progress_title, "Preparing");
+        assert_eq!(app.profiling.progress_current, 0);
+        assert_eq!(app.profiling.progress_total, 0);
+        assert_eq!(app.profiling.choice_index, 0);
         assert!(app
-            .profiling_cancel
+            .profiling.cancel
             .as_ref()
             .is_some_and(|token| !token.is_cancelled()));
         assert!(app
-            .profiling_progress
+            .profiling.progress
             .iter()
             .any(|line| line.contains("Preparing workflow")));
     }
@@ -1573,16 +1571,16 @@ mod tests {
     fn reset_profile_and_open_launcher_resets_cluster_and_screen() {
         let mut app = App::new(Preferences::default());
         app.screen = Screen::ProfileSuccess;
-        app.profiling_pending_action = Some(ProfilingAction::QuickSweep);
-        app.profiling_progress.push("line".into());
+        app.profiling.pending_action = Some(ProfilingAction::QuickSweep);
+        app.profiling.progress.push("line".into());
 
         app.reset_profile_and_open_launcher();
 
         assert_eq!(app.screen, Screen::Launcher);
-        assert!(app.profiling_pending_action.is_none());
-        assert!(app.profiling_progress.is_empty());
-        assert!(app.profiling_success.is_none());
-        assert!(app.profiling_failure.is_none());
+        assert!(app.profiling.pending_action.is_none());
+        assert!(app.profiling.progress.is_empty());
+        assert!(app.profiling.success.is_none());
+        assert!(app.profiling.failure.is_none());
     }
 
     #[test]
@@ -1590,7 +1588,7 @@ mod tests {
     fn profile_confirm_escape_returns_to_configure_hub_for_saved_profile_benchmark() {
         let mut app = App::new(Preferences::default());
         app.screen = Screen::ProfileConfirm;
-        app.profiling_pending_action = Some(ProfilingAction::BenchmarkSavedProfile);
+        app.profiling.pending_action = Some(ProfilingAction::BenchmarkSavedProfile);
         app.configure_recommended_plan = Some(test_launch_plan_for_model(
             TEST_MODEL_NAME,
             TEST_CONTEXT_BASE,

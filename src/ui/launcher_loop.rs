@@ -153,13 +153,13 @@ pub async fn run_launcher(
         // Drain profiling workflow events (only compiled when profiling-ui is enabled).
         #[cfg(feature = "profiling-ui")]
         loop {
-            let lost = app.profiling_event_rx.is_none();
-            let event = match app.profiling_event_rx.as_mut() {
+            let lost = app.profiling.event_rx.is_none();
+            let event = match app.profiling.event_rx.as_mut() {
                 Some(rx) => match rx.try_recv() {
                     Ok(event) => Some(event),
                     Err(TryRecvError::Empty) => None,
                     Err(TryRecvError::Disconnected) => {
-                        app.profiling_event_rx = None;
+                        app.profiling.event_rx = None;
                         None
                     }
                 },
@@ -169,7 +169,7 @@ pub async fn run_launcher(
                 // If the channel dropped without sending Completed/Failed, and we're
                 // on ProfileRunning, the task silently crashed — bail to launcher.
                 if lost && app.screen == Screen::ProfileRunning {
-                    app.profiling_cancel = None;
+                    app.profiling.cancel = None;
                     app.reset_profile_and_open_launcher();
                     app.set_status("Profiling task exited unexpectedly — check crash.log".into());
                 }

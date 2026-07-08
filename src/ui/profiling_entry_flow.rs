@@ -8,24 +8,24 @@ use super::{configure_profile_flow::selected_saved_profile, App, Screen};
 pub(super) fn handle_profile_advisory_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => app.screen = Screen::ModelPicker,
-        KeyCode::Up if app.profiling_choice_index > 0 => {
-            app.profiling_choice_index -= 1;
+        KeyCode::Up if app.profiling.choice_index > 0 => {
+            app.profiling.choice_index -= 1;
         }
         KeyCode::Down => {
             let count = app
-                .profiling_advisory
+                .profiling.advisory
                 .as_ref()
                 .map(|advisory| advisory.available_actions.len())
                 .unwrap_or(0);
-            if app.profiling_choice_index + 1 < count {
-                app.profiling_choice_index += 1;
+            if app.profiling.choice_index + 1 < count {
+                app.profiling.choice_index += 1;
             }
         }
         KeyCode::Enter => {
-            if let Some(advisory) = &app.profiling_advisory {
+            if let Some(advisory) = &app.profiling.advisory {
                 if let Some(action) = advisory
                     .available_actions
-                    .get(app.profiling_choice_index)
+                    .get(app.profiling.choice_index)
                     .cloned()
                 {
                     match action {
@@ -53,7 +53,7 @@ pub(super) fn handle_profile_advisory_key(app: &mut App, key: KeyEvent) {
                             }
                         }
                         action => {
-                            app.profiling_pending_action = Some(action);
+                            app.profiling.pending_action = Some(action);
                             app.screen = Screen::ProfileConfirm;
                         }
                     }
@@ -68,7 +68,7 @@ pub(super) fn handle_profile_confirm_key(app: &mut App, key: KeyEvent) {
     match key.code {
         KeyCode::Esc => {
             if matches!(
-                app.profiling_pending_action,
+                app.profiling.pending_action,
                 Some(ProfilingAction::BenchmarkSavedProfile)
             ) && app.configure_recommended_plan.is_some()
             {
@@ -80,7 +80,7 @@ pub(super) fn handle_profile_confirm_key(app: &mut App, key: KeyEvent) {
         KeyCode::Enter => {
             if let (Some(record), Some(action)) = (
                 app.filtered_catalog_get(app.selected_model),
-                app.profiling_pending_action,
+                app.profiling.pending_action,
             ) {
                 let launch_plan_override = matches!(action, ProfilingAction::BenchmarkSavedProfile)
                     .then(|| app.current_plan.clone())

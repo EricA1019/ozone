@@ -49,7 +49,7 @@ fn action_items(actions: &[ProfilingAction], selected: usize) -> (Vec<ListItem<'
 }
 
 pub fn render_profile_advisory(f: &mut Frame, app: &App) {
-    let Some(ref advisory) = app.profiling_advisory else { return };
+    let Some(ref advisory) = app.profiling.advisory else { return };
     let area = f.area();
     f.render_widget(Clear, area);
 
@@ -111,7 +111,7 @@ pub fn render_profile_advisory(f: &mut Frame, app: &App) {
     f.render_widget(Paragraph::new(warning_lines).block(warning_block), chunks[1]);
 
     // -- Actions --
-    let (items, state) = action_items(&advisory.available_actions, app.profiling_choice_index);
+    let (items, state) = action_items(&advisory.available_actions, app.profiling.choice_index);
     let action_list = List::new(items)
         .block(
             Block::default()
@@ -154,7 +154,7 @@ pub fn render_profile_advisory(f: &mut Frame, app: &App) {
 }
 
 pub fn render_profile_confirm(f: &mut Frame, app: &App) {
-    let Some(ref report) = app.profiling_success else { return };
+    let Some(ref report) = app.profiling.success else { return };
     let area = f.area();
     f.render_widget(Clear, area);
 
@@ -188,7 +188,7 @@ pub fn render_profile_confirm(f: &mut Frame, app: &App) {
 
     // -- Recommended profile --
     let available_actions = report.available_actions();
-    let (items, state) = action_items(&available_actions, app.profiling_choice_index);
+    let (items, state) = action_items(&available_actions, app.profiling.choice_index);
     let action_list = List::new(items)
         .block(
             Block::default()
@@ -221,14 +221,14 @@ pub fn render_profile_running(f: &mut Frame, app: &App) {
         ])
         .split(inner);
 
-    let title = &app.profiling_progress_title;
+    let title = &app.profiling.progress_title;
     f.render_widget(Paragraph::new(Line::from(Span::styled(title, style_cyan()))), chunks[0]);
 
-    if app.profiling_progress_total > 0 {
-        let pct = app.profiling_progress_current as f64 / app.profiling_progress_total as f64;
+    if app.profiling.progress_total > 0 {
+        let pct = app.profiling.progress_current as f64 / app.profiling.progress_total as f64;
         let bar_width = (chunks[1].width as f64 * pct) as u16;
         let bar = "█".repeat(bar_width as usize);
-        let label = format!("{}/{}", app.profiling_progress_current, app.profiling_progress_total);
+        let label = format!("{}/{}", app.profiling.progress_current, app.profiling.progress_total);
         f.render_widget(
             Paragraph::new(Line::from(vec![
                 Span::raw(bar),
@@ -239,7 +239,7 @@ pub fn render_profile_running(f: &mut Frame, app: &App) {
     }
 
     let progress_lines: Vec<Line> = app
-        .profiling_progress
+        .profiling.progress
         .iter()
         .map(|s| Line::from(Span::raw(s)))
         .collect();
@@ -247,7 +247,7 @@ pub fn render_profile_running(f: &mut Frame, app: &App) {
 }
 
 pub fn render_profile_success(f: &mut Frame, app: &App) {
-    let Some(ref report) = app.profiling_success else { return };
+    let Some(ref report) = app.profiling.success else { return };
     let area = f.area();
     f.render_widget(Clear, area);
 
@@ -304,7 +304,7 @@ pub fn render_profile_success(f: &mut Frame, app: &App) {
 }
 
 pub fn render_profile_failure(f: &mut Frame, app: &App) {
-    let Some(ref report) = app.profiling_failure else { return };
+    let Some(ref report) = app.profiling.failure else { return };
     let area = f.area();
     f.render_widget(Clear, area);
 
@@ -338,7 +338,7 @@ pub fn render_profile_failure(f: &mut Frame, app: &App) {
     f.render_widget(Paragraph::new(suggestion_lines), chunks[1]);
 
     let available_actions = report.available_actions();
-    let (items, state) = action_items(&available_actions, app.profiling_choice_index);
+    let (items, state) = action_items(&available_actions, app.profiling.choice_index);
     let action_list = List::new(items)
         .block(
             Block::default()

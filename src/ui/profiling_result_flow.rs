@@ -11,7 +11,7 @@ pub(super) enum ProfilingResultOutcome {
 
 pub(super) fn handle_profile_running_key(app: &mut App, key: KeyEvent) {
     if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) {
-        if let Some(token) = &app.profiling_cancel {
+        if let Some(token) = &app.profiling.cancel {
             token.cancel();
             app.push_profile_progress("⏳ Cancelling…".into());
         }
@@ -22,7 +22,7 @@ pub(super) fn handle_profile_success_key(app: &mut App, key: KeyEvent) -> Profil
     match key.code {
         KeyCode::Esc => {
             if matches!(
-                app.profiling_success.as_ref().map(|report| &report.action),
+                app.profiling.success.as_ref().map(|report| &report.action),
                 Some(ProfilingAction::BenchmarkSavedProfile)
             ) && app.configure_recommended_plan.is_some()
             {
@@ -38,23 +38,23 @@ pub(super) fn handle_profile_success_key(app: &mut App, key: KeyEvent) -> Profil
         KeyCode::Char('q') => {
             app.reset_profile_and_open_launcher();
         }
-        KeyCode::Up if app.profiling_choice_index > 0 => {
-            app.profiling_choice_index -= 1;
+        KeyCode::Up if app.profiling.choice_index > 0 => {
+            app.profiling.choice_index -= 1;
         }
         KeyCode::Down => {
             let count = app
-                .profiling_success
+                .profiling.success
                 .as_ref()
                 .map(|report| report.available_actions().len())
                 .unwrap_or(0);
-            if app.profiling_choice_index + 1 < count {
-                app.profiling_choice_index += 1;
+            if app.profiling.choice_index + 1 < count {
+                app.profiling.choice_index += 1;
             }
         }
         KeyCode::Enter => {
-            if let Some(report) = &app.profiling_success {
+            if let Some(report) = &app.profiling.success {
                 let actions = report.available_actions();
-                if let Some(action) = actions.get(app.profiling_choice_index).cloned() {
+                if let Some(action) = actions.get(app.profiling.choice_index).cloned() {
                     match action {
                         ProfilingAction::LaunchRecommended => {
                             if let (Some(record), Some(hw)) = (
@@ -75,7 +75,7 @@ pub(super) fn handle_profile_success_key(app: &mut App, key: KeyEvent) -> Profil
                             }
                         }
                         action => {
-                            app.profiling_pending_action = Some(action);
+                            app.profiling.pending_action = Some(action);
                             app.screen = Screen::ProfileConfirm;
                         }
                     }
@@ -94,7 +94,7 @@ pub(super) fn handle_profile_failure_key(app: &mut App, key: KeyEvent) -> Profil
     match key.code {
         KeyCode::Esc => {
             if matches!(
-                app.profiling_pending_action,
+                app.profiling.pending_action,
                 Some(ProfilingAction::BenchmarkSavedProfile)
             ) && app.configure_recommended_plan.is_some()
             {
@@ -110,24 +110,24 @@ pub(super) fn handle_profile_failure_key(app: &mut App, key: KeyEvent) -> Profil
         KeyCode::Char('q') => {
             app.reset_profile_and_open_launcher();
         }
-        KeyCode::Up if app.profiling_choice_index > 0 => {
-            app.profiling_choice_index -= 1;
+        KeyCode::Up if app.profiling.choice_index > 0 => {
+            app.profiling.choice_index -= 1;
         }
         KeyCode::Down => {
             let count = app
-                .profiling_failure
+                .profiling.failure
                 .as_ref()
                 .map(|report| report.available_actions().len())
                 .unwrap_or(0);
-            if app.profiling_choice_index + 1 < count {
-                app.profiling_choice_index += 1;
+            if app.profiling.choice_index + 1 < count {
+                app.profiling.choice_index += 1;
             }
         }
         KeyCode::Enter => {
-            if let Some(report) = &app.profiling_failure {
+            if let Some(report) = &app.profiling.failure {
                 let actions = report.available_actions();
-                if let Some(action) = actions.get(app.profiling_choice_index).cloned() {
-                    app.profiling_pending_action = Some(action);
+                if let Some(action) = actions.get(app.profiling.choice_index).cloned() {
+                    app.profiling.pending_action = Some(action);
                     app.screen = Screen::ProfileConfirm;
                 }
             }
@@ -159,7 +159,7 @@ fn return_to_profile_advisory_or_launcher(app: &mut App) -> ProfilingResultOutco
 pub(super) fn apply_workflow_event(app: &mut App, event: WorkflowEvent) {
     match event {
         WorkflowEvent::Status { title, detail } => {
-            app.profiling_progress_title = title;
+            app.profiling.progress_title = title;
             app.push_profile_progress(detail);
         }
         WorkflowEvent::Progress {
@@ -168,15 +168,15 @@ pub(super) fn apply_workflow_event(app: &mut App, event: WorkflowEvent) {
             current,
             total,
         } => {
-            app.profiling_progress_title = title;
-            app.profiling_progress_current = current;
-            app.profiling_progress_total = total;
+            app.profiling.progress_title = title;
+            app.profiling.progress_current = current;
+            app.profiling.progress_total = total;
             app.push_profile_progress(detail);
         }
         WorkflowEvent::Completed(report) => {
             let report = *report;
-            app.profiling_event_rx = None;
-            app.profiling_cancel = None;
+            app.profiling.event_rx = None;
+            app.profiling.cancel = None;
             if let Some(ref profile) = report.recommended_profile {
                 app.prefs.llamacpp_gpu_layers = Some(profile.gpu_layers);
                 app.prefs.llamacpp_context_size = Some(profile.context_size);
@@ -197,23 +197,23 @@ pub(super) fn apply_workflow_event(app: &mut App, event: WorkflowEvent) {
             tokio::spawn(async move {
                 let _ = crate::prefs::save_prefs(&prefs_clone).await;
             });
-            app.profiling_success = Some(report);
-            app.profiling_failure = None;
-            app.profiling_choice_index = 0;
+            app.profiling.success = Some(report);
+            app.profiling.failure = None;
+            app.profiling.choice_index = 0;
             app.screen = Screen::ProfileSuccess;
         }
         WorkflowEvent::Failed(report) => {
             let report = *report;
-            app.profiling_event_rx = None;
-            app.profiling_cancel = None;
-            app.profiling_failure = Some(report);
-            app.profiling_success = None;
-            app.profiling_choice_index = 0;
+            app.profiling.event_rx = None;
+            app.profiling.cancel = None;
+            app.profiling.failure = Some(report);
+            app.profiling.success = None;
+            app.profiling.choice_index = 0;
             app.screen = Screen::ProfileFailure;
         }
         WorkflowEvent::Cancelled => {
-            app.profiling_event_rx = None;
-            app.profiling_cancel = None;
+            app.profiling.event_rx = None;
+            app.profiling.cancel = None;
             app.set_status("Profiling cancelled.".into());
             app.screen = Screen::Launcher;
         }

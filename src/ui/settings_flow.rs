@@ -22,11 +22,11 @@ pub(super) fn back_from_confirm(app: &App) -> Screen {
     }
     #[cfg(feature = "profiling-ui")]
     {
-        if app.profiling_success.is_some() {
+        if app.profiling.success.is_some() {
             return Screen::ProfileSuccess;
-        } else if app.profiling_failure.is_some() {
+        } else if app.profiling.failure.is_some() {
             return Screen::ProfileFailure;
-        } else if app.profiling_advisory.is_some() {
+        } else if app.profiling.advisory.is_some() {
             return Screen::ProfileAdvisory;
         }
     }

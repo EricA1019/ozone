@@ -77,7 +77,7 @@ pub(super) async fn handle_configure_hub_key(app: &mut App, key: KeyEvent) {
         #[cfg(feature = "profiling-ui")]
         KeyCode::Char('b') | KeyCode::Char('B') => {
             if selected_saved_profile(app).is_some() {
-                app.profiling_pending_action = Some(ProfilingAction::BenchmarkSavedProfile);
+                app.profiling.pending_action = Some(ProfilingAction::BenchmarkSavedProfile);
                 app.screen = Screen::ProfileConfirm;
             } else {
                 // No saved profile? Start a quick sweep against the current model immediately.

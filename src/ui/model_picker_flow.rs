@@ -67,10 +67,10 @@ pub(super) fn handle_model_picker_key(app: &mut App, key: KeyEvent) {
                         &app.services,
                     ) {
                         Ok(advisory) => {
-                            app.profiling_advisory = Some(advisory);
-                            app.profiling_choice_index = 0;
-                            app.profiling_success = None;
-                            app.profiling_failure = None;
+                            app.profiling.advisory = Some(advisory);
+                            app.profiling.choice_index = 0;
+                            app.profiling.success = None;
+                            app.profiling.failure = None;
                             app.screen = Screen::ProfileAdvisory;
                         }
                         Err(error) => {
