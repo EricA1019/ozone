@@ -433,96 +433,7 @@ pub async fn run() -> Result<()> {
             quant_kv,
             threads,
             save_profile,
-        }) => {
-            let model_dir = ozone_core::paths::models_dir();
-            let model_path = model_dir.join(&model);
-            let server_path = processes::resolved_llamacpp_server_path()?;
-            let backend = bench::BenchBackend::LlamaCpp { server_path };
-
-            if !model_path.exists() {
-                ozone_core::cli::error(&format!("Model not found: {}", model_path.display()));
-                std::process::exit(1);
-            }
-
-            // Resolve quant_k and quant_v: --quant-kv sets both, --quant-v overrides V only
-            let effective_k = quant_kv.unwrap_or(quant_k);
-            let effective_v = quant_v.or(quant_kv).unwrap_or(quant_k);
-
-            // Get model size for storage
-            let model_size_gb = std::fs::metadata(&model_path)
-                .map(|m| m.len() as f64 / 1_073_741_824.0)
-                .unwrap_or(0.0);
-
-            ozone_core::cli::header("oz Bench");
-            ozone_core::cli::field("Model:", &model);
-            ozone_core::cli::field("GPU Layers:", &gpu_layers);
-            ozone_core::cli::field("Context:", &context);
-            ozone_core::cli::field("Quant K:", &effective_k);
-            ozone_core::cli::field("Quant V:", &effective_v);
-            if let Some(t) = threads {
-                ozone_core::cli::field("Threads:", &t);
-            }
-            ozone_core::cli::spacer();
-
-            let result = bench::run_benchmark(bench::BenchmarkRunRequest {
-                model_name: &model,
-                model_path: &model_path,
-                backend: &backend,
-                gpu_layers,
-                context_size: context,
-                quant_k: effective_k,
-                quant_v: effective_v,
-                threads,
-                mode: bench::BenchMode::Precise,
-            })
-            .await?;
-
-            bench::print_result(
-                &model,
-                gpu_layers,
-                context,
-                effective_k,
-                effective_v,
-                &result,
-            );
-
-            // Store result
-            let thread_count = threads.unwrap_or(0);
-            match bench::store_result(
-                bench::BenchmarkStoreRequest {
-                    model_name: &model,
-                    model_size_gb,
-                    gpu_layers,
-                    context_size: context,
-                    quant_k: effective_k as u32,
-                    quant_v: effective_v as u32,
-                    threads: thread_count,
-                    launch_profile_name: None,
-                },
-                &result,
-            ) {
-                Ok(id) => ozone_core::cli::success(&format!("Stored as benchmark #{id}")),
-                Err(e) => ozone_core::cli::warn(&format!("Failed to store result: {e}")),
-            }
-            // Save config as a named launch profile if requested
-            if let Some(ref profile_name) = save_profile {
-                let mut prefs = crate::prefs::load_prefs().await?;
-                prefs.upsert_saved_launch_profile(
-                    &model,
-                    crate::prefs::SavedLaunchProfile {
-                        profile_name: profile_name.clone(),
-                        context_size: context,
-                        gpu_layers,
-                        quant_k: effective_k,
-                        quant_v: effective_v,
-                        threads,
-                    },
-                );
-                crate::prefs::save_prefs(&prefs).await?;
-                ozone_core::cli::success(&format!("Saved profile '{profile_name}' for {model}"));
-            }
-            Ok(())
-        }
+        }) => commands::cmd_bench(model, gpu_layers, context, quant_k, quant_v, quant_kv, threads, save_profile).await,
         #[cfg(feature = "sweep")]
         Some(Commands::Sweep {
             model,
@@ -531,111 +442,7 @@ pub async fn run() -> Result<()> {
             context_sweep,
             quant_kv,
             sweep_quant,
-        }) => {
-            let model_dir = ozone_core::paths::models_dir();
-            let model_path = model_dir.join(&model);
-            let server_path = processes::resolved_llamacpp_server_path()?;
-
-            if context_sweep {
-                if sweep_quant {
-                    // Test each quant level (1=f16, 2=q8_0, 3=q4_0) at each context
-                    for &qkv in &[1u8, 2u8, 3u8] {
-                        eprintln!("\n  --- Sweep with quant_k={qkv} quant_v={qkv} ---");
-                        let _ = sweep::run_context_sweep(sweep::ContextSweepRequest {
-                            model_name: &model,
-                            model_path: &model_path,
-                            server_path: &server_path,
-                            gpu_layers: -1,
-                            quant_k: qkv,
-                            quant_v: qkv,
-                            threads: None,
-                            quick,
-                        })
-                        .await;
-                    }
-                    return Ok(());
-                }
-                let (csv_path, sweet_spot) = sweep::run_context_sweep(sweep::ContextSweepRequest {
-                    model_name: &model,
-                    model_path: &model_path,
-                    server_path: &server_path,
-                    gpu_layers: -1,
-                    quant_k: quant_kv,
-                    quant_v: quant_kv,
-                    threads: None,
-                    quick,
-                })
-                .await?;
-                ozone_core::cli::success(&format!(
-                    "Sweep complete. Sweet spot: context={sweet_spot}. CSV: {}",
-                    csv_path.display()
-                ));
-                return Ok(());
-            }
-
-            if !model_path.exists() {
-                ozone_core::cli::error(&format!("Model not found: {}", model_path.display()));
-                std::process::exit(1);
-            }
-
-            let model_size_gb = std::fs::metadata(&model_path)
-                .map(|m| m.len() as f64 / 1_073_741_824.0)
-                .unwrap_or(0.0);
-
-            let hw = hardware::load_hardware();
-            let gpu_vram_budget_mb = hw
-                .gpu
-                .as_ref()
-                .map(|g| (g.total_mb as f64 * 0.9) as u32)
-                .unwrap_or(0);
-
-            let (context_sizes, quant_kv_levels) = if quick {
-                (vec![4096, 8192], vec![(1u8, 1u8)])
-            } else {
-                // Read the model's native max context from GGUF metadata
-                let native_max = gguf::read_context_length(&model_path).unwrap_or(65536);
-                let max = max_context.unwrap_or(native_max).min(native_max);
-                let ctxs = sweep::generate_context_steps(max);
-                (ctxs, vec![(1u8, 1u8), (2u8, 2u8)])
-            };
-
-            let sweep_config = sweep::SweepConfig {
-                model_name: model.clone(),
-                model_path: model_path.clone(),
-                backend: bench::BenchBackend::LlamaCpp { server_path },
-                model_size_gb,
-                total_layers: gguf::inspect_model_topology(
-                    &model_path,
-                    crate::launch_config::estimate_total_layers(model_size_gb),
-                )
-                .total_layers,
-                context_sizes,
-                quant_kv_levels,
-                gpu_vram_budget_mb,
-            };
-
-            let result = sweep::run_sweep(sweep_config).await?;
-
-            // Auto-save the optimal profile for quick loading
-            if let Some(optimal) =
-                sweep::pick_optimal_profile(&model, &result.pareto_frontier, None)
-            {
-                let mut prefs = crate::prefs::load_prefs().await?;
-                prefs.upsert_saved_launch_profile(&model, optimal.clone());
-                prefs.set_default_saved_launch_profile(&model, "auto-optimal");
-                crate::prefs::save_prefs(&prefs).await?;
-                ozone_core::cli::success(&format!(
-                    "Auto-saved 'auto-optimal' profile: ctx={}, gpu={}, K=q{}, V=q{}",
-                    optimal.context_size, optimal.gpu_layers, optimal.quant_k, optimal.quant_v,
-                ));
-            }
-
-            if let Some(ref csv_path) = result.csv_path {
-                ozone_core::cli::info(&format!("CSV: {}", csv_path.display()));
-            }
-
-            Ok(())
-        }
+        }) => commands::cmd_sweep(model, max_context, quick, context_sweep, quant_kv, sweep_quant).await,
         #[cfg(feature = "bench")]
         Some(Commands::ThreadSweep {
             model,
@@ -644,57 +451,7 @@ pub async fn run() -> Result<()> {
             quant_k,
             quant_v,
             batch,
-        }) => {
-            let model_dir = ozone_core::paths::models_dir();
-            let model_path = model_dir.join(&model);
-            let server_path = processes::resolved_llamacpp_server_path()?;
-            let backend = bench::BenchBackend::LlamaCpp { server_path };
-
-            if !model_path.exists() {
-                ozone_core::cli::error(&format!("Model not found: {}", model_path.display()));
-                std::process::exit(1);
-            }
-
-            if batch {
-                ozone_core::cli::header("oz Batch Thread Sweep");
-                ozone_core::cli::field("Model:", &model);
-                ozone_core::cli::field("Context:", &context);
-                ozone_core::cli::spacer();
-
-                let results = bench::run_batch_thread_sweep(bench::BatchThreadSweepRequest {
-                    model_name: &model,
-                    model_path: &model_path,
-                    backend: &backend,
-                    gpu_layers,
-                    context_size: context,
-                    quant_k,
-                    quant_v,
-                    base_threads: 6,
-                })
-                .await?;
-                bench::print_thread_sweep_summary(&results);
-            } else {
-                ozone_core::cli::header("oz Thread Sweep");
-                ozone_core::cli::field("Model:", &model);
-                ozone_core::cli::field("Context:", &context);
-                ozone_core::cli::field("Quant K:", &quant_k);
-                ozone_core::cli::field("Quant V:", &quant_v);
-                ozone_core::cli::spacer();
-
-                let results = bench::run_thread_sweep(
-                    &model,
-                    &model_path,
-                    &backend,
-                    gpu_layers,
-                    context,
-                    quant_k,
-                    quant_v,
-                )
-                .await?;
-                bench::print_thread_sweep_summary(&results);
-            }
-            Ok(())
-        }
+        }) => commands::cmd_thread_sweep(model, gpu_layers, context, quant_k, quant_v, batch).await,
         #[cfg(feature = "analyze")]
         Some(Commands::Analyze { model, all, generate, profiles, export }) => commands::cmd_analyze(model, all, generate, profiles, export).await,
         #[cfg(feature = "eval")]
@@ -723,104 +480,16 @@ pub async fn run() -> Result<()> {
             cache_type_kv,
             flash_attn,
             no_thinking,
-        }) => {
-            use crate::runner::{EvalRunConfig, SweepLevel};
-            let sweep_level = if quick {
-                SweepLevel::Quick
-            } else if standard {
-                SweepLevel::Standard
-            } else {
-                SweepLevel::Full // default (also when --full is set)
-            };
-            // Resolve cache type with env var fallback
-            let resolve_cache_type = |cli_val: Option<u8>, env_var: &str, default: u8| -> u8 {
-                cli_val.unwrap_or_else(|| {
-                    std::env::var(env_var)
-                        .ok()
-                        .and_then(|v| v.parse::<u8>().ok())
-                        .unwrap_or(default)
-                })
-            };
-            let effective_cache_k = resolve_cache_type(cache_type_k, "OZONE_QUANT_K", 1);
-            let effective_cache_v = resolve_cache_type(
-                cache_type_v.or(cache_type_kv),
-                "OZONE_QUANT_V",
-                effective_cache_k,
-            );
-
-            let mut policy = crate::policy::ContextPolicy::default();
-            if allow_below_min_context {
-                policy.allow_below_min_context = true;
-            }
-            let config = if no_manage_server {
-                EvalRunConfig {
-                    model_name: std::path::Path::new(&model_path)
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("unknown")
-                        .to_string(),
-                    model_path,
-                    backend,
-                    base_url,
-                    context_length,
-                    skip_warmup,
-                    skip_health_gate,
-                    policy,
-                    sweep_level,
-                    gate_attempts: gate_attempts.unwrap_or(0),
-                    regular_attempts: attempts.unwrap_or(0),
-                    gpu_layers,
-                    threads,
-                    manage_server: false,
-                    server_path: None,
-                    cache_type_k: effective_cache_k,
-                    cache_type_v: effective_cache_v,
-                    flash_attn,
-                    no_thinking,
-                }
-            } else {
-                let resolved_server_path = if let Some(ref p) = cli_server_path {
-                    std::path::PathBuf::from(p)
-                } else {
-                    processes::resolved_llamacpp_server_path()?
-                };
-                EvalRunConfig {
-                    model_name: std::path::Path::new(&model_path)
-                        .file_stem()
-                        .and_then(|s| s.to_str())
-                        .unwrap_or("unknown")
-                        .to_string(),
-                    model_path,
-                    backend,
-                    base_url,
-                    context_length,
-                    skip_warmup,
-                    skip_health_gate,
-                    policy,
-                    sweep_level,
-                    gate_attempts: gate_attempts.unwrap_or(0),
-                    regular_attempts: attempts.unwrap_or(0),
-                    gpu_layers,
-                    threads,
-                    manage_server: true,
-                    server_path: Some(resolved_server_path),
-                    cache_type_k: effective_cache_k,
-                    cache_type_v: effective_cache_v,
-                    flash_attn,
-                    no_thinking,
-                }
-            };
-            let result = runner::run_eval(&config).await?;
-            println!(
-                "Status: {} ({}/{} passed, {} skipped by gate, in {:.1}s)",
-                result.status,
-                result.tasks_passed,
-                result.tasks_run,
-                result.tasks_skipped_gate,
-                result.total_duration_ms as f64 / 1000.0
-            );
-            Ok(())
-        }
+        }) => commands::cmd_eval_run(
+            model_path, backend, base_url, context_length,
+            skip_warmup, skip_health_gate,
+            quick, standard,
+            attempts, gate_attempts,
+            no_manage_server, allow_below_min_context,
+            gpu_layers, threads, cli_server_path,
+            cache_type_k, cache_type_v, cache_type_kv,
+            flash_attn, no_thinking,
+        ).await,
         #[cfg(feature = "eval")]
         Some(Commands::EvalList) => commands::cmd_eval_list().await,
         #[cfg(feature = "eval")]
@@ -828,40 +497,9 @@ pub async fn run() -> Result<()> {
             model,
             base_url,
             prompts: _prompts,
-        }) => {
-            let root = crate::eval::resolve_project_root()?;
-            let prompt_bank = creative_writing::load_prompt_bank(&root)?;
-            if prompt_bank.is_empty() {
-                anyhow::bail!("No prompts found in creative writing prompt bank");
-            }
-
-            let artifacts_dir = root.join("results").join("creative_writing");
-            let csv_path = creative_writing::run_creative_writing_eval(
-                &model,
-                &prompt_bank,
-                &base_url,
-                &artifacts_dir,
-            )
-            .await?;
-
-            // Build and write markdown report
-            let report_md = creative_writing::build_creative_report(&csv_path)?;
-            let report_path = csv_path.with_extension("md");
-            std::fs::write(&report_path, &report_md)?;
-
-            ozone_core::cli::success(&format!("Creative writing eval complete for '{}'", model));
-            ozone_core::cli::field("CSV:", &csv_path.display());
-            ozone_core::cli::field("Report:", &report_path.display());
-            Ok(())
-        }
+        }) => commands::cmd_creative_write(model, base_url).await,
         #[cfg(feature = "model-mgmt")]
-        Some(Commands::Model { command }) => match model::run(command).await {
-            Ok(()) => Ok(()),
-            Err(e) => {
-                ozone_core::cli::error(&format!("{e}"));
-                std::process::exit(1);
-            }
-        },
+        Some(Commands::Model { command }) => commands::cmd_model(command).await,
         Some(Commands::Profiles) => commands::cmd_profiles().await,
     }
 }

@@ -5,6 +5,35 @@
 
 use anyhow::Result;
 
+// ── Handler modules (one per CLI command, extracted from lib.rs inline dispatch) ──
+
+#[cfg(feature = "bench")]
+mod cmd_bench;
+#[cfg(feature = "sweep")]
+mod cmd_sweep;
+#[cfg(feature = "bench")]
+mod cmd_thread_sweep;
+#[cfg(feature = "eval")]
+mod cmd_eval_run;
+#[cfg(feature = "eval")]
+mod cmd_creative_write;
+#[cfg(feature = "model-mgmt")]
+mod cmd_model;
+
+// Re-exports — each matches a `Commands::*` variant.
+#[cfg(feature = "bench")]
+pub use cmd_bench::cmd_bench;
+#[cfg(feature = "sweep")]
+pub use cmd_sweep::cmd_sweep;
+#[cfg(feature = "bench")]
+pub use cmd_thread_sweep::cmd_thread_sweep;
+#[cfg(feature = "eval")]
+pub use cmd_eval_run::cmd_eval_run;
+#[cfg(feature = "eval")]
+pub use cmd_creative_write::cmd_creative_write;
+#[cfg(feature = "model-mgmt")]
+pub use cmd_model::cmd_model;
+
 pub async fn cmd_clear() -> Result<()> {
     let killed = crate::processes::clear_gpu_backends().await?;
     if killed.is_empty() {
