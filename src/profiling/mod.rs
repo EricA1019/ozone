@@ -12,7 +12,7 @@ use crate::{
     hardware::HardwareProfile,
     launch_config::{self, LaunchPlan, RecommendationMode},
     prefs::SavedLaunchProfile,
-    processes::{self, ServiceStatus},
+    llamacpp::{self, ServiceStatus},
 };
 #[cfg(any(feature = "analyze", feature = "bench", feature = "profiling-ui"))]
 use crate::bench;
@@ -34,7 +34,7 @@ pub enum ProfilingBackend {
 impl ProfilingBackend {
     fn resolve_backend(&self) -> Option<bench::BenchBackend> {
         match self {
-            ProfilingBackend::LlamaCpp => processes::resolved_llamacpp_server_path()
+            ProfilingBackend::LlamaCpp => llamacpp::resolved_llamacpp_server_path()
                 .ok()
                 .map(|server_path| bench::BenchBackend::LlamaCpp { server_path }),
         }
@@ -198,7 +198,7 @@ pub(super) fn send_failed(tx: &UnboundedSender<WorkflowEvent>, report: Profiling
 /// Falls back to `"llama-server"` (hoping it is on $PATH) when the
 /// configured path cannot be resolved.
 pub fn launcher_path() -> PathBuf {
-    processes::resolved_llamacpp_server_path().unwrap_or_else(|_| PathBuf::from("llama-server"))
+    llamacpp::resolved_llamacpp_server_path().unwrap_or_else(|_| PathBuf::from("llama-server"))
 }
 
 /// Resolve the directory path for exported launch profiles.

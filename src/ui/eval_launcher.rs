@@ -345,11 +345,11 @@ async fn dispatch_action(app: &mut App, action: EvalLauncherAction) {
 async fn check_server_ready(app: &mut App) -> bool {
     let base_url = ozone_core::paths::llamacpp_base_url();
     let health_url = format!("{base_url}/health");
-    if crate::processes::is_url_ready(&health_url).await {
+    if crate::llamacpp::is_url_ready(&health_url).await {
         return true;
     }
     // Update service status so the UI reflects reality
-    app.services = crate::processes::get_service_status().await;
+    app.services = crate::llamacpp::get_service_status().await;
     app.set_error(
         "No llama.cpp server is running. Launch a model first from the Launcher, or select 'Launch Model' below.".into(),
     );
@@ -371,7 +371,7 @@ fn start_eval_sweep(app: &mut App, level: crate::runner::SweepLevel) {
     // Use the server's actual context, falling back to 32k
     let context_length = tokio::task::block_in_place(|| {
         tokio::runtime::Handle::current()
-            .block_on(async { crate::processes::get_llamacpp_context().await })
+            .block_on(async { crate::llamacpp::get_llamacpp_context().await })
     })
     .unwrap_or(32768);
     let config = crate::runner::EvalRunConfig {

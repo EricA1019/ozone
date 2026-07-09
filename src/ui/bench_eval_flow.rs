@@ -171,7 +171,7 @@ async fn activate_selected(app: &mut App) {
             tokio::spawn(async move {
                 let model_dir = ozone_core::paths::models_dir();
                 let model_path = model_dir.join(&model);
-                let server_path = match crate::processes::resolved_llamacpp_server_path() {
+                let server_path = match crate::llamacpp::resolved_llamacpp_server_path() {
                     Ok(p) => p,
                     Err(e) => {
                         tracing::error!("export server: failed to resolve server path: {e}");
@@ -297,14 +297,14 @@ pub(crate) async fn start_eval_with_cli_name(app: &mut App, cli_name: &str) {
     // Resolve server and model paths so the spawned task can auto-launch
     // the model if llama.cpp isn't already serving it.
     let model_path = ozone_core::paths::models_dir().join(&model_name);
-    let server_path = crate::processes::resolved_llamacpp_server_path().ok();
+    let server_path = crate::llamacpp::resolved_llamacpp_server_path().ok();
 
     tokio::spawn(async move {
         // Auto-launch the model if llama.cpp isn't running
         if let Some(sp) = &server_path {
             let mp = &model_path;
             let ready_url = ozone_core::paths::llamacpp_ready_url();
-            if !crate::processes::is_url_ready(&ready_url).await {
+            if !crate::llamacpp::is_url_ready(&ready_url).await {
                 let _ = error_tx.send(super::bench_eval_workflow::BenchEvalWorkflowEvent::Status {
                     title: "Launching model…".into(),
                     detail: format!("Starting {} for eval", model_name),
@@ -319,7 +319,7 @@ pub(crate) async fn start_eval_with_cli_name(app: &mut App, cli_name: &str) {
                     "4096".into(),
                     "--no-webui".into(),
                 ];
-                match crate::processes::start_llamacpp(sp, &mp.to_string_lossy(), &args).await {
+                match crate::llamacpp::start_llamacpp(sp, &mp.to_string_lossy(), &args).await {
                     Ok(_) => {
                         // Give the server a moment to become ready
                         tokio::time::sleep(tokio::time::Duration::from_secs(3)).await;

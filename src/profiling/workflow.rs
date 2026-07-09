@@ -15,7 +15,7 @@ use crate::{analyze, bench};
 #[cfg(any(feature = "analyze", feature = "bench", feature = "eval", feature = "profiling-ui"))]
 use crate::db;
 #[cfg(any(feature = "profiling-ui", feature = "sweep"))]
-use crate::processes;
+use crate::llamacpp;
 use crate::sweep;
 
 // Helper functions and types from the parent profiling module.
@@ -176,7 +176,7 @@ pub async fn run_workflow(
 
     // ExportPresets only reads from DB and writes files — no launcher needed.
     if action == ProfilingAction::ExportPresets {
-        let use_llamacpp = processes::resolved_llamacpp_server_path()
+        let use_llamacpp = llamacpp::resolved_llamacpp_server_path()
             .ok()
             .map(|p| p.exists())
             .unwrap_or(false)

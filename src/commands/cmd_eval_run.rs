@@ -128,7 +128,7 @@ pub async fn cmd_eval_run(
         let resolved_server_path = if let Some(ref p) = cli_server_path {
             PathBuf::from(p)
         } else {
-            crate::processes::resolved_llamacpp_server_path()?
+            crate::llamacpp::resolved_llamacpp_server_path()?
         };
         build_eval_run_config(
             &model_path, &backend, base_url, context_length,

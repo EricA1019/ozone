@@ -56,20 +56,20 @@ fn pre_split_profiling_actions_have_ten_labels() {
 }
 
 // ---------------------------------------------------------------------------
-// processes.rs snapshot — kv_cache_args helper
+// llamacpp.rs snapshot — kv_cache_args helper
 // ---------------------------------------------------------------------------
 
 #[test]
 fn pre_split_kv_cache_args_default_no_flags() {
-    assert_eq!(ozone::processes::kv_cache_args(1, 1).len(), 0);
+    assert_eq!(ozone::llamacpp::kv_cache_args(1, 1).len(), 0);
 }
 
 #[test]
 fn pre_split_kv_cache_args_q8_k_only() {
-    assert_eq!(ozone::processes::kv_cache_args(2, 1).len(), 2);
+    assert_eq!(ozone::llamacpp::kv_cache_args(2, 1).len(), 2);
 }
 
 #[test]
 fn pre_split_kv_cache_args_both_set() {
-    assert_eq!(ozone::processes::kv_cache_args(3, 2).len(), 4);
+    assert_eq!(ozone::llamacpp::kv_cache_args(3, 2).len(), 4);
 }

@@ -1,6 +1,6 @@
 use crate::db::{self, BenchmarkRow};
 use crate::hardware;
-use crate::processes;
+use crate::llamacpp;
 use anyhow::{anyhow, Result};
 use ozone_core::paths;
 use std::time::{Duration, Instant};
@@ -134,7 +134,7 @@ fn build_llamacpp_bench_args(
         "--parallel".into(),
         "1".into(),
     ];
-    args.extend(crate::processes::kv_cache_args(quant_k, quant_v));
+    args.extend(crate::llamacpp::kv_cache_args(quant_k, quant_v));
     args
 }
 
@@ -183,7 +183,7 @@ where
     on_progress(BenchProgress {
         message: "Clearing GPU backends…".into(),
     });
-    processes::clear_gpu_backends().await?;
+    llamacpp::clear_gpu_backends().await?;
 
     // Sweep mode: clear_gpu_backends already sleeps 600ms — enough.
     // Precise mode: add extra settle for a clean start.
@@ -211,7 +211,7 @@ where
         BenchBackend::LlamaCpp { server_path } => {
             let args =
                 build_llamacpp_bench_args(gpu_layers, context_size, quant_k, quant_v, threads);
-            processes::start_llamacpp(server_path, &model_path.to_string_lossy(), &args)
+            llamacpp::start_llamacpp(server_path, &model_path.to_string_lossy(), &args)
                 .await
                 .map_err(|e| anyhow!("Launch failed: {e}"))?;
         }
@@ -219,7 +219,7 @@ where
 
     // Step 3: Confirm model is loaded
     let loaded_model = match backend {
-        BenchBackend::LlamaCpp { .. } => processes::get_llamacpp_model()
+        BenchBackend::LlamaCpp { .. } => llamacpp::get_llamacpp_model()
             .await
             .ok_or_else(|| anyhow!("llama.cpp launched but model not available via API"))?,
     };
@@ -307,7 +307,7 @@ where
     on_progress(BenchProgress {
         message: format!("Stopping {}…", backend.display_name()),
     });
-    processes::clear_gpu_backends().await?;
+    llamacpp::clear_gpu_backends().await?;
 
     match gen_result {
         Ok(gen) => {
@@ -659,14 +659,14 @@ pub async fn run_batch_thread_sweep(
             "--parallel".into(),
             "1".into(),
         ];
-        args.extend(crate::processes::kv_cache_args(
+        args.extend(crate::llamacpp::kv_cache_args(
             request.quant_k,
             request.quant_v,
         ));
 
         // Launch + benchmark manually since we need custom args
-        processes::clear_gpu_backends().await?;
-        processes::start_llamacpp(
+        llamacpp::clear_gpu_backends().await?;
+        llamacpp::start_llamacpp(
             backend_server_path(request.backend)?,
             &request.model_path.to_string_lossy(),
             &args,
@@ -676,7 +676,7 @@ pub async fn run_batch_thread_sweep(
         tracing::info!("  ⬡ [batch={batch}] Running generation…");
         let gen = run_llamacpp_generation(true).await;
 
-        processes::clear_gpu_backends().await?;
+        llamacpp::clear_gpu_backends().await?;
 
         match gen {
             Ok(g) => {

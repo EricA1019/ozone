@@ -35,7 +35,7 @@ pub use cmd_creative_write::cmd_creative_write;
 pub use cmd_model::cmd_model;
 
 pub async fn cmd_clear() -> Result<()> {
-    let killed = crate::processes::clear_gpu_backends().await?;
+    let killed = crate::llamacpp::clear_gpu_backends().await?;
     if killed.is_empty() {
         ozone_core::cli::info("No GPU backends running.");
     } else {
@@ -47,7 +47,7 @@ pub async fn cmd_clear() -> Result<()> {
 }
 
 pub async fn cmd_purge_last_model() -> Result<()> {
-    let killed = crate::processes::purge_last_model().await?;
+    let killed = crate::llamacpp::purge_last_model().await?;
     if killed.is_empty() {
         ozone_core::cli::info("No managed llama.cpp model was running.");
     } else {
@@ -202,7 +202,7 @@ pub async fn cmd_export_server(
         anyhow::bail!("Model not found: {}", model_path.display());
     }
 
-    let server_path = crate::processes::resolved_llamacpp_server_path()?;
+    let server_path = crate::llamacpp::resolved_llamacpp_server_path()?;
 
     let plan = {
         let report = crate::catalog::load_catalog_report(

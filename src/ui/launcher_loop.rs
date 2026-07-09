@@ -397,7 +397,7 @@ pub async fn run_launcher(
         if last_fast_refresh.elapsed() >= Duration::from_millis(500) {
             last_fast_refresh = Instant::now();
             if matches!(app.screen, Screen::Monitor) {
-                app.services = crate::processes::get_service_status().await;
+                app.services = crate::llamacpp::get_service_status().await;
                 app.tokens_per_sec = None;
                 if let Some(ref mut hw) = app.hardware {
                     *hw = tokio::task::spawn_blocking(crate::hardware::load_hardware_live)
@@ -405,7 +405,7 @@ pub async fn run_launcher(
                         .unwrap_or_default();
                 }
             } else if matches!(app.screen, Screen::Launcher) {
-                app.services = crate::processes::get_service_status().await;
+                app.services = crate::llamacpp::get_service_status().await;
             }
         }
 

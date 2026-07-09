@@ -10,7 +10,7 @@ use crate::hardware::HardwareProfile;
 use crate::launch_config::LaunchPlan;
 use crate::prefs::{Preferences, SavedLaunchProfile};
 use crate::disk::DiskSnapshot;
-use crate::processes::ServiceStatus;
+use crate::llamacpp::ServiceStatus;
 #[cfg(feature = "profiling-ui")]
 use crate::profiling::{
     ProfilingAction, ProfilingAdvisory, ProfilingFailureReport, ProfilingSuccessReport,

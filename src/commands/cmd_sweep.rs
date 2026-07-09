@@ -15,7 +15,7 @@ pub async fn cmd_sweep(
 ) -> Result<()> {
     let model_dir = ozone_core::paths::models_dir();
     let model_path = model_dir.join(&model);
-    let server_path = crate::processes::resolved_llamacpp_server_path()?;
+    let server_path = crate::llamacpp::resolved_llamacpp_server_path()?;
 
     if context_sweep {
         if sweep_quant {

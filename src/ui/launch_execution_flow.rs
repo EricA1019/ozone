@@ -16,7 +16,7 @@ pub(super) async fn handle_pending_frontend_launch(
         app.screen = Screen::Launching;
         app.launch_start = Some(Instant::now());
 
-        let server_path = match crate::processes::resolved_llamacpp_server_path() {
+        let server_path = match crate::llamacpp::resolved_llamacpp_server_path() {
             Ok(path) => path,
             Err(error) => {
                 app.set_error(format!("Launch failed: {error}"));
@@ -26,7 +26,7 @@ pub(super) async fn handle_pending_frontend_launch(
         };
         let model_path = ozone_core::paths::models_dir().join(&plan.model_name);
         let llama_args = build_llama_args(&plan);
-        match crate::processes::start_llamacpp(
+        match crate::llamacpp::start_llamacpp(
             &server_path,
             &model_path.to_string_lossy(),
             &llama_args,
@@ -99,8 +99,8 @@ pub(super) async fn run_launcher_action(
             super::open_settings(app);
         }
         super::LauncherActionId::ClearGpu => {
-            let _ = crate::processes::clear_gpu_backends().await;
-            app.services = crate::processes::get_service_status().await;
+            let _ = crate::llamacpp::clear_gpu_backends().await;
+            app.services = crate::llamacpp::get_service_status().await;
             *last_refresh = Instant::now();
             app.set_status("GPU backends cleared.".into());
         }

@@ -20,7 +20,7 @@ use crate::gate::{
 use crate::hash::{hash_model_file, hash_run_config, RunConfigIdentity};
 use crate::policy::{check_task_allowed, ContextPolicy};
 use crate::preflight::check_context_fit;
-use crate::processes;
+use crate::llamacpp;
 use crate::scorers::{self, aggregate_multi, multi_to_status};
 use crate::suites::{EvalTask, CANARY_SUITE, CODE_MICRO, FORMAT_MICRO, HEALTH_SUITE, MATH_MICRO};
 use crate::timeout::{compute_timeout, TimeoutEstimate, HARD_CAP_SECS};
@@ -248,7 +248,7 @@ fn build_eval_server_args(config: &EvalRunConfig) -> Vec<String> {
     args.push("--flash-attn".into());
     args.push(fa.into());
     // Apply KV cache quantization from config
-    args.extend(processes::kv_cache_args(config.cache_type_k, config.cache_type_v));
+    args.extend(llamacpp::kv_cache_args(config.cache_type_k, config.cache_type_v));
     args
 }
 
@@ -308,17 +308,17 @@ pub async fn run_eval(config: &EvalRunConfig) -> Result<EvalRunResult> {
             .as_deref()
             .context("server_path is required when manage_server is true")?;
         let server_args = build_eval_server_args(config);
-        let _stopped = processes::clear_gpu_backends().await?;
+        let _stopped = llamacpp::clear_gpu_backends().await?;
         // Wait for GPU memory to fully release before re-launching
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
-        processes::start_llamacpp(
+        llamacpp::start_llamacpp(
             server_path,
             &config.model_path,
             &server_args,
         )
         .await
         .context("Failed to launch llama.cpp server for eval")?;
-        let _loaded = processes::get_llamacpp_model()
+        let _loaded = llamacpp::get_llamacpp_model()
             .await
             .ok_or_else(|| anyhow::anyhow!("Server launched but model not available"))?;
     }
@@ -582,7 +582,7 @@ response"]);
 
     // ---- Cleanup: kill managed server ----
     if config.manage_server {
-        processes::clear_gpu_backends().await?;
+        llamacpp::clear_gpu_backends().await?;
     }
 
     // ---- Save results ----
@@ -722,21 +722,21 @@ pub(crate) async fn run_eval_with_events(
             name: "Server".into(),
             detail: "Clearing GPU backends...".into(),
         });
-        processes::clear_gpu_backends().await?;
+        llamacpp::clear_gpu_backends().await?;
         // Wait for GPU memory to fully release before re-launching
         tokio::time::sleep(std::time::Duration::from_secs(3)).await;
         let _ = tx.send(crate::ui::eval_run_workflow::EvalRunEvent::Stage {
             name: "Server".into(),
             detail: format!("Launching {} with ctx={}...", server_path.display(), config.context_length),
         });
-        processes::start_llamacpp(
+        llamacpp::start_llamacpp(
             server_path,
             &config.model_path,
             &build_eval_server_args(config),
         )
         .await
         .context("Failed to launch llama.cpp server for eval")?;
-        let _loaded = processes::get_llamacpp_model()
+        let _loaded = llamacpp::get_llamacpp_model()
             .await
             .ok_or_else(|| anyhow::anyhow!("Server launched but model not available"))?;
         let _ = tx.send(crate::ui::eval_run_workflow::EvalRunEvent::Stage {
@@ -980,7 +980,7 @@ response"]);
             name: "Cleanup".into(),
             detail: "Shutting down server...".into(),
         });
-        processes::clear_gpu_backends().await?;
+        llamacpp::clear_gpu_backends().await?;
     }
 
     // ---- Save results ----

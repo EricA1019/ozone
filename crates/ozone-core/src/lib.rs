@@ -179,7 +179,7 @@ pub mod paths {
         data_dir().map(|path| path.join("llamacpp.log"))
     }
 
-    /// Managed llama.cpp launch-state marker written by `src/processes.rs`.
+    /// Managed llama.cpp launch-state marker written by `src/llamacpp.rs`.
     pub fn llamacpp_launch_state_path() -> Option<PathBuf> {
         data_dir().map(|path| path.join("launcher-state.json"))
     }

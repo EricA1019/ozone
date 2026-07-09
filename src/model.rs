@@ -691,7 +691,7 @@ async fn cmd_info(name: &str) -> Result<()> {
 /// Check if managed llama.cpp is running and whether this model is loaded.
 /// Returns Some(true) if loaded, Some(false) if running but different model, None if not running.
 async fn check_llamacpp_model(model_name: &str) -> Option<bool> {
-    let loaded = crate::processes::get_llamacpp_model().await?;
+    let loaded = crate::llamacpp::get_llamacpp_model().await?;
     Some(loaded.contains(model_name.trim_end_matches(".gguf")))
 }
 

@@ -4,7 +4,7 @@ use anyhow::Result;
 use std::path::{Path, PathBuf};
 
 use crate::launch_config::LaunchPlan;
-use crate::processes::kv_cache_args;
+use crate::llamacpp::kv_cache_args;
 
 /// Format a LaunchPlan into a ready-to-run shell script.
 /// Does NOT resolve configs — the caller provides the resolved plan.

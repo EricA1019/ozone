@@ -30,8 +30,8 @@ pub(super) async fn handle_monitor_key(app: &mut App, key: KeyEvent) -> MonitorO
             app.screen = Screen::Launcher;
         }
         KeyCode::Char('s') => {
-            let _ = crate::processes::clear_gpu_backends().await;
-            app.services = crate::processes::get_service_status().await;
+            let _ = crate::llamacpp::clear_gpu_backends().await;
+            app.services = crate::llamacpp::get_service_status().await;
             app.set_status("GPU backends cleared.".into());
             app.screen = Screen::Launcher;
         }
@@ -66,7 +66,7 @@ pub async fn run_monitor() -> Result<()> {
             .await
             .unwrap_or_default(),
     );
-    app.services = crate::processes::get_service_status().await;
+    app.services = crate::llamacpp::get_service_status().await;
 
     enable_raw_mode()?;
     let mut terminal_restore = TerminalRestoreGuard::new();
@@ -96,8 +96,8 @@ pub async fn run_monitor() -> Result<()> {
                 match key.code {
                     KeyCode::Char('q') | KeyCode::Esc => break,
                     KeyCode::Char('s') => {
-                        let _ = crate::processes::clear_gpu_backends().await;
-                        app.services = crate::processes::get_service_status().await;
+                        let _ = crate::llamacpp::clear_gpu_backends().await;
+                        app.services = crate::llamacpp::get_service_status().await;
                         terminal.draw(|f| monitor::render(f, &app))?;
                         break;
                     }
@@ -114,7 +114,7 @@ pub async fn run_monitor() -> Result<()> {
         // Fast path (500ms): service status, GPU/RAM stats
         if last_fast_refresh.elapsed() >= Duration::from_millis(500) {
             last_fast_refresh = Instant::now();
-            app.services = crate::processes::get_service_status().await;
+            app.services = crate::llamacpp::get_service_status().await;
             app.tokens_per_sec = None;
             if let Some(ref mut hw) = app.hardware {
                 *hw = tokio::task::spawn_blocking(crate::hardware::load_hardware_live)
