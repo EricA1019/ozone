@@ -25,6 +25,7 @@ mod types;
 mod tool_defs;
 mod server;
 pub(crate) use self::server::OzoneMcpServer;
+pub use self::jsonrpc::JsonRpcRequest;
 
 use self::arg_helpers::*;
 use self::persist_helpers::*;
@@ -32,7 +33,7 @@ use self::tool_defs::*;
 use self::types::*;
 
 use self::jsonrpc::{
-    read_message, write_message, JsonRpcRequest,
+    read_message, write_message,
 };
 use self::testing::screen::{screenshot_capture_config, mock_user_capture_settings};
 

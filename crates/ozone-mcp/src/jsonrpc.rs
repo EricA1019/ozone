@@ -7,7 +7,7 @@ use serde_json::{json, Value};
 use crate::JSONRPC_VERSION;
 
 #[derive(Debug, Deserialize)]
-pub(super) struct JsonRpcRequest {
+pub struct JsonRpcRequest {
     pub(super) jsonrpc: String,
     #[serde(default)]
     pub(super) id: Option<Value>,

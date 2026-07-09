@@ -735,3 +735,78 @@ fn write_modified_baseline_fixture() -> TestSidecarFile {
     .expect("write modified baseline fixture");
     TestSidecarFile { path }
 }
+
+
+// ── Protocol integration tests ───────────────────────────────────────────
+// These tests exercise the JSON-RPC protocol layer through the server's
+// handle_request method, covering initialize, tools/list, ping, and error paths.
+
+
+fn send_request(server: &mut super::OzoneMcpServer, method: &str, params: Option<serde_json::Value>) -> serde_json::Value {
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": method,
+        "params": params.unwrap_or(json!({})),
+    });
+    let req: super::JsonRpcRequest = serde_json::from_value(request).unwrap();
+    server.handle_request(req).unwrap_or_else(|| {
+        json!({"error": {"message": "no response"}})
+    })
+}
+
+#[test]
+fn protocol_initialize_returns_server_info() {
+    let mut server = super::OzoneMcpServer::new().expect("server should create");
+    let response = send_request(&mut server, "initialize", Some(json!({
+        "protocolVersion": "2024-11-05",
+        "capabilities": {},
+        "clientInfo": {"name": "test", "version": "0.0.0"}
+    })));
+    assert!(response.get("result").is_some(),
+        "initialize should return a result");
+    assert!(response["result"]["serverInfo"]["name"].as_str().unwrap_or("").contains("ozone"),
+        "server info should identify as ozone");
+}
+
+#[test]
+fn protocol_tools_list_returns_tool_definitions() {
+    let mut server = super::OzoneMcpServer::new().expect("server should create");
+    send_request(&mut server, "initialize", Some(json!({
+        "protocolVersion": "2024-11-05",
+        "capabilities": {},
+        "clientInfo": {"name": "test", "version": "0.0.0"}
+    })));
+    let response = send_request(&mut server, "tools/list", None);
+    let tools = response["result"]["tools"].as_array()
+        .expect("tools/list should return a tools array");
+    assert!(!tools.is_empty(), "should advertise at least one tool");
+    assert!(tools.iter().any(|t| t["name"] == "workspace_status"),
+        "tools should include workspace_status");
+}
+
+#[test]
+fn protocol_ping_returns_result() {
+    let mut server = super::OzoneMcpServer::new().expect("server should create");
+    let response = send_request(&mut server, "ping", None);
+    assert!(response.get("result").is_some(),
+        "ping should return a result");
+}
+
+#[test]
+fn protocol_unknown_method_returns_error() {
+    let mut server = super::OzoneMcpServer::new().expect("server should create");
+    let request = json!({
+        "jsonrpc": "2.0",
+        "id": 1,
+        "method": "nonexistent_method",
+        "params": {},
+    });
+    let req: super::JsonRpcRequest = serde_json::from_value(request).unwrap();
+    let response = server.handle_request(req);
+    assert!(response.is_some(), "should respond with error for unknown method");
+    if let Some(resp) = response {
+        assert!(resp.get("error").is_some(),
+            "unknown method should return an error response");
+    }
+}
