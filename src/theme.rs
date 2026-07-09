@@ -28,16 +28,6 @@ pub enum ThemePreset {
 }
 
 impl ThemePreset {
-    /// Parse the kebab-case string stored in prefs (e.g. `"dark-mint"`).
-    #[allow(dead_code)]
-    pub fn from_pref_str(s: &str) -> Self {
-        match s {
-            "dark-mint" => Self::DarkMint,
-            "ozone-dark" => Self::OzoneDark,
-            "high-contrast" => Self::HighContrast,
-            _ => Self::default(),
-        }
-    }
 }
 
 // ── Active-preset singleton ──────────────────────────────────────────────────
@@ -46,17 +36,7 @@ impl ThemePreset {
 /// 0 = DarkMint (default), 1 = OzoneDark, 2 = HighContrast.
 static ACTIVE_PRESET: AtomicU8 = AtomicU8::new(0);
 
-/// Set the active preset. Can be called multiple times to change the
-/// theme at runtime — each call takes effect immediately.
-#[allow(dead_code)]
-pub fn set_preset(preset: ThemePreset) {
-    let disc = match preset {
-        ThemePreset::DarkMint => 0,
-        ThemePreset::OzoneDark => 1,
-        ThemePreset::HighContrast => 2,
-    };
-    ACTIVE_PRESET.store(disc, Ordering::Relaxed);
-}
+
 
 /// Return the active preset, defaulting to `DarkMint` for unknown values.
 pub fn active_preset() -> ThemePreset {

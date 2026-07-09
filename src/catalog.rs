@@ -55,6 +55,7 @@ pub struct CatalogRecord {
     pub model_name: String,
     /// Populated during catalog scan; used in launcher (profiling-ui feature).
     /// `#[allow(dead_code)]` because this field is dead in lite builds without profiling-ui.
+    /// REVIEW(2026-10-01): re-evaluate if profiling-ui is still a separate feature.
     #[allow(dead_code)]
     pub model_path: PathBuf,
     pub model_size_gb: f64,
@@ -62,6 +63,7 @@ pub struct CatalogRecord {
     pub benchmark: Option<BenchmarkRun>,
     /// Populated during catalog scan; used in launcher (profiling-ui feature).
     /// `#[allow(dead_code)]` because this field is dead in lite builds without profiling-ui.
+    /// REVIEW(2026-10-01): re-evaluate if profiling-ui is still a separate feature.
     #[allow(dead_code)]
     pub benchmark_count: usize,
     pub source_priority: u8,

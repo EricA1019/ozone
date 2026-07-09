@@ -213,6 +213,7 @@ pub fn show_pareto(model_name: &str) -> Result<()> {
 }
 
 /// Assign profile labels to Pareto frontier points.
+/// `expect` is safe: early return at call site ensures non-empty frontier.
 #[allow(clippy::expect_used)]
 fn assign_profile_labels(frontier: &[ParetoPoint]) -> Vec<String> {
     let mut labels = vec![String::new(); frontier.len()];

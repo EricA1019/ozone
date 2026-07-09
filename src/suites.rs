@@ -7,6 +7,7 @@
 use crate::eval_types::SizeClass;
 
 /// A single native evaluation task.
+/// REVIEW(2026-10-01): remove if native eval still not wired (Phase 1.4).
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct EvalTask {
@@ -461,6 +462,7 @@ pub const CANARY_SUITE: &[EvalTask] = &[
 /// Mapping from task key to expected exact answer.
 /// All keys here MUST have a corresponding `EvalTask` with `scorer: "exact"`.
 // Phase 1.4 will wire this into runner.rs; suppress dead_code until then.
+// REVIEW(2026-10-01): remove if Phase 1.4 still not started.
 #[allow(dead_code)]
 pub const EXPECTED_ANSWERS: &[(&str, &str)] = &[
     ("health_001_short_answer", "4"),

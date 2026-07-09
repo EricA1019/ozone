@@ -11,6 +11,7 @@
 use crate::calibration::CalibrationResult;
 
 /// A gate decision for a lane or suite.
+/// REVIEW(2026-10-01): remove if check_lane_gate is still unused.
 #[derive(Debug, Clone)]
 #[allow(dead_code)]
 pub struct GateDecision {
@@ -75,6 +76,7 @@ pub fn check_health_gate(cal: &CalibrationResult) -> GateDecision {
 /// Returns a `GateDecision` indicating whether the model/config should
 /// be promoted to advanced tests in this lane.
 /// Used in tests (check_lane_gate_multi is the production path).
+/// REVIEW(2026-10-01): remove if still unused.
 #[allow(dead_code)]
 pub fn check_lane_gate(gate_name: &'static str, score: f64, required_score: f64) -> GateDecision {
     let passed = score >= required_score;
@@ -195,6 +197,7 @@ pub fn promotion_threshold(lane: &str) -> Option<f64> {
 /// Determine whether a lane gate result justifies promotion to the
 /// next tier of tests.
 /// Kept for API completeness; promotion check is currently inlined in the runner.
+/// REVIEW(2026-10-01): remove if still unused.
 #[allow(dead_code)]
 pub fn should_promote(decision: &GateDecision) -> bool {
     if !decision.passed {
