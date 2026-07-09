@@ -12,23 +12,10 @@ use crate::theme::*;
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum BenchEvalAction {
     ProfileModel,
-    EvalGsm8k,
-    EvalInstruction,
-    EvalMath,
-    EvalHumaneval,
-    EvalMmlu,
-    EvalHellaSwag,
-    EvalTruthfulQA,
-    EvalBbh,
-    EvalMmluPro,
-    EvalArcChallenge,
-    EvalMmluPhilosophy,
-    EvalHendrycksEthics,
-    EvalBbhFormalFallacies,
-    EvalBbhCausalJudgement,
-    EvalMbpp,
-    EvalDrop,
-    EvalGpqa,
+    /// Eval task from the EVAL_TASKS registry. The string is the cli_name
+    /// used to look up the task definition. Keeps the UI in sync with the
+    /// registry without duplicating variant definitions.
+    Eval(&'static str),
     EvalCreativeWriting,
     EvalRun,
     ExportServer,
@@ -104,26 +91,13 @@ pub(super) fn entries() -> Vec<BenchEvalEntry> {
     entries
 }
 
-fn eval_action_for_cli_name(name: &str) -> BenchEvalAction {
-    match name {
-        "gsm8k" => BenchEvalAction::EvalGsm8k,
-        "instruction" => BenchEvalAction::EvalInstruction,
-        "math" => BenchEvalAction::EvalMath,
-        "humaneval" => BenchEvalAction::EvalHumaneval,
-        "mmlu" => BenchEvalAction::EvalMmlu,
-        "hellaswag" => BenchEvalAction::EvalHellaSwag,
-        "truthfulqa" => BenchEvalAction::EvalTruthfulQA,
-        "bbh" => BenchEvalAction::EvalBbh,
-        "mmlu_pro" => BenchEvalAction::EvalMmluPro,
-        "arc_challenge" => BenchEvalAction::EvalArcChallenge,
-        "mmlu_philosophy" => BenchEvalAction::EvalMmluPhilosophy,
-        "hendrycks_ethics" => BenchEvalAction::EvalHendrycksEthics,
-        "bbh_formal_fallacies" => BenchEvalAction::EvalBbhFormalFallacies,
-        "bbh_causal_judgement" => BenchEvalAction::EvalBbhCausalJudgement,
-        "mbpp" => BenchEvalAction::EvalMbpp,
-        "drop" => BenchEvalAction::EvalDrop,
-        "gpqa" => BenchEvalAction::EvalGpqa,
-        _ => BenchEvalAction::Back,
+fn eval_action_for_cli_name(name: &'static str) -> BenchEvalAction {
+    // Look up name in EVAL_TASKS registry. If found, return Eval variant.
+    // If not found (e.g. empty string or unknown), return Back.
+    if crate::eval::find_task(name).is_some() {
+        BenchEvalAction::Eval(name)
+    } else {
+        BenchEvalAction::Back
     }
 }
 
@@ -536,56 +510,8 @@ fn render_preview(f: &mut Frame, area: Rect, app: &App) {
         BenchEvalAction::ProfileModel => {
             "Enter opens model picker with profiling workflow (bench/sweep/analyze).".to_string()
         }
-        BenchEvalAction::EvalGsm8k => {
-            format!("oz eval {model_hint} --preset gsm8k --limit 1")
-        }
-        BenchEvalAction::EvalInstruction => {
-            format!("oz eval {model_hint} --preset instruction --limit 1")
-        }
-        BenchEvalAction::EvalMath => {
-            format!("oz eval {model_hint} --preset math --limit 1")
-        }
-        BenchEvalAction::EvalHumaneval => {
-            format!("oz eval {model_hint} --preset humaneval --limit 1")
-        }
-        BenchEvalAction::EvalMmlu => {
-            format!("oz eval {model_hint} --preset mmlu --limit 1")
-        }
-        BenchEvalAction::EvalHellaSwag => {
-            format!("oz eval {model_hint} --preset hellaswag --limit 1")
-        }
-        BenchEvalAction::EvalTruthfulQA => {
-            format!("oz eval {model_hint} --preset truthfulqa --limit 1")
-        }
-        BenchEvalAction::EvalBbh => {
-            format!("oz eval {model_hint} --preset bbh --limit 1")
-        }
-        BenchEvalAction::EvalMmluPro => {
-            format!("oz eval {model_hint} --preset mmlu_pro --limit 1")
-        }
-        BenchEvalAction::EvalArcChallenge => {
-            format!("oz eval {model_hint} --preset arc_challenge --limit 1")
-        }
-        BenchEvalAction::EvalMmluPhilosophy => {
-            format!("oz eval {model_hint} --preset mmlu_philosophy --limit 1")
-        }
-        BenchEvalAction::EvalHendrycksEthics => {
-            format!("oz eval {model_hint} --preset hendrycks_ethics --limit 1")
-        }
-        BenchEvalAction::EvalBbhFormalFallacies => {
-            format!("oz eval {model_hint} --preset bbh_formal_fallacies --limit 1")
-        }
-        BenchEvalAction::EvalBbhCausalJudgement => {
-            format!("oz eval {model_hint} --preset bbh_causal_judgement --limit 1")
-        }
-        BenchEvalAction::EvalMbpp => {
-            format!("oz eval {model_hint} --preset mbpp --limit 1")
-        }
-        BenchEvalAction::EvalDrop => {
-            format!("oz eval {model_hint} --preset drop --limit 1")
-        }
-        BenchEvalAction::EvalGpqa => {
-            format!("oz eval {model_hint} --preset gpqa --limit 1")
+        BenchEvalAction::Eval(task_name) => {
+            format!("oz eval {model_hint} --preset {task_name} --limit 1")
         }
         BenchEvalAction::EvalRun => {
             format!("oz eval-run {} --context-length 4096", model_hint)

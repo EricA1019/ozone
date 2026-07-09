@@ -85,23 +85,7 @@ async fn activate_selected(app: &mut App) {
                 );
             }
         }
-        BenchEvalAction::EvalGsm8k => start_eval_with_cli_name(app, "gsm8k").await,
-        BenchEvalAction::EvalInstruction => start_eval_with_cli_name(app, "instruction").await,
-        BenchEvalAction::EvalMath => start_eval_with_cli_name(app, "math").await,
-        BenchEvalAction::EvalHumaneval => start_eval_with_cli_name(app, "humaneval").await,
-        BenchEvalAction::EvalMmlu => start_eval_with_cli_name(app, "mmlu").await,
-        BenchEvalAction::EvalHellaSwag => start_eval_with_cli_name(app, "hellaswag").await,
-        BenchEvalAction::EvalTruthfulQA => start_eval_with_cli_name(app, "truthfulqa").await,
-        BenchEvalAction::EvalBbh => start_eval_with_cli_name(app, "bbh").await,
-        BenchEvalAction::EvalMmluPro => start_eval_with_cli_name(app, "mmlu_pro").await,
-        BenchEvalAction::EvalArcChallenge => start_eval_with_cli_name(app, "arc_challenge").await,
-        BenchEvalAction::EvalMmluPhilosophy => start_eval_with_cli_name(app, "mmlu_philosophy").await,
-        BenchEvalAction::EvalHendrycksEthics => start_eval_with_cli_name(app, "hendrycks_ethics").await,
-        BenchEvalAction::EvalBbhFormalFallacies => start_eval_with_cli_name(app, "bbh_formal_fallacies").await,
-        BenchEvalAction::EvalBbhCausalJudgement => start_eval_with_cli_name(app, "bbh_causal_judgement").await,
-        BenchEvalAction::EvalMbpp => start_eval_with_cli_name(app, "mbpp").await,
-        BenchEvalAction::EvalDrop => start_eval_with_cli_name(app, "drop").await,
-        BenchEvalAction::EvalGpqa => start_eval_with_cli_name(app, "gpqa").await,
+        BenchEvalAction::Eval(task_name) => start_eval_with_cli_name(app, task_name).await,
         BenchEvalAction::EvalRun => {
             let Some(model_name) = resolve_bench_eval_model(app) else {
                 app.set_error("No model selected. Select or launch a model first.".into());
