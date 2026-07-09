@@ -1,5 +1,14 @@
 # Structural Debt Remediation Plan
 
+> **Status: ✅ COMPLETE** — All waves executed 2026-07-07 through 2026-07-09.
+> See commit history and ROUTER.md for execution details.
+>
+> Waves executed:
+> - Wave 1: Eval feature flag, dead_code removal, test cleanup, scope docs dedup
+> - Wave 2: lib.rs extraction, screen.rs split, profiling extraction
+> - Wave 3: ozone-mcp legacy-tools flag, workspace cleanup
+> - Wave 4: Launcher decomposition, CLI extraction, App struct, lite build fix
+>
 > Generated 2026-07-07 from full-project audit. See `docs/plans/project-audit.md`
 > for the audit findings this plan addresses.
 
@@ -11,7 +20,7 @@ behavior or breaking the green build.
 
 ## Prerequisites
 
-- [ ] `make preflight` passes (green build — confirmed 2026-07-07: 296 tests, 0
+- [x] `make preflight` passes (green build — confirmed 2026-07-07: 296 tests, 0
       clippy warnings)
 - [ ] You have read `.mex/patterns/audit-triage-planning.md` before starting this
       plan
