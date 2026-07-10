@@ -11,9 +11,9 @@ pub fn workspace_status_tool(server: &OzoneMcpServer) -> anyhow::Result<ToolRepl
     let workspace_members = vec![
         "apps/ozone-mcp",
         "apps/ozone-plus",
-        "crates/ozone-core",
-        "crates/ozone-engine",
-        "crates/ozone-inference",
+        "archive/crates/ozone-tui",
+        "archive/crates/ozone-engine",
+        "archive/crates/ozone-inference",
         "crates/ozone-mcp",
         "crates/ozone-memory",
         "crates/ozone-persist",

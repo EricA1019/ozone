@@ -18,9 +18,9 @@ members = [
 exclude = [
     # Archived ozone+ crates. Keep outside RC workspace gates until
     # intentionally reactivated or removed.
-    "crates/ozone-tui",
-    "crates/ozone-engine",
-    "crates/ozone-inference",
+    "archive/crates/ozone-tui",
+    "archive/crates/ozone-engine",
+    "archive/crates/ozone-inference",
     # ozone-persist and ozone-memory are still needed by ozone-mcp's
     # legacy MCP tools (behind the "legacy-tools" feature flag).
     # Excluded from workspace builds but resolvable by path dependency.

@@ -195,14 +195,14 @@ def rewrite_projection_source_files(payload: dict, file_map: dict[str, str]) -> 
 
 scope_inputs = {
     "ozone-src": ROOT / "src",
-    "ozone-tui": ROOT / "crates/ozone-tui/src",
+    "ozone-tui": ROOT / "archive/crates/ozone-tui/src",
     "ozone-memory": ROOT / "crates/ozone-memory/src",
 }
 
 projection_map: dict[str, str] = {}
 
 if SCOPE == "ozone-tui-core":
-    input_root = ROOT / "crates/ozone-tui/src"
+    input_root = ROOT / "archive/crates/ozone-tui/src"
     selected_files = [
         input_root / "lib.rs",
         input_root / "layout.rs",
@@ -265,7 +265,7 @@ report = generate(
     surprises,
     detection,
     {"input": extraction.get("input_tokens", 0), "output": extraction.get("output_tokens", 0)},
-    str(scope_inputs.get(SCOPE, ROOT / "crates/ozone-tui/src")),
+    str(scope_inputs.get(SCOPE, ROOT / "archive/crates/ozone-tui/src")),
     suggested_questions=questions,
 )
 
