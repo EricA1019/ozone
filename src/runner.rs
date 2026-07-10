@@ -252,14 +252,12 @@ fn build_eval_server_args(config: &EvalRunConfig) -> Vec<String> {
     args
 }
 
-/// Run the full eval pipeline with multi-attempt scoring.
+/// Run the full eval pipeline: warmup, calibration, gating, suites, and scoring.
 ///
 /// Each task is run N times (configurable per sweep level) with varied seeds.
 /// Gate tasks use a 2-of-3 pass rule; failed gates skip deeper tasks in
 /// that lane while other lanes continue.
-#[tracing::instrument(skip(config))]
 #[tracing::instrument(skip_all)]
-/// Run the full eval pipeline: warmup, calibration, gating, suites, and scoring.
 ///
 /// When `manage_server` is set on the config, handles the full server lifecycle:
 /// clear any running model, launch the requested model, run evals, then kill.
