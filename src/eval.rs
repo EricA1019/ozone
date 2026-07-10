@@ -74,7 +74,7 @@ pub enum EvalTaskKind {
     /// Runs the creative writing diversity probe (Phase 2).
     // Constructed indirectly via eval dispatch; never explicitly instantiated.
     // REVIEW(2026-10-01): remove if this enum is still never matched directly.
-    #[allow(dead_code)]
+    /// Creative writing diversity probe.
     CreativeWriting,
 }
 

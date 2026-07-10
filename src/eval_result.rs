@@ -22,7 +22,6 @@ use std::path::PathBuf;
 /// Unified eval result — produced by both native suites and external benchmarks.
 /// Phase 3.3 wires this into the runner.
 /// REVIEW(2026-10-01): remove if Phase 3.3 still not started.
-#[allow(dead_code)]
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EvalResult {
     /// Model name or identifier.

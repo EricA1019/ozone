@@ -13,8 +13,6 @@ use crate::calibration::CalibrationResult;
 /// A gate decision for a lane or suite.
 /// REVIEW(2026-10-01): remove if check_lane_gate is still unused.
 #[derive(Debug, Clone)]
-/// REVIEW(2026-10-01): re-evaluate if GateDecision is still dead.
-#[allow(dead_code)]
 pub struct GateDecision {
     /// Name of the gate that produced this decision.
     pub gate_name: &'static str,
@@ -78,7 +76,6 @@ pub fn check_health_gate(cal: &CalibrationResult) -> GateDecision {
 /// be promoted to advanced tests in this lane.
 /// Used in tests (check_lane_gate_multi is the production path).
 /// REVIEW(2026-10-01): remove if still unused.
-#[allow(dead_code)]
 pub fn check_lane_gate(gate_name: &'static str, score: f64, required_score: f64) -> GateDecision {
     let passed = score >= required_score;
     let reason = if passed {
@@ -199,7 +196,6 @@ pub fn promotion_threshold(lane: &str) -> Option<f64> {
 /// next tier of tests.
 /// Kept for API completeness; promotion check is currently inlined in the runner.
 /// REVIEW(2026-10-01): remove if still unused.
-#[allow(dead_code)]
 pub fn should_promote(decision: &GateDecision) -> bool {
     if !decision.passed {
         return false;
