@@ -16,12 +16,6 @@ pub enum Tier {
     Base,
 }
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
-#[serde(rename_all = "kebab-case")]
-pub enum FrontendPreference {
-    SillyTavern,
-}
-
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(default)]
 pub struct Preferences {
@@ -41,12 +35,7 @@ pub struct Preferences {
     #[serde(default)]
     pub preferred_backend: Option<BackendMode>,
     #[serde(default)]
-    pub preferred_frontend: Option<FrontendPreference>,
-    #[serde(default)]
     pub preferred_tier: Option<Tier>,
-    /// Legacy toggle for the old side-by-side monitor launch path.
-    #[serde(default)]
-    pub side_by_side_monitor: bool,
     #[serde(default)]
     pub llamacpp_gpu_layers: Option<i32>,
     #[serde(default)]
@@ -63,15 +52,7 @@ pub struct Preferences {
     /// Converted to the TUI enum at startup; unknown values fall back to `DarkMint`.
     #[serde(default = "default_theme_preset")]
     pub theme_preset: String,
-    /// Whether the inspector pane is shown when the chat shell first opens.
-    #[serde(default)]
-    pub show_inspector: bool,
-    /// How message timestamps are displayed: `"relative"`, `"absolute"`, or `"off"`.
-    #[serde(default = "default_timestamp_style")]
-    pub timestamp_style: String,
-    /// Message list density: `"comfortable"` or `"compact"`.
-    #[serde(default = "default_message_density")]
-    pub message_density: String,
+
     /// Custom model directory override. When set, overrides `~/models/` and
     /// the `OZONE_MODELS_DIR` env var.
     #[serde(default)]
@@ -112,10 +93,6 @@ fn coerce_supported_tier(tier: Option<Tier>) -> Option<Tier> {
     tier
 }
 
-fn coerce_supported_frontend(frontend: Option<FrontendPreference>) -> Option<FrontendPreference> {
-    frontend
-}
-
 fn coerce_supported_backend(_backend: Option<BackendMode>) -> Option<BackendMode> {
     Some(BackendMode::LlamaCpp)
 }
@@ -139,14 +116,6 @@ fn default_theme_preset() -> String {
     "dark-mint".to_string()
 }
 
-fn default_timestamp_style() -> String {
-    "relative".to_string()
-}
-
-fn default_message_density() -> String {
-    "comfortable".to_string()
-}
-
 impl Default for Preferences {
     fn default() -> Self {
         Self {
@@ -161,9 +130,7 @@ impl Default for Preferences {
             last_blas_threads: None,
             no_browser: false,
             preferred_backend: Some(BackendMode::LlamaCpp),
-            preferred_frontend: None,
             preferred_tier: None,
-            side_by_side_monitor: false,
             llamacpp_gpu_layers: None,
             llamacpp_context_size: None,
             llamacpp_threads: None,
@@ -171,9 +138,6 @@ impl Default for Preferences {
             saved_launch_profiles: BTreeMap::new(),
             default_launch_profiles: BTreeMap::new(),
             theme_preset: default_theme_preset(),
-            show_inspector: false,
-            timestamp_style: default_timestamp_style(),
-            message_density: default_message_density(),
             models_dir: None,
         }
     }
@@ -308,7 +272,6 @@ pub async fn load_prefs() -> Result<Preferences> {
 fn normalize_loaded_prefs(mut prefs: Preferences) -> Preferences {
     prefs.preferred_backend = coerce_supported_backend(prefs.preferred_backend);
     prefs.preferred_tier = coerce_supported_tier(prefs.preferred_tier);
-    prefs.preferred_frontend = coerce_supported_frontend(prefs.preferred_frontend);
     prefs
 }
 
@@ -486,7 +449,6 @@ mod tests {
 
         assert_eq!(prefs.preferred_backend, Some(BackendMode::LlamaCpp));
         assert_eq!(prefs.theme_preset, "dark-mint");
-        assert_eq!(prefs.timestamp_style, "relative");
     }
 
     #[test]
@@ -556,10 +518,6 @@ mod tests {
         assert_eq!(
             prefs.preferred_tier, None,
             "legacy plus tier should be rejected"
-        );
-        assert_eq!(
-            prefs.preferred_frontend, None,
-            "ozone-plus frontend should be rejected"
         );
         assert_eq!(
             prefs.default_saved_launch_profile_name_for("legacy.gguf"),
@@ -676,5 +634,24 @@ mod tests {
             prefs.default_saved_launch_profile_name_for("model-a.gguf"),
             None
         );
+    }
+
+    #[test]
+    fn old_pref_fields_are_ignored_on_deserialize() {
+        // Verify that archived preference fields (from the deprecated ozone+
+        // chat feature) do not break deserialization. These fields were removed
+        // in 2026-07-10 cleanup — old pref files on disk should still load.
+        let json = r#"{
+            "show_inspector": true,
+            "timestamp_style": "absolute",
+            "message_density": "compact",
+            "preferred_frontend": "silly-tavern",
+            "side_by_side_monitor": true
+        }"#;
+        let prefs: Preferences = serde_json::from_str(json)
+            .expect("old fields must not break deserialization");
+        // Verify default values are used for removed fields
+        assert_eq!(prefs.theme_preset, "dark-mint");
+        assert_eq!(prefs.models_dir, None);
     }
 }
