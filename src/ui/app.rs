@@ -36,7 +36,7 @@ use super::command_overlay_flow::new_command_overlay;
 #[cfg(feature = "eval")]
 use super::eval_run_workflow::EvalRunEvent;
 use super::results::{first_csv_summary, ResultFile, ResultFileKind};
-#[cfg(feature = "profiling-ui")]
+#[cfg(any(feature = "bench", feature = "eval", feature = "profiling-ui"))]
 use super::results::scan_result_dir;
 use super::screen::Screen;
 use super::tier_picker;
@@ -387,6 +387,7 @@ impl App {
         self.screen = Screen::BenchEvalReport;
     }
 
+    #[cfg(any(feature = "bench", feature = "eval", feature = "profiling-ui"))]
     pub(super) fn discover_result_files(&mut self) {
         self.bench_eval.results_files.clear();
         let data_dir = ozone_core::paths::data_dir();

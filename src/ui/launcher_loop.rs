@@ -261,8 +261,10 @@ pub async fn run_launcher(
                 Screen::BenchEval => bench_eval::render(f, &app),
                 #[cfg(feature = "eval")]
                 Screen::EvalLauncher => eval_launcher::render(f, &app),
-                #[cfg(feature = "eval")]
+                #[cfg(feature = "profiling-ui")]
                 Screen::BenchLauncher => bench_launcher::render(f, &app),
+                #[cfg(not(feature = "profiling-ui"))]
+                Screen::BenchLauncher => {}
                 #[cfg(feature = "eval")]
                 Screen::BenchEvalRunning => bench_eval::render_running(f, &app),
                 #[cfg(feature = "eval")]
@@ -362,6 +364,7 @@ pub async fn run_launcher(
                         {}
                     }
                     #[cfg(feature = "eval")]
+                    #[cfg(feature = "profiling-ui")]
                     Screen::BenchLauncher => {
                         if let BenchLauncherOutcome::ExitLauncher =
                             handle_bench_launcher_key(&mut app, key).await

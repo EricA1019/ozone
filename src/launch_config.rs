@@ -552,7 +552,7 @@ pub fn build_configure_warnings(plan: &LaunchPlan, hw: &HardwareProfile) -> Vec<
     warnings
 }
 
-#[cfg(feature = "profiling-ui")]
+#[cfg(any(feature = "profiling-ui", feature = "bench", feature = "sweep", feature = "analyze"))]
 pub fn plan_profiling_launch(record: &CatalogRecord, hw: &HardwareProfile) -> LaunchPlan {
     let (total_layers, layer_source_label, layer_source_note) = launch_topology(record);
     plan_launch_with_layers(

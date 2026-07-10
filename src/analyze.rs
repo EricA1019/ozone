@@ -313,7 +313,7 @@ pub fn generate_profiles(model_name: &str) -> Result<()> {
     generate_profiles_impl(model_name, true).map(|_| ())
 }
 
-#[cfg(feature = "profiling-ui")]
+#[cfg(any(feature = "profiling-ui", feature = "analyze"))]
 pub fn generate_profiles_quiet(model_name: &str) -> Result<usize> {
     generate_profiles_impl(model_name, false)
 }
@@ -532,7 +532,7 @@ pub fn export_presets_conf(conf_path: &Path, model: Option<&str>) -> Result<()> 
     export_presets_conf_impl(conf_path, model, true).map(|_| ())
 }
 
-#[cfg(feature = "profiling-ui")]
+#[cfg(any(feature = "profiling-ui", feature = "analyze"))]
 pub fn export_presets_conf_quiet(conf_path: &Path, model: Option<&str>) -> Result<usize> {
     export_presets_conf_impl(conf_path, model, false)
 }

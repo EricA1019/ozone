@@ -77,7 +77,7 @@ pub mod results;
 use self::bench_eval_flow::{handle_bench_eval_key, BenchEvalOutcome};
 #[cfg(feature = "eval")]
 use self::bench_eval_workflow::apply_bench_eval_event;
-#[cfg(any(feature = "eval", feature = "profiling-ui"))]
+#[cfg(feature = "profiling-ui")]
 use self::bench_launcher::{handle_key as handle_bench_launcher_key, BenchLauncherOutcome};
 use self::catalog_flow::apply_catalog_report;
 #[cfg(test)]

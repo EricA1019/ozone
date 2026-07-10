@@ -48,7 +48,6 @@ pub mod policy;
 pub mod preflight;
 pub mod prefs;
 pub mod llamacpp;
-#[cfg(feature = "profiling-ui")]
 #[cfg(any(feature = "profiling-ui", feature = "bench", feature = "sweep", feature = "analyze"))]
 pub mod profiling_actions;
 #[cfg(any(feature = "profiling-ui", feature = "bench", feature = "sweep", feature = "analyze"))]
