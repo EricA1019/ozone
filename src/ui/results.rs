@@ -20,6 +20,8 @@ pub enum ResultFileKind {
 }
 
 impl ResultFileKind {
+    /// Available when eval or profiling-ui is enabled (used by bench_eval and eval_launcher screens).
+    #[cfg(any(feature = "eval", feature = "profiling-ui"))]
     pub(crate) fn label(&self) -> &'static str {
         match self {
             ResultFileKind::Sweep => "Sweep",
@@ -48,6 +50,7 @@ pub(crate) fn first_csv_summary(path: &std::path::Path) -> Option<String> {
 }
 
 /// Recursively scan a directory for CSV and MD result files.
+#[cfg(any(feature = "eval", feature = "profiling-ui"))]
 pub(crate) fn scan_result_dir(dir: &std::path::Path, out: &mut Vec<ResultFile>) {
     if let Ok(entries) = std::fs::read_dir(dir) {
         for entry in entries.flatten() {
@@ -112,6 +115,7 @@ pub(crate) fn scan_result_dir(dir: &std::path::Path, out: &mut Vec<ResultFile>) 
 }
 
 /// Format a result file's contents for display in the viewer.
+#[cfg(any(feature = "eval", feature = "profiling-ui"))]
 pub(crate) fn format_result_text(path: &std::path::Path, text: &str, kind: &ResultFileKind) -> String {
     match kind {
         ResultFileKind::Report | ResultFileKind::CreativeWriting

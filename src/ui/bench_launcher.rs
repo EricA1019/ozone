@@ -2,6 +2,7 @@
 //!
 //! Separated from eval for cleaner UX.
 
+#[cfg(feature = "profiling-ui")]
 use ratatui::{
     layout::{Constraint, Direction, Layout},
     text::{Line, Span},
@@ -9,10 +10,13 @@ use ratatui::{
     Frame,
 };
 
+#[cfg(feature = "profiling-ui")]
 use super::{App, Screen};
+#[cfg(feature = "profiling-ui")]
 use crate::theme::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "profiling-ui")]
 pub(super) enum BenchLauncherAction {
     ProfileModel,
     QuickSweep,
@@ -21,6 +25,7 @@ pub(super) enum BenchLauncherAction {
 }
 
 #[derive(Debug, Clone)]
+#[cfg(feature = "profiling-ui")]
 pub(super) struct BenchLauncherEntry {
     pub action: BenchLauncherAction,
     pub label: String,
@@ -29,11 +34,13 @@ pub(super) struct BenchLauncherEntry {
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[cfg(feature = "profiling-ui")]
 pub(super) enum BenchLauncherOutcome {
     Continue,
     ExitLauncher,
 }
 
+#[cfg(feature = "profiling-ui")]
 pub(super) fn entries(_app: &App) -> Vec<BenchLauncherEntry> {
     vec![
         BenchLauncherEntry {
@@ -63,6 +70,7 @@ pub(super) fn entries(_app: &App) -> Vec<BenchLauncherEntry> {
     ]
 }
 
+#[cfg(feature = "profiling-ui")]
 pub(super) fn render(f: &mut Frame, app: &App) {
     let area = f.area();
     let center = Layout::default()
@@ -152,6 +160,7 @@ pub(super) fn render(f: &mut Frame, app: &App) {
     f.render_widget(hints, chunks[2]);
 }
 
+#[cfg(feature = "profiling-ui")]
 pub(super) async fn handle_key(
     app: &mut App,
     key: crossterm::event::KeyEvent,
@@ -196,6 +205,7 @@ pub(super) async fn handle_key(
     BenchLauncherOutcome::Continue
 }
 
+#[cfg(feature = "profiling-ui")]
 fn dispatch_action(app: &mut App, action: BenchLauncherAction) {
     match action {
         BenchLauncherAction::ProfileModel => {

@@ -75,32 +75,47 @@ use clap::{Parser, Subcommand, ValueEnum};
 
 // ---------------------------------------------------------------------------
 // Named constants — single source of truth for CLI defaults.
+//
+// Each constant is cfg-gated to match the feature set of the CLI command
+// that uses it. The lite build (--no-default-features) excludes all of
+// these; the default build includes them all.
 // ---------------------------------------------------------------------------
 
+#[cfg(feature = "eval")]
 /// Default llama.cpp server URL (mirrors `ozone_core::paths::DEFAULT_LLAMACPP_BASE_URL`).
 const DEFAULT_LLAMACPP_URL: &str = ozone_core::paths::DEFAULT_LLAMACPP_BASE_URL;
 /// Default server port as string (for clap `default_value`).
 const DEFAULT_LLAMACPP_PORT_STR: &str = "8989";
+#[cfg(any(feature = "bench", feature = "eval"))]
 /// Default context size as string (for clap `default_value`).
 const DEFAULT_CONTEXT_SIZE_STR: &str = "4096";
+#[cfg(feature = "bench")]
 /// Default GPU layers sentinel: -1 means "all layers".
 const GPU_LAYERS_AUTO_STR: &str = "-1";
+#[cfg(feature = "bench")]
 /// Default KV cache quantization: 1=f16, 2=q8_0, 3=q4_0.
 const DEFAULT_KV_QUANT_STR: &str = "1";
+#[cfg(feature = "eval")]
 /// Default benchmark preset.
 const DEFAULT_BENCH_PRESET: &str = "gsm8k";
+#[cfg(feature = "eval")]
 /// Default sample count as string.
 const DEFAULT_SAMPLES_STR: &str = "1";
+#[cfg(feature = "eval")]
 /// Default temperature for generation (0.0 = deterministic).
 const DEFAULT_TEMPERATURE_STR: &str = "0.0";
+#[cfg(feature = "eval")]
 /// Default backend identifier.
 const DEFAULT_BACKEND_STR: &str = "llama.cpp";
+#[cfg(feature = "eval")]
 /// Default creative writing prompt bank path.
 const DEFAULT_CREATIVE_PROMPTS_PATH: &str = "contrib/evals/prompts/creative_writing.toml";
 
+#[cfg(any(feature = "bench", feature = "eval"))]
 // Non-string constants (for `default_value_t` and struct defaults).
 /// Default context length in tokens (32k).
 const DEFAULT_CONTEXT_SIZE: u32 = 32768;
+#[cfg(feature = "eval")]
 /// Default GPU layers for server launch.
 const DEFAULT_GPU_LAYERS: i32 = 35;
 

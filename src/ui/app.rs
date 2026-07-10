@@ -35,7 +35,9 @@ use super::bench_eval_workflow::BenchEvalWorkflowEvent;
 use super::command_overlay_flow::new_command_overlay;
 #[cfg(feature = "eval")]
 use super::eval_run_workflow::EvalRunEvent;
-use super::results::{first_csv_summary, scan_result_dir, ResultFile, ResultFileKind};
+use super::results::{first_csv_summary, ResultFile, ResultFileKind};
+#[cfg(feature = "profiling-ui")]
+use super::results::scan_result_dir;
 use super::screen::Screen;
 use super::tier_picker;
 use super::ModelPickerMode;
@@ -422,6 +424,7 @@ impl App {
         }
     }
 
+    #[cfg(any(feature = "eval", feature = "profiling-ui"))]
     pub(super) fn load_result_file_content(&mut self, index: usize) {
         if let Some(file) = self.bench_eval.results_files.get(index) {
             self.bench_eval.results_viewing = true;
@@ -434,6 +437,7 @@ impl App {
         }
     }
 
+    #[cfg(any(feature = "eval", feature = "profiling-ui"))]
     pub(super) fn push_bench_eval_progress(&mut self, line: String) {
         self.bench_eval.progress.push(line);
         if self.bench_eval.progress.len() > 24 {
