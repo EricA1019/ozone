@@ -1,8 +1,21 @@
 //! Model file and run configuration hashing.
 //!
 //! Provides SHA-256 based identity for model files (fast: first 64KB + size)
-//! and run configurations (stable format string). Foundation for gate caching
-//! and result deduplication in the eval pipeline.
+//! and run configurations (stable format string).
+//!
+//! # Usage
+//!
+//! - `hash_model_file` — identity for model caching. Same file = same hash.
+//! - `hash_run_config` — **diagnostic only**. The hash is written into eval
+//!   artifact logs for traceability. It is NOT used as a DB cache key or for
+//!   deduplication. The `eval_run_configs` table schema includes a
+//!   `config_hash` column but nothing writes to or reads from it.
+//!
+//!   Because the hash is diagnostic-only, the call sites in `runner.rs` pass
+//!   some fixed default values (`batch_size: 512`, `seed: 42`) that are not
+//!   currently configurable. This is harmless — if those fields become
+//!   user-configurable in the future, the hashed values should be updated to
+//!   match.
 
 use anyhow::{Context, Result};
 use sha2::{Digest, Sha256};
