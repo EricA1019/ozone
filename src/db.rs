@@ -72,7 +72,7 @@ pub fn open() -> Result<Connection> {
     Ok(conn)
 }
 
-fn init_tables(conn: &Connection) -> Result<()> {
+fn create_benchmarks_table(conn: &Connection) -> Result<()> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS benchmarks (
             id                    INTEGER PRIMARY KEY,
@@ -96,9 +96,14 @@ fn init_tables(conn: &Connection) -> Result<()> {
             timestamp             TEXT,
             notes                 TEXT,
             launch_profile_name   TEXT
-        );
+        );",
+    )?;
+    Ok(())
+}
 
-        CREATE TABLE IF NOT EXISTS profiles (
+fn create_profiles_table(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS profiles (
             id            INTEGER PRIMARY KEY,
             model_name    TEXT NOT NULL,
             profile_name  TEXT,
@@ -110,8 +115,14 @@ fn init_tables(conn: &Connection) -> Result<()> {
             vram_mb       INTEGER,
             source        TEXT,
             created_at    TEXT
-         );
-        CREATE TABLE IF NOT EXISTS eval_models (
+         );",
+    )?;
+    Ok(())
+}
+
+fn create_eval_models_table(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS eval_models (
             id              INTEGER PRIMARY KEY,
             name            TEXT NOT NULL,
             family          TEXT,
@@ -122,9 +133,14 @@ fn init_tables(conn: &Connection) -> Result<()> {
             file_size_bytes INTEGER,
             notes           TEXT,
             created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-        );
+        );",
+    )?;
+    Ok(())
+}
 
-        CREATE TABLE IF NOT EXISTS eval_run_configs (
+fn create_eval_run_configs_table(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS eval_run_configs (
             id              INTEGER PRIMARY KEY,
             model_id        INTEGER NOT NULL,
             config_hash     TEXT NOT NULL UNIQUE,
@@ -141,9 +157,14 @@ fn init_tables(conn: &Connection) -> Result<()> {
             seed            INTEGER,
             hardware_json   TEXT,
             created_at      TEXT NOT NULL DEFAULT (datetime('now'))
-        );
+        );",
+    )?;
+    Ok(())
+}
 
-        CREATE TABLE IF NOT EXISTS eval_runs (
+fn create_eval_runs_table(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS eval_runs (
             id              INTEGER PRIMARY KEY,
             run_config_id   INTEGER NOT NULL,
             started_at      TEXT NOT NULL,
@@ -154,9 +175,14 @@ fn init_tables(conn: &Connection) -> Result<()> {
             warmup_enabled  INTEGER NOT NULL DEFAULT 1,
             warmup_discarded INTEGER NOT NULL DEFAULT 1,
             notes           TEXT
-        );
+        );",
+    )?;
+    Ok(())
+}
 
-        CREATE TABLE IF NOT EXISTS eval_task_results (
+fn create_eval_task_results_table(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS eval_task_results (
             id                INTEGER PRIMARY KEY,
             run_id            INTEGER NOT NULL,
             task_key          TEXT NOT NULL,
@@ -176,9 +202,14 @@ fn init_tables(conn: &Connection) -> Result<()> {
             artifact_path     TEXT,
             attempt_index     INTEGER NOT NULL DEFAULT 1,
             created_at        TEXT NOT NULL DEFAULT (datetime('now'))
-        );
+        );",
+    )?;
+    Ok(())
+}
 
-        CREATE TABLE IF NOT EXISTS eval_gate_results (
+fn create_eval_gate_results_table(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS eval_gate_results (
             id            INTEGER PRIMARY KEY,
             run_id        INTEGER NOT NULL,
             lane          TEXT NOT NULL,
@@ -189,9 +220,14 @@ fn init_tables(conn: &Connection) -> Result<()> {
             reason        TEXT,
             cache_hit     INTEGER NOT NULL DEFAULT 0,
             created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-        );
+        );",
+    )?;
+    Ok(())
+}
 
-        CREATE TABLE IF NOT EXISTS eval_skipped (
+fn create_eval_skipped_table(conn: &Connection) -> Result<()> {
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS eval_skipped (
             id            INTEGER PRIMARY KEY,
             run_id        INTEGER NOT NULL,
             suite_name    TEXT NOT NULL,
@@ -202,13 +238,17 @@ fn init_tables(conn: &Connection) -> Result<()> {
             actual_score  REAL,
             required_score REAL,
             created_at    TEXT NOT NULL DEFAULT (datetime('now'))
-        );
-         ",
+        );",
     )?;
-    // Migration: rename quant_kv → quant_k, add quant_v column (older DBs).
-    // All migration errors are non-fatal — the schema might not support RENAME
-    // COLUMN (SQLite < 3.25.0), or the columns may already exist. The queries
-    // use COALESCE(quant_v, quant_k) to handle any missing columns gracefully.
+    Ok(())
+}
+
+/// Run schema migrations for older DBs.
+///
+/// All migration errors are non-fatal — the schema might not support RENAME
+/// COLUMN (SQLite < 3.25.0), or the columns may already exist. The queries
+/// use COALESCE(quant_v, quant_k) to handle any missing columns gracefully.
+fn run_schema_migrations(conn: &Connection) -> Result<()> {
     let _ = conn.execute(
         "ALTER TABLE benchmarks RENAME COLUMN quant_kv TO quant_k",
         [],
@@ -226,6 +266,19 @@ fn init_tables(conn: &Connection) -> Result<()> {
         "ALTER TABLE benchmarks ADD COLUMN launch_profile_name TEXT",
         [],
     );
+    Ok(())
+}
+
+fn init_tables(conn: &Connection) -> Result<()> {
+    create_benchmarks_table(conn)?;
+    create_profiles_table(conn)?;
+    create_eval_models_table(conn)?;
+    create_eval_run_configs_table(conn)?;
+    create_eval_runs_table(conn)?;
+    create_eval_task_results_table(conn)?;
+    create_eval_gate_results_table(conn)?;
+    create_eval_skipped_table(conn)?;
+    run_schema_migrations(conn)?;
     Ok(())
 }
 
