@@ -68,12 +68,11 @@ ratatui-braille-bar = "0.2.2"
 # sweeps, analysis, and model management.
 default = ["bench","sweep","analyze","profiling-ui","model-mgmt","eval"]
 full = ["bench", "sweep", "analyze", "profiling-ui", "model-mgmt", "eval"]
-database = ["dep:rusqlite"]
-bench = ["database"]
+bench = ["dep:rusqlite"]
 sweep = ["bench"]
-analyze = ["database"]
+analyze = ["dep:rusqlite"]
 profiling-ui = ["bench", "sweep", "analyze"]
-eval = ["database"]
+eval = ["dep:rusqlite"]
 model-mgmt = []
 
 [profile.release]

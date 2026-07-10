@@ -267,13 +267,13 @@ pub async fn run_eval_task(
     }
 
     let root = resolve_project_root()?;
-    let artifacts_dir = root.join("results");
+    let artifacts_dir = root.join(ozone_core::paths::RESULTS_DIR);
     let venv_bin = root.join("contrib/evals/.venv/bin");
 
-    if !root.join("contrib/evals").is_dir() {
+    if !root.join(ozone_core::paths::CONTRIB_EVALS_DIR).is_dir() {
         bail!(
             "Missing contrib/evals at {}. Run from an Ozone source checkout or set OZONE_SOURCE_ROOT.",
-            root.join("contrib/evals").display()
+            root.join(ozone_core::paths::CONTRIB_EVALS_DIR).display()
         );
     }
 
@@ -517,7 +517,7 @@ pub fn print_comparison(task_name: &str) -> Result<()> {
     };
 
     let root = resolve_project_root()?;
-    let dir = root.join("results").join(output_dir);
+    let dir = root.join(ozone_core::paths::RESULTS_DIR).join(output_dir);
 
     if !dir.exists() {
         tracing::info!("No results yet. Run `oz eval <model> --preset {task_name}` first.");

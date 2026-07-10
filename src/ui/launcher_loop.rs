@@ -34,6 +34,12 @@ pub async fn run_launcher(
     };
     prefs.no_browser = prefs.no_browser || no_browser;
 
+    // Apply theme preset from preferences and load runtime overrides.
+    crate::theme::set_preset(
+        prefs.theme_preset.parse::<crate::theme::ThemePreset>().unwrap_or_default(),
+    );
+    crate::theme::load_theme_overrides();
+
     // Apply tier override if given
     if let Some(tier) = tier_override {
         prefs.preferred_tier = Some(tier);

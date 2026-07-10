@@ -8,7 +8,7 @@ use ratatui::{
     Frame,
 };
 
-use super::{App, LauncherAction, LauncherActionId};
+use super::{App, LauncherAction, LauncherActionId, Screen};
 use crate::theme::*;
 
 pub(super) fn visible_launcher_actions(app: &App) -> Vec<LauncherAction> {
@@ -117,23 +117,73 @@ pub fn render(f: &mut Frame, app: &App) {
     render_services(f, chunks[2], app);
     render_actions(f, chunks[3], app);
     render_status_bar(f, chunks[4], app);
-    render_hint_bar(f, chunks[5]);
+    render_hint_bar(f, chunks[5], app);
 }
 
-fn render_hint_bar(f: &mut Frame, area: Rect) {
+/// Show context-sensitive keyboard hints at the bottom of the launcher.
+///
+/// Hints adapt to the current screen state — the launcher shows different
+/// keys than the model picker or confirm screen.
+fn render_hint_bar(f: &mut Frame, area: Rect, app: &App) {
+    let spans: Vec<Span> = match app.screen {
+        Screen::Launcher => vec![
+            Span::styled("↑↓/jk", style_hint_key()),
+            Span::styled(" navigate  ", style_muted()),
+            Span::styled("Enter", style_hint_key()),
+            Span::styled(" select  ", style_muted()),
+            Span::styled("m", style_hint_key()),
+            Span::styled(" model picker  ", style_muted()),
+            Span::styled("p", style_hint_key()),
+            Span::styled(" profile  ", style_muted()),
+            Span::styled("Esc", style_hint_key()),
+            Span::styled(" exit  ", style_muted()),
+            Span::styled("q", style_hint_key()),
+            Span::styled(" quit  ", style_muted()),
+            Span::styled("/", style_hint_key()),
+            Span::styled(" command", style_muted()),
+        ],
+        Screen::ModelPicker => vec![
+            Span::styled("↑↓/jk", style_hint_key()),
+            Span::styled(" navigate  ", style_muted()),
+            Span::styled("Enter", style_hint_key()),
+            Span::styled(" select  ", style_muted()),
+            Span::styled("Esc", style_hint_key()),
+            Span::styled(" back  ", style_muted()),
+            Span::styled("/", style_hint_key()),
+            Span::styled(" filter", style_muted()),
+        ],
+        Screen::Confirm => vec![
+            Span::styled("Enter", style_hint_key()),
+            Span::styled(" confirm  ", style_muted()),
+            Span::styled("Esc", style_hint_key()),
+            Span::styled(" back  ", style_muted()),
+            Span::styled("c", style_hint_key()),
+            Span::styled(" configure", style_muted()),
+        ],
+        Screen::Monitor => vec![
+            Span::styled("q/Esc", style_hint_key()),
+            Span::styled(" exit  ", style_muted()),
+            Span::styled("s", style_hint_key()),
+            Span::styled(" clear & exit", style_muted()),
+        ],
+        Screen::BenchEval => vec![
+            Span::styled("↑↓/jk", style_hint_key()),
+            Span::styled(" navigate  ", style_muted()),
+            Span::styled("Enter", style_hint_key()),
+            Span::styled(" run  ", style_muted()),
+            Span::styled("Esc", style_hint_key()),
+            Span::styled(" back  ", style_muted()),
+            Span::styled("r", style_hint_key()),
+            Span::styled(" refresh results", style_muted()),
+        ],
+        _ => vec![
+            Span::styled("Esc", style_hint_key()),
+            Span::styled(" back  ", style_muted()),
+            Span::styled("q", style_hint_key()),
+            Span::styled(" quit", style_muted()),
+        ],
+    };
 
-    let spans = vec![
-        Span::styled("↑↓/jk", style_hint_key()),
-        Span::styled(" navigate  ", style_muted()),
-        Span::styled("Enter", style_hint_key()),
-        Span::styled(" select  ", style_muted()),
-        Span::styled("Esc", style_hint_key()),
-        Span::styled(" exit  ", style_muted()),
-        Span::styled("q", style_hint_key()),
-        Span::styled(" quit  ", style_muted()),
-        Span::styled("/", style_hint_key()),
-        Span::styled(" command", style_muted()),
-    ];
     let bar = Paragraph::new(Line::from(spans));
     f.render_widget(bar, area);
 }

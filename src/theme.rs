@@ -3,11 +3,15 @@
 //! Three preset themes: DarkMint (default), OzoneDark (original), HighContrast.
 //! All style functions are preset-aware via the active preset singleton.
 //! Use `set_preset()` at startup or at runtime to switch themes instantly.
+//!
+//! Runtime overrides can be loaded from `theme.toml` in the data directory
+//! (alongside `preferences.json`). Any color in the file overrides the
+//! compiled preset value for that slot across all presets.
 
 // Infrastructure for later phases — not dead.
 
-
 use std::sync::atomic::{AtomicU8, Ordering};
+use std::sync::OnceLock;
 
 use ratatui::style::{Color, Modifier, Style};
 use serde::{Deserialize, Serialize};
@@ -30,11 +34,31 @@ pub enum ThemePreset {
 impl ThemePreset {
 }
 
+impl std::str::FromStr for ThemePreset {
+    type Err = ();
+
+    /// Parse a kebab-case preset string (e.g. `"dark-mint"`, `"ozone-dark"`,
+    /// `"high-contrast"`), returning `DarkMint` for unknown values.
+    fn from_str(s: &str) -> Result<Self, Self::Err> {
+        Ok(match s {
+            "dark-mint" => Self::DarkMint,
+            "ozone-dark" => Self::OzoneDark,
+            "high-contrast" => Self::HighContrast,
+            _ => Self::default(),
+        })
+    }
+}
+
 // ── Active-preset singleton ──────────────────────────────────────────────────
 
 /// Stores the active preset discriminant as a `u8`.
 /// 0 = DarkMint (default), 1 = OzoneDark, 2 = HighContrast.
 static ACTIVE_PRESET: AtomicU8 = AtomicU8::new(0);
+
+/// Switch the active theme preset at runtime.
+pub fn set_preset(preset: ThemePreset) {
+    ACTIVE_PRESET.store(preset as u8, Ordering::Relaxed);
+}
 
 
 
@@ -52,38 +76,38 @@ pub fn active_preset() -> ThemePreset {
 
 /// Primary accent color for the given preset (maps to `style_lime()`).
 pub fn accent(preset: ThemePreset) -> Color {
-    match preset {
+    or_override("lime", match preset {
         ThemePreset::DarkMint => Color::Rgb(45, 175, 130),
         ThemePreset::OzoneDark => LIME,
         ThemePreset::HighContrast => Color::Rgb(0, 255, 180),
-    }
+    })
 }
 
 /// Lighter highlight accent (maps to `style_cyan()`).
 pub fn highlight(preset: ThemePreset) -> Color {
-    match preset {
+    or_override("cyan", match preset {
         ThemePreset::DarkMint => Color::Rgb(78, 210, 165),
         ThemePreset::OzoneDark => CYAN,
         ThemePreset::HighContrast => Color::Rgb(100, 255, 200),
-    }
+    })
 }
 
 /// Violet/purple accent (maps to `style_violet()`).
 pub fn violet(preset: ThemePreset) -> Color {
-    match preset {
+    or_override("violet", match preset {
         ThemePreset::DarkMint => Color::Rgb(100, 58, 200),
         ThemePreset::OzoneDark => VIOLET,
         ThemePreset::HighContrast => Color::Rgb(180, 100, 255),
-    }
+    })
 }
 
 /// Muted secondary text color (maps to `style_gray()`).
 pub fn muted_color(preset: ThemePreset) -> Color {
-    match preset {
-        ThemePreset::DarkMint => Color::Rgb(100, 140, 130),
+    or_override("gray", match preset {
+        ThemePreset::DarkMint => Color::Rgb(100, 115, 115),
         ThemePreset::OzoneDark => GRAY,
         ThemePreset::HighContrast => Color::Rgb(180, 180, 180),
-    }
+    })
 }
 
 // ── OzoneDark reference palette (kept as consts for backward compat) ─────────
@@ -109,6 +133,83 @@ pub const RED: Color = Color::Rgb(239, 68, 68); // #ef4444
 /// Muted secondary text — OzoneDark reference value.
 pub const GRAY: Color = Color::Rgb(141, 214, 209); // #8dd6d1 (same as CYAN)
 
+// ── Runtime theme overrides (theme.toml) ─────────────────────────────────────
+
+/// Per-color overrides loaded from `theme.toml`.
+///
+/// Each field is an optional hex colour string (`"#RRGGBB"`). When set, the
+/// override is used instead of the compiled preset value for that colour slot.
+/// Unknown fields are silently ignored so future versions can add new slots.
+#[derive(Debug, Clone, Default, serde::Deserialize)]
+#[serde(default)]
+pub struct ThemeOverrides {
+    pub lime: Option<String>,
+    pub cyan: Option<String>,
+    pub violet: Option<String>,
+    pub green: Option<String>,
+    pub amber: Option<String>,
+    pub red: Option<String>,
+    pub gray: Option<String>,
+}
+
+static THEME_OVERRIDES: OnceLock<ThemeOverrides> = OnceLock::new();
+
+/// Load colour overrides from `theme.toml` in the data directory.
+///
+/// If the file is missing or unreadable the compiled defaults are used.
+/// Should be called once at startup, after `set_preset()`.
+pub fn load_theme_overrides() {
+    let Some(data_dir) = ozone_core::paths::data_dir() else {
+        return;
+    };
+    let path = data_dir.join("theme.toml");
+    let content = match std::fs::read_to_string(&path) {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+    match toml::from_str::<ThemeOverrides>(&content) {
+        Ok(config) => {
+            let _ = THEME_OVERRIDES.set(config);
+        }
+        Err(e) => {
+            tracing::warn!("Failed to parse theme.toml: {e}");
+        }
+    }
+}
+
+/// Parse a hex colour string like `"#RRGGBB"` into a `Color`.
+fn parse_hex(hex: &str) -> Option<Color> {
+    let hex = hex.trim_start_matches('#');
+    if hex.len() != 6 {
+        return None;
+    }
+    let r = u8::from_str_radix(&hex[0..2], 16).ok()?;
+    let g = u8::from_str_radix(&hex[2..4], 16).ok()?;
+    let b = u8::from_str_radix(&hex[4..6], 16).ok()?;
+    Some(Color::Rgb(r, g, b))
+}
+
+/// Return the override colour for a named colour slot, if one was loaded.
+fn override_color(name: &str) -> Option<Color> {
+    let overrides = THEME_OVERRIDES.get()?;
+    let hex_str = match name {
+        "lime" => overrides.lime.as_deref()?,
+        "cyan" => overrides.cyan.as_deref()?,
+        "violet" => overrides.violet.as_deref()?,
+        "green" => overrides.green.as_deref()?,
+        "amber" => overrides.amber.as_deref()?,
+        "red" => overrides.red.as_deref()?,
+        "gray" => overrides.gray.as_deref()?,
+        _ => return None,
+    };
+    parse_hex(hex_str)
+}
+
+/// Apply any runtime override for `name` or return `default`.
+fn or_override(name: &str, default: Color) -> Color {
+    override_color(name).unwrap_or(default)
+}
+
 // ── Semantic style functions (preset-aware) ──────────────────────────────────
 
 /// Primary teal accent style — follows active preset.
@@ -125,15 +226,15 @@ pub fn style_cyan() -> Style {
 }
 /// Success / green style (same across all presets).
 pub fn style_green() -> Style {
-    Style::default().fg(GREEN)
+    Style::default().fg(or_override("green", GREEN))
 }
 /// Warning / amber style (same across all presets).
 pub fn style_amber() -> Style {
-    Style::default().fg(AMBER)
+    Style::default().fg(or_override("amber", AMBER))
 }
 /// Error / red style (same across all presets).
 pub fn style_red() -> Style {
-    Style::default().fg(RED)
+    Style::default().fg(or_override("red", RED))
 }
 /// Muted / secondary text — follows active preset.
 pub fn style_gray() -> Style {

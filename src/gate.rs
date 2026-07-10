@@ -13,6 +13,7 @@ use crate::calibration::CalibrationResult;
 /// A gate decision for a lane or suite.
 /// REVIEW(2026-10-01): remove if check_lane_gate is still unused.
 #[derive(Debug, Clone)]
+/// REVIEW(2026-10-01): re-evaluate if GateDecision is still dead.
 #[allow(dead_code)]
 pub struct GateDecision {
     /// Name of the gate that produced this decision.

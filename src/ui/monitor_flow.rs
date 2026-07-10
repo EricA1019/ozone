@@ -56,6 +56,12 @@ pub async fn run_monitor() -> Result<()> {
             Some(format!("Failed to load preferences: {error}")),
         ),
     };
+
+    // Apply theme preset from preferences and load runtime overrides.
+    crate::theme::set_preset(
+        prefs.theme_preset.parse::<crate::theme::ThemePreset>().unwrap_or_default(),
+    );
+    crate::theme::load_theme_overrides();
     let mut app = App::new(prefs);
     if let Some(error) = startup_error {
         app.set_error(error);

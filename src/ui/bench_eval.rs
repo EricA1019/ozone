@@ -11,6 +11,8 @@ use crate::theme::*;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum BenchEvalAction {
+    /// Non-selectable category header in the grouped list.
+    CategoryHeader,
     ProfileModel,
     /// Eval task from the EVAL_TASKS registry. The string is the cli_name
     /// used to look up the task definition. Keeps the UI in sync with the
@@ -35,14 +37,39 @@ pub(super) struct BenchEvalEntry {
 pub(super) fn entries() -> Vec<BenchEvalEntry> {
     let mut entries: Vec<BenchEvalEntry> = Vec::new();
 
-    // Generate eval entries from the task registry
-    for task in crate::eval::EVAL_TASKS {
-        entries.push(BenchEvalEntry {
-            action: eval_action_for_cli_name(task.cli_name),
-            label: task.report_label,
-            description: task.description,
-            command: task.cli_name,
-        });
+    // Ordered categories and the tasks that belong to each.
+    // Headers are inserted automatically.
+    let categories: &[(&str, &[&str])] = &[
+        ("Standard Benchmarks", &["gsm8k", "math", "humaneval", "mbpp", "instruction"]),
+        ("Knowledge", &["mmlu", "mmlu_pro", "truthfulqa", "drop"]),
+        ("Reasoning", &["bbh", "arc_challenge", "hellaswag", "bbh_causal_judgement"]),
+        ("Safety & Ethics", &["mmlu_philosophy", "hendrycks_ethics", "bbh_formal_fallacies"]),
+        ("Hard (opt-in)", &["gpqa"]),
+    ];
+
+    for (cat_name, task_names) in categories {
+        // Collect tasks for this category
+        let mut cat_entries: Vec<BenchEvalEntry> = Vec::new();
+        for task in crate::eval::EVAL_TASKS {
+            if task_names.contains(&task.cli_name) {
+                cat_entries.push(BenchEvalEntry {
+                    action: eval_action_for_cli_name(task.cli_name),
+                    label: task.report_label,
+                    description: task.description,
+                    command: task.cli_name,
+                });
+            }
+        }
+        if !cat_entries.is_empty() {
+            // Category header
+            entries.push(BenchEvalEntry {
+                action: BenchEvalAction::CategoryHeader,
+                label: cat_name,
+                description: "",
+                command: "",
+            });
+            entries.extend(cat_entries);
+        }
     }
 
     // Add non-eval entries
@@ -455,42 +482,56 @@ fn render_actions(f: &mut Frame, area: Rect, app: &App) {
         .iter()
         .enumerate()
         .map(|(index, entry)| {
-            let selected = index == app.bench_eval.selected;
-            let marker = if selected {
-                if (app.ticker / 6).is_multiple_of(2) {
-                    HEX_CURSOR
-                } else {
-                    HEX_FILLED
+            match entry.action {
+                BenchEvalAction::CategoryHeader => {
+                    // Non-selectable category header
+                    ListItem::new(Line::from(vec![
+                        Span::styled("", style_muted()),
+                        Span::styled(
+                            format!(" {} ", entry.label),
+                            style_bold_cyan(),
+                        ),
+                    ]))
                 }
-            } else {
-                " "
-            };
-            let label_style = if selected {
-                Style::default().fg(LIME).add_modifier(Modifier::BOLD)
-            } else {
-                style_gray()
-            };
-            let cmd_style = if selected {
-                style_hint_key()
-            } else {
-                style_muted()
-            };
-
-            ListItem::new(Line::from(vec![
-                Span::styled(
-                    format!("{marker} "),
-                    if selected {
-                        style_lime()
+                _ => {
+                    let selected = index == app.bench_eval.selected;
+                    let marker = if selected {
+                        if (app.ticker / 6).is_multiple_of(2) {
+                            HEX_CURSOR
+                        } else {
+                            HEX_FILLED
+                        }
+                    } else {
+                        " "
+                    };
+                    let label_style = if selected {
+                        Style::default().fg(LIME).add_modifier(Modifier::BOLD)
+                    } else {
+                        style_gray()
+                    };
+                    let cmd_style = if selected {
+                        style_hint_key()
                     } else {
                         style_muted()
-                    },
-                ),
-                Span::styled(format!("{}", index + 1), style_gray()),
-                Span::raw("  "),
-                Span::styled(entry.label, label_style),
-                Span::styled(format!("  {}", entry.description), style_muted()),
-                Span::styled(format!("  /{}", entry.command), cmd_style),
-            ]))
+                    };
+
+                    ListItem::new(Line::from(vec![
+                        Span::styled(
+                            format!("{marker} "),
+                            if selected {
+                                style_lime()
+                            } else {
+                                style_muted()
+                            },
+                        ),
+                        Span::styled(format!("{}", index + 1), style_gray()),
+                        Span::raw("  "),
+                        Span::styled(entry.label, label_style),
+                        Span::styled(format!("  {}", entry.description), style_muted()),
+                        Span::styled(format!("  /{}", entry.command), cmd_style),
+                    ]))
+                }
+            }
         })
         .collect();
 
@@ -507,6 +548,9 @@ fn render_preview(f: &mut Frame, area: Rect, app: &App) {
     let model_hint = resolved_model.as_deref().unwrap_or("<MODEL>");
 
     let preview = match selected.action {
+        BenchEvalAction::CategoryHeader => {
+            format!("── {} ──", selected.label)
+        }
         BenchEvalAction::ProfileModel => {
             "Enter opens model picker with profiling workflow (bench/sweep/analyze).".to_string()
         }

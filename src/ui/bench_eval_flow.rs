@@ -25,19 +25,34 @@ pub(super) async fn handle_bench_eval_key(app: &mut App, key: KeyEvent) -> Bench
         KeyCode::Up => {
             if app.bench_eval.selected > 0 {
                 app.bench_eval.selected -= 1;
+                // Skip category headers
+                while app.bench_eval.selected > 0
+                    && is_category_header(app.bench_eval.selected)
+                {
+                    app.bench_eval.selected -= 1;
+                }
             }
         }
         KeyCode::Down => {
             let max_index = entries().len().saturating_sub(1);
             if app.bench_eval.selected < max_index {
                 app.bench_eval.selected += 1;
+                // Skip category headers
+                while app.bench_eval.selected < max_index
+                    && is_category_header(app.bench_eval.selected)
+                {
+                    app.bench_eval.selected += 1;
+                }
             }
         }
         KeyCode::Char(ch) if ch.is_ascii_digit() => {
             if let Some(index) = ch.to_digit(10).map(|value| value as usize) {
                 if index > 0 && index <= entries().len() {
-                    app.bench_eval.selected = index - 1;
-                    activate_selected(app).await;
+                    let target = index - 1;
+                    if !is_category_header(target) {
+                        app.bench_eval.selected = target;
+                        activate_selected(app).await;
+                    }
                 }
             }
         }
@@ -50,7 +65,9 @@ pub(super) async fn handle_bench_eval_key(app: &mut App, key: KeyEvent) -> Bench
             }
         }
         KeyCode::Enter => {
-            activate_selected(app).await;
+            if !is_category_header(app.bench_eval.selected) {
+                activate_selected(app).await;
+            }
         }
         _ => {}
     }
@@ -58,11 +75,23 @@ pub(super) async fn handle_bench_eval_key(app: &mut App, key: KeyEvent) -> Bench
     BenchEvalOutcome::Continue
 }
 
+/// Returns true if the entry at the given index is a category header.
+fn is_category_header(index: usize) -> bool {
+    entries()
+        .get(index)
+        .map(|e| e.action == BenchEvalAction::CategoryHeader)
+        .unwrap_or(true)
+}
+
 async fn activate_selected(app: &mut App) {
-    let selected = entries()
-        .get(app.bench_eval.selected)
-        .copied()
-        .unwrap_or(entries()[0]);
+    let Some(selected) = entries().get(app.bench_eval.selected).copied() else {
+        return;
+    };
+
+    // Category headers are not activatable
+    if selected.action == BenchEvalAction::CategoryHeader {
+        return;
+    }
 
     match selected.action {
         BenchEvalAction::ProfileModel => {
@@ -230,6 +259,10 @@ async fn activate_selected(app: &mut App) {
         }
         BenchEvalAction::Back => {
             app.screen = Screen::Launcher;
+        }
+        BenchEvalAction::CategoryHeader => {
+            // Category headers are not activatable; this arm is unreachable
+            // because activate_selected returns early for CategoryHeader.
         }
     }
 }

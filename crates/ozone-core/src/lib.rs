@@ -76,6 +76,11 @@ pub mod paths {
     pub const DEFAULT_LLAMACPP_PORT: u16 = 8989;
     pub const DEFAULT_LLAMACPP_BASE_URL: &str = "http://127.0.0.1:8989";
 
+    /// Subdirectory name for eval artifacts and reports beneath the project root.
+    pub const RESULTS_DIR: &str = "results";
+    /// Relative path to the contrib eval data directory.
+    pub const CONTRIB_EVALS_DIR: &str = "contrib/evals";
+
     fn project_dirs() -> Option<ProjectDirs> {
         ProjectDirs::from("", "", "ozone")
     }

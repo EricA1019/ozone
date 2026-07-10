@@ -50,6 +50,15 @@ cargo test --workspace
 cargo clippy --workspace --all-targets -- -D warnings
 ```
 
+Additional Makefile targets:
+
+```bash
+make doc              # build documentation with private items
+make feature-matrix   # print feature gate counts per module
+make check-all        # check all feature permutations
+make outdated         # list outdated dependencies (requires cargo-outdated)
+```
+
 ## Backend
 
 Ozone's active managed backend path is llama.cpp.
@@ -97,22 +106,30 @@ picker. Ozone reports them instead of crashing.
 
 ## TUI Navigation
 
-The terminal launcher supports keyboard-driven navigation across all screens:
+The terminal launcher shows a **context-sensitive hint bar** at the bottom of
+each screen with available keys for the current context:
 
-| Key | Action |
-|-----|--------|
-| `j` / `k` or `↑` / `↓` | Navigate lists |
-| `Enter` | Select / confirm |
-| `Esc` | Go back |
-| `q` | Quit |
-| `/` | Open command palette |
-| `Tab` | Switch focus (where supported) |
-
-The launcher shows a hint bar at the bottom of each screen with available keys.
-Press `?` for help on supported screens.
+| Screen | Keys |
+|--------|------|
+| Launcher | `↑↓/jk` navigate, `Enter` select, `m` model picker, `p` profile, `Esc` back, `q` quit, `/` command |
+| Model Picker | `↑↓/jk` navigate, `Enter` select, `Esc` back, `/` filter |
+| Bench+Eval | `↑↓/jk` navigate, `Enter` run, `Esc` back, `r` refresh results |
+| Confirm | `Enter` confirm, `Esc` back, `c` configure |
+| Monitor | `q/Esc` exit, `s` clear & exit |
 
 Three theme presets are available: **DarkMint** (default), **OzoneDark** (original),
-and **HighContrast** (accessibility). Configure in the Settings screen.
+and **HighContrast** (accessibility). Configure in the Settings screen or override
+colors at runtime by creating a `theme.toml` in the data directory:
+
+```toml
+# ~/.local/share/ozone/theme.toml
+lime = "#45AF82"
+cyan = "#4ED2A5"
+violet = "#643AC8"
+gray = "#647373"
+green = "#22C55E"
+red = "#EF4444"
+```
 
 ## Main Commands
 
@@ -154,20 +171,15 @@ is running.
 
 ### All Registered Evals
 
-Each eval appears in the launcher with a category bracket and description:
+Evals are grouped by category in the Bench+Eval launcher for easier navigation:
 
-| Eval | Category | Framework | What It Tests |
-|------|----------|-----------|---------------|
-| **Native Pipeline** | `[Sweep]` | ozone | Health gates, canary, code, format, math (36 tasks in Full) |
-| **GSM8K** | `[Math]` | lm-eval | Grade-school arithmetic word problems |
-| **Math Hard** | `[Math]` | lm-eval | Competition-level problem solving |
-| **MMLU** | `[Reasoning]` | lm-eval | Multi-subject QA across 57 academic domains |
-| **BBH** | `[Reasoning]` | lm-eval | Multi-step logic across 23 hard tasks |
-| **HumanEval** | `[Code]` | EvalPlus | Python function completion (164 problems) |
-| **Instruction** | `[Follow]` | lm-eval | Multi-constraint instruction adherence |
-| **TruthfulQA** | `[Safety]` | lm-eval | Factual accuracy & misconception resistance |
-| **HellaSwag** | `[Safety]` | lm-eval | Commonsense reasoning & adversarial filtering |
-| **Creative Writing** | `[Creative]` | ozone | Diversity & coherence in long-form generation |
+| Category | Evals | Framework |
+|----------|-------|-----------|
+| **Standard Benchmarks** | GSM8K, MATH, HumanEval, MBPP, IFEval | lm-eval, EvalPlus |
+| **Knowledge** | MMLU, MMLU-Pro, TruthfulQA, DROP | lm-eval |
+| **Reasoning** | BBH, ARC-Challenge, HellaSwag, BBH Causal Judgement | lm-eval |
+| **Safety & Ethics** | MMLU Philosophy, Hendrycks Ethics, BBH Formal Fallacies | lm-eval |
+| **Hard (opt-in)** | GPQA | lm-eval |
 
 ### Error Handling
 
@@ -195,7 +207,7 @@ Each eval appears in the launcher with a category bracket and description:
 | `~/models/` or `OZONE_MODELS_DIR` | GGUF model library and symlinks |
 | `results/` | eval artifacts, generated reports, and error logs |
 | `results/logs/` | timestamped eval error logs |
-| `docs/archive/ozone-plus/` | deprecated chat documentation |
+| `docs/archive/` | archived ozone+ chat documentation (INDEX.md) |
 
 ## Developer Automation
 
