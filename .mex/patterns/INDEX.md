@@ -41,20 +41,7 @@ Lookup table for all pattern files in this directory. Check here before starting
 | [ozone-mcp-automation.md](ozone-mcp-automation.md) | Building or extending the developer-facing ozone MCP server, its stdio tool contract, sandbox helpers, or launcher smoke orchestration |
 | [ozone-launch-planner-parity.md](ozone-launch-planner-parity.md) | Aligning base Ozone fast-launch planning with profiling, especially GGUF topology/layer-count sourcing |
 | [ozone-launcher-normalization.md](ozone-launcher-normalization.md) | Normalizing the base Ozone launcher chrome, typed action metadata, settings UX, or future `/` quick-command groundwork |
-| [ozoneplus-conversation-engine.md](ozoneplus-conversation-engine.md) | Building or extending the Phase 1B ozone+ engine, engine-backed CLI, branches, or swipe flows |
-| [ozoneplus-context-inspector.md](ozoneplus-context-inspector.md) | Building or extending the Phase 1E context assembler surface, inspector preview, or dry-run trigger |
-| [ozoneplus-message-editor.md](ozoneplus-message-editor.md) | Tightening ozone+ transcript editing, textarea synchronization, slash/history suppression in edit mode, or composer scroll/cursor polish |
-| [ozoneplus-phase1f-import-export.md](ozoneplus-phase1f-import-export.md) | Building or extending Phase 1F import/export (character cards, session/transcript export), bookmarks, slash commands, or stats |
-| [ozoneplus-phase1g-launcher-onramp.md](ozoneplus-phase1g-launcher-onramp.md) | Building or extending the Phase 1G frontend-choice screen, FrontendMode, --frontend flag, or exec handoff to ozone-plus |
-| [ozoneplus-phase2a-memory-foundations.md](ozoneplus-phase2a-memory-foundations.md) | Building or extending Phase 2A manual retrieval: ozone-memory types, pinned memories, FTS recall, `memory`/`search` commands, `Ctrl+K`, or `:memories` |
-| [ozoneplus-phase2b-hybrid-retrieval.md](ozoneplus-phase2b-hybrid-retrieval.md) | Building or extending Phase 2B embeddings, vector-index rebuilds, hybrid recall/search, stale-embedding handling, or `RetrievedMemory` context injection |
-| [ozoneplus-persistence-bootstrap.md](ozoneplus-persistence-bootstrap.md) | Building or extending the Phase 1A ozone+ persistence bootstrap, schema, or session CLI |
-| [ozoneplus-reroll-swipes.md](ozoneplus-reroll-swipes.md) | Adding or debugging ozone+ selected-reply rerolls, `/session reroll`, or branch/swipe persistence for regenerated assistant replies |
-| [ozoneplus-roadmap-planning.md](ozoneplus-roadmap-planning.md) | Turning the ozone+ docs and current codebase into a phased execution plan |
-| [ozoneplus-runtime-decomposition.md](ozoneplus-runtime-decomposition.md) | Decomposing large ozone+ runtime hotspots into child modules in behavior-preserving slices |
-| [ozoneplus-streaming-backend-runtime.md](ozoneplus-streaming-backend-runtime.md) | Building or extending the Phase 1D ozone+ inference crate, app-side adapter, or streamed backend runtime path |
-| [ozoneplus-tui-shell.md](ozoneplus-tui-shell.md) | Building or extending the Phase 1C ozone+ TUI shell, `open` integration, draft persistence, or mock-runtime chat flow |
-| [ozoneplus-workspace-bootstrap.md](ozoneplus-workspace-bootstrap.md) | Implementing or extending the Phase 0 workspace split, shared ozone-core crate, or ozone-plus bootstrap app |
+| _Archived ozone+ patterns_ — see `docs/archive/ozone-plus-patterns/` | The ozone+ chat shell is deprecated. Patterns moved 2026-07-10. |
 | [product-family-docs.md](product-family-docs.md) | Updating or extending the Ozone family documentation split, scope docs, or compatibility notes |
 | [release-smoke-gates.md](release-smoke-gates.md) | Adding or debugging shipped-artifact release smoke for fresh temp-XDG and existing-user paths, especially when `make release-gates` or `make release-smoke` changes |
 | [safe-hygiene-pass.md](safe-hygiene-pass.md) | Running a behavior-preserving cleanup pass for dead tracked residue, stale comments/text, ignore-rule gaps, or unused plumbing while a dirty worktree is in play |
